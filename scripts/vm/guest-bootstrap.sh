@@ -27,7 +27,7 @@ if test ! -e "$toolchain_stamp"; then
 	sudo touch "$toolchain_stamp"
 fi
 
-for package in kernel kernel-core kernel-modules-core kernel-modules kernel-devel; do
+for package in kernel kernel-core kernel-modules-core kernel-modules kernel-modules-internal kernel-devel; do
 	kernel_packages+=("$package-$target_release")
 	if ! rpm -q "$package-$target_release" >/dev/null 2>&1; then
 		kernel_ready=0
