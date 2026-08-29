@@ -41,6 +41,20 @@ The two also differ in how they run:
 - Writeback composes inline on the frame-dispatch queue.
 - Capture can omit the cursor from the pixels. Writeback always keeps it.
 
+## Framebuffer memory
+
+CastKMS composes frames on the CPU and needs a persistent kernel mapping of
+every scanout buffer. Native shmem GEM objects, including a CastKMS object
+exported and re-imported through PRIME, meet that contract. Foreign DMA-BUFs
+are rejected during PRIME import because DMA-BUF provides no side-effect-free
+way to ask whether an exporter supports the required mapping. Accepting one
+and discovering that it cannot be mapped during atomic commit would make a
+successful modeset depend on the exporting GPU.
+
+Multi-GPU compositors should respond to the failed import by copying into a
+CastKMS dumb buffer. Supporting direct foreign imports in the future requires
+a rendering or capture path that does not depend on CPU mapping the exporter.
+
 ## Layers
 
 CastKMS is built in layers so that the code enforcing authorization never
