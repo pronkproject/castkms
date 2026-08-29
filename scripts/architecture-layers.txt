@@ -52,6 +52,8 @@ drm-runtime src/castkms_frame_dispatch.h
 drm-runtime src/castkms_frame_dispatch_demand.h
 drm-runtime src/castkms_framebuffer.c
 drm-runtime src/castkms_framebuffer.h
+drm-runtime src/castkms_gem.c
+drm-runtime src/castkms_gem.h
 drm-runtime src/castkms_output.h
 drm-runtime src/castkms_plane.c
 drm-runtime src/castkms_plane.h

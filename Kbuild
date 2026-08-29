@@ -18,6 +18,7 @@ castkms-y := \
 	src/castkms_drv.o \
 	src/castkms_file.o \
 	src/castkms_framebuffer.o \
+	src/castkms_gem.o \
 	src/castkms_capture_authority.o \
 	src/castkms_capture_owner.o \
 	src/castkms_grant.o \
