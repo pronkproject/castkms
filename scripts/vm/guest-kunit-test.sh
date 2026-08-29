@@ -22,6 +22,7 @@ expected_suites=(
 	castkms-format
 	castkms-color
 	castkms-frame-dispatch
+	castkms-gem
 	castkms-grant
 	castkms-snapshot
 )
