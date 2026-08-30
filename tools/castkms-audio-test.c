@@ -9,7 +9,6 @@
  *   4. Clock-rate accuracy vs CLOCK_MONOTONIC wall time.
  *   5. System-to-audio offset drift over the run.
  *   6. Pause/resume position continuity.
- *   7. Detach causes XRUN (when --detach-during-playback is used).
  */
 
 #include <alsa/asoundlib.h>
@@ -53,14 +52,14 @@ static int find_castkms_card(void)
 	int card = -1;
 
 	while (snd_card_next(&card) == 0 && card >= 0) {
-		char *name = NULL;
+		char *longname = NULL;
 
-		snd_card_get_name(card, &name);
-		if (name && strstr(name, "CastKMS")) {
-			free(name);
+		snd_card_get_longname(card, &longname);
+		if (longname && !strncmp(longname, "CastKMS output ", 15)) {
+			free(longname);
 			return card;
 		}
-		free(name);
+		free(longname);
 	}
 
 	return -1;
