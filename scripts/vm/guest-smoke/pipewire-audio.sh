@@ -610,6 +610,19 @@ PYEOF
 		tee -a "$result_dir/summary.txt" || true
 	printf '%s\n' 'audio_timing=pass' | tee -a "$result_dir/summary.txt"
 
+	# Keep a PCM handle active across detach. The card must vanish from new
+	# callers immediately, wake this existing client with ENODEV/XRUN, and free
+	# its attachment-owned state only after the client closes.
+	sudo timeout --signal=TERM --kill-after=2s 30s \
+		aplay -D "hw:${castkms_card_index},0" -f S16_LE -c 2 -r 48000 \
+		-d 20 /dev/zero > "$result_dir/audio-detach-playback.txt" 2>&1 &
+	audio_playback_pid=$!
+	sleep 0.3
+	if ! kill -0 "$audio_playback_pid" 2>/dev/null; then
+		cat "$result_dir/audio-detach-playback.txt" >&2
+		exit 1
+	fi
+
 	# Clean up audio modeset holder.
 	exec 4>&-
 	audio_mode_gate_open=0
@@ -624,7 +637,28 @@ PYEOF
 	wait "$attach_hold_pid" 2>/dev/null || true
 	attach_hold_pid=
 
-	sleep 0.3
+	for _ in $(seq 1 30); do
+		if ! kill -0 "$audio_playback_pid" 2>/dev/null; then
+			break
+		fi
+		sleep 0.1
+	done
+	if kill -0 "$audio_playback_pid" 2>/dev/null; then
+		printf 'open PCM did not wake after attachment card removal\n' >&2
+		cat "$result_dir/audio-detach-playback.txt" >&2
+		exit 1
+	fi
+	set +e
+	wait "$audio_playback_pid"
+	audio_detach_status=$?
+	set -e
+	audio_playback_pid=
+	if test "$audio_detach_status" -eq 0; then
+		printf 'detached PCM playback exited successfully instead of failing\n' >&2
+		exit 1
+	fi
+	printf '%s\n' 'audio_open_handle_detach=pass' | \
+		tee -a "$result_dir/summary.txt"
 
 	for _ in $(seq 1 50); do
 		if ! find_castkms_audio_card 0 >/dev/null; then

@@ -38,6 +38,7 @@ pw_mode_gate_open=0
 pw_runtime=
 sink_capture_pid=
 audio_modeset_pid=
+audio_playback_pid=
 audio_mode_gate_open=0
 audio_attach_gate_open=0
 audio_second_attach_gate_open=0
@@ -104,6 +105,10 @@ cleanup()
 	if test -n "$audio_modeset_pid"; then
 		kill "$audio_modeset_pid" 2>/dev/null || true
 		wait "$audio_modeset_pid" 2>/dev/null || true
+	fi
+	if test -n "$audio_playback_pid"; then
+		kill "$audio_playback_pid" 2>/dev/null || true
+		wait "$audio_playback_pid" 2>/dev/null || true
 	fi
 	if test "$audio_attach_gate_open" -eq 1; then
 		printf 'x' >&5 2>/dev/null || true
