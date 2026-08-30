@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0+
 
+#include <linux/math64.h>
+
 #include <drm/drm_fixed.h>
 #include <drm/drm_mode.h>
 
@@ -63,6 +65,28 @@ u16 castkms_apply_lut_to_channel_value(const struct castkms_color_lut *lut,
 }
 EXPORT_SYMBOL_IF_KUNIT(castkms_apply_lut_to_channel_value);
 
+bool castkms_color_lut_is_identity(const struct castkms_color_lut *lut)
+{
+	if (!lut->base || !lut->lut_length)
+		return true;
+
+	/* A single-entry LUT is a constant function, not an identity ramp. */
+	if (lut->lut_length < 2)
+		return false;
+
+	for (size_t i = 0; i < lut->lut_length; i++) {
+		u16 expected = div64_u64((u64)i * 0xffff,
+					 lut->lut_length - 1);
+		const struct drm_color_lut *entry = &lut->base[i];
+
+		if (entry->red != expected || entry->green != expected ||
+		    entry->blue != expected)
+			return false;
+	}
+
+	return true;
+}
+EXPORT_SYMBOL_IF_KUNIT(castkms_color_lut_is_identity);
 
 /*
  * These luts were generated with a LUT generated based on

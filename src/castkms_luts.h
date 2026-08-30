@@ -21,6 +21,7 @@ extern const struct castkms_color_lut castkms_linear_eotf;
 extern const struct castkms_color_lut castkms_srgb_eotf;
 extern const struct castkms_color_lut castkms_srgb_inv_eotf;
 
+bool castkms_color_lut_is_identity(const struct castkms_color_lut *lut);
 u16 castkms_apply_lut_to_channel_value(const struct castkms_color_lut *lut,
 				       s32 channel_value,
 				       enum lut_channel channel);
@@ -30,4 +31,5 @@ u16 castkms_lerp_u16(u16 a, u16 b, s64 t);
 s64 castkms_get_lut_index(const struct castkms_color_lut *lut,
 			  u16 channel_value);
 #endif
+
 #endif /* _CASTKMS_LUTS_H_ */
