@@ -66,64 +66,6 @@ static void fill_background(const struct pixel_argb_u16 *background_color,
 		output_buffer->pixels[i] = *background_color;
 }
 
-// lerp(a, b, t) = a + (b - a) * t
-VISIBLE_IF_KUNIT u16 castkms_lerp_u16(u16 a, u16 b, s64 t)
-{
-	s64 a_fp = drm_int2fixp(a);
-	s64 b_fp = drm_int2fixp(b);
-
-	s64 delta = drm_fixp_mul(b_fp - a_fp, t);
-
-	return drm_fixp2int_round(a_fp + delta);
-}
-EXPORT_SYMBOL_IF_KUNIT(castkms_lerp_u16);
-
-VISIBLE_IF_KUNIT s64 castkms_get_lut_index(const struct castkms_color_lut *lut, u16 channel_value)
-{
-	s64 color_channel_fp = drm_int2fixp(channel_value);
-
-	return drm_fixp_mul(color_channel_fp, lut->channel_value2index_ratio);
-}
-EXPORT_SYMBOL_IF_KUNIT(castkms_get_lut_index);
-
-VISIBLE_IF_KUNIT u16
-castkms_apply_lut_to_channel_value(const struct castkms_color_lut *lut,
-				   s32 channel_value,
-				   enum lut_channel channel)
-{
-	u16 lut_input = clamp_val(channel_value, 0, 0xffff);
-	s64 lut_index = castkms_get_lut_index(lut, lut_input);
-	const u16 *floor_lut_value, *ceil_lut_value;
-	u16 floor_channel_value, ceil_channel_value;
-
-	/*
-	 * A 1D LUT has a normalized input domain. Matrix operations retain a
-	 * signed, extended-range value between stages, so clamp that value at
-	 * the LUT boundary rather than narrowing it to u16 and wrapping it.
-	 */
-
-	/*
-	 * This checks if `struct drm_color_lut` has any gap added by the compiler
-	 * between the struct fields.
-	 */
-	static_assert(sizeof(struct drm_color_lut) == sizeof(__u16) * 4);
-
-	floor_lut_value = (const u16 *)&lut->base[drm_fixp2int(lut_index)];
-	if (drm_fixp2int(lut_index) == (lut->lut_length - 1))
-		/* We're at the end of the LUT array, use same value for ceil and floor */
-		ceil_lut_value = floor_lut_value;
-	else
-		ceil_lut_value = (const u16 *)&lut->base[drm_fixp2int_ceil(lut_index)];
-
-	floor_channel_value = floor_lut_value[channel];
-	ceil_channel_value = ceil_lut_value[channel];
-
-	return castkms_lerp_u16(floor_channel_value, ceil_channel_value,
-			lut_index & DRM_FIXED_DECIMAL_MASK);
-}
-EXPORT_SYMBOL_IF_KUNIT(castkms_apply_lut_to_channel_value);
-
-
 static void apply_lut(const struct castkms_frame_stage *frame,
 		      struct line_buffer *output_buffer)
 {
