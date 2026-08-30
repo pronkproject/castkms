@@ -138,6 +138,28 @@ static void castkms_color_test_linear(struct kunit *test)
 	}
 }
 
+static void castkms_color_test_identity_lut(struct kunit *test)
+{
+	struct drm_color_lut entries[TEST_LUT_SIZE];
+	struct drm_color_lut single_entry = {};
+	struct castkms_color_lut lut = {
+		.base = entries,
+		.lut_length = ARRAY_SIZE(entries),
+	};
+	struct castkms_color_lut empty = {};
+
+	memcpy(entries, test_linear_array, sizeof(entries));
+	KUNIT_EXPECT_TRUE(test, castkms_color_lut_is_identity(&empty));
+	KUNIT_EXPECT_TRUE(test, castkms_color_lut_is_identity(&lut));
+
+	entries[TEST_LUT_SIZE / 2].green++;
+	KUNIT_EXPECT_FALSE(test, castkms_color_lut_is_identity(&lut));
+
+	lut.base = &single_entry;
+	lut.lut_length = 1;
+	KUNIT_EXPECT_FALSE(test, castkms_color_lut_is_identity(&lut));
+}
+
 static void castkms_color_srgb_inv_srgb(struct kunit *test)
 {
 	u16 srgb, final;
@@ -517,6 +539,7 @@ static struct kunit_case castkms_color_test_cases[] = {
 	KUNIT_CASE(castkms_color_test_get_lut_index),
 	KUNIT_CASE(castkms_color_test_lerp),
 	KUNIT_CASE(castkms_color_test_linear),
+	KUNIT_CASE(castkms_color_test_identity_lut),
 	KUNIT_CASE(castkms_color_srgb_inv_srgb),
 	KUNIT_CASE(castkms_color_ctm_3x4_50_desat),
 	KUNIT_CASE(castkms_color_ctm_3x4_bt709),
