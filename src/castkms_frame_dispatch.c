@@ -133,7 +133,8 @@ void castkms_frame_dispatch_worker(struct work_struct *work)
 	else
 		ret = castkms_compose_targets(
 			frame, wb_pending ? active_wb : NULL,
-			separate_capture ? NULL : capture_dest, &crc32);
+			separate_capture ? NULL : capture_dest,
+			crc_pending ? &crc32 : NULL);
 
 	if (capture_dest) {
 		capture_ret = ret;
