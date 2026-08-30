@@ -254,11 +254,14 @@ accumulates damage separately for every destination.
 Audio and CEC make the virtual output behave like a real HDMI monitor; neither
 is a way to capture data out of the kernel.
 
-The ALSA device is a single device-global HDMI presentation card. Jack
-detection, ELD (the short audio-capability list derived from EDID), the PCM
-lifecycle, and timing are all real, but the samples themselves are not kept for
-any capture path. To capture audio locally, read the PipeWire sink's monitor
-instead; who may see that PipeWire node is a userspace policy decision.
+Each attached audio-capable display owns an ALSA HDMI presentation card. Card
+registration follows monitor attachment, the card and PCM use the attachment's
+assigned display name (with DisplayID product identity as a fallback), and
+detach disconnects the card immediately while ALSA safely drains any already-open handles. Jack detection, ELD (the
+short audio-capability list derived from EDID), the PCM lifecycle, and timing
+are all real, but the samples themselves are not kept for any capture path. To
+capture audio locally, read the PipeWire sink's monitor instead; who may see
+that PipeWire node is a userspace policy decision.
 
 HDMI-CEC (Consumer Electronics Control) is the command channel HDMI devices
 use for power, volume, and input switching. CEC `0.1` is opt-in and
