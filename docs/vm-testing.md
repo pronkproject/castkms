@@ -179,8 +179,8 @@ capture stream.
 **pipewire-audio** publishes a grant-backed PipeWire source, validates
 delivered frames, disconnects the consumer so the source releases its
 destination pool, reconnects a second consumer on a fresh CastKMS stream, and
-checks PipeWire audio-sink discovery plus ALSA card creation, ELD, playback,
-timestamps, and pause/resume when audio is available.
+checks attachment-owned PipeWire/ALSA card creation and removal plus ELD,
+playback, timestamps, and pause/resume while audio is available.
 
 Device-backed capture, grant, grant-launcher, and CEC clients share the small
 `castkms-test-drm` harness for driver identification, dumb framebuffers, and
