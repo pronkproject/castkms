@@ -62,7 +62,8 @@ void castkms_trigger_connector_hotplug(struct castkms_device *castkmsdev);
 int castkms_connector_attach_monitor(
 	struct drm_connector *connector,
 	struct castkms_capture_authority *authority,
-	const struct drm_edid *drm_edid);
+	const struct drm_edid *drm_edid,
+	const char *display_name);
 int castkms_connector_update_authority_edid(
 	struct drm_connector *connector,
 	struct castkms_capture_authority *authority,

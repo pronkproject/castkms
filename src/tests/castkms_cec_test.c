@@ -287,7 +287,7 @@ static int castkms_cec_test_init(struct kunit *test)
 		return ret;
 	mutex_lock(&context->config->dev->attach_transition_lock);
 	ret = castkms_connector_attach_monitor(&context->connector->base,
-					       context->authority, NULL);
+					       context->authority, NULL, NULL);
 	mutex_unlock(&context->config->dev->attach_transition_lock);
 	castkms_capture_authority_end(context->authority);
 	if (ret)

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0+
 
+#include <linux/string.h>
+
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_drv.h>
@@ -215,7 +217,8 @@ castkms_connector_set_status(struct drm_connector *connector,
 int castkms_connector_attach_monitor(
 	struct drm_connector *connector,
 	struct castkms_capture_authority *authority,
-	const struct drm_edid *drm_edid)
+	const struct drm_edid *drm_edid,
+	const char *display_name)
 {
 	struct drm_device *dev = connector->dev;
 	struct castkms_device *castkmsdev = drm_device_to_castkms_device(dev);
@@ -237,6 +240,8 @@ int castkms_connector_attach_monitor(
 
 	WRITE_ONCE(castkms_connector->monitor_attached, true);
 	castkms_connector->attachment_authority = authority;
+	strscpy(castkms_connector->display_name, display_name ?: "",
+		sizeof(castkms_connector->display_name));
 	castkms_capture_authority_get(authority);
 	mutex_unlock(&castkmsdev->attach_lock);
 
@@ -248,6 +253,7 @@ int castkms_connector_attach_monitor(
 		mutex_lock(&castkmsdev->attach_lock);
 		WRITE_ONCE(castkms_connector->monitor_attached, false);
 		castkms_connector->attachment_authority = NULL;
+		castkms_connector->display_name[0] = '\0';
 		mutex_unlock(&castkmsdev->attach_lock);
 		castkms_capture_authority_put(authority);
 		castkms_connector_set_status(connector,
@@ -292,6 +298,7 @@ int castkms_connector_detach_monitor(
 
 	WRITE_ONCE(castkms_connector->monitor_attached, false);
 	castkms_connector->attachment_authority = NULL;
+	castkms_connector->display_name[0] = '\0';
 	mutex_unlock(&castkmsdev->attach_lock);
 
 	castkms_audio_notify_disconnect(castkmsdev, connector);

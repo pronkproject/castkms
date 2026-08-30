@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 #define DRM_CASTKMS_CAPTURE_UAPI_MAJOR	0
-#define DRM_CASTKMS_CAPTURE_UAPI_MINOR	10
+#define DRM_CASTKMS_CAPTURE_UAPI_MINOR	11
 
 /* Immutable capture-protocol limits shared by the driver and clients. */
 #define DRM_CASTKMS_CAPTURE_MIN_WIDTH		10U
@@ -20,6 +20,7 @@ extern "C" {
 #define DRM_CASTKMS_CAPTURE_MAX_CURSOR_WIDTH	512U
 #define DRM_CASTKMS_CAPTURE_MAX_CURSOR_HEIGHT	512U
 #define DRM_CASTKMS_CAPTURE_MAX_EDID_SIZE	512U
+#define DRM_CASTKMS_CAPTURE_MAX_DISPLAY_NAME_SIZE 79U
 
 /**
  * DRM_CASTKMS_CAPTURE_CAP_SYNCOBJ_TIMELINE:
@@ -510,14 +511,23 @@ struct drm_castkms_capture_set_output_edid {
  * @connector_id: DRM object ID of the display connector
  * @flags: must be zero
  * @edid_size: EDID blob size in bytes; zero attaches without an EDID
- * @reserved: must be zero
+ * @display_name_size: assigned display-name size in bytes, excluding a NUL
  * @edid_ptr: userspace pointer to @edid_size bytes, or zero when no EDID
+ * @display_name_ptr: userspace pointer to @display_name_size bytes, or zero
+ *                    to derive a fallback name from the EDID
+ * @reserved: must be zero
  *
  * The default device publishes a fixed set of disconnected virtual ports at
  * load. This ioctl is the plug-in: the connector becomes connected, the
  * optional EDID is published, and a standard KMS hotplug is emitted. The
  * calling grant owns the attachment until DETACH_MONITOR, revocation, or final
  * holder close.
+ *
+ * The display name is the user-assigned endpoint name, not the EDID product name.
+ * It labels the attachment-owned sound card so otherwise-identical displays
+ * remain distinguishable in desktop audio settings. It must not contain NUL
+ * or ASCII control bytes and must be at most
+ * DRM_CASTKMS_CAPTURE_MAX_DISPLAY_NAME_SIZE bytes.
  *
  * When setting an EDID, @edid_size must be a non-zero multiple of 128 and at
  * most DRM_CASTKMS_CAPTURE_MAX_EDID_SIZE. Invalid EDIDs return -EINVAL. A
@@ -528,8 +538,10 @@ struct drm_castkms_capture_attach_monitor {
 	__u32 connector_id;
 	__u32 flags;
 	__u32 edid_size;
-	__u32 reserved;
+	__u32 display_name_size;
 	__u64 edid_ptr;
+	__u64 display_name_ptr;
+	__u64 reserved;
 };
 
 /**

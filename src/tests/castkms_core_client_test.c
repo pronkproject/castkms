@@ -446,7 +446,8 @@ static int castkms_core_client_test_init(struct kunit *test)
 		CASTKMS_CAPTURE_AUTHORITY_MANAGE_ATTACHMENT);
 	if (!ret) {
 		mutex_lock(&client->config->dev->attach_transition_lock);
-		ret = castkms_connector_attach_monitor(connector, authority, NULL);
+		ret = castkms_connector_attach_monitor(connector, authority, NULL,
+						       "Living Room TV");
 		mutex_unlock(&client->config->dev->attach_transition_lock);
 		castkms_capture_authority_end(authority);
 	}

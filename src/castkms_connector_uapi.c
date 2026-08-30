@@ -19,10 +19,12 @@
 #include "castkms_limits.h"
 
 static_assert(sizeof(struct drm_castkms_capture_set_output_edid) == 24);
-static_assert(sizeof(struct drm_castkms_capture_attach_monitor) == 24);
+static_assert(sizeof(struct drm_castkms_capture_attach_monitor) == 40);
 static_assert(sizeof(struct drm_castkms_capture_detach_monitor) == 16);
 static_assert(sizeof(struct drm_castkms_get_output) == 16);
 static_assert(CASTKMS_MAX_EDID_SIZE == DRM_CASTKMS_CAPTURE_MAX_EDID_SIZE);
+static_assert(CASTKMS_MAX_DISPLAY_NAME_SIZE ==
+	      DRM_CASTKMS_CAPTURE_MAX_DISPLAY_NAME_SIZE);
 
 int castkms_get_output_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file_priv)
@@ -89,6 +91,41 @@ static int castkms_connector_uapi_edid_from_user(
 	return 0;
 }
 
+static int castkms_connector_uapi_display_name_from_user(
+	u32 display_name_size, u64 display_name_ptr, char **display_name)
+{
+	char *name;
+	u32 i;
+
+	*display_name = NULL;
+	if (!display_name_size) {
+		if (display_name_ptr)
+			return -EINVAL;
+		return 0;
+	}
+	if (!display_name_ptr ||
+	    display_name_size > CASTKMS_MAX_DISPLAY_NAME_SIZE)
+		return -EINVAL;
+
+	name = memdup_user_nul(u64_to_user_ptr(display_name_ptr),
+				 display_name_size);
+	if (IS_ERR(name))
+		return PTR_ERR(name);
+	if (memchr(name, '\0', display_name_size)) {
+		kfree(name);
+		return -EINVAL;
+	}
+	for (i = 0; i < display_name_size; i++) {
+		if ((u8)name[i] < 0x20 || name[i] == 0x7f) {
+			kfree(name);
+			return -EINVAL;
+		}
+	}
+
+	*display_name = name;
+	return 0;
+}
+
 int castkms_capture_set_output_edid_ioctl(struct drm_device *dev, void *data,
 					  struct drm_file *file_priv)
 {
@@ -141,16 +178,22 @@ int castkms_capture_attach_monitor_ioctl(struct drm_device *dev, void *data,
 	struct castkms_capture_authority *authority;
 	struct drm_connector *connector;
 	const struct drm_edid *drm_edid = NULL;
+	char *display_name = NULL;
 	u32 rights = CASTKMS_CAPTURE_AUTHORITY_MANAGE_ATTACHMENT;
 	int ret;
 
 	if (args->flags || args->reserved)
 		return -EINVAL;
 
+	ret = castkms_connector_uapi_display_name_from_user(
+		args->display_name_size, args->display_name_ptr, &display_name);
+	if (ret)
+		return ret;
+
 	ret = castkms_connector_uapi_edid_from_user(
 		args->edid_size, args->edid_ptr, &drm_edid);
 	if (ret)
-		return ret;
+		goto out_free_display_name;
 
 	connector = drm_connector_lookup(dev, file_priv, args->connector_id);
 	if (!connector) {
@@ -164,7 +207,8 @@ int castkms_capture_attach_monitor_ioctl(struct drm_device *dev, void *data,
 	ret = castkms_grant_begin(file_priv, connector, rights, &authority);
 	if (!ret) {
 		ret = castkms_connector_attach_monitor(connector, authority,
-						       drm_edid);
+						       drm_edid,
+						       display_name);
 		castkms_grant_end(authority);
 	}
 	mutex_unlock(&castkmsdev->attach_transition_lock);
@@ -173,6 +217,9 @@ int castkms_capture_attach_monitor_ioctl(struct drm_device *dev, void *data,
 out_free_edid:
 	if (drm_edid)
 		drm_edid_free(drm_edid);
+
+out_free_display_name:
+	kfree(display_name);
 
 	return ret;
 }

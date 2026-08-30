@@ -45,7 +45,7 @@ static_assert(sizeof(struct drm_castkms_capture_queue_buffer) == 48,
 	      "capture queue ABI size changed");
 static_assert(sizeof(struct drm_castkms_capture_set_output_edid) == 24,
 	      "capture set-output-edid ABI size changed");
-static_assert(sizeof(struct drm_castkms_capture_attach_monitor) == 24,
+static_assert(sizeof(struct drm_castkms_capture_attach_monitor) == 40,
 	      "capture attach-monitor ABI size changed");
 static_assert(sizeof(struct drm_castkms_capture_detach_monitor) == 16,
 	      "capture detach-monitor ABI size changed");
