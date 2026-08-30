@@ -16,6 +16,7 @@
 #include <kunit/visibility.h>
 
 #include "castkms_composer.h"
+#include "castkms_direct_composer.h"
 #include "castkms_formats.h"
 #include "castkms_luts.h"
 #include "castkms_output_buffer.h"
@@ -428,7 +429,8 @@ static void blend_line(const struct castkms_frame_plane *current_plane, int y,
 static void blend(const struct castkms_output_buffer *destination,
 		  const struct castkms_output_buffer *second_destination,
 		  const struct castkms_frame_stage *frame,
-		  u32 *crc32, struct line_buffer *stage_buffer,
+		  bool apply_gamma_lut, u32 *crc32,
+		  struct line_buffer *stage_buffer,
 		  struct line_buffer *output_buffer, size_t row_size)
 {
 	struct castkms_frame_plane **planes = frame->planes;
@@ -459,7 +461,8 @@ static void blend(const struct castkms_output_buffer *destination,
 			blend_line(planes[i], y, crtc_x_limit, stage_buffer,
 				   output_buffer);
 
-		apply_lut(frame, output_buffer);
+		if (apply_gamma_lut)
+			apply_lut(frame, output_buffer);
 
 		if (crc32) {
 			const unsigned char *pixels =
@@ -560,7 +563,8 @@ int castkms_compose_targets(
 	const struct castkms_output_buffer *second_destination, u32 *crc32)
 {
 	size_t line_width, pixel_size = sizeof(struct pixel_argb_u16);
-	struct line_buffer output_buffer, stage_buffer;
+	struct line_buffer output_buffer = {}, stage_buffer = {};
+	bool direct_compose, gamma_lut_is_identity;
 	int ret = 0;
 
 	/*
@@ -585,21 +589,32 @@ int castkms_compose_targets(
 		    !castkms_output_buffer_is_valid(second_destination)))
 		return -EINVAL;
 
+	gamma_lut_is_identity =
+		castkms_color_lut_is_identity(&frame->gamma_lut);
+	direct_compose = !crc32;
+	if (direct_compose)
+		direct_compose = castkms_frame_can_direct_compose_xrgb8888(
+			frame, destination, second_destination);
+
 	line_width = frame->width;
 	stage_buffer.n_pixels = line_width;
 	output_buffer.n_pixels = line_width;
 
-	stage_buffer.pixels = kvmalloc(line_width * pixel_size, GFP_KERNEL);
-	if (!stage_buffer.pixels) {
-		DRM_ERROR("Cannot allocate memory for the output line buffer");
-		return -ENOMEM;
-	}
+	if (!direct_compose) {
+		stage_buffer.pixels =
+			kvmalloc(line_width * pixel_size, GFP_KERNEL);
+		if (!stage_buffer.pixels) {
+			DRM_ERROR("Cannot allocate memory for the output line buffer");
+			return -ENOMEM;
+		}
 
-	output_buffer.pixels = kvmalloc(line_width * pixel_size, GFP_KERNEL);
-	if (!output_buffer.pixels) {
-		DRM_ERROR("Cannot allocate memory for intermediate line buffer");
-		ret = -ENOMEM;
-		goto free_stage_buffer;
+		output_buffer.pixels =
+			kvmalloc(line_width * pixel_size, GFP_KERNEL);
+		if (!output_buffer.pixels) {
+			DRM_ERROR("Cannot allocate memory for intermediate line buffer");
+			ret = -ENOMEM;
+			goto free_stage_buffer;
+		}
 	}
 
 	ret = plane_framebuffers_begin_cpu_access(frame);
@@ -618,8 +633,14 @@ int castkms_compose_targets(
 			goto end_first_destination;
 	}
 
-	blend(destination, second_destination, frame, crc32, &stage_buffer,
-	      &output_buffer, line_width * pixel_size);
+	if (direct_compose)
+		castkms_direct_compose_xrgb8888(frame, destination,
+						second_destination,
+						gamma_lut_is_identity);
+	else
+		blend(destination, second_destination, frame,
+		      !gamma_lut_is_identity, crc32, &stage_buffer,
+		      &output_buffer, line_width * pixel_size);
 
 	if (second_destination)
 		castkms_output_buffer_end_cpu_access(second_destination);
