@@ -211,7 +211,7 @@ run_pipewire_audio_scenario()
 	for _ in $(seq 1 20); do
 		if sudo env PIPEWIRE_RUNTIME_DIR="$pw_runtime" \
 			XDG_RUNTIME_DIR="$pw_runtime" \
-			wpctl status 2>/dev/null | grep -qi 'CastKMS'; then
+			wpctl status 2>/dev/null | grep -qi 'Casting Display'; then
 			pw_audio_sink=1
 			break
 		fi
@@ -233,7 +233,7 @@ run_pipewire_audio_scenario()
 		castkms_sink_id=$(sudo env PIPEWIRE_RUNTIME_DIR="$pw_runtime" \
 			XDG_RUNTIME_DIR="$pw_runtime" \
 			wpctl status 2>/dev/null | \
-			sed -n 's/[^0-9]*\([0-9][0-9]*\)\..*CastKMS.*/\1/p' | \
+			sed -n 's/[^0-9]*\([0-9][0-9]*\)\..*Casting Display.*/\1/p' | \
 			head -1)
 
 		if test -n "$castkms_sink_id"; then
