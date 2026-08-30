@@ -6,6 +6,22 @@
 # Shared state assignments are consumed by that trap after this file returns.
 # shellcheck disable=SC2154
 
+find_castkms_audio_card()
+{
+	local card_dir id_path output_index=$1
+	for id_path in /proc/asound/card*/id; do
+		test -f "$id_path" || continue
+		case "$(cat "$id_path")" in
+		CastKMS"$output_index"*)
+			card_dir=${id_path%/id}
+			printf '%s\n' "${card_dir##*/card}"
+			return 0
+			;;
+		esac
+	done
+	return 1
+}
+
 run_pipewire_audio_scenario()
 {
 	scenario_begin pipewire-audio
