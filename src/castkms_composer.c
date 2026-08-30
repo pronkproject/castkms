@@ -640,8 +640,6 @@ EXPORT_SYMBOL_IF_KUNIT(castkms_compose_targets);
 int castkms_compose_frame(const struct castkms_frame_stage *frame,
 			  const struct castkms_output_buffer *destination)
 {
-	u32 crc32 = 0;
-
-	return castkms_compose_targets(frame, destination, NULL, &crc32);
+	return castkms_compose_targets(frame, destination, NULL, NULL);
 }
 EXPORT_SYMBOL_IF_KUNIT(castkms_compose_frame);
