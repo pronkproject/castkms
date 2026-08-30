@@ -455,6 +455,14 @@ static int castkms_core_client_test_init(struct kunit *test)
 	return ret;
 }
 
+static void castkms_core_client_keeps_assigned_display_name(struct kunit *test)
+{
+	struct castkms_core_client *client = test->priv;
+
+	KUNIT_EXPECT_STREQ(test, client->connector->display_name,
+			   "Living Room TV");
+}
+
 static void castkms_core_client_request_revocation(struct kunit *test)
 {
 	struct castkms_core_client *client = test->priv;
@@ -610,6 +618,7 @@ static void castkms_core_client_file_close_cleans_stale_stream(
 }
 
 static struct kunit_case castkms_core_client_test_cases[] = {
+	KUNIT_CASE(castkms_core_client_keeps_assigned_display_name),
 	KUNIT_CASE(castkms_core_client_request_revocation),
 	KUNIT_CASE(castkms_core_client_mode_change_cancellation),
 	KUNIT_CASE(castkms_core_client_master_drop_cleans_stale_stream),
