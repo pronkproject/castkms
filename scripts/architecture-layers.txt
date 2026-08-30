@@ -71,6 +71,8 @@ render-core src/castkms_colorop.c
 render-core src/castkms_colorop.h
 render-core src/castkms_composer.c
 render-core src/castkms_composer.h
+render-core src/castkms_direct_composer.c
+render-core src/castkms_direct_composer.h
 render-core src/castkms_formats.c
 render-core src/castkms_formats.h
 render-core src/castkms_frame.h

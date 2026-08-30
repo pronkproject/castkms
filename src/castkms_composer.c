@@ -237,6 +237,7 @@ static enum pixel_read_direction direction_for_rotation(unsigned int rotation)
  * @src_line: source line of the reading. Only the top-left coordinate is used. This rectangle
  * must be rotated and have a shape of 1*pixel_count if @direction is vertical and a shape of
  * pixel_count*1 if @direction is horizontal.
+ * @clipped_dst_x: first output x coordinate after clipping to the CRTC
  * @src_x_start: x start coordinate for the line reading
  * @src_y_start: y start coordinate for the line reading
  * @dst_x_start: x coordinate to blend the read line
@@ -248,13 +249,14 @@ static enum pixel_read_direction direction_for_rotation(unsigned int rotation)
  */
 static void clamp_line_coordinates(enum pixel_read_direction direction,
 				   const struct castkms_frame_plane *current_plane,
-				   const struct drm_rect *src_line, int *src_x_start,
-				   int *src_y_start, int *dst_x_start, int *pixel_count)
+				   const struct drm_rect *src_line, int clipped_dst_x,
+				   int *src_x_start, int *src_y_start,
+				   int *dst_x_start, int *pixel_count)
 {
 	/* By default the start points are correct */
 	*src_x_start = src_line->x1;
 	*src_y_start = src_line->y1;
-	*dst_x_start = current_plane->frame_info->dst.x1;
+	*dst_x_start = clipped_dst_x;
 
 	/* Get the correct number of pixel to blend, it depends of the direction */
 	switch (direction) {
@@ -368,8 +370,9 @@ static void blend_line(const struct castkms_frame_plane *current_plane, int y,
 		direction_for_rotation(current_plane->frame_info->rotation);
 
 	/* [2]: Compute and clamp the number of pixel to read */
-	clamp_line_coordinates(direction, current_plane, &src_line, &src_x_start, &src_y_start,
-			       &dst_x_start, &pixel_count);
+	clamp_line_coordinates(direction, current_plane, &src_line, dst_line.x1,
+			       &src_x_start, &src_y_start, &dst_x_start,
+			       &pixel_count);
 
 	if (pixel_count <= 0) {
 		/* Nothing to read, so avoid multiple function calls */
@@ -627,6 +630,7 @@ free_stage_buffer:
 
 	return ret;
 }
+EXPORT_SYMBOL_IF_KUNIT(castkms_compose_targets);
 
 int castkms_compose_frame(const struct castkms_frame_stage *frame,
 			  const struct castkms_output_buffer *destination)

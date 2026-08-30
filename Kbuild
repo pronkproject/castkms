@@ -35,6 +35,7 @@ castkms-y := \
 	src/castkms_crtc.o \
 	src/castkms_frame_dispatch.o \
 	src/castkms_composer.o \
+	src/castkms_direct_composer.o \
 	src/castkms_writeback.o \
 	src/castkms_connector.o \
 	src/castkms_connector_uapi.o \

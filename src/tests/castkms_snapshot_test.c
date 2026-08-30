@@ -252,6 +252,80 @@ static void castkms_snapshot_test_compose_with_gamma(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, dst_pixels[2], (u8)0xff);
 }
 
+static void castkms_snapshot_test_direct_cursor_matches_reference(struct kunit *test)
+{
+	u8 primary_pixels[] = {
+		0x10, 0x20, 0x30, 0xff,
+		0x40, 0x50, 0x60, 0xff,
+		0x70, 0x80, 0x90, 0xff,
+		0x90, 0x80, 0x70, 0xff,
+		0x60, 0x50, 0x40, 0xff,
+		0x30, 0x20, 0x10, 0xff,
+	};
+	/* Premultiplied ARGB8888 in little-endian B, G, R, A byte order. */
+	u8 cursor_pixels[] = {
+		0x00, 0x00, 0x00, 0x00,
+		0x20, 0x40, 0x10, 0x80,
+		0x30, 0x20, 0x10, 0x40,
+		0x00, 0x00, 0xff, 0xff,
+	};
+	u8 direct_pixels[sizeof(primary_pixels)] = {};
+	u8 second_pixels[sizeof(primary_pixels)] = {};
+	u8 reference_pixels[sizeof(primary_pixels)] = {};
+	struct {
+		struct snapshot_test_plane primary;
+		struct snapshot_test_plane cursor;
+		struct snapshot_test_output direct;
+		struct snapshot_test_output second;
+		struct snapshot_test_output reference;
+	} *context;
+	struct castkms_frame_plane *planes[2];
+	struct castkms_frame_stage frame = {
+		.planes = planes,
+		.num_planes = ARRAY_SIZE(planes),
+		.width = 3,
+		.height = 2,
+	};
+	bool direct_compose;
+	int ret;
+
+	context = kunit_kzalloc(test, sizeof(*context), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, context);
+	planes[0] = &context->primary.sp.plane;
+	planes[1] = &context->cursor.sp.plane;
+	init_test_plane(&context->primary, DRM_FORMAT_XRGB8888,
+			primary_pixels, 3, 2);
+	init_test_plane(&context->cursor, DRM_FORMAT_ARGB8888,
+			cursor_pixels, 2, 2);
+	init_test_output(&context->direct, DRM_FORMAT_XRGB8888,
+			 direct_pixels, 3, 2);
+	init_test_output(&context->second, DRM_FORMAT_XRGB8888,
+			 second_pixels, 3, 2);
+	init_test_output(&context->reference, DRM_FORMAT_XRGB8888,
+			 reference_pixels, 3, 2);
+	context->cursor.sp.plane.is_cursor = true;
+	context->cursor.sp.frame_info.dst.x1 = -1;
+	context->cursor.sp.frame_info.dst.x2 = 1;
+
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(
+		&frame, &context->direct.output, &context->second.output);
+	KUNIT_ASSERT_TRUE(test, direct_compose);
+	ret = castkms_compose_targets(&frame, &context->direct.output,
+				      &context->second.output, NULL);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	/* The same topmost ARGB plane without the cursor role selects the generic
+	 * compositor and provides a byte-exact reference for blending and clipping.
+	 */
+	context->cursor.sp.plane.is_cursor = false;
+	ret = castkms_compose_frame(&frame, &context->reference.output);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_MEMEQ(test, direct_pixels, reference_pixels,
+			   sizeof(direct_pixels));
+	KUNIT_EXPECT_MEMEQ(test, second_pixels, reference_pixels,
+			   sizeof(second_pixels));
+}
+
 static void castkms_snapshot_test_plane_pixel_read(struct kunit *test)
 {
 	u8 src_pixels[] = { 0xaa, 0xbb, 0xcc, 0xff };
@@ -457,6 +531,7 @@ static struct kunit_case castkms_snapshot_test_cases[] = {
 	KUNIT_CASE(castkms_snapshot_test_compose_background),
 	KUNIT_CASE(castkms_snapshot_test_compose_no_destination),
 	KUNIT_CASE(castkms_snapshot_test_compose_with_gamma),
+	KUNIT_CASE(castkms_snapshot_test_direct_cursor_matches_reference),
 	KUNIT_CASE(castkms_snapshot_test_plane_pixel_read),
 	KUNIT_CASE(castkms_snapshot_test_rejects_iomem_source),
 	KUNIT_CASE(castkms_snapshot_test_rejects_null_map),
