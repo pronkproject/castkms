@@ -348,7 +348,8 @@ Each area of behavior has exactly one owning file:
 | Deferred capture execution | `castkms_capture_job.c` |
 | Immutable source snapshots and fences | `castkms_snapshot.c` |
 | CRTC scheduling and checksum/writeback/capture mux | `castkms_frame_dispatch.c` |
-| Pixel rendering | `castkms_composer.c` |
+| Reference pixel rendering and path selection | `castkms_composer.c` |
+| Packed opaque RGB fast path | `castkms_direct_composer.c` |
 | Driver CRTC atomic state | `castkms_crtc.h` |
 | Per-output runtime assembly | `castkms_output.h`, via `castkms_capture_output.h` and `castkms_frame_dispatch_demand.h` |
 | Topology construction | `castkms_topology.c` |
