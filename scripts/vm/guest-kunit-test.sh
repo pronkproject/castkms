@@ -19,6 +19,7 @@ expected_suites=(
 	castkms-cec-core
 	castkms-core-client
 	castkms-config
+	castkms-display-identity
 	castkms-format
 	castkms-color
 	castkms-frame-dispatch
