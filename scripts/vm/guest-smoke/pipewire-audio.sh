@@ -255,7 +255,7 @@ PYEOF
 
 			python3 - "$result_dir/sink-monitor-capture.wav" \
 				<< 'PYEOF' | tee "$result_dir/sink-monitor-analysis.txt"
-import wave, struct, sys
+import collections, wave, struct, sys
 try:
     with wave.open(sys.argv[1], 'r') as f:
         data = f.readframes(f.getnframes())
@@ -271,16 +271,22 @@ if n < 100:
     sys.exit(1)
 
 vals = struct.unpack('<%dh' % n, data)
-nonzero = sum(1 for v in vals if v != 0)
-matches = sum(1 for v in vals if abs(v - 0x4000) <= 0x400)
+nonzero_vals = [v for v in vals if v != 0]
+nonzero = len(nonzero_vals)
+pattern = collections.Counter(nonzero_vals).most_common(1)[0][0] if nonzero_vals else 0
+matches = sum(1 for v in nonzero_vals if abs(v - pattern) <= 1)
 
 print('capture_samples=%d' % n)
 print('capture_nonzero=%d' % nonzero)
+print('capture_pattern_value=%d' % pattern)
 print('capture_pattern_matches=%d' % matches)
-if n > 0:
-    print('capture_match_pct=%.1f' % (100.0 * matches / n))
+if nonzero > 0:
+    print('capture_nonzero_match_pct=%.1f' % (100.0 * matches / nonzero))
 
-if matches > n // 4:
+# WirePlumber may apply the sink's current software volume to monitor ports.
+# Preserve that expected gain while requiring an undistorted, non-inverted
+# version of the constant source signal.
+if nonzero > n // 4 and matches > nonzero * 9 // 10 and 0 < pattern <= 0x4000:
     print('sink_monitor_integrity=pass')
 else:
     print('sink_monitor_integrity=fail')
