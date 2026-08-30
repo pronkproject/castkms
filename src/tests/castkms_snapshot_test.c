@@ -327,6 +327,52 @@ static void castkms_snapshot_test_direct_cursor_matches_reference(struct kunit *
 			   sizeof(second_pixels));
 }
 
+static void castkms_snapshot_test_direct_xbgr_with_gamma(struct kunit *test)
+{
+	/* XBGR memory order: red, green, blue, padding. */
+	u8 src_pixels[] = { 0x11, 0x22, 0x33, 0x00 };
+	u8 dst_pixels[4] = {};
+	struct snapshot_test_plane tp;
+	struct snapshot_test_output to;
+	struct castkms_frame_plane *planes[] = { &tp.sp.plane };
+	struct castkms_frame_stage frame = {
+		.planes = planes,
+		.num_planes = ARRAY_SIZE(planes),
+		.width = 1,
+		.height = 1,
+	};
+	struct drm_color_lut *lut;
+	bool direct_compose;
+	int ret;
+
+	lut = kunit_kzalloc(test, CASTKMS_LUT_SIZE * sizeof(*lut), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, lut);
+	for (size_t i = 0; i < CASTKMS_LUT_SIZE; i++) {
+		lut[i].red = 0x4444;
+		lut[i].green = 0x5555;
+		lut[i].blue = 0x6666;
+	}
+
+	init_test_plane(&tp, DRM_FORMAT_XBGR8888, src_pixels, 1, 1);
+	init_test_output(&to, DRM_FORMAT_XRGB8888, dst_pixels, 1, 1);
+	frame.gamma_lut.base = lut;
+	frame.gamma_lut.lut_length = CASTKMS_LUT_SIZE;
+	frame.gamma_lut.channel_value2index_ratio =
+		drm_fixp_div(drm_int2fixp(CASTKMS_LUT_SIZE - 1),
+			     drm_int2fixp(0xffff));
+
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_ASSERT_TRUE(test, direct_compose);
+	ret = castkms_compose_frame(&frame, &to.output);
+
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, dst_pixels[0], (u8)0x66);
+	KUNIT_EXPECT_EQ(test, dst_pixels[1], (u8)0x55);
+	KUNIT_EXPECT_EQ(test, dst_pixels[2], (u8)0x44);
+	KUNIT_EXPECT_EQ(test, dst_pixels[3], (u8)0xff);
+}
+
 static void castkms_snapshot_test_direct_path_eligibility(struct kunit *test)
 {
 	u8 src_pixels[4] = {};
@@ -573,6 +619,7 @@ static struct kunit_case castkms_snapshot_test_cases[] = {
 	KUNIT_CASE(castkms_snapshot_test_compose_no_destination),
 	KUNIT_CASE(castkms_snapshot_test_compose_with_gamma),
 	KUNIT_CASE(castkms_snapshot_test_direct_cursor_matches_reference),
+	KUNIT_CASE(castkms_snapshot_test_direct_xbgr_with_gamma),
 	KUNIT_CASE(castkms_snapshot_test_direct_path_eligibility),
 	KUNIT_CASE(castkms_snapshot_test_plane_pixel_read),
 	KUNIT_CASE(castkms_snapshot_test_rejects_iomem_source),
