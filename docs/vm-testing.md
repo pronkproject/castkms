@@ -30,7 +30,7 @@ into that kernel. Re-running it is safe and idempotent.
 
 `test` mirrors the current working tree into the guest and then:
 
-1. runs the warning-enabled build matrix, all ten KUnit suites, the live
+1. runs the warning-enabled build matrix, all eleven KUnit suites, the live
    grant gate, and the userspace protocol and PipeWire tool builds;
 2. verifies both modules' names, vermagic, dependencies, legacy strings, and
    exported symbols;
@@ -50,7 +50,7 @@ into that kernel. Re-running it is safe and idempotent.
 
 `kunit-test` builds the kernel-options-disabled fallback and all four
 audio/CEC inclusion combinations, builds the KUnit module with `W=1`, loads
-the Fedora KUnit support and CastKMS modules, and requires all ten CastKMS
+the Fedora KUnit support and CastKMS modules, and requires all eleven CastKMS
 suites to pass. It then loads a normal two-output device and runs the live
 grant-fd lifecycle gate, including cross-connector isolation. It rejects
 kernel diagnostics from both phases, unloads the project modules, and copies
