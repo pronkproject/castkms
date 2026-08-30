@@ -12,6 +12,7 @@
 #include <drm/drm_rect.h>
 
 #include "../castkms_composer.h"
+#include "../castkms_direct_composer.h"
 #include "../castkms_formats.h"
 #include "../castkms_output_buffer.h"
 #include "../castkms_snapshot.h"
@@ -326,6 +327,46 @@ static void castkms_snapshot_test_direct_cursor_matches_reference(struct kunit *
 			   sizeof(second_pixels));
 }
 
+static void castkms_snapshot_test_direct_path_eligibility(struct kunit *test)
+{
+	u8 src_pixels[4] = {};
+	u8 dst_pixels[4] = {};
+	struct snapshot_test_plane tp;
+	struct snapshot_test_output to;
+	struct castkms_colorop_snapshot colorop = { .bypass = true };
+	struct castkms_frame_plane *planes[] = { &tp.sp.plane };
+	struct castkms_frame_stage frame = {
+		.planes = planes,
+		.num_planes = ARRAY_SIZE(planes),
+		.width = 1,
+		.height = 1,
+	};
+	bool direct_compose;
+
+	init_test_plane(&tp, DRM_FORMAT_XRGB8888, src_pixels, 1, 1);
+	init_test_output(&to, DRM_FORMAT_XRGB8888, dst_pixels, 1, 1);
+
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_TRUE(test, direct_compose);
+
+	tp.sp.frame_info.rotation = DRM_MODE_ROTATE_90;
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_FALSE(test, direct_compose);
+	tp.sp.frame_info.rotation = DRM_MODE_ROTATE_0;
+
+	tp.sp.plane.colorops = &colorop;
+	tp.sp.plane.num_colorops = 1;
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_TRUE(test, direct_compose);
+	colorop.bypass = false;
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_FALSE(test, direct_compose);
+}
+
 static void castkms_snapshot_test_plane_pixel_read(struct kunit *test)
 {
 	u8 src_pixels[] = { 0xaa, 0xbb, 0xcc, 0xff };
@@ -532,6 +573,7 @@ static struct kunit_case castkms_snapshot_test_cases[] = {
 	KUNIT_CASE(castkms_snapshot_test_compose_no_destination),
 	KUNIT_CASE(castkms_snapshot_test_compose_with_gamma),
 	KUNIT_CASE(castkms_snapshot_test_direct_cursor_matches_reference),
+	KUNIT_CASE(castkms_snapshot_test_direct_path_eligibility),
 	KUNIT_CASE(castkms_snapshot_test_plane_pixel_read),
 	KUNIT_CASE(castkms_snapshot_test_rejects_iomem_source),
 	KUNIT_CASE(castkms_snapshot_test_rejects_null_map),
