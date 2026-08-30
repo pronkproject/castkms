@@ -145,7 +145,7 @@ over the card as DRM master and become the owner of on-screen content.
 
 ## PipeWire video
 
-`tools/pw-castkms/pw-castkms` is a small example consumer. It takes a `0.10`
+`tools/pw-castkms/pw-castkms` is a small example consumer. It takes a `0.11`
 grant through `--grant-fd` or `CASTKMS_GRANT_FD`, creates destination buffers
 on that fd, and publishes a PipeWire source. It stops when the grant or mode
 generation changes so a supervisor can restart it. Publication uses a
