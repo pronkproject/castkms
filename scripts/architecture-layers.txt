@@ -47,6 +47,8 @@ drm-runtime src/castkms_connector.h
 drm-runtime src/castkms_crc.h
 drm-runtime src/castkms_crtc.c
 drm-runtime src/castkms_crtc.h
+drm-runtime src/castkms_display_identity.c
+drm-runtime src/castkms_display_identity.h
 drm-runtime src/castkms_frame_dispatch.c
 drm-runtime src/castkms_frame_dispatch.h
 drm-runtime src/castkms_frame_dispatch_demand.h

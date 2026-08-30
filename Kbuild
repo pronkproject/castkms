@@ -38,6 +38,7 @@ castkms-y := \
 	src/castkms_direct_composer.o \
 	src/castkms_writeback.o \
 	src/castkms_connector.o \
+	src/castkms_display_identity.o \
 	src/castkms_connector_uapi.o \
 	src/castkms_config.o \
 	src/castkms_configfs.o \
