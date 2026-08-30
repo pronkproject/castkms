@@ -3,6 +3,7 @@
 #include <linux/device/faux.h>
 #include <linux/hrtimer.h>
 #include <linux/math64.h>
+#include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 
@@ -25,8 +26,31 @@
 #include "castkms_connector.h"
 #include "castkms_device.h"
 
+struct castkms_audio_card {
+	struct snd_card *card;
+	struct snd_jack *jack;
+	struct snd_kcontrol *eld_ctl;
+	char display_name[80];
+
+	struct mutex lock;
+	u8 eld[MAX_ELD_BYTES];
+	unsigned int generation;
+	struct snd_pcm_substream *active_substream;
+};
+
+struct castkms_audio_slot {
+	struct drm_connector *connector;
+	int index;
+	struct castkms_audio_card *card;
+};
+
+struct castkms_audio {
+	struct mutex lock;
+	unsigned int num_outputs;
+	struct castkms_audio_slot *outputs;
+};
+
 struct castkms_audio_runtime {
-	struct castkms_audio_output *output;
 	struct snd_pcm_substream *substream;
 	struct hrtimer timer;
 	ktime_t period_duration;
@@ -118,7 +142,7 @@ static void castkms_audio_timer_disarm(struct castkms_audio_runtime *rt,
 
 static int castkms_pcm_open(struct snd_pcm_substream *substream)
 {
-	struct castkms_audio_output *out = substream->private_data;
+	struct castkms_audio_card *out = substream->private_data;
 	struct castkms_audio_runtime *rt;
 	int ret;
 
@@ -134,7 +158,6 @@ static int castkms_pcm_open(struct snd_pcm_substream *substream)
 		return -ENOMEM;
 	}
 
-	rt->output = out;
 	rt->substream = substream;
 	rt->eld_generation = out->generation;
 	memcpy(rt->eld, out->eld, sizeof(rt->eld));
@@ -164,7 +187,7 @@ static int castkms_pcm_open(struct snd_pcm_substream *substream)
 
 static int castkms_pcm_close(struct snd_pcm_substream *substream)
 {
-	struct castkms_audio_output *out = substream->private_data;
+	struct castkms_audio_card *out = substream->private_data;
 	struct castkms_audio_runtime *rt = substream->runtime->private_data;
 
 	if (READ_ONCE(rt->running))
@@ -182,7 +205,7 @@ static int castkms_pcm_close(struct snd_pcm_substream *substream)
 static int castkms_pcm_hw_params(struct snd_pcm_substream *substream,
 				 struct snd_pcm_hw_params *params)
 {
-	struct castkms_audio_output *out = substream->private_data;
+	struct castkms_audio_card *out = substream->private_data;
 	struct castkms_audio_runtime *rt = substream->runtime->private_data;
 	int ret = 0;
 
@@ -196,7 +219,7 @@ static int castkms_pcm_hw_params(struct snd_pcm_substream *substream,
 
 static int castkms_pcm_prepare(struct snd_pcm_substream *substream)
 {
-	struct castkms_audio_output *out = substream->private_data;
+	struct castkms_audio_card *out = substream->private_data;
 	struct castkms_audio_runtime *rt = substream->runtime->private_data;
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	u64 period_ns;
@@ -309,7 +332,7 @@ static int castkms_eld_ctl_info(struct snd_kcontrol *kcontrol,
 static int castkms_eld_ctl_get(struct snd_kcontrol *kcontrol,
 			       struct snd_ctl_elem_value *ucontrol)
 {
-	struct castkms_audio_output *out = kcontrol->private_data;
+	struct castkms_audio_card *out = kcontrol->private_data;
 
 	mutex_lock(&out->lock);
 	memcpy(ucontrol->value.bytes.data, out->eld, MAX_ELD_BYTES);
@@ -327,17 +350,13 @@ static const struct snd_kcontrol_new castkms_eld_ctl_template = {
 	.get = castkms_eld_ctl_get,
 };
 
-/* --- Output lookup --- */
+/* --- Attachment-owned card lifecycle --- */
 
-static struct castkms_audio_output *
-castkms_audio_find_output(struct castkms_device *castkmsdev,
-			  struct drm_connector *connector)
+static struct castkms_audio_slot *
+castkms_audio_find_slot(struct castkms_audio *audio,
+			struct drm_connector *connector)
 {
-	struct castkms_audio *audio = castkmsdev->audio;
 	unsigned int i;
-
-	if (!audio)
-		return NULL;
 
 	for (i = 0; i < audio->num_outputs; i++) {
 		if (audio->outputs[i].connector == connector)
@@ -347,126 +366,210 @@ castkms_audio_find_output(struct castkms_device *castkmsdev,
 	return NULL;
 }
 
-/* --- Notification hooks --- */
-
-void castkms_audio_notify_eld(struct castkms_device *castkmsdev,
-			      struct drm_connector *connector)
+static void castkms_audio_display_name(int index, char *name, size_t name_size)
 {
-	struct castkms_audio_output *out;
-	struct snd_pcm_substream *substream = NULL;
-	bool changed = false;
-	bool available;
-
-	out = castkms_audio_find_output(castkmsdev, connector);
-	if (!out)
-		return;
-
-	mutex_lock(&connector->eld_mutex);
-	available = drm_eld_size(connector->eld) > 0;
-
-	mutex_lock(&out->lock);
-	if (available != out->audio_available ||
-	    memcmp(out->eld, connector->eld, MAX_ELD_BYTES)) {
-		memcpy(out->eld, connector->eld, MAX_ELD_BYTES);
-		out->audio_available = available;
-		out->generation++;
-		changed = true;
-		if (out->active_substream &&
-		    ((struct castkms_audio_runtime *)
-		     out->active_substream->runtime->private_data)
-		     ->eld_generation != out->generation)
-			substream = out->active_substream;
-	}
-	mutex_unlock(&out->lock);
-	mutex_unlock(&connector->eld_mutex);
-
-	if (changed) {
-		snd_ctl_notify_one(out->pcm->card,
-				   SNDRV_CTL_EVENT_MASK_VALUE,
-				   out->eld_ctl, 0);
-		snd_jack_report(out->jack,
-				available ? SND_JACK_AVOUT : 0);
-	}
-
-	if (substream)
-		snd_pcm_stop_xrun(substream);
+	snprintf(name, name_size, "Casting Display %d", index + 1);
 }
 
-void castkms_audio_notify_disconnect(struct castkms_device *castkmsdev,
-				     struct drm_connector *connector)
+static void castkms_audio_card_invalidate(struct castkms_audio_card *out)
 {
-	struct castkms_audio_output *out;
-	struct snd_pcm_substream *substream = NULL;
-
-	out = castkms_audio_find_output(castkmsdev, connector);
-	if (!out)
-		return;
-
 	mutex_lock(&out->lock);
-	memset(out->eld, 0, MAX_ELD_BYTES);
-	out->audio_available = false;
+	memset(out->eld, 0, sizeof(out->eld));
 	out->generation++;
-	substream = out->active_substream;
+	if (out->active_substream)
+		snd_pcm_stop_xrun(out->active_substream);
 	mutex_unlock(&out->lock);
+}
 
-	snd_ctl_notify_one(out->pcm->card,
-			   SNDRV_CTL_EVENT_MASK_VALUE,
-			   out->eld_ctl, 0);
+static void castkms_audio_card_disconnect(struct castkms_audio_card *out)
+{
+	struct snd_card *card = out->card;
+
+	castkms_audio_card_invalidate(out);
 	snd_jack_report(out->jack, 0);
 
-	if (substream)
-		snd_pcm_stop_xrun(substream);
+	/*
+	 * Make every existing handle fail immediately, but let ALSA retain the
+	 * attachment-owned state until the last handle closes. This keeps detach
+	 * non-blocking and permits the slot to acquire a fresh card at once.
+	 */
+	snd_card_free_when_closed(card);
 }
 
-/* --- Per-output setup --- */
-
-static int castkms_audio_output_init(struct castkms_audio *audio,
-				     struct castkms_audio_output *out,
-				     struct castkms_device *castkmsdev,
-				     struct drm_connector *connector,
-				     int index)
+static int castkms_audio_card_create(struct castkms_device *castkmsdev,
+				     struct castkms_audio_slot *slot,
+				     const u8 eld[MAX_ELD_BYTES],
+				     const char *display_name)
 {
-	struct snd_pcm *pcm;
+	struct castkms_audio_card *out;
 	struct snd_kcontrol_new eld_ctl;
-	char name[64];
+	struct snd_card *card;
+	struct snd_pcm *pcm;
+	char card_id[16];
 	int ret;
 
-	out->castkmsdev = castkmsdev;
-	out->connector = connector;
-	out->index = index;
-	mutex_init(&out->lock);
-
-	snprintf(name, sizeof(name), "Virtual HDMI %d", index);
-	ret = snd_pcm_new(audio->card, name, index, 1, 0, &pcm);
+	snprintf(card_id, sizeof(card_id), "CastKMS%d", slot->index);
+	ret = snd_card_new(&castkmsdev->faux_dev->dev, -1, card_id,
+			   THIS_MODULE, sizeof(*out), &card);
 	if (ret)
 		return ret;
 
+	out = card->private_data;
+	out->card = card;
+	mutex_init(&out->lock);
+	memcpy(out->eld, eld, sizeof(out->eld));
+	strscpy(out->display_name, display_name, sizeof(out->display_name));
+
+	strscpy(card->driver, "castkms", sizeof(card->driver));
+	strscpy(card->shortname, display_name, sizeof(card->shortname));
+	strscpy(card->mixername, display_name, sizeof(card->mixername));
+	snprintf(card->longname, sizeof(card->longname),
+		 "CastKMS output %d audio: %s", slot->index, display_name);
+
+	ret = snd_pcm_new(card, "Virtual HDMI", 0, 1, 0, &pcm);
+	if (ret)
+		goto err_card;
+
 	pcm->private_data = out;
+	strscpy(pcm->name, display_name, sizeof(pcm->name));
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &castkms_pcm_ops);
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_VMALLOC,
 				       NULL, 0, 0);
 	ret = snd_pcm_add_chmap_ctls(pcm, SNDRV_PCM_STREAM_PLAYBACK,
 				     snd_pcm_std_chmaps, 2, 0, NULL);
 	if (ret)
-		return ret;
-	out->pcm = pcm;
-
-	snprintf(name, sizeof(name), "HDMI/DP,pcm=%d", index);
-	ret = snd_jack_new(audio->card, name, SND_JACK_AVOUT,
+		goto err_card;
+	ret = snd_jack_new(card, "HDMI/DP,pcm=0", SND_JACK_AVOUT,
 			   &out->jack, true, false);
 	if (ret)
-		return ret;
+		goto err_card;
 
 	eld_ctl = castkms_eld_ctl_template;
-	eld_ctl.device = index;
+	eld_ctl.device = 0;
 	out->eld_ctl = snd_ctl_new1(&eld_ctl, out);
-	if (!out->eld_ctl)
-		return -ENOMEM;
-	ret = snd_ctl_add(audio->card, out->eld_ctl);
+	if (!out->eld_ctl) {
+		ret = -ENOMEM;
+		goto err_card;
+	}
+	ret = snd_ctl_add(card, out->eld_ctl);
 	if (ret)
-		return ret;
+		goto err_card;
 
+	ret = snd_card_register(card);
+	if (ret)
+		goto err_card;
+
+	slot->card = out;
+	snd_jack_report(out->jack, SND_JACK_AVOUT);
 	return 0;
+
+err_card:
+	snd_card_free(card);
+	return ret;
+}
+
+static void castkms_audio_card_update_eld(
+	struct castkms_audio_card *out, const u8 eld[MAX_ELD_BYTES])
+{
+	bool changed = false;
+
+	mutex_lock(&out->lock);
+	if (memcmp(out->eld, eld, sizeof(out->eld))) {
+		memcpy(out->eld, eld, sizeof(out->eld));
+		out->generation++;
+		changed = true;
+		if (out->active_substream)
+			snd_pcm_stop_xrun(out->active_substream);
+	}
+	mutex_unlock(&out->lock);
+
+	if (!changed)
+		return;
+
+	snd_ctl_notify_one(out->card, SNDRV_CTL_EVENT_MASK_VALUE,
+			   out->eld_ctl, 0);
+	snd_jack_report(out->jack, SND_JACK_AVOUT);
+}
+
+/* --- Connector notification hooks --- */
+
+void castkms_audio_notify_eld(struct castkms_device *castkmsdev,
+			      struct drm_connector *connector)
+{
+	struct castkms_audio *audio = castkmsdev->audio;
+	struct castkms_audio_slot *slot;
+	u8 eld[MAX_ELD_BYTES];
+	char display_name[80];
+	bool available;
+	int ret;
+
+	if (!audio)
+		return;
+
+	mutex_lock(&connector->eld_mutex);
+	memcpy(eld, connector->eld, sizeof(eld));
+	available = drm_eld_size(eld) > 0;
+	mutex_unlock(&connector->eld_mutex);
+
+
+	mutex_lock(&audio->lock);
+	slot = castkms_audio_find_slot(audio, connector);
+	if (!slot)
+		goto out_unlock;
+
+	castkms_audio_display_name(slot->index, display_name,
+				   sizeof(display_name));
+
+	if (slot->card &&
+	    (!available || strcmp(slot->card->display_name, display_name))) {
+		struct castkms_audio_card *old_card = slot->card;
+
+		slot->card = NULL;
+		castkms_audio_card_disconnect(old_card);
+	}
+
+	if (!available)
+		goto out_unlock;
+
+	if (slot->card) {
+		castkms_audio_card_update_eld(slot->card, eld);
+		goto out_unlock;
+	}
+
+	ret = castkms_audio_card_create(castkmsdev, slot, eld, display_name);
+	if (ret)
+		drm_err(&castkmsdev->drm,
+			"failed to create audio card for output %d: %d\n",
+			slot->index, ret);
+
+out_unlock:
+	mutex_unlock(&audio->lock);
+}
+
+void castkms_audio_notify_disconnect(struct castkms_device *castkmsdev,
+				     struct drm_connector *connector)
+{
+	struct castkms_audio *audio = castkmsdev->audio;
+	struct castkms_audio_slot *slot;
+	struct castkms_audio_card *card;
+
+	if (!audio)
+		return;
+
+	mutex_lock(&audio->lock);
+	slot = castkms_audio_find_slot(audio, connector);
+	if (!slot || !slot->card)
+		goto out_unlock;
+
+	castkms_audio_display_name(slot->index, display_name,
+				   sizeof(display_name));
+
+	card = slot->card;
+	slot->card = NULL;
+	castkms_audio_card_disconnect(card);
+
+out_unlock:
+	mutex_unlock(&audio->lock);
 }
 
 /* --- Device-level init/cleanup --- */
@@ -474,12 +577,10 @@ static int castkms_audio_output_init(struct castkms_audio *audio,
 int castkms_audio_init(struct castkms_device *castkmsdev)
 {
 	struct castkms_audio *audio;
-	struct snd_card *card;
 	struct drm_connector_list_iter iter;
 	struct drm_connector *connector;
 	unsigned int num_outputs = 0;
 	unsigned int idx = 0;
-	int ret;
 
 	drm_connector_list_iter_begin(&castkmsdev->drm, &iter);
 	drm_for_each_connector_iter(connector, &iter) {
@@ -501,24 +602,8 @@ int castkms_audio_init(struct castkms_device *castkmsdev)
 		kfree(audio);
 		return -ENOMEM;
 	}
+	mutex_init(&audio->lock);
 	audio->num_outputs = num_outputs;
-
-	ret = snd_card_new(&castkmsdev->faux_dev->dev, -1, "CastKMS",
-			   THIS_MODULE, 0, &card);
-	if (ret) {
-		kfree(audio->outputs);
-		kfree(audio);
-		return ret;
-	}
-
-	audio->card = card;
-	strscpy(card->driver, "castkms");
-	strscpy(card->shortname, "CastKMS Audio");
-	snprintf(card->longname, sizeof(card->longname),
-		 "CastKMS Virtual HDMI Audio %s",
-		 dev_name(&castkmsdev->faux_dev->dev));
-
-	castkmsdev->audio = audio;
 
 	drm_connector_list_iter_begin(&castkmsdev->drm, &iter);
 	drm_for_each_connector_iter(connector, &iter) {
@@ -530,41 +615,36 @@ int castkms_audio_init(struct castkms_device *castkmsdev)
 			break;
 
 		castkms_conn = drm_connector_to_castkms_connector(connector);
-
-		ret = castkms_audio_output_init(audio, &audio->outputs[idx],
-						castkmsdev, connector,
-						castkms_conn->output_index);
-		if (ret) {
-			drm_connector_list_iter_end(&iter);
-			goto err_card;
-		}
+		audio->outputs[idx].connector = connector;
+		audio->outputs[idx].index = castkms_conn->output_index;
 		idx++;
 	}
 	drm_connector_list_iter_end(&iter);
 
-	ret = snd_card_register(card);
-	if (ret)
-		goto err_card;
-
+	castkmsdev->audio = audio;
 	return 0;
-
-err_card:
-	snd_card_free(card);
-	castkmsdev->audio = NULL;
-	kfree(audio->outputs);
-	kfree(audio);
-	return ret;
 }
 
 void castkms_audio_cleanup(struct castkms_device *castkmsdev)
 {
 	struct castkms_audio *audio = castkmsdev->audio;
+	unsigned int i;
 
 	if (!audio)
 		return;
 
+	mutex_lock(&audio->lock);
+	for (i = 0; i < audio->num_outputs; i++) {
+		struct castkms_audio_card *card = audio->outputs[i].card;
+
+		if (!card)
+			continue;
+		audio->outputs[i].card = NULL;
+		castkms_audio_card_disconnect(card);
+	}
+	mutex_unlock(&audio->lock);
+
 	castkmsdev->audio = NULL;
-	snd_card_free(audio->card);
 	kfree(audio->outputs);
 	kfree(audio);
 }
