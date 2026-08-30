@@ -191,7 +191,7 @@ exercises the driver:
 ./scripts/vm/castkms-vm kunit-test
 ```
 
-`kunit-test` is the fast gate: ten in-kernel suites plus live grant lifetime.
+`kunit-test` is the fast gate: eleven in-kernel suites plus live grant lifetime.
 `test` runs that gate by default and then covers capture, cursor, PipeWire,
 audio, and the VKMS-derived development facilities. CI sets
 `CASTKMS_VM_FAST_GATE=skip` for its independent product job, avoiding a second
