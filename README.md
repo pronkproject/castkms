@@ -50,7 +50,7 @@ Rights on a grant independently cover monitor attachment, EDID, pixels, cursor
 data, and HDMI-CEC. A DRM **lease** (a client given only a subset of the
 card's resources) cannot create grants.
 
-The capture protocol is experimental version `0.10` (read as major.minor;
+The capture protocol is experimental version `0.11` (read as major.minor;
 major `0` means it may still change incompatibly). Each stream carries a
 single mode's frames: after a modeset the agent stops the stream, starts a
 new one, and registers fresh buffers for the new mode. Those buffers are
