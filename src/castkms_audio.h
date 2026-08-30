@@ -6,13 +6,16 @@
 struct castkms_device;
 struct castkms_audio;
 struct drm_connector;
+struct drm_edid;
 
 #ifdef CASTKMS_HAVE_AUDIO
 
 int castkms_audio_init(struct castkms_device *castkmsdev);
 void castkms_audio_cleanup(struct castkms_device *castkmsdev);
 void castkms_audio_notify_eld(struct castkms_device *castkmsdev,
-			      struct drm_connector *connector);
+			      struct drm_connector *connector,
+			      const struct drm_edid *drm_edid,
+			      const char *display_name);
 void castkms_audio_notify_disconnect(struct castkms_device *castkmsdev,
 				     struct drm_connector *connector);
 
@@ -29,7 +32,9 @@ castkms_audio_cleanup(struct castkms_device *castkmsdev) { }
 
 static inline void
 castkms_audio_notify_eld(struct castkms_device *castkmsdev,
-			 struct drm_connector *connector) { }
+			 struct drm_connector *connector,
+			 const struct drm_edid *drm_edid,
+			 const char *display_name) { }
 
 static inline void
 castkms_audio_notify_disconnect(struct castkms_device *castkmsdev,

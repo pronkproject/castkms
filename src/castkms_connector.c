@@ -263,7 +263,8 @@ int castkms_connector_attach_monitor(
 	}
 
 	if (!ret) {
-		castkms_audio_notify_eld(castkmsdev, connector);
+		castkms_audio_notify_eld(castkmsdev, connector, drm_edid,
+					 castkms_connector->display_name);
 		castkms_cec_core_refresh_connector(connector);
 	}
 	return ret;
@@ -414,7 +415,8 @@ int castkms_connector_update_authority_edid(
 
 	ret = castkms_connector_publish_edid(connector, drm_edid);
 	if (!ret) {
-		castkms_audio_notify_eld(castkmsdev, connector);
+		castkms_audio_notify_eld(castkmsdev, connector, drm_edid,
+			drm_connector_to_castkms_connector(connector)->display_name);
 		castkms_cec_core_refresh_connector(connector);
 	}
 

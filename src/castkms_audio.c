@@ -25,6 +25,7 @@
 #include "castkms_config.h"
 #include "castkms_connector.h"
 #include "castkms_device.h"
+#include "castkms_display_identity.h"
 
 struct castkms_audio_card {
 	struct snd_card *card;
@@ -366,8 +367,19 @@ castkms_audio_find_slot(struct castkms_audio *audio,
 	return NULL;
 }
 
-static void castkms_audio_display_name(int index, char *name, size_t name_size)
+static void castkms_audio_display_name(const struct drm_edid *drm_edid,
+				       const char *assigned_name,
+				       int index, char *name,
+				       size_t name_size)
 {
+	if (assigned_name && assigned_name[0]) {
+		strscpy(name, assigned_name, name_size);
+		return;
+	}
+
+	if (castkms_display_identity_product_name(drm_edid, name, name_size))
+		return;
+
 	snprintf(name, name_size, "Casting Display %d", index + 1);
 }
 
@@ -494,7 +506,9 @@ static void castkms_audio_card_update_eld(
 /* --- Connector notification hooks --- */
 
 void castkms_audio_notify_eld(struct castkms_device *castkmsdev,
-			      struct drm_connector *connector)
+			      struct drm_connector *connector,
+			      const struct drm_edid *drm_edid,
+			      const char *assigned_name)
 {
 	struct castkms_audio *audio = castkmsdev->audio;
 	struct castkms_audio_slot *slot;
@@ -511,14 +525,15 @@ void castkms_audio_notify_eld(struct castkms_device *castkmsdev,
 	available = drm_eld_size(eld) > 0;
 	mutex_unlock(&connector->eld_mutex);
 
+	castkms_audio_display_name(drm_edid, assigned_name,
+				    drm_connector_to_castkms_connector(connector)
+					    ->output_index,
+				    display_name, sizeof(display_name));
 
 	mutex_lock(&audio->lock);
 	slot = castkms_audio_find_slot(audio, connector);
 	if (!slot)
 		goto out_unlock;
-
-	castkms_audio_display_name(slot->index, display_name,
-				   sizeof(display_name));
 
 	if (slot->card &&
 	    (!available || strcmp(slot->card->display_name, display_name))) {
@@ -560,9 +575,6 @@ void castkms_audio_notify_disconnect(struct castkms_device *castkmsdev,
 	slot = castkms_audio_find_slot(audio, connector);
 	if (!slot || !slot->card)
 		goto out_unlock;
-
-	castkms_audio_display_name(slot->index, display_name,
-				   sizeof(display_name));
 
 	card = slot->card;
 	slot->card = NULL;
