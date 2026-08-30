@@ -7,6 +7,8 @@
 
 #include <drm/drm_connector.h>
 
+#include "castkms_limits.h"
+
 struct castkms_capture_authority;
 struct castkms_cec_output;
 struct castkms_device;
@@ -23,6 +25,7 @@ struct drm_edid;
  * @output_index: Stable non-writeback output identity, assigned at creation
  * @cec: Transport-neutral CEC state, or NULL if CEC is unavailable
  * @attachment_authority: Core authority owning the attachment, or NULL
+ * @display_name: User-assigned name of the attached display, or empty
  * @monitor_attached: Whether a virtual monitor is attached
  */
 struct castkms_connector {
@@ -30,6 +33,7 @@ struct castkms_connector {
 	unsigned int output_index;
 	struct castkms_cec_output *cec;
 	struct castkms_capture_authority *attachment_authority;
+	char display_name[CASTKMS_MAX_DISPLAY_NAME_SIZE + 1];
 	bool monitor_attached;
 };
 
