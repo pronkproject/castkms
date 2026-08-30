@@ -3,7 +3,10 @@
 #include <kunit/test.h>
 
 #include <linux/jiffies.h>
+#include <linux/limits.h>
+#include <linux/math64.h>
 #include <linux/workqueue.h>
+
 #include <drm/drm_fixed.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
@@ -14,6 +17,7 @@
 #include "../castkms_composer.h"
 #include "../castkms_direct_composer.h"
 #include "../castkms_formats.h"
+#include "../castkms_luts.h"
 #include "../castkms_output_buffer.h"
 #include "../castkms_snapshot.h"
 
@@ -140,6 +144,15 @@ static void init_test_output(struct snapshot_test_output *to, u32 format,
 		castkms_get_pixel_write_function(format);
 }
 
+static u8 apply_lut_u8(const struct castkms_color_lut *lut, u8 value,
+		       enum lut_channel channel)
+{
+	u16 output = castkms_apply_lut_to_channel_value(lut, value * 0x101,
+							  channel);
+
+	return DIV_ROUND_CLOSEST(output, 0x101);
+}
+
 static void castkms_snapshot_test_compose_single_plane(struct kunit *test)
 {
 	u8 src_pixels[] = {
@@ -253,6 +266,159 @@ static void castkms_snapshot_test_compose_with_gamma(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, dst_pixels[2], (u8)0xff);
 }
 
+static void castkms_snapshot_test_direct_xbgr_with_gamma(struct kunit *test)
+{
+	/* XBGR memory order: red, green, blue, padding. */
+	u8 src_pixels[] = { 0x11, 0x22, 0x33, 0x00 };
+	u8 dst_pixels[4] = {};
+	struct snapshot_test_plane tp;
+	struct snapshot_test_output to;
+	struct castkms_frame_plane *planes[] = { &tp.sp.plane };
+	struct castkms_frame_stage frame = {
+		.planes = planes,
+		.num_planes = ARRAY_SIZE(planes),
+		.width = 1,
+		.height = 1,
+	};
+	struct drm_color_lut *lut;
+	bool direct_compose;
+	int ret;
+
+	lut = kunit_kzalloc(test, CASTKMS_LUT_SIZE * sizeof(*lut), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, lut);
+	for (size_t i = 0; i < CASTKMS_LUT_SIZE; i++) {
+		lut[i].red = 0x4444;
+		lut[i].green = 0x5555;
+		lut[i].blue = 0x6666;
+	}
+
+	init_test_plane(&tp, DRM_FORMAT_XBGR8888, src_pixels, 1, 1);
+	init_test_output(&to, DRM_FORMAT_XRGB8888, dst_pixels, 1, 1);
+	frame.gamma_lut.base = lut;
+	frame.gamma_lut.lut_length = CASTKMS_LUT_SIZE;
+	frame.gamma_lut.channel_value2index_ratio =
+		drm_fixp_div(drm_int2fixp(CASTKMS_LUT_SIZE - 1),
+			     drm_int2fixp(0xffff));
+
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_ASSERT_TRUE(test, direct_compose);
+	ret = castkms_compose_frame(&frame, &to.output);
+
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, dst_pixels[0], (u8)0x66);
+	KUNIT_EXPECT_EQ(test, dst_pixels[1], (u8)0x55);
+	KUNIT_EXPECT_EQ(test, dst_pixels[2], (u8)0x44);
+	KUNIT_EXPECT_EQ(test, dst_pixels[3], (u8)0xff);
+}
+
+static void castkms_snapshot_test_direct_gamma_matches_reference(struct kunit *test)
+{
+	const size_t width = U8_MAX + 1;
+	u8 *src_pixels, *dst_pixels;
+	struct snapshot_test_plane tp;
+	struct snapshot_test_output to;
+	struct castkms_frame_plane *planes[] = { &tp.sp.plane };
+	struct castkms_frame_stage frame = {
+		.planes = planes,
+		.num_planes = ARRAY_SIZE(planes),
+		.width = width,
+		.height = 1,
+	};
+	struct drm_color_lut *lut;
+	int ret;
+
+	src_pixels = kunit_kzalloc(test, width * 4, GFP_KERNEL);
+	dst_pixels = kunit_kzalloc(test, width * 4, GFP_KERNEL);
+	lut = kunit_kzalloc(test, CASTKMS_LUT_SIZE * sizeof(*lut), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, src_pixels);
+	KUNIT_ASSERT_NOT_NULL(test, dst_pixels);
+	KUNIT_ASSERT_NOT_NULL(test, lut);
+
+	for (size_t i = 0; i < CASTKMS_LUT_SIZE; i++) {
+		u16 quadratic = div64_u64((u64)i * i * 0xffff,
+					  (CASTKMS_LUT_SIZE - 1) *
+					  (CASTKMS_LUT_SIZE - 1));
+
+		lut[i].red = quadratic;
+		lut[i].green = 0xffff - quadratic;
+		lut[i].blue = i * 0x101;
+	}
+	for (size_t i = 0; i < width; i++) {
+		/* XBGR memory order: red, green, blue, padding. */
+		src_pixels[i * 4] = i;
+		src_pixels[i * 4 + 1] = U8_MAX - i;
+		src_pixels[i * 4 + 2] = (i * 73) & U8_MAX;
+	}
+
+	init_test_plane(&tp, DRM_FORMAT_XBGR8888, src_pixels, width, 1);
+	init_test_output(&to, DRM_FORMAT_XRGB8888, dst_pixels, width, 1);
+	frame.gamma_lut.base = lut;
+	frame.gamma_lut.lut_length = CASTKMS_LUT_SIZE;
+	frame.gamma_lut.channel_value2index_ratio =
+		drm_fixp_div(drm_int2fixp(CASTKMS_LUT_SIZE - 1),
+			     drm_int2fixp(0xffff));
+
+	ret = castkms_compose_frame(&frame, &to.output);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+
+	for (size_t i = 0; i < width; i++) {
+		u8 red = src_pixels[i * 4];
+		u8 green = src_pixels[i * 4 + 1];
+		u8 blue = src_pixels[i * 4 + 2];
+		u8 expected_red = apply_lut_u8(&frame.gamma_lut, red, LUT_RED);
+		u8 expected_green = apply_lut_u8(&frame.gamma_lut, green,
+						 LUT_GREEN);
+		u8 expected_blue = apply_lut_u8(&frame.gamma_lut, blue,
+						LUT_BLUE);
+
+		KUNIT_EXPECT_EQ(test, dst_pixels[i * 4], expected_blue);
+		KUNIT_EXPECT_EQ(test, dst_pixels[i * 4 + 1], expected_green);
+		KUNIT_EXPECT_EQ(test, dst_pixels[i * 4 + 2], expected_red);
+		KUNIT_EXPECT_EQ(test, dst_pixels[i * 4 + 3], (u8)0xff);
+	}
+}
+
+static void castkms_snapshot_test_direct_path_eligibility(struct kunit *test)
+{
+	u8 src_pixels[4] = {};
+	u8 dst_pixels[4] = {};
+	struct snapshot_test_plane tp;
+	struct snapshot_test_output to;
+	struct castkms_colorop_snapshot colorop = { .bypass = true };
+	struct castkms_frame_plane *planes[] = { &tp.sp.plane };
+	struct castkms_frame_stage frame = {
+		.planes = planes,
+		.num_planes = ARRAY_SIZE(planes),
+		.width = 1,
+		.height = 1,
+	};
+	bool direct_compose;
+
+	init_test_plane(&tp, DRM_FORMAT_XRGB8888, src_pixels, 1, 1);
+	init_test_output(&to, DRM_FORMAT_XRGB8888, dst_pixels, 1, 1);
+
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_TRUE(test, direct_compose);
+
+	tp.sp.frame_info.rotation = DRM_MODE_ROTATE_90;
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_FALSE(test, direct_compose);
+	tp.sp.frame_info.rotation = DRM_MODE_ROTATE_0;
+
+	tp.sp.plane.colorops = &colorop;
+	tp.sp.plane.num_colorops = 1;
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_TRUE(test, direct_compose);
+	colorop.bypass = false;
+	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
+								     &to.output, NULL);
+	KUNIT_EXPECT_FALSE(test, direct_compose);
+}
+
 static void castkms_snapshot_test_direct_cursor_matches_reference(struct kunit *test)
 {
 	u8 primary_pixels[] = {
@@ -325,92 +491,6 @@ static void castkms_snapshot_test_direct_cursor_matches_reference(struct kunit *
 			   sizeof(direct_pixels));
 	KUNIT_EXPECT_MEMEQ(test, second_pixels, reference_pixels,
 			   sizeof(second_pixels));
-}
-
-static void castkms_snapshot_test_direct_xbgr_with_gamma(struct kunit *test)
-{
-	/* XBGR memory order: red, green, blue, padding. */
-	u8 src_pixels[] = { 0x11, 0x22, 0x33, 0x00 };
-	u8 dst_pixels[4] = {};
-	struct snapshot_test_plane tp;
-	struct snapshot_test_output to;
-	struct castkms_frame_plane *planes[] = { &tp.sp.plane };
-	struct castkms_frame_stage frame = {
-		.planes = planes,
-		.num_planes = ARRAY_SIZE(planes),
-		.width = 1,
-		.height = 1,
-	};
-	struct drm_color_lut *lut;
-	bool direct_compose;
-	int ret;
-
-	lut = kunit_kzalloc(test, CASTKMS_LUT_SIZE * sizeof(*lut), GFP_KERNEL);
-	KUNIT_ASSERT_NOT_NULL(test, lut);
-	for (size_t i = 0; i < CASTKMS_LUT_SIZE; i++) {
-		lut[i].red = 0x4444;
-		lut[i].green = 0x5555;
-		lut[i].blue = 0x6666;
-	}
-
-	init_test_plane(&tp, DRM_FORMAT_XBGR8888, src_pixels, 1, 1);
-	init_test_output(&to, DRM_FORMAT_XRGB8888, dst_pixels, 1, 1);
-	frame.gamma_lut.base = lut;
-	frame.gamma_lut.lut_length = CASTKMS_LUT_SIZE;
-	frame.gamma_lut.channel_value2index_ratio =
-		drm_fixp_div(drm_int2fixp(CASTKMS_LUT_SIZE - 1),
-			     drm_int2fixp(0xffff));
-
-	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
-								     &to.output, NULL);
-	KUNIT_ASSERT_TRUE(test, direct_compose);
-	ret = castkms_compose_frame(&frame, &to.output);
-
-	KUNIT_ASSERT_EQ(test, ret, 0);
-	KUNIT_EXPECT_EQ(test, dst_pixels[0], (u8)0x66);
-	KUNIT_EXPECT_EQ(test, dst_pixels[1], (u8)0x55);
-	KUNIT_EXPECT_EQ(test, dst_pixels[2], (u8)0x44);
-	KUNIT_EXPECT_EQ(test, dst_pixels[3], (u8)0xff);
-}
-
-static void castkms_snapshot_test_direct_path_eligibility(struct kunit *test)
-{
-	u8 src_pixels[4] = {};
-	u8 dst_pixels[4] = {};
-	struct snapshot_test_plane tp;
-	struct snapshot_test_output to;
-	struct castkms_colorop_snapshot colorop = { .bypass = true };
-	struct castkms_frame_plane *planes[] = { &tp.sp.plane };
-	struct castkms_frame_stage frame = {
-		.planes = planes,
-		.num_planes = ARRAY_SIZE(planes),
-		.width = 1,
-		.height = 1,
-	};
-	bool direct_compose;
-
-	init_test_plane(&tp, DRM_FORMAT_XRGB8888, src_pixels, 1, 1);
-	init_test_output(&to, DRM_FORMAT_XRGB8888, dst_pixels, 1, 1);
-
-	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
-								     &to.output, NULL);
-	KUNIT_EXPECT_TRUE(test, direct_compose);
-
-	tp.sp.frame_info.rotation = DRM_MODE_ROTATE_90;
-	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
-								     &to.output, NULL);
-	KUNIT_EXPECT_FALSE(test, direct_compose);
-	tp.sp.frame_info.rotation = DRM_MODE_ROTATE_0;
-
-	tp.sp.plane.colorops = &colorop;
-	tp.sp.plane.num_colorops = 1;
-	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
-								     &to.output, NULL);
-	KUNIT_EXPECT_TRUE(test, direct_compose);
-	colorop.bypass = false;
-	direct_compose = castkms_frame_can_direct_compose_xrgb8888(&frame,
-								     &to.output, NULL);
-	KUNIT_EXPECT_FALSE(test, direct_compose);
 }
 
 static void castkms_snapshot_test_plane_pixel_read(struct kunit *test)
@@ -618,9 +698,10 @@ static struct kunit_case castkms_snapshot_test_cases[] = {
 	KUNIT_CASE(castkms_snapshot_test_compose_background),
 	KUNIT_CASE(castkms_snapshot_test_compose_no_destination),
 	KUNIT_CASE(castkms_snapshot_test_compose_with_gamma),
-	KUNIT_CASE(castkms_snapshot_test_direct_cursor_matches_reference),
 	KUNIT_CASE(castkms_snapshot_test_direct_xbgr_with_gamma),
+	KUNIT_CASE(castkms_snapshot_test_direct_gamma_matches_reference),
 	KUNIT_CASE(castkms_snapshot_test_direct_path_eligibility),
+	KUNIT_CASE(castkms_snapshot_test_direct_cursor_matches_reference),
 	KUNIT_CASE(castkms_snapshot_test_plane_pixel_read),
 	KUNIT_CASE(castkms_snapshot_test_rejects_iomem_source),
 	KUNIT_CASE(castkms_snapshot_test_rejects_null_map),
