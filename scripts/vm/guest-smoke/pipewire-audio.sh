@@ -365,12 +365,14 @@ PYEOF
 	# module is still loaded with the same DRM device.
 	test -c "$castkms_drm"
 
-	# The ALSA card should exist even before a monitor is attached.
-	if ! grep -q CastKMS /proc/asound/cards; then
-		printf 'CastKMS card not found in /proc/asound/cards\n' >&2
+	# Audio cards are attachment-owned; an unused display slot must not leave
+	# a phantom output in desktop audio inventory.
+	if find_castkms_audio_card 0 >/dev/null; then
+		printf 'CastKMS audio card remained after monitor detach\n' >&2
 		exit 1
 	fi
-	printf '%s\n' 'audio_card_present=pass' | tee -a "$result_dir/summary.txt"
+	printf '%s\n' 'audio_card_absent_before_attach=pass' | \
+		tee -a "$result_dir/summary.txt"
 
 	if ! sudo modetest -M castkms -c -p \
 			> "$result_dir/audio-modetest.txt" 2>&1; then
@@ -391,31 +393,13 @@ PYEOF
 	test -n "$virtual_connector_id"
 	test -n "$crtc_id"
 
-	# Before attach, playback should fail (no audio-capable monitor).
-	castkms_card_index=$(awk '/CastKMS/ { print $1; exit }' /proc/asound/cards)
-	if test -z "$castkms_card_index"; then
-		printf 'could not determine CastKMS card index\n' >&2
-		exit 1
-	fi
-	sudo amixer -c "$castkms_card_index" \
-		cget iface=PCM,name='Playback Channel Map' \
-		> "$result_dir/audio-channel-map.txt" 2>&1
-	if ! grep -Fq 'chmap-fixed=FL,FR' \
-		"$result_dir/audio-channel-map.txt"; then
-		printf 'CastKMS PCM does not advertise a stereo channel map\n' >&2
-		cat "$result_dir/audio-channel-map.txt" >&2
-		exit 1
-	fi
-	printf '%s\n' 'audio_channel_map=stereo' | \
-		tee -a "$result_dir/summary.txt"
-
 	# Attach a monitor with an audio-capable EDID using the runtime attach client.
 	mkfifo "$runtime_dir/audio-attach-gate"
 	exec 5<> "$runtime_dir/audio-attach-gate"
 	audio_attach_gate_open=1
 	sudo stdbuf --output=L --error=L ./tools/castkms-grant-launch \
 		"$castkms_drm" "$virtual_connector_id" -- \
-		./tools/castkms-attach \
+		./tools/castkms-attach --display-name 'Living Room TV' \
 	<&5 > "$result_dir/audio-attach-hold.txt" 2>&1 &
 	attach_hold_pid=$!
 	audio_attached=0
@@ -435,8 +419,38 @@ PYEOF
 		exit 1
 	fi
 
-	# Wait briefly for ELD propagation.
-	sleep 0.5
+	castkms_card_index=
+	for _ in $(seq 1 50); do
+		castkms_card_index=$(find_castkms_audio_card 0 || true)
+		test -n "$castkms_card_index" && break
+		sleep 0.1
+	done
+	if test -z "$castkms_card_index"; then
+		printf 'attachment-owned CastKMS audio card did not appear\n' >&2
+		exit 1
+	fi
+	printf '%s\n' 'audio_card_present_after_attach=pass' | \
+		tee -a "$result_dir/summary.txt"
+	if ! grep -Fx 'name: Living Room TV' \
+		"/proc/asound/card${castkms_card_index}/pcm0p/info" >/dev/null; then
+		printf 'first audio card did not retain its assigned display name\n' >&2
+		exit 1
+	fi
+	printf '%s\n' 'audio_assigned_display_name=pass' | \
+		tee -a "$result_dir/summary.txt"
+
+
+	sudo amixer -c "$castkms_card_index" \
+		cget iface=PCM,name='Playback Channel Map' \
+		> "$result_dir/audio-channel-map.txt" 2>&1
+	if ! grep -Fq 'chmap-fixed=FL,FR' \
+		"$result_dir/audio-channel-map.txt"; then
+		printf 'CastKMS PCM does not advertise a stereo channel map\n' >&2
+		cat "$result_dir/audio-channel-map.txt" >&2
+		exit 1
+	fi
+	printf '%s\n' 'audio_channel_map=stereo' | \
+		tee -a "$result_dir/summary.txt"
 
 	# Verify the ELD control contains non-zero data (monitor attached).
 	sudo amixer -c "$castkms_card_index" cget iface=PCM,name='ELD' \
@@ -536,18 +550,18 @@ PYEOF
 
 	sleep 0.3
 
-	# After detach, the ELD should contain only zeroes.
-	sudo amixer -c "$castkms_card_index" cget iface=PCM,name='ELD' \
-		> "$result_dir/audio-eld-after.txt" 2>&1
-	if ! grep 'values=' "$result_dir/audio-eld-after.txt" |
-		grep -oE '0x[0-9a-f]{2}' | grep -qv '^0x00$'; then
-		printf '%s\n' 'audio_detach_eld=pass' | \
-			tee -a "$result_dir/summary.txt"
-	else
-		printf 'ELD still has data after detach\n' >&2
-		cat "$result_dir/audio-eld-after.txt" >&2
+	for _ in $(seq 1 50); do
+		if ! find_castkms_audio_card 0 >/dev/null; then
+			break
+		fi
+		sleep 0.1
+	done
+	if find_castkms_audio_card 0 >/dev/null; then
+		printf 'attachment-owned audio card survived monitor detach\n' >&2
 		exit 1
 	fi
+	printf '%s\n' 'audio_card_removed_after_detach=pass' | \
+		tee -a "$result_dir/summary.txt"
 
 	rm -f "$runtime_dir/audio-attach-gate"
 	printf '%s\n' 'audio_lifecycle=pass' | tee -a "$result_dir/summary.txt"
