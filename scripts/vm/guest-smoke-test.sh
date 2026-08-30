@@ -40,6 +40,8 @@ sink_capture_pid=
 audio_modeset_pid=
 audio_mode_gate_open=0
 audio_attach_gate_open=0
+audio_second_attach_gate_open=0
+audio_second_attach_pid=
 kms_console_unit=kmsconvt@tty1.service
 kms_console_masked_by_test=0
 kms_console_was_active=0
@@ -107,6 +109,14 @@ cleanup()
 		printf 'x' >&5 2>/dev/null || true
 		exec 5>&-
 	fi
+	if test "$audio_second_attach_gate_open" -eq 1; then
+		printf 'x' >&10 2>/dev/null || true
+		exec 10>&-
+	fi
+	if test -n "$audio_second_attach_pid"; then
+		kill "$audio_second_attach_pid" 2>/dev/null || true
+		wait "$audio_second_attach_pid" 2>/dev/null || true
+	fi
 	if test "$attach_gate_open" -eq 1; then
 		printf 'x' >&9 2>/dev/null || true
 		exec 9>&-
@@ -162,7 +172,8 @@ cleanup()
 			"$runtime_dir/unplug-gate" "$runtime_dir/mode-gate" \
 			"$runtime_dir/attach-gate" "$runtime_dir/connect-mode-gate" \
 			"$runtime_dir/pw-mode-gate" \
-			"$runtime_dir/audio-attach-gate"
+			"$runtime_dir/audio-attach-gate" \
+			"$runtime_dir/audio-second-attach-gate"
 		rmdir "$runtime_dir" 2>/dev/null || true
 	fi
 	if test "$cast_loaded" -eq 1; then

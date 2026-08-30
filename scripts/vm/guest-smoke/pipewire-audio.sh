@@ -385,12 +385,19 @@ PYEOF
 	virtual_connector_id=$(awk '
 		$1 ~ /^[0-9]+$/ && $4 ~ /^Virtual-/ { print $1; exit }
 	' "$result_dir/audio-modetest.txt")
+	second_virtual_connector_id=$(awk '
+		$1 ~ /^[0-9]+$/ && $4 ~ /^Virtual-/ {
+			seen++
+			if (seen == 2) { print $1; exit }
+		}
+	' "$result_dir/audio-modetest.txt")
 	crtc_id=$(awk '
 		$0 == "CRTCs:" { in_crtcs = 1; next }
 		in_crtcs && $1 ~ /^[0-9]+$/ { print $1; exit }
 	' "$result_dir/audio-modetest.txt")
 	test -n "$virtual_connector"
 	test -n "$virtual_connector_id"
+	test -n "$second_virtual_connector_id"
 	test -n "$crtc_id"
 
 	# Attach a monitor with an audio-capable EDID using the runtime attach client.
@@ -439,6 +446,75 @@ PYEOF
 	printf '%s\n' 'audio_assigned_display_name=pass' | \
 		tee -a "$result_dir/summary.txt"
 
+	# A second attached display must get a distinct card, and removing it must
+	# not disturb the first display's card. This catches accidental retention
+	# of the former one-card/many-PCM topology in either lifetime or identity.
+	mkfifo "$runtime_dir/audio-second-attach-gate"
+	exec 10<> "$runtime_dir/audio-second-attach-gate"
+	audio_second_attach_gate_open=1
+	sudo stdbuf --output=L --error=L ./tools/castkms-grant-launch \
+		"$castkms_drm" "$second_virtual_connector_id" -- \
+		./tools/castkms-attach --display-name 'Bedroom TV' \
+	<&10 > "$result_dir/audio-second-attach-hold.txt" 2>&1 &
+	audio_second_attach_pid=$!
+	second_audio_attached=0
+	for _ in $(seq 1 100); do
+		if grep -Fx 'attached=1' \
+			"$result_dir/audio-second-attach-hold.txt" >/dev/null; then
+			second_audio_attached=1
+			break
+		fi
+		if ! kill -0 "$audio_second_attach_pid" 2>/dev/null; then
+			cat "$result_dir/audio-second-attach-hold.txt" >&2
+			exit 1
+		fi
+		sleep 0.1
+	done
+	if test "$second_audio_attached" -ne 1; then
+		cat "$result_dir/audio-second-attach-hold.txt" >&2
+		exit 1
+	fi
+
+	second_castkms_card_index=
+	for _ in $(seq 1 50); do
+		second_castkms_card_index=$(find_castkms_audio_card 1 || true)
+		test -n "$second_castkms_card_index" && break
+		sleep 0.1
+	done
+	if test -z "$second_castkms_card_index" ||
+		test "$second_castkms_card_index" = "$castkms_card_index"; then
+		printf 'second attachment did not acquire a distinct CastKMS card\n' >&2
+		exit 1
+	fi
+	printf '%s\n' 'audio_multiple_cards=pass' | \
+		tee -a "$result_dir/summary.txt"
+	if ! grep -Fx 'name: Bedroom TV' \
+		"/proc/asound/card${second_castkms_card_index}/pcm0p/info" >/dev/null; then
+		printf 'second audio card did not retain its assigned display name\n' >&2
+		exit 1
+	fi
+	printf '%s\n' 'audio_distinct_assigned_display_names=pass' | \
+		tee -a "$result_dir/summary.txt"
+
+	printf 'x' >&10
+	exec 10>&-
+	audio_second_attach_gate_open=0
+	wait "$audio_second_attach_pid"
+	audio_second_attach_pid=
+	for _ in $(seq 1 50); do
+		if ! find_castkms_audio_card 1 >/dev/null; then
+			break
+		fi
+		sleep 0.1
+	done
+	if find_castkms_audio_card 1 >/dev/null ||
+		test "$(find_castkms_audio_card 0)" != "$castkms_card_index"; then
+		printf 'second card detach disturbed the first CastKMS card\n' >&2
+		exit 1
+	fi
+	rm -f "$runtime_dir/audio-second-attach-gate"
+	printf '%s\n' 'audio_independent_card_lifetimes=pass' | \
+		tee -a "$result_dir/summary.txt"
 
 	sudo amixer -c "$castkms_card_index" \
 		cget iface=PCM,name='Playback Channel Map' \
