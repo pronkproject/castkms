@@ -150,7 +150,8 @@ reject 'kernel limits import the public UAPI' \
 
 reject 'pixel composer coordinates mutable frame consumers' \
 	'castkms_capture|castkms_capture_owner|castkms_crtc|castkms_frame_dispatch|castkms_snapshot|drm_writeback|drm_crtc_add_crc' \
-	src/castkms_composer.c src/castkms_composer.h
+	src/castkms_composer.c src/castkms_composer.h \
+	src/castkms_direct_composer.c src/castkms_direct_composer.h
 
 reject 'snapshot layer owns deferred capture execution' \
 	'castkms_capture_queue_job|castkms_capture\.h|castkms_composer\.h|castkms_output\.h' \
