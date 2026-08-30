@@ -161,13 +161,14 @@ buffer-lifetime walkthrough.
 ## HDMI audio
 
 If the module was built with audio, it is enabled by default
-(`enable_audio=1`). Each output looks like an HDMI PCM sink to ALSA: jack
-detection follows connector plug, and **ELD** (the short audio-capability list
-players read) is derived from the attached EDID. Pause, resume, and
-presentation timing work as they would on a real HDMI device. The kernel
-models that presentation; it does not keep a second copy of samples for the
-capture API. A local agent can capture audio from the PipeWire sink's monitor
-instead.
+(`enable_audio=1`). Each attached audio-capable display owns an ALSA card with
+one HDMI PCM sink. The card disappears on detach and uses the assigned display
+name supplied with the attachment, falling back to DisplayID product identity.
+**ELD** remains the short capability list audio players expect. Pause, resume,
+and presentation timing work as they would on a
+real HDMI device. The kernel models that presentation; it does not keep a
+second copy of samples for the capture API. A local agent can capture audio
+from the PipeWire sink's monitor instead.
 
 ## HDMI-CEC
 
