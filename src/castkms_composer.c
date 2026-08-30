@@ -461,7 +461,12 @@ static void blend(const struct castkms_output_buffer *destination,
 
 		apply_lut(frame, output_buffer);
 
-		*crc32 = crc32_le(*crc32, (void *)output_buffer->pixels, row_size);
+		if (crc32) {
+			const unsigned char *pixels =
+				(void *)output_buffer->pixels;
+
+			*crc32 = crc32_le(*crc32, pixels, row_size);
+		}
 
 		if (destination)
 			castkms_output_buffer_write_row(destination, output_buffer, y);
