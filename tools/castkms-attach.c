@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <getopt.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,13 +78,19 @@ static int open_grant(int inherited_fd, uint32_t *connector_id)
 }
 
 static int attach_monitor(int fd, uint32_t connector_id,
-			  const void *edid, uint32_t edid_size)
+			  const void *edid, uint32_t edid_size,
+			  const char *display_name)
 {
 	struct drm_castkms_capture_attach_monitor attach = {
 		.connector_id = connector_id,
 		.edid_size = edid_size,
 		.edid_ptr = (uint64_t)(uintptr_t)edid,
 	};
+
+	if (display_name) {
+		attach.display_name_size = (uint32_t)strlen(display_name);
+		attach.display_name_ptr = (uint64_t)(uintptr_t)display_name;
+	}
 
 	if (ioctl(fd, DRM_IOCTL_CASTKMS_CAPTURE_ATTACH_MONITOR, &attach) < 0)
 		return -errno;
@@ -114,32 +121,66 @@ static int connector_is_connected(int fd, uint32_t connector_id)
 
 static void usage(const char *program)
 {
-	fprintf(stderr, "usage: %s [--grant-fd FD]\n", program);
+	fprintf(stderr,
+		"usage: %s [--grant-fd FD] [--display-name NAME]\n",
+		program);
+}
+
+static int validate_display_name(const char *display_name)
+{
+	const unsigned char *byte = (const unsigned char *)display_name;
+	size_t size = strlen(display_name);
+
+	if (!size || size > DRM_CASTKMS_CAPTURE_MAX_DISPLAY_NAME_SIZE)
+		return -1;
+	for (; *byte; byte++) {
+		if (*byte < 0x20 || *byte == 0x7f)
+			return -1;
+	}
+	return 0;
 }
 
 int main(int argc, char **argv)
 {
+	static const struct option options[] = {
+		{ "grant-fd", required_argument, NULL, 'f' },
+		{ "display-name", required_argument, NULL, 'n' },
+		{ "help", no_argument, NULL, 'h' },
+		{},
+	};
 	uint8_t edid[CASTKMS_REFERENCE_EDID_MAX_SIZE];
 	uint32_t connector_id;
+	const char *display_name = NULL;
 	char discard;
 	ssize_t read_ret;
 	int inherited_fd = -1;
 	int edid_size;
 	int ioctl_ret;
+	int option;
 	int fd;
 	int ret = EXIT_FAILURE;
 
-	if (argc == 2 && (!strcmp(argv[1], "-h") ||
-			  !strcmp(argv[1], "--help"))) {
-		usage(argv[0]);
-		return EXIT_SUCCESS;
-	}
-	if (argc == 3 && !strcmp(argv[1], "--grant-fd")) {
-		if (parse_fd(argv[2], &inherited_fd)) {
+	while ((option = getopt_long(argc, argv, "f:n:h", options, NULL)) != -1) {
+		switch (option) {
+		case 'f':
+			if (parse_fd(optarg, &inherited_fd)) {
+				usage(argv[0]);
+				return EXIT_FAILURE;
+			}
+			break;
+		case 'n':
+			display_name = optarg;
+			break;
+		case 'h':
+			usage(argv[0]);
+			return EXIT_SUCCESS;
+		default:
 			usage(argv[0]);
 			return EXIT_FAILURE;
 		}
-	} else if (argc != 1) {
+	}
+	if (optind != argc ||
+	    (display_name && validate_display_name(display_name))) {
 		usage(argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -155,7 +196,7 @@ int main(int argc, char **argv)
 		goto out_close;
 	}
 	ioctl_ret = attach_monitor(fd, connector_id, edid,
-				   (uint32_t)edid_size);
+				   (uint32_t)edid_size, display_name);
 	if (ioctl_ret) {
 		errno = -ioctl_ret;
 		perror("ATTACH_MONITOR");
