@@ -4,12 +4,12 @@ This is the contract for compositor and capture-agent authors. Driver internals
 that implement it are in [`architecture.md`](architecture.md).
 
 A **grant** is a capability file descriptor for one CastKMS connector. It
-authorizes the holder to attach a monitor, publish EDID, capture pixels, read
-cursor data, and speak HDMI-CEC, whichever rights were requested at creation.
-Opening `/dev/dri/cardN` does not confer any of those rights. Sensitive ioctls
-require the grant fd, which is a newly created DRM file. The fd can be
-duplicated or passed over a Unix socket (`SCM_RIGHTS`); all copies represent
-the same capability, and closing the last copy ends it.
+authorizes the holder to attach a monitor, publish EDID, capture pixels or
+audio, read cursor data, and speak HDMI-CEC, whichever rights were requested
+at creation. Opening `/dev/dri/cardN` does not confer any of those rights.
+Sensitive ioctls require the grant fd, which is a newly created DRM file. The
+fd can be duplicated or passed over a Unix socket (`SCM_RIGHTS`); all copies
+represent the same capability, and closing the last copy ends it.
 
 Creating a grant returns a second descriptor, the **grantor fd**. Keep it in
 the compositor or other component responsible for the grant; do not pass it to
@@ -31,9 +31,24 @@ virtual monitor.
 
 The boundary does not protect against root, kernel compromise, a compromised
 grant creator or revoker, or a creator that deliberately passes its grant to
-an untrusted recipient. PipeWire publication is a separate boundary: a capture
-producer must keep its audio and video nodes private or assign per-client
-permissions.
+an untrusted recipient. PipeWire publication is a separate boundary: a
+capture producer must keep its audio and video nodes private or assign
+per-client permissions.
+
+## Audio tap
+
+`DRM_CASTKMS_GRANT_CAPTURE_AUDIO` permits
+`DRM_IOCTL_CASTKMS_OPEN_AUDIO_TAP` only while the grant owns an attached,
+audio-capable monitor. The result is an anonymous read/poll fd carrying fixed
+48 kHz, 16-bit little-endian stereo PCM. It yields the samples consumed by the
+attachment's playback-only ALSA device and silence while that device is idle.
+Only one tap can exist for an attachment.
+
+The tap is not an ALSA capture device and creates no discoverable microphone.
+It terminates when the authority suspends or ends, or when the attachment
+changes, rather than continuing to expose buffered samples. Possession of the
+holder grant controls who can open it; possession of the resulting anonymous
+fd controls who can read it.
 
 ## Which grant to create
 
@@ -304,11 +319,11 @@ becomes safe again.
 
 ## PipeWire
 
-The kernel grant controls access to CastKMS pixels, not access to a PipeWire
-node containing those pixels. The preferred session daemon consumes the grant
-directly without publishing a generally visible source. If a separate producer
-is retained, WirePlumber must restrict both video and matching audio nodes to
-the intended client and destroy or revoke them with the grant.
+The kernel grant controls access to CastKMS pixels and the anonymous audio tap,
+not access to PipeWire nodes made from either one. Producers must use a private
+server or per-client permissions for both media nodes and destroy them with the
+grant. Publishing the audio tap to the ordinary desktop graph would discard
+the protection gained by keeping it out of ALSA capture inventory.
 
 ## Kernel implementation
 
