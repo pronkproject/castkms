@@ -8,8 +8,8 @@ and buffer-lifetime walkthrough, not used as a session broker.
 
 When no EDID file is supplied, the generated virtual monitor advertises basic
 stereo HDMI audio. An audio-enabled CastKMS build exposes the corresponding
-ALSA sink; a local agent can capture that sink's PipeWire monitor alongside
-this video source.
+ALSA sink. Audio capture is a separate grant-scoped kernel tap; this example
+publishes only video.
 
 Published nodes use the `Screen` media role and carry the CastKMS card,
 connector, CRTC, and stable output index as `api.castkms.*` properties.
@@ -21,7 +21,7 @@ other DRM-backed video nodes.
 1. [`pw-castkms.c`](pw-castkms.c) is the application. Its `main()` shows the
    complete sequence: adopt a holder grant, configure the output, start a
    capture stream, and publish it.
-2. [`castkms.c`](castkms.c) validates the `0.11` grant and capabilities,
+2. [`castkms.c`](castkms.c) validates the `0.12` grant and capabilities,
    manages connector attachment, starts and stops capture, and validates DRM
    events.
 3. [`castkms-buffer.c`](castkms-buffer.c) creates the destination pool in the
@@ -52,7 +52,7 @@ PipeWire pool gets a new CastKMS stream and fresh registrations and syncobjs.
 - Receive a grant holder fd from the compositor or broker. Opening the
   primary node does not authorize capture, and the consumer never needs DRM
   master.
-- Require capture UAPI `0.11`, `DRM_CASTKMS_CAPTURE_CAP_GRANT_FD`,
+- Require capture UAPI `0.12`, `DRM_CASTKMS_CAPTURE_CAP_GRANT_FD`,
   `DRM_CASTKMS_CAPTURE_CAP_GRANT_CONTROL_FD`, an advertised format/modifier
   pair, and all rights needed by the operations the consumer performs.
 - Discover only the connector named by `GET_GRANT`. Treat its CRTC route as
