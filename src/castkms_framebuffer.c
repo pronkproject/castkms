@@ -20,8 +20,9 @@
  *                    creator, or NULL
  *
  * A framebuffer keeps the identity of the DRM ownership domain that supplied
- * it.  A later master cannot make residual pixels capture-safe merely by
- * issuing a no-op atomic commit which retains this framebuffer.
+ * it.  This provenance protects inherited scanout state; a current master may
+ * supersede it only by selecting a different framebuffer in an explicit plane
+ * update.
  */
 struct castkms_framebuffer {
 	struct drm_framebuffer base;
@@ -109,6 +110,19 @@ castkms_framebuffer_resolve_capture_owner(
 	return NULL;
 }
 EXPORT_SYMBOL_IF_KUNIT(castkms_framebuffer_resolve_capture_owner);
+
+struct drm_master *
+castkms_framebuffer_resolve_committed_owner(
+	struct drm_master *provenance_owner,
+	struct drm_master *current_master,
+	bool framebuffer_selected)
+{
+	if (framebuffer_selected && current_master)
+		return current_master;
+
+	return provenance_owner;
+}
+EXPORT_SYMBOL_IF_KUNIT(castkms_framebuffer_resolve_committed_owner);
 
 bool castkms_framebuffer_capture_owners_match(
 	const struct drm_master *owner,

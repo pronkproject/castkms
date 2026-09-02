@@ -57,6 +57,7 @@
 #include "castkms_grant.h"
 #include "castkms_ioctl_policy.h"
 #include "castkms_limits.h"
+#include "castkms_plane.h"
 #include "castkms_topology.h"
 #include "castkms_uapi_device.h"
 
@@ -331,8 +332,14 @@ static int castkms_atomic_check(struct drm_device *dev, struct drm_atomic_commit
 {
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *new_crtc_state;
+	struct drm_plane *plane;
+	struct drm_plane_state *new_plane_state;
 	int ret;
 	int i;
+
+	/* Preserve which planes userspace selected before helpers add others. */
+	for_each_new_plane_in_state(state, plane, new_plane_state, i)
+		to_castkms_plane_state(new_plane_state)->explicitly_submitted = true;
 
 	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
 		size_t gamma_lut_length;

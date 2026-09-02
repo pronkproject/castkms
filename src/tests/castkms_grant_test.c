@@ -188,6 +188,37 @@ static void castkms_framebuffer_rejects_mixed_plane_owners(struct kunit *test)
 		castkms_framebuffer_capture_owners_match(&owner_a, NULL));
 }
 
+static void castkms_selected_framebuffer_establishes_current_owner(struct kunit *test)
+{
+	struct drm_master owner_a = {};
+	struct drm_master owner_b = {};
+
+	KUNIT_EXPECT_PTR_EQ(test,
+		castkms_framebuffer_resolve_committed_owner(NULL, &owner_b, true),
+		&owner_b);
+	KUNIT_EXPECT_PTR_EQ(test,
+		castkms_framebuffer_resolve_committed_owner(&owner_a, &owner_b,
+							     true),
+		&owner_b);
+}
+
+static void castkms_unselected_framebuffer_keeps_provenance(struct kunit *test)
+{
+	struct drm_master owner_a = {};
+	struct drm_master owner_b = {};
+
+	KUNIT_EXPECT_PTR_EQ(test,
+		castkms_framebuffer_resolve_committed_owner(&owner_a, &owner_b,
+							     false),
+		&owner_a);
+	KUNIT_EXPECT_PTR_EQ(test,
+		castkms_framebuffer_resolve_committed_owner(NULL, &owner_b, false),
+		NULL);
+	KUNIT_EXPECT_PTR_EQ(test,
+		castkms_framebuffer_resolve_committed_owner(&owner_a, NULL, true),
+		&owner_a);
+}
+
 static void castkms_grant_rejects_lease_master(struct kunit *test)
 {
 	struct drm_master owner = {};
@@ -382,6 +413,8 @@ static struct kunit_case castkms_grant_test_cases[] = {
 	KUNIT_CASE(castkms_framebuffer_accepts_current_association),
 	KUNIT_CASE(castkms_framebuffer_rejects_stale_association),
 	KUNIT_CASE(castkms_framebuffer_rejects_mixed_plane_owners),
+	KUNIT_CASE(castkms_selected_framebuffer_establishes_current_owner),
+	KUNIT_CASE(castkms_unselected_framebuffer_keeps_provenance),
 	KUNIT_CASE(castkms_grant_rejects_lease_master),
 	KUNIT_CASE(castkms_grant_creation_policy),
 	KUNIT_CASE(castkms_grant_id_access_policy),

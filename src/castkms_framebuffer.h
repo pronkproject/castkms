@@ -27,6 +27,12 @@ castkms_framebuffer_resolve_capture_owner(
 	struct drm_master *associated_owner,
 	const struct drm_master *current_master);
 
+struct drm_master *
+castkms_framebuffer_resolve_committed_owner(
+	struct drm_master *provenance_owner,
+	struct drm_master *current_master,
+	bool framebuffer_selected);
+
 bool castkms_framebuffer_capture_owners_match(
 	const struct drm_master *owner,
 	const struct drm_master *plane_owner);

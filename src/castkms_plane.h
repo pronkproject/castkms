@@ -18,10 +18,13 @@ struct drm_atomic_commit;
  * struct castkms_plane_state - Driver-specific atomic plane state
  * @base: DRM shadow-plane state
  * @frame: Renderer-facing state produced by this atomic state
+ * @explicitly_submitted: Plane was present before atomic helpers expanded the
+ *                        transaction with inherited state
  */
 struct castkms_plane_state {
 	struct drm_shadow_plane_state base;
 	struct castkms_frame_plane frame;
+	bool explicitly_submitted;
 };
 
 /**

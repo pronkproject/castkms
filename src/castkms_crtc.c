@@ -465,9 +465,20 @@ static int castkms_crtc_atomic_check(struct drm_crtc *crtc,
 			struct castkms_plane_state *plane = container_of(
 				frame->planes[i], struct castkms_plane_state, frame);
 			struct drm_framebuffer *fb = plane->base.base.fb;
-			struct drm_master *plane_owner =
+			struct drm_plane_state *old_plane_state =
+				drm_atomic_get_old_plane_state(
+					state, plane->base.base.plane);
+			struct drm_master *provenance_owner =
 				castkms_framebuffer_capture_owner(fb,
 							  current_owner);
+			bool framebuffer_changed =
+				!old_plane_state || old_plane_state->fb != fb;
+			bool framebuffer_selected = plane->explicitly_submitted &&
+				framebuffer_changed;
+			struct drm_master *plane_owner =
+				castkms_framebuffer_resolve_committed_owner(
+					provenance_owner, current_owner,
+					framebuffer_selected);
 
 			if (!castkms_framebuffer_capture_owners_match(
 				    owner, plane_owner)) {
