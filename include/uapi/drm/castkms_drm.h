@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 #define DRM_CASTKMS_CAPTURE_UAPI_MAJOR	0
-#define DRM_CASTKMS_CAPTURE_UAPI_MINOR	11
+#define DRM_CASTKMS_CAPTURE_UAPI_MINOR	12
 
 /* Immutable capture-protocol limits shared by the driver and clients. */
 #define DRM_CASTKMS_CAPTURE_MIN_WIDTH		10U

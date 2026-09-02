@@ -45,6 +45,7 @@
 #include "castkms_cec_uapi.h"
 #include "castkms_connector_uapi.h"
 #include "castkms_audio.h"
+#include "castkms_audio_uapi.h"
 #include "castkms_config.h"
 #include "castkms_configfs.h"
 #include "castkms_crc.h"

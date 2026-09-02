@@ -23,6 +23,7 @@ castkms-y := \
 	src/castkms_capture_owner.o \
 	src/castkms_grant.o \
 	src/castkms_grant_file.o \
+	src/castkms_audio_uapi.o \
 	src/castkms_capture_uapi.o \
 	src/castkms_capture.o \
 	src/castkms_capture_buffer.o \

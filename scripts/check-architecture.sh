@@ -20,7 +20,7 @@ while read -r layer path extra; do
 		exit 1
 	fi
 	case "$layer" in
-	assembly|audio-core|authority-core|capture-core|capture-uapi|cec-core|cec-uapi|config|drm-runtime|grant-uapi|render-core) ;;
+	assembly|audio-core|audio-uapi|authority-core|capture-core|capture-uapi|cec-core|cec-uapi|config|drm-runtime|grant-uapi|render-core) ;;
 	*)
 		printf 'unknown architecture layer: %s\n' "$layer" >&2
 		exit 1
@@ -84,11 +84,11 @@ check_layer_dependencies()
 			dependency_path=src/$dependency_header
 			dependency_layer=${source_layers[$dependency_path]:-}
 			case "$source_layer:$dependency_layer" in
-			audio-core:grant-uapi|audio-core:capture-uapi|audio-core:cec-uapi|\
+			audio-core:audio-uapi|audio-core:grant-uapi|audio-core:capture-uapi|audio-core:cec-uapi|\
 			authority-core:grant-uapi|authority-core:capture-uapi|authority-core:cec-uapi|\
-			capture-core:grant-uapi|capture-core:capture-uapi|capture-core:cec-uapi|\
-			cec-core:grant-uapi|cec-core:capture-uapi|cec-core:cec-uapi|\
-			render-core:grant-uapi|render-core:capture-core|render-core:capture-uapi|render-core:cec-uapi)
+			capture-core:audio-uapi|capture-core:grant-uapi|capture-core:capture-uapi|capture-core:cec-uapi|\
+			cec-core:audio-uapi|cec-core:grant-uapi|cec-core:capture-uapi|cec-core:cec-uapi|\
+			render-core:audio-uapi|render-core:grant-uapi|render-core:capture-core|render-core:capture-uapi|render-core:cec-uapi)
 				printf 'architecture dependency violation: %s (%s) imports %s (%s)\n' \
 					"$path" "$source_layer" "$dependency_path" \
 					"$dependency_layer" >&2

@@ -783,6 +783,14 @@ static void castkms_capture_authority_reconcile(
 			authority,
 			CASTKMS_CAPTURE_AUTHORITY_CLEANUP_MASTER_EPOCH,
 			master_cleanup_sequence, -EAGAIN);
+	if (state == CASTKMS_CAPTURE_AUTHORITY_SUSPENDED_FOREIGN_CONTENT ||
+	    (!authority->administrative &&
+	     (state == CASTKMS_CAPTURE_AUTHORITY_SUSPENDED_NO_MASTER ||
+	      state == CASTKMS_CAPTURE_AUTHORITY_SUSPENDED_OTHER_MASTER)))
+		castkms_capture_authority_cleanup_resources(
+			authority,
+			CASTKMS_CAPTURE_AUTHORITY_CLEANUP_SUSPEND,
+			0, status);
 	if (!authority->administrative &&
 	    (force_master_cleanup ||
 	     state == CASTKMS_CAPTURE_AUTHORITY_SUSPENDED_NO_MASTER ||

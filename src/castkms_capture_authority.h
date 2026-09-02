@@ -20,10 +20,13 @@ struct castkms_capture_authority_resource;
  *	A DRM-master cleanup epoch invalidated resources created earlier
  * @CASTKMS_CAPTURE_AUTHORITY_CLEANUP_DISCONNECT:
  *	The authority's connector lost its attached monitor
+ * @CASTKMS_CAPTURE_AUTHORITY_CLEANUP_SUSPEND:
+ *	The authority entered a temporary state that forbids fresh capture
  */
 enum castkms_capture_authority_cleanup_reason {
 	CASTKMS_CAPTURE_AUTHORITY_CLEANUP_MASTER_EPOCH,
 	CASTKMS_CAPTURE_AUTHORITY_CLEANUP_DISCONNECT,
+	CASTKMS_CAPTURE_AUTHORITY_CLEANUP_SUSPEND,
 };
 
 /**
