@@ -47,10 +47,10 @@ should read [`docs/architecture.md`](docs/architecture.md).
    frames to PipeWire or another consumer.
 
 Rights on a grant independently cover monitor attachment, EDID, pixels, cursor
-data, and HDMI-CEC. A DRM **lease** (a client given only a subset of the
-card's resources) cannot create grants.
+data, audio capture, and HDMI-CEC. A DRM **lease** (a client given only a
+subset of the card's resources) cannot create grants.
 
-The capture protocol is experimental version `0.11` (read as major.minor;
+The capture protocol is experimental version `0.12` (read as major.minor;
 major `0` means it may still change incompatibly). Each stream carries a
 single mode's frames: after a modeset the agent stops the stream, starts a
 new one, and registers fresh buffers for the new mode. Those buffers are
@@ -145,7 +145,7 @@ over the card as DRM master and become the owner of on-screen content.
 
 ## PipeWire video
 
-`tools/pw-castkms/pw-castkms` is a small example consumer. It takes a `0.11`
+`tools/pw-castkms/pw-castkms` is a small example consumer. It takes a `0.12`
 grant through `--grant-fd` or `CASTKMS_GRANT_FD`, creates destination buffers
 on that fd, and publishes a PipeWire source. It stops when the grant or mode
 generation changes so a supervisor can restart it. Publication uses a
@@ -162,13 +162,20 @@ buffer-lifetime walkthrough.
 
 If the module was built with audio, it is enabled by default
 (`enable_audio=1`). Each attached audio-capable display owns an ALSA card with
-one HDMI PCM sink. The card disappears on detach and uses the assigned display
-name supplied with the attachment, falling back to DisplayID product identity.
-**ELD** remains the short capability list audio players expect. Pause, resume,
-and presentation timing work as they would on a
-real HDMI device. The kernel models that presentation; it does not keep a
-second copy of samples for the capture API. A local agent can capture audio
-from the PipeWire sink's monitor instead.
+one 48 kHz, 16-bit stereo HDMI playback PCM. The card disappears on detach and
+uses the assigned display name supplied with the attachment, falling back to
+DisplayID product identity. **ELD** remains the short capability list audio
+players expect. Pause, resume, and presentation timing work as they would on a
+real HDMI device.
+
+A holder with `DRM_CASTKMS_GRANT_CAPTURE_AUDIO` can use
+`DRM_IOCTL_CASTKMS_OPEN_AUDIO_TAP` to obtain one anonymous, close-on-exec raw
+PCM descriptor for its attached display. The descriptor yields samples as
+the playback device consumes them and continuous silence while playback is
+idle. It follows grant, attachment, ELD, and device lifetime. It is deliberately
+not an ALSA capture PCM, so ALSA and desktop audio policy cannot enumerate it
+as a microphone. Treat the descriptor—and any PipeWire source made from
+it—as grant-protected media.
 
 ## HDMI-CEC
 
