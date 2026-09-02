@@ -166,7 +166,7 @@ and unplugs the device before its configuration is detached, even when ioctl
 and debugfs calls fail on file descriptors left open across the removal.
 
 **capture** creates a default card with a color pipeline, writeback, and frame
-checksums. It consumes a `0.11` grant fd, checks that an ordinary card fd
+checksums. It consumes a `0.12` grant fd, checks that an ordinary card fd
 remains unauthorized, and exercises monitor attach, EDID, implicit and
 explicit buffer synchronization, DMA-BUF fence reuse, completion metadata,
 composed pixels, a vsynced `800x600` page-flip that advances the capture
@@ -176,11 +176,13 @@ standalone CEC session test through a full-rights grant.
 **cursor** checks cursor metadata and bitmap transitions on a grant-backed
 capture stream.
 
-**pipewire-audio** publishes a grant-backed PipeWire source, validates
+**pipewire-audio** publishes a grant-backed PipeWire video source, validates
 delivered frames, disconnects the consumer so the source releases its
-destination pool, reconnects a second consumer on a fresh CastKMS stream, and
-checks attachment-owned PipeWire/ALSA card creation and removal plus ELD,
-playback, timestamps, and pause/resume while audio is available.
+destination pool, and reconnects a second consumer on a fresh CastKMS stream.
+It also checks attachment-owned PipeWire/ALSA card creation and removal, ELD,
+playback, timestamps, and pause/resume. Its audio-tap test starts playback
+first, then verifies exact grant-scoped sample capture, idle silence,
+single-consumer and detach lifetime, and that the card has no capture PCM.
 
 Device-backed capture, grant, grant-launcher, and CEC clients share the small
 `castkms-test-drm` harness for driver identification, dumb framebuffers, and
