@@ -109,12 +109,23 @@ extern "C" {
  */
 #define DRM_CASTKMS_GRANT_MANAGE_CEC		(1U << 4)
 
+/**
+ * DRM_CASTKMS_GRANT_CAPTURE_AUDIO:
+ *
+ * Permit creation of a private audio tap for the connector named by the
+ * grant. The tap contains only samples consumed by that connector's
+ * attachment-owned ALSA playback device and is never registered as an ALSA
+ * capture device.
+ */
+#define DRM_CASTKMS_GRANT_CAPTURE_AUDIO		(1U << 5)
+
 #define DRM_CASTKMS_GRANT_RIGHTS_MASK \
 	(DRM_CASTKMS_GRANT_CAPTURE_PIXELS | \
 	 DRM_CASTKMS_GRANT_MANAGE_ATTACHMENT | \
 	 DRM_CASTKMS_GRANT_UPDATE_EDID | \
 	 DRM_CASTKMS_GRANT_READ_CURSOR | \
-	 DRM_CASTKMS_GRANT_MANAGE_CEC)
+	 DRM_CASTKMS_GRANT_MANAGE_CEC | \
+	 DRM_CASTKMS_GRANT_CAPTURE_AUDIO)
 
 /**
  * DRM_CASTKMS_GRANT_CREATE_ADMIN:
@@ -720,6 +731,50 @@ struct drm_event_castkms_capture_frame {
 #define DRM_CASTKMS_REVOKE_GRANT			0x12
 #define DRM_CASTKMS_GET_GRANT			0x13
 #define DRM_CASTKMS_GET_OUTPUT			0x14
+#define DRM_CASTKMS_OPEN_AUDIO_TAP		0x15
+
+/** DRM_CASTKMS_AUDIO_FORMAT_S16_LE: signed 16-bit little-endian PCM. */
+#define DRM_CASTKMS_AUDIO_FORMAT_S16_LE		1U
+
+/**
+ * struct drm_castkms_open_audio_tap - create a grant-scoped audio stream fd
+ * @connector_id: DRM object ID of the grant's attached display connector
+ * @flags: must be zero
+ * @fd: output private audio descriptor; must be -1 on input
+ * @fd_flags: flags for the returned file; only O_NONBLOCK is accepted
+ * @format: output DRM_CASTKMS_AUDIO_FORMAT_* value; must be zero on input
+ * @rate: output sample rate in frames per second; must be zero on input
+ * @channels: output channel count; must be zero on input
+ * @frame_bytes: output bytes per interleaved frame; must be zero on input
+ * @buffer_frames: output kernel buffering capacity; must be zero on input
+ * @reserved: must be zero
+ *
+ * The returned close-on-exec descriptor is a raw interleaved PCM byte stream.
+ * Reads must request at least one complete frame and return only whole frames.
+ * The stream advances continuously, returning silence while the desktop ALSA
+ * playback stream is idle. Playback is constrained to the returned format
+ * while the tap exists, so the kernel never resamples audio.
+ *
+ * Opening requires DRM_CASTKMS_GRANT_CAPTURE_AUDIO and an attachment owned by
+ * that grant. Only one tap may exist for an attachment. Monitor detach, grant
+ * revocation, authority suspension, device removal, or a DRM-master cleanup
+ * epoch terminates the stream; poll then reports POLLHUP and reads fail with
+ * the terminal status.
+ * The tap is not an ALSA capture PCM and therefore cannot be presented by a
+ * desktop audio policy service as a microphone.
+ */
+struct drm_castkms_open_audio_tap {
+	__u32 connector_id;
+	__u32 flags;
+	__s32 fd;
+	__u32 fd_flags;
+	__u32 format;
+	__u32 rate;
+	__u32 channels;
+	__u32 frame_bytes;
+	__u64 buffer_frames;
+	__u64 reserved;
+};
 
 /**
  * struct drm_castkms_capture_read_cursor_bitmap - read cursor image data
@@ -791,6 +846,9 @@ struct drm_castkms_capture_read_cursor_bitmap {
 #define DRM_IOCTL_CASTKMS_GET_OUTPUT \
 	DRM_IOWR(DRM_COMMAND_BASE + DRM_CASTKMS_GET_OUTPUT, \
 		 struct drm_castkms_get_output)
+#define DRM_IOCTL_CASTKMS_OPEN_AUDIO_TAP \
+	DRM_IOWR(DRM_COMMAND_BASE + DRM_CASTKMS_OPEN_AUDIO_TAP, \
+		 struct drm_castkms_open_audio_tap)
 
 /* --- CEC transport UAPI --- */
 

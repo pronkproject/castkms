@@ -199,6 +199,8 @@ static u32 castkms_grant_rights_from_uapi(u32 rights)
 		authority_rights |= CASTKMS_CAPTURE_AUTHORITY_READ_CURSOR;
 	if (rights & DRM_CASTKMS_GRANT_MANAGE_CEC)
 		authority_rights |= CASTKMS_CAPTURE_AUTHORITY_MANAGE_CEC;
+	if (rights & DRM_CASTKMS_GRANT_CAPTURE_AUDIO)
+		authority_rights |= CASTKMS_CAPTURE_AUTHORITY_CAPTURE_AUDIO;
 
 	return authority_rights;
 }
@@ -217,6 +219,8 @@ static u32 castkms_grant_rights_to_uapi(u32 rights)
 		uapi_rights |= DRM_CASTKMS_GRANT_READ_CURSOR;
 	if (rights & CASTKMS_CAPTURE_AUTHORITY_MANAGE_CEC)
 		uapi_rights |= DRM_CASTKMS_GRANT_MANAGE_CEC;
+	if (rights & CASTKMS_CAPTURE_AUTHORITY_CAPTURE_AUDIO)
+		uapi_rights |= DRM_CASTKMS_GRANT_CAPTURE_AUDIO;
 
 	return uapi_rights;
 }
