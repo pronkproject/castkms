@@ -251,17 +251,35 @@ accumulates damage separately for every destination.
 
 ## Audio and CEC
 
-Audio and CEC make the virtual output behave like a real HDMI monitor; neither
-is a way to capture data out of the kernel.
-
 Each attached audio-capable display owns an ALSA HDMI presentation card. Card
 registration follows monitor attachment, the card and PCM use the attachment's
 assigned display name (with DisplayID product identity as a fallback), and
-detach disconnects the card immediately while ALSA safely drains any already-open handles. Jack detection, ELD (the
-short audio-capability list derived from EDID), the PCM lifecycle, and timing
-are all real, but the samples themselves are not kept for any capture path. To
-capture audio locally, read the PipeWire sink's monitor instead; who may see
-that PipeWire node is a userspace policy decision.
+detach disconnects the card immediately while ALSA safely drains any
+already-open handles. Jack detection, ELD (the short audio-capability list
+derived from EDID), the PCM lifecycle, and timing are real. The playback-only
+PCM has one fixed wire format: interleaved 48 kHz, 16-bit little-endian stereo.
+
+Audio capture does not add a second ALSA PCM. A holder with
+`CAPTURE_AUDIO` opens one anonymous raw-stream fd for its own attachment. A
+10 ms kernel clock copies frames as the playback pointer consumes them and
+emits silence when playback is absent, paused, or cannot supply a frame. The
+bounded FIFO drops old backlog rather than delaying the live stream. Opening
+works whether the playback PCM or the tap starts first; the fixed playback
+format removes any negotiation race. A second tap is rejected.
+
+The tap is a registered capture-authority resource. Grant cleanup or
+suspension, monitor detach, ELD replacement, and device removal terminate it,
+clear queued audio, wake pollers with `POLLHUP|POLLERR`, and make reads return
+the terminal status.
+The anonymous fd retains the detached card state only as long as needed for
+safe teardown. Since no ALSA capture PCM exists, desktop audio discovery can
+present the CastKMS card only as an output, never as a microphone. A process
+that republishes the fd through PipeWire must separately confine that node.
+
+The audio core owns card, playback, tap, and lifetime mechanics.
+`castkms_audio_uapi` is the DRM adapter: it validates the grant right and
+attachment, creates the anonymous descriptor, and translates the fixed stream
+metadata into UAPI fields.
 
 HDMI-CEC (Consumer Electronics Control) is the command channel HDMI devices
 use for power, volume, and input switching. CEC `0.1` is opt-in and
