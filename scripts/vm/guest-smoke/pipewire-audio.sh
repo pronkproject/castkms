@@ -400,6 +400,30 @@ PYEOF
 	test -n "$second_virtual_connector_id"
 	test -n "$crtc_id"
 
+	# This is the capture path used by Pronk in both session and system mode.
+	# Cover desktop-first startup, exact sample copying, continuous idle
+	# silence, exclusive ownership, detach lifetime, and the absence of an
+	# ALSA capture PCM before the broader card-lifecycle checks.
+	audio_tap_status=0
+	sudo timeout --signal=TERM --kill-after=2s 15s \
+		./tools/castkms-grant-launch \
+		"$castkms_drm" "$virtual_connector_id" -- \
+		./tools/castkms-audio-tap-test \
+		> "$result_dir/audio-tap.txt" 2>&1 || audio_tap_status=$?
+	if test "$audio_tap_status" -ne 0; then
+		cat "$result_dir/audio-tap.txt" >&2
+		exit 1
+	fi
+	grep -Fx 'alsa_capture_pcm_absent=pass' \
+		"$result_dir/audio-tap.txt" >/dev/null
+	grep -Fx 'audio_tap=pass' "$result_dir/audio-tap.txt" >/dev/null
+	printf '%s\n' 'alsa_capture_pcm_absent=pass' \
+		'audio_tap=pass' | tee -a "$result_dir/summary.txt"
+	if find_castkms_audio_card 0 >/dev/null; then
+		printf 'audio tap test left its attachment card behind\n' >&2
+		exit 1
+	fi
+
 	# Attach a monitor with an audio-capable EDID using the runtime attach client.
 	mkfifo "$runtime_dir/audio-attach-gate"
 	exec 5<> "$runtime_dir/audio-attach-gate"

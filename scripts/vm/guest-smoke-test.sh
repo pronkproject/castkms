@@ -255,6 +255,7 @@ test -x ./tools/castkms-capture-test
 test -x ./tools/castkms-grant-launch
 test -x ./tools/castkms-cec-test
 test -x ./tools/castkms-audio-test
+test -x ./tools/castkms-audio-tap-test
 test -x ./tools/pw-castkms/pw-castkms
 test -x ./tools/pw-castkms/pw-castkms-test
 printf '%s\n' 'smoke_tools_build=pass' | tee -a "$result_dir/summary.txt"
