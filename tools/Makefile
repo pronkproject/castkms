@@ -13,7 +13,7 @@ all: castkms-capture-test castkms-grant-launch castkms-grant-test \
 	castkms-attach castkms-edid-test castkms-cec-test
 	$(MAKE) -C pw-castkms
 ifneq ($(ALSA_LIBS),)
-	$(MAKE) castkms-audio-test
+	$(MAKE) castkms-audio-test castkms-audio-tap-test
 endif
 
 castkms-capture-test: castkms-capture-test.c \
@@ -60,6 +60,7 @@ check: all
 	./castkms-edid-test
 ifneq ($(ALSA_LIBS),)
 	./castkms-audio-test -h >/dev/null 2>&1
+	./castkms-audio-tap-test -h >/dev/null 2>&1
 endif
 	$(MAKE) -C pw-castkms check
 
@@ -67,8 +68,15 @@ castkms-audio-test: castkms-audio-test.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN_CFLAGS) $(ALSA_CFLAGS) \
 		-o $@ $< $(ALSA_LIBS) -lm
 
+castkms-audio-tap-test: castkms-audio-tap-test.c \
+		castkms-test-drm.c castkms-test-drm.h virtualscreen-edid.h \
+		../include/uapi/drm/castkms_drm.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(WARN_CFLAGS) $(ALSA_CFLAGS) \
+		-o $@ castkms-audio-tap-test.c castkms-test-drm.c \
+		$(ALSA_LIBS)
+
 clean:
 	$(RM) castkms-capture-test castkms-grant-launch castkms-grant-test \
 		castkms-attach castkms-edid-test castkms-cec-test \
-		castkms-audio-test
+		castkms-audio-test castkms-audio-tap-test
 	$(MAKE) -C pw-castkms clean
