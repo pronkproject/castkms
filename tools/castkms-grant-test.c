@@ -1546,7 +1546,8 @@ int main(int argc, char **argv)
 		DRM_CASTKMS_GRANT_MANAGE_ATTACHMENT |
 		DRM_CASTKMS_GRANT_UPDATE_EDID |
 		DRM_CASTKMS_GRANT_READ_CURSOR |
-		DRM_CASTKMS_GRANT_MANAGE_CEC;
+		DRM_CASTKMS_GRANT_MANAGE_CEC |
+		DRM_CASTKMS_GRANT_CAPTURE_AUDIO;
 	struct drm_castkms_capture_attach_monitor attach;
 	struct drm_castkms_capture_detach_monitor detach;
 	struct drm_castkms_capture_start admin_stream = {};
