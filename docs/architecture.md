@@ -212,6 +212,12 @@ stream is bound to one CRTC and mode generation. Master loss makes every
 existing capture stream obsolete; the holder must create a fresh stream in
 each master epoch.
 
+An atomic commit retains the previous published ownership decision until the
+replacement state is completely programmed. Authority queries and capture
+queue admission use that stable decision, while vblank dispatch is paused by
+an in-progress marker. Publication atomically replaces the decision and
+unblocks only frames owned by the active master.
+
 This capture-owner label is deliberately narrower than generic DRM access.
 DRM permits retained scanout to cross a master transition for seamless
 handoff. A never-master grant file cannot use `GETFB2`, and capture buffer

@@ -37,9 +37,14 @@ static void castkms_capture_owner_copy_snapshot_state(
 						 owners->master),
 		.cleanup_sequence = owners->cleanup_sequence,
 	};
+	/*
+	 * capture_owner describes the last completely published display state.
+	 * Keep authority decisions on that stable state while the next atomic
+	 * commit is in progress. Frame dispatch separately observes
+	 * capture_owner_updating and remains paused until publication completes.
+	 */
 	if (output)
-		snapshot->content_safe = !output->capture_owner_updating &&
-			owners->master_active &&
+		snapshot->content_safe = owners->master_active &&
 			castkms_capture_owner_is_current(output->capture_owner,
 						 owners->master);
 }
@@ -107,8 +112,9 @@ bool castkms_capture_output_has_safe_content(
 	struct castkms_capture_owner_snapshot snapshot;
 
 	castkms_capture_owner_take_output_snapshot(output, NULL, &snapshot);
-	return snapshot.content_safe;
+	return !output->capture_owner_updating && snapshot.content_safe;
 }
+EXPORT_SYMBOL_IF_KUNIT(castkms_capture_output_has_safe_content);
 
 VISIBLE_IF_KUNIT bool
 castkms_capture_blank_establishes_owner(bool old_state_exists,

@@ -537,6 +537,31 @@ static void castkms_core_client_mode_change_cancellation(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, client->stop_calls, 0U);
 }
 
+static void castkms_core_client_queues_across_owner_publication(
+	struct kunit *test)
+{
+	struct castkms_core_client *client = test->priv;
+	unsigned long flags;
+	bool content_safe;
+	int submit_ret;
+
+	KUNIT_ASSERT_EQ(test, castkms_core_client_start_stream(client), 0);
+	KUNIT_ASSERT_EQ(test, castkms_core_client_create_buffer(client), 0);
+
+	spin_lock_irqsave(&client->output->lock, flags);
+	client->output->capture_owner_updating = true;
+	content_safe = castkms_capture_output_has_safe_content(client->output);
+	spin_unlock_irqrestore(&client->output->lock, flags);
+	KUNIT_EXPECT_FALSE(test, content_safe);
+
+	submit_ret = castkms_core_client_submit(client);
+
+	spin_lock_irqsave(&client->output->lock, flags);
+	client->output->capture_owner_updating = false;
+	spin_unlock_irqrestore(&client->output->lock, flags);
+	KUNIT_ASSERT_EQ(test, submit_ret, 0);
+}
+
 static void castkms_core_client_master_drop_cleans_stale_stream(
 	struct kunit *test)
 {
@@ -621,6 +646,7 @@ static struct kunit_case castkms_core_client_test_cases[] = {
 	KUNIT_CASE(castkms_core_client_keeps_assigned_display_name),
 	KUNIT_CASE(castkms_core_client_request_revocation),
 	KUNIT_CASE(castkms_core_client_mode_change_cancellation),
+	KUNIT_CASE(castkms_core_client_queues_across_owner_publication),
 	KUNIT_CASE(castkms_core_client_master_drop_cleans_stale_stream),
 	KUNIT_CASE(castkms_core_client_file_close_cleans_stale_stream),
 	{}

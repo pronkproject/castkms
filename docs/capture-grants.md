@@ -249,10 +249,13 @@ at once, derives its capture owner from every visible plane:
 - a no-op commit cannot claim old pixels.
 
 The commit publishes the new owner only after plane and modeset programming.
-Capture queueing, vblank selection (choosing a frame at the **vblank**, the
-gap between frames when a new one can be shown), stream startup, and a frame
-checksum all require the published owner to equal the current master. While an
-atomic commit is in flight the output is marked unsafe.
+Stream startup and capture queueing continue to use the last fully published
+owner while an atomic commit is in flight, so an intermediate state cannot
+spuriously suspend a grant or stale a stream. Vblank selection (choosing a
+frame at the **vblank**, the gap between frames when a new one can be shown)
+and frame checksums remain paused until publication completes. They then
+require the newly published owner to equal the current master before exposing
+pixels.
 
 CastKMS withholds a frame rather than guessing that retained pixels belong to
 the new owner. Frame checksums and writeback are additional pixel-derived

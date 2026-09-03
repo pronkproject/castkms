@@ -57,7 +57,8 @@ struct castkms_capture_owner_state {
  * @master_present: A current or most recently dropped master is known
  * @master_active: The tracked master is currently installed
  * @bound_master_current: The queried bound master is the tracked master
- * @content_safe: The output content belongs to the active tracked master
+ * @content_safe: The last published output content belongs to the active
+ *                tracked master
  * @cleanup_sequence: Current master-drop cleanup generation
  */
 struct castkms_capture_owner_snapshot {

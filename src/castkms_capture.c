@@ -298,7 +298,8 @@ bool castkms_capture_prepare_frame(struct castkms_output *output,
 	authority_generation = buffer->stream->authority_generation;
 	authority_status = castkms_capture_authority_evaluate_stream_status(
 		authority, output, authority_generation);
-	if (capture->in_flight_buffer ||
+	if (output->capture_owner_updating ||
+	    capture->in_flight_buffer ||
 	    buffer->state != CASTKMS_CAPTURE_BUFFER_QUEUED ||
 	    buffer->mode_generation != capture->mode_generation ||
 	    !capture->active || authority_status) {
