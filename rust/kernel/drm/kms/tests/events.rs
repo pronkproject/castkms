@@ -37,9 +37,11 @@ struct Observations {
 struct Data {
     observations: Arc<Observations>,
     action: EventAction,
+    second_output: bool,
     // Initialized before setup returns; consumers retain the device and exclude teardown.
     crtc: AtomicPtr<bindings::drm_crtc>,
     connector: AtomicPtr<bindings::drm_connector>,
+    sibling_crtc: AtomicPtr<bindings::drm_crtc>,
 }
 
 enum EventAction {
@@ -47,6 +49,7 @@ enum EventAction {
     DropThenArm,
     // The other device has no reference back to this one. Its test parent outlives both.
     RejectOther(crtc::CrtcRef<EventCrtc>),
+    RejectSibling,
 }
 
 struct EventDriver;
@@ -189,35 +192,37 @@ impl crtc::DriverCrtc for EventCrtc {
             .clock
             .store(new.adjusted_mode().crtc_clock(), Ordering::Relaxed);
         if observations.delay.load(Ordering::Relaxed) != 0 {
-            match &crtc.drm_dev().action {
-                EventAction::Arm => {}
+            let other = match &crtc.drm_dev().action {
+                EventAction::Arm => None,
                 EventAction::DropThenArm => {
                     let event = commit.get_pending_vblank_event();
                     observations
                         .dropped_handle
                         .store(u32::from(event.is_some()), Ordering::Relaxed);
                     drop(event);
+                    None
                 }
-                EventAction::RejectOther(other) => {
-                    let other = other.crtc();
-                    other.vblank_on();
-                    let result = other.vblank_get().and_then(|reference| {
-                        observations
-                            .other_references_before
-                            .store(vblank_references(other), Ordering::Relaxed);
-                        commit
-                            .get_pending_vblank_event()
-                            .ok_or(ENOENT)?
-                            .arm(reference)
-                    });
+                EventAction::RejectOther(other) => Some(other.crtc()),
+                EventAction::RejectSibling => sibling_crtc(crtc.drm_dev()),
+            };
+            if let Some(other) = other {
+                other.vblank_on();
+                let result = other.vblank_get().and_then(|reference| {
                     observations
-                        .rejected_arm
-                        .store(result.err().map_or(0, Error::to_errno), Ordering::Relaxed);
-                    observations
-                        .other_references
+                        .other_references_before
                         .store(vblank_references(other), Ordering::Relaxed);
-                    other.vblank_off();
-                }
+                    commit
+                        .get_pending_vblank_event()
+                        .ok_or(ENOENT)?
+                        .arm(reference)
+                });
+                observations
+                    .rejected_arm
+                    .store(result.err().map_or(0, Error::to_errno), Ordering::Relaxed);
+                observations
+                    .other_references
+                    .store(vblank_references(other), Ordering::Relaxed);
+                other.vblank_off();
             }
             let result = crtc.vblank_get().and_then(|reference| {
                 commit
@@ -317,39 +322,14 @@ impl KmsDriver for EventDriver {
         })
     }
     fn create_objects(dev: &UnregisteredKmsDevice<'_, Self>) -> Result {
-        use connector::AsRawConnector;
-        let plane = plane::UnregisteredPlane::<EventPlane>::new(
-            dev,
-            0,
-            &[fourcc::XRGB8888],
-            Some(&[fourcc::FORMAT_MOD_LINEAR]),
-            plane::Type::Primary,
-            None,
-            (),
-        )?;
-        let crtc = crtc::UnregisteredCrtc::<EventCrtc>::new(
-            dev,
-            plane,
-            None::<&plane::UnregisteredPlane<EventPlane>>,
-            None,
-            (),
-        )?;
-        let encoder = encoder::UnregisteredEncoder::<EventEncoder>::new(
-            dev,
-            encoder::Type::Virtual,
-            crtc.mask(),
-            0,
-            None,
-            (),
-        )?;
-        let connector = connector::UnregisteredConnector::<EventConnector>::new(
-            dev,
-            connector::Type::Virtual,
-            (),
-        )?;
-        connector.attach_encoder(encoder)?;
+        let (crtc, connector) = create_output(dev)?;
         dev.crtc.store(crtc.as_raw(), Ordering::Relaxed);
+        use connector::AsRawConnector;
         dev.connector.store(connector.as_raw(), Ordering::Relaxed);
+        if dev.second_output {
+            let (sibling, _) = create_output(dev)?;
+            dev.sibling_crtc.store(sibling.as_raw(), Ordering::Relaxed);
+        }
         Ok(())
     }
     fn atomic_commit_tail<'a>(
@@ -370,6 +350,42 @@ impl KmsDriver for EventDriver {
     }
 }
 
+fn create_output<'a>(
+    dev: &'a UnregisteredKmsDevice<'_, EventDriver>,
+) -> Result<(
+    &'a crtc::UnregisteredCrtc<EventCrtc>,
+    &'a connector::UnregisteredConnector<EventConnector>,
+)> {
+    let plane = plane::UnregisteredPlane::<EventPlane>::new(
+        dev,
+        0,
+        &[fourcc::XRGB8888],
+        Some(&[fourcc::FORMAT_MOD_LINEAR]),
+        plane::Type::Primary,
+        None,
+        (),
+    )?;
+    let crtc = crtc::UnregisteredCrtc::<EventCrtc>::new(
+        dev,
+        plane,
+        None::<&plane::UnregisteredPlane<EventPlane>>,
+        None,
+        (),
+    )?;
+    let encoder = encoder::UnregisteredEncoder::<EventEncoder>::new(
+        dev,
+        encoder::Type::Virtual,
+        crtc.mask(),
+        0,
+        None,
+        (),
+    )?;
+    let connector =
+        connector::UnregisteredConnector::<EventConnector>::new(dev, connector::Type::Virtual, ())?;
+    connector.attach_encoder(encoder)?;
+    Ok((crtc, connector))
+}
+
 fn framebuffer_count(dev: &Device<EventDriver>) -> i32 {
     // SAFETY: Setup initialized the mutex. The device borrow excludes destruction, and this
     // lock serializes count inspection with any unexpected early framebuffer cleanup.
@@ -380,6 +396,16 @@ fn framebuffer_count(dev: &Device<EventDriver>) -> i32 {
         bindings::mutex_unlock(&raw mut (*config).fb_lock);
         count
     }
+}
+
+fn sibling_crtc(dev: &Device<EventDriver>) -> Option<&crtc::Crtc<EventCrtc>> {
+    let raw = dev.sibling_crtc.load(Ordering::Relaxed);
+    if raw.is_null() {
+        return None;
+    }
+    // SAFETY: Setup publishes only a fully initialized EventCrtc. Callers exclude setup
+    // and teardown, and the returned borrow cannot outlive the device's managed objects.
+    Some(unsafe { crtc::Crtc::<EventCrtc>::from_raw(raw) })
 }
 
 fn vblank_references(crtc: &crtc::Crtc<EventCrtc>) -> i32 {
@@ -403,6 +429,16 @@ fn create_with_action(
     counts: &Arc<Counts>,
     action: EventAction,
 ) -> Result<UnregisteredDevice<EventDriver>> {
+    create_with_outputs(parent, counts, action, false)
+}
+
+fn create_with_outputs(
+    parent: &faux::Device<device::Bound>,
+    counts: &Arc<Counts>,
+    action: EventAction,
+    second_output: bool,
+) -> Result<UnregisteredDevice<EventDriver>> {
+    let second_output = second_output || matches!(action, EventAction::RejectSibling);
     let observations = Arc::pin_init(
         pin_init!(Observations {
             counts: counts.clone(), delay: AtomicU32::new(0),
@@ -420,8 +456,10 @@ fn create_with_action(
         try_pin_init!(Data {
             observations,
             action,
+            second_output,
             crtc: AtomicPtr::new(core::ptr::null_mut()),
             connector: AtomicPtr::new(core::ptr::null_mut()),
+            sibling_crtc: AtomicPtr::new(core::ptr::null_mut()),
         }),
     )?;
     // SAFETY: Newly allocated device, exclusively owned until setup finishes.
@@ -447,9 +485,17 @@ fn delayed_flip_with_action(
     action: EventAction,
     deliver: impl FnOnce(&crtc::Crtc<EventCrtc>) -> bool,
 ) -> Result<FlipResult> {
+    delayed_flip_with_outputs(action, false, deliver)
+}
+
+fn delayed_flip_with_outputs(
+    action: EventAction,
+    second_output: bool,
+    deliver: impl FnOnce(&crtc::Crtc<EventCrtc>) -> bool,
+) -> Result<FlipResult> {
     let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
     let parent = faux::Registration::new(c"rust-kms-event", None)?;
-    let drm = create_with_action(parent.as_ref(), &counts, action)?;
+    let drm = create_with_outputs(parent.as_ref(), &counts, action, second_output)?;
     let observations = drm.observations.clone();
     let first = framebuffer(&drm)?;
     let second = framebuffer(&drm)?;
@@ -541,6 +587,56 @@ fn delayed_flip_with_action(
 #[kunit_tests(rust_drm_events)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn sibling_crtc_arm_preserves_event_for_retry() -> Result {
+        let mut distinct_sibling = false;
+        let mut live_objects = 0;
+        let result = delayed_flip_with_action(EventAction::RejectSibling, |crtc| {
+            distinct_sibling = sibling_crtc(crtc.drm_dev()).is_some_and(|sibling| {
+                sibling.as_raw() != crtc.as_raw()
+                    && sibling.drm_dev().as_raw() == crtc.drm_dev().as_raw()
+            });
+            live_objects = crtc
+                .drm_dev()
+                .observations
+                .counts
+                .objects
+                .load(Ordering::Relaxed);
+            crtc.handle_vblank()
+        })?;
+        assert!(distinct_sibling);
+        assert_eq!(live_objects, 8);
+        assert!(result.pending);
+        assert!(result.delivered);
+        assert_eq!(result.before, 2);
+        assert_eq!(result.after, 1);
+        assert_eq!(result.disabled, 0);
+        assert_eq!(result.error, 0);
+        assert_eq!(
+            result.observations.rejected_arm.load(Ordering::Relaxed),
+            EINVAL.to_errno()
+        );
+        assert_eq!(
+            result
+                .observations
+                .other_references_before
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            result.observations.other_references.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(result.observations.armed.load(Ordering::Relaxed), 1);
+        assert_eq!(result.observations.event_error.load(Ordering::Relaxed), 0);
+        assert_eq!(result.observations.detached.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            result.observations.counts.objects.load(Ordering::Relaxed),
+            0
+        );
+        Ok(())
+    }
 
     #[test]
     fn dropped_event_handle_can_be_reacquired() -> Result {

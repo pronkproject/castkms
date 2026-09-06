@@ -317,12 +317,13 @@ further lookup must see nothing. The old framebuffer still stays until the
 interrupt, and final disable still releases the remaining image.
 
 Arming that event with a vblank reference from the wrong CRTC must fail. The
-wrong CRTC belongs to a second virtual device of the same driver type.
-Taking that other reference can succeed; using it to arm the source event
-must return an invalid argument and drop the extra reference. Retrying with
-the source CRTC then follows the ordinary delayed-completion path. The case
-does not test two active outputs on one device or concurrent event-list
-updates.
+wrong CRTC may belong to a second virtual device of the same driver type, or
+to a second output on the same device. Taking that other reference can
+succeed; using it to arm the source event must return an invalid argument and
+drop the extra reference. Retrying with the source CRTC then follows the
+ordinary delayed-completion path. Only the source output is scanning out.
+This is not coverage of two outputs showing images at once, and it is not a
+test of concurrent updates to the native event list.
 
 These events are internal completion objects. They are not the page-flip
 events userspace reads from a DRM file. The schedules do not claim to cover
