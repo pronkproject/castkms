@@ -320,6 +320,13 @@ A mapping can be the last owner: dropping the original buffer and
 device handles must keep the device alive until unmap and buffer release
 finish. A borrowed mapping still cannot outlive the borrowed buffer.
 
+Reservations, the native mechanism that tracks who is using a buffer, have a
+cycle hazard. If a child buffer retains a parent on the same device, only the
+external child handle may take an extra device reference. The embedded parent
+must not, or display state that retains the child would keep its own device
+alive forever. The test checks that dropping the child restores the original
+device reference count; it does not submit GPU work.
+
 ### Page flips and vblank
 
 Showing a new image is not the same as the old image becoming free. The old
