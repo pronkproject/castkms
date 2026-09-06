@@ -890,6 +890,36 @@ mod cases {
     }
 
     #[test]
+    fn shared_reservation_retains_foreign_device() -> Result {
+        let first_counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let second_counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-foreign-reservation", None)?;
+        let first = create(parent.as_ref(), &first_counts, false)?;
+        let second = create(parent.as_ref(), &second_counts, false)?;
+        let owner = gem::shmem::Object::<TestObject>::new(&first, 4096, Default::default(), ())?;
+        let child = gem::shmem::Object::<TestObject>::new(
+            &second,
+            4096,
+            gem::shmem::ObjectConfig {
+                parent_resv_obj: Some(&owner),
+                ..Default::default()
+            },
+            (),
+        )?;
+        drop(owner);
+        drop(first);
+        drop(second);
+        let first_live = first_counts.objects.load(Ordering::Relaxed);
+        let second_live = second_counts.objects.load(Ordering::Relaxed);
+        drop(child);
+        assert_eq!(first_live, 4);
+        assert_eq!(second_live, 4);
+        assert_eq!(first_counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(second_counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn owned_shmem_retains_device() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-shmem-owner", None)?;

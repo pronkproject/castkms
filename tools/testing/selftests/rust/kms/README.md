@@ -324,8 +324,10 @@ Reservations, the native mechanism that tracks who is using a buffer, have a
 cycle hazard. If a child buffer retains a parent on the same device, only the
 external child handle may take an extra device reference. The embedded parent
 must not, or display state that retains the child would keep its own device
-alive forever. The test checks that dropping the child restores the original
-device reference count; it does not submit GPU work.
+alive forever. A child on one device that reserves a parent on another device
+must keep both devices alive until the child is released. These checks are
+about reference ownership, not GPU access, not importing a shared buffer from
+another device, and not completion of work that used the shared reservation.
 
 ### Page flips and vblank
 
