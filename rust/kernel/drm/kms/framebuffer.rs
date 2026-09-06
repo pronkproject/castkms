@@ -72,12 +72,12 @@ impl<T: KmsDriver> Eq for Framebuffer<T> {}
 unsafe impl<T: KmsDriver> AlwaysRefCounted for Framebuffer<T> {
     fn inc_ref(&self) {
         // SAFETY: A shared reference proves the framebuffer and its refcount are live.
-        unsafe { bindings::drm_framebuffer_get(self.0.get()) };
+        unsafe { bindings::drm_framebuffer_get(self.as_raw()) };
     }
 
     unsafe fn dec_ref(obj: core::ptr::NonNull<Self>) {
         // SAFETY: The caller transfers one live framebuffer reference to this method.
-        unsafe { bindings::drm_framebuffer_put(obj.as_ref().0.get()) };
+        unsafe { bindings::drm_framebuffer_put(obj.as_ref().as_raw()) };
     }
 }
 
@@ -207,6 +207,10 @@ where
 }
 
 impl<T: KmsDriver> Framebuffer<T> {
+    pub(super) fn as_raw(&self) -> *mut bindings::drm_framebuffer {
+        self.0.get()
+    }
+
     /// Convert a raw pointer to a `struct drm_framebuffer` into a [`Framebuffer`]
     ///
     /// # Safety
