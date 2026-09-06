@@ -61,12 +61,24 @@ pub trait VblankSupport: Sized {
 ///
 /// Drivers interested in implementing vblank support should refer to [`VblankSupport`], drivers
 /// that don't have vblank support can use [`PhantomData`].
-pub trait VblankImpl {
+pub trait VblankImpl: private::VblankImpl {
     /// The parent [`DriverCrtc`].
     type Crtc: DriverCrtc<VblankImpl = Self>;
 
     /// The generated [`VblankOps`].
     const VBLANK_OPS: VblankOps;
+}
+
+mod private {
+    use super::*;
+
+    // Only the two framework-generated implementations may supply callbacks. In particular,
+    // an implementation must not reuse a table whose callbacks expect a different CRTC type.
+    pub trait VblankImpl {}
+
+    impl<T: VblankSupport> VblankImpl for T {}
+
+    impl<T: DriverCrtc<VblankImpl = PhantomData<T>>> VblankImpl for PhantomData<T> {}
 }
 
 /// C FFI callbacks for vblank management.
