@@ -1107,12 +1107,15 @@ mod cases {
     fn registered_device_lifecycle() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-registration", None)?;
-        let registration = drm::Registration::new_static(
-            parent.as_ref().as_ref(),
-            allocate(parent.as_ref(), &counts, false)?,
-            Ok::<(), Error>(()),
-            0,
-        )?;
+        // SAFETY: Every return path drops registration before the owning faux parent.
+        let registration = unsafe {
+            drm::Registration::new_static(
+                parent.as_ref().as_ref(),
+                allocate(parent.as_ref(), &counts, false)?,
+                Ok::<(), Error>(()),
+                0,
+            )?
+        };
         let retained: ARef<Device<TestDriver>> = registration.device().into();
         let crtc_count = {
             let registered = registration.registration_guard().ok_or(ENODEV)?;
@@ -1142,12 +1145,15 @@ mod cases {
 
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-active-unplug", None)?;
-        let registration = drm::Registration::new_static(
-            parent.as_ref().as_ref(),
-            allocate(parent.as_ref(), &counts, false)?,
-            Ok::<(), Error>(()),
-            0,
-        )?;
+        // SAFETY: Every return path drops registration before the owning faux parent.
+        let registration = unsafe {
+            drm::Registration::new_static(
+                parent.as_ref().as_ref(),
+                allocate(parent.as_ref(), &counts, false)?,
+                Ok::<(), Error>(()),
+                0,
+            )?
+        };
         let retained: ARef<Device<TestDriver>> = registration.device().into();
         {
             let registered = registration.registration_guard().ok_or(ENODEV)?;
