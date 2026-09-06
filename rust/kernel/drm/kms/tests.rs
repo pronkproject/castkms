@@ -51,7 +51,8 @@ struct Data {
     counts: Arc<Counts>,
     fail_after_plane: bool,
     // Non-owning observations, filled before setup returns. Tests borrow the owning DRM device
-    // before using them; they never survive its teardown or expose objects to another thread.
+    // before using them and exclude object creation and teardown. Atomic state access on other
+    // tasks goes through transactions, which acquire the native per-object locks.
     plane: AtomicPtr<bindings::drm_plane>,
     crtc: AtomicPtr<bindings::drm_crtc>,
     connector: AtomicPtr<bindings::drm_connector>,
@@ -463,6 +464,119 @@ fn mode() -> Result<modes::DisplayMode> {
         vsync_end: 492,
         vtotal: 525,
         flags: modes::ModeFlags::NHSYNC | modes::ModeFlags::NVSYNC,
+    })
+}
+
+struct ContentionResult {
+    result: Result,
+    older_errno: i32,
+    attempts: u32,
+    deadlocks: u32,
+    fresh: bool,
+    published: u64,
+    objects: u32,
+    plane_states: u32,
+    crtc_states: u32,
+}
+
+// Force opposing lock order with two real acquire contexts. No lock-error injection is used.
+fn contended_update(check_only: bool, consume_deadlock: bool) -> Result<ContentionResult> {
+    use crate::{sync::Completion, workqueue};
+    use core::sync::atomic::AtomicI32;
+    use crtc::AsRawCrtc;
+    use plane::AsRawPlane;
+
+    let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+    let parent = faux::Registration::new(c"rust-kms-contention", None)?;
+    let dev = create(parent.as_ref(), &counts, false)?;
+    let older_has_crtc = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+    let younger_has_plane = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+    let done = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+    let older_errno = Arc::new(AtomicI32::new(0), GFP_KERNEL)?;
+    let worker_dev: ARef<Device<TestDriver>> = (&*dev).into();
+    let worker_crtc = older_has_crtc.clone();
+    let worker_plane = younger_has_plane.clone();
+    let worker_done = done.clone();
+    let worker_errno = older_errno.clone();
+    workqueue::system_dfl().try_spawn(GFP_KERNEL, move || {
+        // SAFETY: Setup completed before spawn. The test owns the device and excludes object
+        // creation, registration and teardown until both transactions have returned.
+        let result = unsafe {
+            let crtc = crtc::Crtc::<TestCrtc>::from_raw(worker_dev.crtc.load(Ordering::Relaxed));
+            let plane =
+                plane::Plane::<TestPlane>::from_raw(worker_dev.plane.load(Ordering::Relaxed));
+            atomic::run_check(&worker_dev, |state| {
+                let _crtc = state.add_crtc_state(crtc)?;
+                worker_crtc.complete_all();
+                worker_plane.wait_for_completion();
+                let _plane = state.add_plane_state(plane)?;
+                Ok(())
+            })
+        };
+        worker_errno.store(result.err().map_or(0, Error::to_errno), Ordering::Release);
+        // Wake the main task even if the older transaction failed before its callback ran.
+        worker_crtc.complete_all();
+        drop(worker_dev);
+        worker_done.complete_all();
+    })?;
+    older_has_crtc.wait_for_completion();
+    // SAFETY: The initialized device owns these objects until after both tasks finish. Each
+    // transaction acquires its own object locks before accessing mutable state.
+    let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(dev.crtc.load(Ordering::Relaxed)) };
+    let plane = unsafe { plane::Plane::<TestPlane>::from_raw(dev.plane.load(Ordering::Relaxed)) };
+    let mut attempts = 0;
+    let mut deadlocks = 0;
+    let mut fresh = true;
+    let update = |state: Pin<&mut atomic::AtomicStateComposer<TestDriver>>| {
+        attempts += 1;
+        let mut plane_state = state.add_plane_state(plane)?;
+        fresh &= *plane_state.value == 0;
+        *plane_state.value = 17;
+        younger_has_plane.complete_all();
+        match state.add_crtc_state(crtc) {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if error == EDEADLK {
+                    deadlocks += 1;
+                    if consume_deadlock {
+                        return Ok(());
+                    }
+                }
+                Err(error)
+            }
+        }
+    };
+    // SAFETY: Setup completed, and neither task registers or tears down the device. Starting
+    // only after the older task acquired its CRTC establishes the acquire-context age order.
+    let result = unsafe {
+        if check_only {
+            atomic::run_check(&dev, update)
+        } else {
+            atomic::run_update(&dev, update)
+        }
+    };
+    // No early return after spawning: unblock the worker even on allocation/callback failure.
+    younger_has_plane.complete_all();
+    done.wait_for_completion();
+    let mut published = 0;
+    // SAFETY: Both concurrent attempts ended, and the same initialized-device exclusion holds.
+    unsafe {
+        atomic::run_check(&dev, |state| {
+            published = *state.add_plane_state(plane)?.value;
+            Ok(())
+        })
+    }?;
+    drop(dev);
+    Ok(ContentionResult {
+        result,
+        older_errno: older_errno.load(Ordering::Acquire),
+        attempts,
+        deadlocks,
+        fresh,
+        published,
+        objects: counts.objects.load(Ordering::Relaxed),
+        plane_states: counts.plane_states.load(Ordering::Relaxed),
+        crtc_states: counts.crtc_states.load(Ordering::Relaxed),
     })
 }
 
@@ -1336,6 +1450,74 @@ mod cases {
         assert_eq!(check, Ok(()));
         assert!(rejected);
         assert_eq!(finished.load(Ordering::Acquire), 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn contended_atomic_check_retries_fresh_state() -> Result {
+        let observed = contended_update(true, false)?;
+        assert_eq!(observed.result, Ok(()));
+        assert_eq!(observed.older_errno, 0);
+        assert!(observed.attempts >= 2);
+        assert!(observed.deadlocks >= 1);
+        assert!(observed.fresh);
+        assert_eq!(observed.published, 0);
+        assert_eq!(observed.objects, 0);
+        assert_eq!(observed.plane_states, 0);
+        assert_eq!(observed.crtc_states, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn contended_atomic_commit_retries_fresh_state() -> Result {
+        let observed = contended_update(false, false)?;
+        assert_eq!(observed.result, Ok(()));
+        assert_eq!(observed.older_errno, 0);
+        assert!(observed.attempts >= 2);
+        assert!(observed.deadlocks >= 1);
+        assert!(observed.fresh);
+        assert_eq!(observed.published, 17);
+        assert_eq!(observed.objects, 0);
+        assert_eq!(observed.plane_states, 0);
+        assert_eq!(observed.crtc_states, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn consumed_deadlock_still_retries_before_commit() -> Result {
+        let observed = contended_update(false, true)?;
+        assert_eq!(observed.result, Ok(()));
+        assert_eq!(observed.older_errno, 0);
+        assert!(observed.attempts >= 2);
+        assert!(observed.deadlocks >= 1);
+        assert!(observed.fresh);
+        assert_eq!(observed.published, 17);
+        assert_eq!(observed.objects, 0);
+        assert_eq!(observed.plane_states, 0);
+        assert_eq!(observed.crtc_states, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn unbacked_deadlock_error_is_not_retried() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-unbacked-deadlock", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let mut attempts = 0;
+        // SAFETY: The device completed setup and remains unregistered on this task.
+        let result = unsafe {
+            atomic::run_update(&dev, |_| {
+                attempts += 1;
+                Err(EDEADLK)
+            })
+        };
+        // SAFETY: The same setup and teardown exclusion holds for the subsequent operation.
+        let retry = unsafe { atomic::run_check(&dev, |_| Ok(())) };
+        drop(dev);
+        assert_eq!(result, Err(EDEADLK));
+        assert_eq!(attempts, 1);
+        assert_eq!(retry, Ok(()));
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
