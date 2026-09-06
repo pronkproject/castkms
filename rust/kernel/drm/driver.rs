@@ -138,7 +138,7 @@ pub trait Driver {
     /// The KMS implementation for this driver.
     ///
     /// Drivers that wish to support KMS should pass their implementation of `drm::kms::KmsDriver`
-    /// here. Drivers which do not have KMS support can simply pass `drm::kms::NoKms` here.
+    /// here. Drivers which do not have KMS support should use `core::marker::PhantomData<Self>`.
     type Kms: drm::kms::KmsImpl<Driver = Self>
     where
         Self: Sized;
