@@ -311,6 +311,11 @@ framework's automatic wait for flip completion makes both cases fail their
 "still pending" check. The driver callback omits an explicit wait, so the
 framework must supply it before releasing the old state.
 
+Looking up the pending event and dropping the handle without sending or arming
+it must not lose the event. A later lookup can still arm it. After arming, a
+further lookup must see nothing. The old framebuffer still stays until the
+interrupt, and final disable still releases the remaining image.
+
 These events are internal completion objects. They are not the page-flip
 events userspace reads from a DRM file. The schedules do not claim to cover
 arbitrary interrupt races, a GPU still reading the old buffer, concurrent

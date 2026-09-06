@@ -23,6 +23,8 @@ struct Observations {
     enable_calls: AtomicU32,
     event_error: AtomicI32,
     armed: AtomicU32,
+    dropped_handle: AtomicU32,
+    detached: AtomicU32,
     clock: AtomicI32,
     #[pin]
     programmed: Completion,
@@ -31,9 +33,15 @@ struct Observations {
 #[pin_data]
 struct Data {
     observations: Arc<Observations>,
+    action: EventAction,
     // Initialized before setup returns; consumers retain the device and exclude teardown.
     crtc: AtomicPtr<bindings::drm_crtc>,
     connector: AtomicPtr<bindings::drm_connector>,
+}
+
+enum EventAction {
+    Arm,
+    DropThenArm,
 }
 
 struct EventDriver;
@@ -176,6 +184,16 @@ impl crtc::DriverCrtc for EventCrtc {
             .clock
             .store(new.adjusted_mode().crtc_clock(), Ordering::Relaxed);
         if observations.delay.load(Ordering::Relaxed) != 0 {
+            match &crtc.drm_dev().action {
+                EventAction::Arm => {}
+                EventAction::DropThenArm => {
+                    let event = commit.get_pending_vblank_event();
+                    observations
+                        .dropped_handle
+                        .store(u32::from(event.is_some()), Ordering::Relaxed);
+                    drop(event);
+                }
+            }
             let result = crtc.vblank_get().and_then(|reference| {
                 commit
                     .get_pending_vblank_event()
@@ -192,6 +210,10 @@ impl crtc::DriverCrtc for EventCrtc {
                         .store(error.to_errno(), Ordering::Relaxed);
                 }
             }
+            observations.detached.store(
+                u32::from(commit.get_pending_vblank_event().is_none()),
+                Ordering::Relaxed,
+            );
         }
         // Immediate updates and rejected arms must still finish their native event.
         if let Some(event) = commit.get_pending_vblank_event() {
@@ -348,11 +370,20 @@ fn create(
     parent: &faux::Device<device::Bound>,
     counts: &Arc<Counts>,
 ) -> Result<UnregisteredDevice<EventDriver>> {
+    create_with_action(parent, counts, EventAction::Arm)
+}
+
+fn create_with_action(
+    parent: &faux::Device<device::Bound>,
+    counts: &Arc<Counts>,
+    action: EventAction,
+) -> Result<UnregisteredDevice<EventDriver>> {
     let observations = Arc::pin_init(
         pin_init!(Observations {
             counts: counts.clone(), delay: AtomicU32::new(0),
             fail_enable: AtomicU32::new(0), enable_calls: AtomicU32::new(0),
             event_error: AtomicI32::new(0), armed: AtomicU32::new(0),
+            dropped_handle: AtomicU32::new(0), detached: AtomicU32::new(0),
             clock: AtomicI32::new(0), programmed <- Completion::new(),
         }),
         GFP_KERNEL,
@@ -361,6 +392,7 @@ fn create(
         parent,
         try_pin_init!(Data {
             observations,
+            action,
             crtc: AtomicPtr::new(core::ptr::null_mut()),
             connector: AtomicPtr::new(core::ptr::null_mut()),
         }),
@@ -381,9 +413,16 @@ struct FlipResult {
 }
 
 fn delayed_flip(deliver: impl FnOnce(&crtc::Crtc<EventCrtc>) -> bool) -> Result<FlipResult> {
+    delayed_flip_with_action(EventAction::Arm, deliver)
+}
+
+fn delayed_flip_with_action(
+    action: EventAction,
+    deliver: impl FnOnce(&crtc::Crtc<EventCrtc>) -> bool,
+) -> Result<FlipResult> {
     let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
     let parent = faux::Registration::new(c"rust-kms-event", None)?;
-    let drm = create(parent.as_ref(), &counts)?;
+    let drm = create_with_action(parent.as_ref(), &counts, action)?;
     let observations = drm.observations.clone();
     let first = framebuffer(&drm)?;
     let second = framebuffer(&drm)?;
@@ -475,6 +514,30 @@ fn delayed_flip(deliver: impl FnOnce(&crtc::Crtc<EventCrtc>) -> bool) -> Result<
 #[kunit_tests(rust_drm_events)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn dropped_event_handle_can_be_reacquired() -> Result {
+        let result =
+            delayed_flip_with_action(EventAction::DropThenArm, |crtc| crtc.handle_vblank())?;
+        assert!(result.pending);
+        assert!(result.delivered);
+        assert_eq!(result.before, 2);
+        assert_eq!(result.after, 1);
+        assert_eq!(result.disabled, 0);
+        assert_eq!(result.error, 0);
+        assert_eq!(
+            result.observations.dropped_handle.load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(result.observations.armed.load(Ordering::Relaxed), 1);
+        assert_eq!(result.observations.event_error.load(Ordering::Relaxed), 0);
+        assert_eq!(result.observations.detached.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            result.observations.counts.objects.load(Ordering::Relaxed),
+            0
+        );
+        Ok(())
+    }
 
     #[test]
     fn owned_vblank_reference_retains_device() -> Result {
