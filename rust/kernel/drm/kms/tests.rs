@@ -831,6 +831,48 @@ mod cases {
 
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
+    fn same_device_import_reuses_original_object() -> Result {
+        use gem::IntoGEMObject;
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-prime-self", None)?;
+        // SAFETY: Registration is released before the owning faux parent on every return path.
+        let registration = unsafe {
+            drm::Registration::new_static(
+                parent.as_ref().as_ref(),
+                allocate(parent.as_ref(), &counts, false)?,
+                Ok::<(), Error>(()),
+                0,
+            )?
+        };
+        let client = HandleClient::new(registration.device())?;
+        let buffer = client.export_dumb()?;
+        counts.fail_prime_import.store(1, Ordering::Relaxed);
+        let imported = {
+            let guard = registration.registration_guard().ok_or(ENODEV)?;
+            gem::shmem::Object::<TestObject>::import(&guard, &buffer)?
+        };
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.gem_creations.load(Ordering::Relaxed), 1);
+        // SAFETY: Native PRIME completed import; local backing fields are immutable. The
+        // exporter reference owns the original object identified by dma_buf.priv.
+        let (attachment, original) =
+            unsafe { ((*imported.as_raw()).import_attach, (*buffer.as_raw()).priv_) };
+        assert!(attachment.is_null());
+        assert_eq!(imported.as_raw().cast::<core::ffi::c_void>(), original);
+        drop(client);
+        drop(buffer);
+        drop(registration);
+        drop(imported);
+        // SAFETY: Drain deferred DMA-BUF release on the KUnit kernel thread without held locks.
+        unsafe { bindings::flush_delayed_fput() };
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
     fn foreign_import_retains_typed_storage_without_vmap() -> Result {
         use gem::{BaseObject, IntoGEMObject};
 
