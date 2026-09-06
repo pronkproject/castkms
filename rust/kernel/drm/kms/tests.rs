@@ -383,6 +383,28 @@ mod cases {
     }
 
     #[test]
+    fn initialized_mode_config_lock() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-config-lock", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: Successful setup initialized mode configuration, and only this thread has
+        // access to the unregistered device's objects.
+        let dev = unsafe { UnregisteredKmsDevice::new(&drm) };
+        let guard = dev.mode_config_lock();
+        let first_matches = ptr::eq(guard.drm_dev(), &*drm);
+        drop(guard);
+        // Reacquiring also exercises the first guard's unlock path.
+        let guard = dev.mode_config_lock();
+        let second_matches = ptr::eq(guard.drm_dev(), &*drm);
+        drop(guard);
+        drop(drm);
+        assert!(first_matches);
+        assert!(second_matches);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn partial_object_setup_unwinds() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
