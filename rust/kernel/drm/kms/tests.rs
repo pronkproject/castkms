@@ -347,4 +347,41 @@ mod cases {
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
+
+    #[test]
+    fn foreign_cursor_is_rejected() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent_a = faux::Registration::new(c"rust-kms-cursor-a", None)?;
+        let parent_b = faux::Registration::new(c"rust-kms-cursor-b", None)?;
+        let a = create(parent_a.as_ref(), &counts, false)?;
+        let b = create(parent_b.as_ref(), &counts, false)?;
+        // SAFETY: The devices are unregistered and own the observed objects for this scope.
+        let dev_a = unsafe { UnregisteredKmsDevice::new(&a) };
+        // SAFETY: b also remains unregistered; the extra cursor is owned by it until teardown.
+        let dev_b = unsafe { UnregisteredKmsDevice::new(&b) };
+        let primary = unsafe {
+            plane::UnregisteredPlane::<TestPlane>::from_raw(a.plane.load(Ordering::Relaxed))
+        };
+        let foreign = plane::UnregisteredPlane::<TestPlane>::new(
+            &dev_b,
+            1,
+            &[fourcc::ARGB8888],
+            Some(&[fourcc::FORMAT_MOD_LINEAR]),
+            plane::Type::Cursor,
+            None,
+            (),
+        )?;
+        assert_eq!(
+            crtc::UnregisteredCrtc::<TestCrtc>::new(&dev_a, primary, Some(foreign), None, (),)
+                .err(),
+            Some(EINVAL)
+        );
+        assert_eq!(a.num_crtcs(), 1);
+        assert_eq!(b.num_crtcs(), 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 9);
+        drop(a);
+        drop(b);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 }
