@@ -62,11 +62,36 @@ declare_encoder_types! {
 /// [`struct drm_encoder`]: srctree/include/drm/drm_encoder.h
 #[vtable]
 pub trait DriverEncoder: Send + Sync + Sized {
-    /// The generated C vtable for this [`DriverEncoder`] implementation.
+    /// The parent driver for this drm_encoder implementation
+    type Driver: KmsDriver;
+
+    /// The type to pass to the `args` field of [`UnregisteredEncoder::new`].
+    ///
+    /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
+    /// don't need this can simply pass [`()`] here.
+    type Args;
+
+    /// The constructor for creating a [`Encoder`] using this [`DriverEncoder`] implementation.
+    ///
+    /// Drivers may use this to instantiate their [`DriverEncoder`] object.
+    fn new(device: &Device<Self::Driver>, args: Self::Args) -> impl PinInit<Self, Error>;
+}
+
+/// The generated C vtable for a [`DriverEncoder`].
+///
+/// This type is created internally by DRM.
+struct DriverEncoderOps {
+    funcs: bindings::drm_encoder_funcs,
+    helper_funcs: bindings::drm_encoder_helper_funcs,
+}
+
+// Keep callback generation outside the driver trait: its implementation must not substitute
+// callbacks that cast the C allocation to another Rust type.
+impl<T: DriverEncoder> Encoder<T> {
     const OPS: &'static DriverEncoderOps = &DriverEncoderOps {
         funcs: bindings::drm_encoder_funcs {
             reset: None,
-            destroy: Some(encoder_destroy_callback::<Self>),
+            destroy: Some(encoder_destroy_callback::<T>),
             late_register: None,
             early_unregister: None,
             debugfs_init: None,
@@ -87,28 +112,6 @@ pub trait DriverEncoder: Send + Sync + Sized {
             atomic_mode_set: None,
         },
     };
-
-    /// The parent driver for this drm_encoder implementation
-    type Driver: KmsDriver;
-
-    /// The type to pass to the `args` field of [`UnregisteredEncoder::new`].
-    ///
-    /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
-    /// don't need this can simply pass [`()`] here.
-    type Args;
-
-    /// The constructor for creating a [`Encoder`] using this [`DriverEncoder`] implementation.
-    ///
-    /// Drivers may use this to instantiate their [`DriverEncoder`] object.
-    fn new(device: &Device<Self::Driver>, args: Self::Args) -> impl PinInit<Self, Error>;
-}
-
-/// The generated C vtable for a [`DriverEncoder`].
-///
-/// This type is created internally by DRM.
-pub struct DriverEncoderOps {
-    funcs: bindings::drm_encoder_funcs,
-    helper_funcs: bindings::drm_encoder_helper_funcs,
 }
 
 /// A trait implemented by any type that acts as a [`struct drm_encoder`] interface.
@@ -305,7 +308,7 @@ impl<T: DriverEncoder> UnregisteredEncoder<T> {
         let this: Pin<KBox<Encoder<T>>> = KBox::try_pin_init(
             try_pin_init!(Encoder {
                 encoder: Opaque::new(bindings::drm_encoder {
-                    helper_private: &T::OPS.helper_funcs,
+                    helper_private: &Encoder::<T>::OPS.helper_funcs,
                     possible_crtcs,
                     possible_clones,
                     ..Default::default()
@@ -327,7 +330,7 @@ impl<T: DriverEncoder> UnregisteredEncoder<T> {
             bindings::drm_encoder_init(
                 dev.as_raw(),
                 this.as_raw(),
-                &T::OPS.funcs,
+                &Encoder::<T>::OPS.funcs,
                 type_ as _,
                 name.map_or(null(), |_| c"%s".as_char_ptr()),
                 name.map_or(null(), |n| n.as_char_ptr()),
