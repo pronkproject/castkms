@@ -1137,6 +1137,73 @@ mod cases {
     }
 
     #[test]
+    fn registered_unplug_disables_scanout() -> Result {
+        use connector::AsRawConnector;
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-active-unplug", None)?;
+        let registration = drm::Registration::new_static(
+            parent.as_ref().as_ref(),
+            allocate(parent.as_ref(), &counts, false)?,
+            Ok::<(), Error>(()),
+            0,
+        )?;
+        let retained: ARef<Device<TestDriver>> = registration.device().into();
+        {
+            let registered = registration.registration_guard().ok_or(ENODEV)?;
+            // SAFETY: Registration completed setup. The device reference owns these immutable
+            // mode objects, and the guard excludes unplug while the transaction uses them.
+            let crtc = unsafe {
+                crtc::Crtc::<TestCrtc>::from_raw(registered.crtc.load(Ordering::Relaxed))
+            };
+            let connector = unsafe {
+                connector::Connector::<TestConnector>::from_raw(
+                    registered.connector.load(Ordering::Relaxed),
+                )
+            };
+            let fb = framebuffer(&registered)?;
+            let mode = mode()?;
+            let scanout = atomic::CrtcScanout {
+                mode: &mode,
+                framebuffer: &fb,
+                connectors: &[connector],
+                position: (0, 0),
+            };
+            registered.check_atomic_update(|state| state.set_crtc_config(crtc, Some(&scanout)))?;
+            registered.atomic_update(|state| state.set_crtc_config(crtc, Some(&scanout)))?;
+            // The published plane retains the framebuffer when this client reference is dropped.
+        }
+        let before = counts.disables.load(Ordering::Relaxed);
+        drop(registration);
+        // SAFETY: Unplug completed its shutdown transaction and no clients remain. retained
+        // owns the device, and no further publication or framebuffer creation takes place.
+        let (active, selected, framebuffers) = unsafe {
+            (
+                (*(*retained.crtc.load(Ordering::Relaxed)).state).active,
+                (*(*retained.plane.load(Ordering::Relaxed)).state).fb,
+                (*retained.as_raw()).mode_config.num_fb,
+            )
+        };
+        // SAFETY: The retained device completed registration earlier in this test.
+        let rejected = unsafe { retained.assume_ctx::<drm::Ioctl>() }
+            .registration_guard()
+            .is_none();
+        drop(retained);
+        assert_eq!(before, 0);
+        assert_eq!(counts.enables.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.disables.load(Ordering::Relaxed), 1);
+        assert!(!active);
+        assert!(selected.is_null());
+        assert_eq!(framebuffers, 0);
+        assert!(rejected);
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn partial_object_setup_unwinds() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
