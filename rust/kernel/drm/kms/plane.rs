@@ -394,6 +394,8 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
         //   - `formats`
         //   - `format_modifiers_raw`
         //   - `name`
+        // - A supplied name is a string argument to the fixed "%s" format, not a format itself.
+        //   A NULL format preserves DRM's default name when no name was supplied.
         // - `type_` is equivalent to `drm_plane_type` via its type invariants.
         to_result(unsafe {
             bindings::drm_universal_plane_init(
@@ -405,6 +407,7 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
                 formats.len() as _,
                 format_modifiers_raw.as_ref().map_or(null(), |f| f.as_ptr()),
                 type_ as _,
+                name.map_or(null(), |_| c"%s".as_char_ptr()),
                 name.map_or(null(), |n| n.as_char_ptr()),
             )
         })?;
