@@ -331,7 +331,7 @@ impl<T: DriverObject> Object<T> {
         Ok(sgt_res.access(dev)?)
     }
 
-    /// Create a new shmem-backed DRM object of the given size.
+    /// Create a new shmem-backed DRM object with a nonzero, page-aligned size.
     ///
     /// Additional config options can be specified using `config`.
     pub fn new(
@@ -428,6 +428,7 @@ impl<T: DriverObject> Object<T> {
         config: ObjectConfig<'_, T>,
         args: T::Args,
     ) -> Result<gem::ObjectRef<Self>> {
+        gem::validate_size(size)?;
         let new: Pin<KBox<Self>> = KBox::try_pin_init(
             try_pin_init!(Self {
                 obj <- Opaque::init_zeroed(),
@@ -817,6 +818,19 @@ mod tests {
         let drm = UnregisteredDevice::new(fdev, data)?;
 
         Ok((reg, drm))
+    }
+
+    #[test]
+    fn explicit_allocation_rejects_invalid_size() -> Result {
+        let (_parent, drm) = create_drm_dev()?;
+        for size in [0, 1, PAGE_SIZE - 1, PAGE_SIZE + 1, usize::MAX] {
+            assert_eq!(
+                Object::<KunitObject>::new(&drm, size, ObjectConfig::default(), ()).err(),
+                Some(EINVAL)
+            );
+            assert_eq!(drm.counts.live.load(Ordering::Relaxed), 0);
+        }
+        Ok(())
     }
 
     #[test]
