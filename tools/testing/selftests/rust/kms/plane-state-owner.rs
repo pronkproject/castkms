@@ -18,4 +18,12 @@ pub struct Other<S>(S);
 #[cfg(negative)]
 impl<S: DriverPlaneState> DriverPlaneState for Other<S> {
     type Plane = S::Plane;
+
+    fn new(_: &Plane<Self::Plane>) -> kernel::error::Result<Self> {
+        Err(kernel::error::code::EINVAL)
+    }
+
+    fn duplicate(&self) -> kernel::error::Result<Self> {
+        Err(kernel::error::code::EINVAL)
+    }
 }

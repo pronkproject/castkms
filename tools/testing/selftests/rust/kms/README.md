@@ -242,7 +242,7 @@ Drivers hang private data off CRTC, plane, and connector state. That
 allocation can fail, and a failed setup must not leave a half-attached
 property or a published copy that was never meant to be visible.
 
-The tests cover three transitions for CRTC state: construction failure,
+The tests cover three transitions for CRTC and plane state: construction failure,
 duplication failure, and a successful copy that can be changed without
 changing the published original. They retry after failure and check that live
 private-data counts return to zero. Failure is injected at the private-data

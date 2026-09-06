@@ -1011,7 +1011,7 @@ impl<T: AsRawPlaneState + ?Sized> RawPlaneState for T {}
 /// type.
 ///
 /// Only DRM's state callbacks construct and initialize this wrapper with its parent plane.
-/// [`Default`] initializes the driver-private payload, not the wrapper.
+/// [`DriverPlaneState::new`] initializes the driver-private payload, not the wrapper.
 ///
 /// # Invariants
 ///
@@ -1045,9 +1045,22 @@ pub struct PlaneState<T: DriverPlaneState> {
 ///
 /// [`struct drm_plane`]: srctree/include/drm_plane.h
 /// [`struct drm_plane_state`]: srctree/include/drm_plane.h
-pub trait DriverPlaneState: Clone + Default + Sized + Send + Sync {
+pub trait DriverPlaneState: Sized + Send + Sync {
     /// The type for this driver's drm_plane implementation
     type Plane: DriverPlane<State = Self>;
+
+    /// Construct the initial private payload before the state is published.
+    ///
+    /// Failure aborts initial-state setup with the returned error. The plane and its driver data
+    /// are initialized, but its published atomic state need not exist yet.
+    fn new(plane: &Plane<Self::Plane>) -> Result<Self>;
+
+    /// Duplicate a published private payload for an unpublished transaction.
+    ///
+    /// The source remains shared read-only. Allocate private storage fallibly here instead of
+    /// hiding allocations in `Clone`. DRM's duplicate-state callback reports any failure as
+    /// `ENOMEM`; it does not carry a distinct error code.
+    fn duplicate(&self) -> Result<Self>;
 }
 
 impl<T: DriverPlaneState> Sealed for PlaneState<T> {}
@@ -1343,7 +1356,7 @@ unsafe extern "C" fn atomic_duplicate_state_callback<T: DriverPlaneState>(
 
     let new: Result<KBox<_>> = KBox::try_init(
         try_init!(PlaneState {
-            inner: state.inner.clone(),
+            inner: state.inner.duplicate()?,
             state: bindings::drm_plane_state {
                 ..Default::default()
             },
@@ -1380,15 +1393,18 @@ unsafe extern "C" fn atomic_destroy_state_callback<T: DriverPlaneState>(
 unsafe extern "C" fn atomic_create_state_callback<T: DriverPlaneState>(
     plane: *mut bindings::drm_plane,
 ) -> *mut bindings::drm_plane_state {
-    let new = match KBox::new(
-        PlaneState::<T> {
+    // SAFETY: The generated callback belongs to this initialized Rust plane type.
+    let parent = unsafe { Plane::<T::Plane>::from_raw(plane) };
+    let new: Result<KBox<PlaneState<T>>> = KBox::try_init(
+        try_init!(PlaneState {
             state: Default::default(),
-            inner: T::default(),
-        },
+            inner: T::new(parent)?,
+        }),
         GFP_KERNEL,
-    ) {
+    );
+    let new = match new {
         Ok(new) => KBox::into_raw(new).cast(),
-        Err(err) => return Error::from(err).to_ptr(),
+        Err(err) => return err.to_ptr(),
     };
 
     // SAFETY: `new` is an owned PlaneState<T> allocation and DRM supplies its valid parent plane.

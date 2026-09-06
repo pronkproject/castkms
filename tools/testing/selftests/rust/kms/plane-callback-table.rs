@@ -30,6 +30,14 @@ impl<T: DriverPlane> Default for Payload<T> {
 
 impl<T: DriverPlane> DriverPlaneState for Payload<T> {
     type Plane = Replacement<T>;
+
+    fn new(_: &Plane<Self::Plane>) -> Result<Self> {
+        Ok(Self(PhantomData))
+    }
+
+    fn duplicate(&self) -> Result<Self> {
+        Ok(Self(PhantomData))
+    }
 }
 
 #[vtable]

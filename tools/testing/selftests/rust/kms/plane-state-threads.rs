@@ -19,4 +19,12 @@ where
     P: DriverPlane<State = Self> + Clone + Default,
 {
     type Plane = P;
+
+    fn new(_: &Plane<Self::Plane>) -> kernel::error::Result<Self> {
+        Ok(Self::default())
+    }
+
+    fn duplicate(&self) -> kernel::error::Result<Self> {
+        Ok(self.clone())
+    }
 }

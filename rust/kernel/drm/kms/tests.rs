@@ -21,6 +21,8 @@ struct Counts {
     disables: AtomicU32,
     crtc_states: AtomicU32,
     fail_crtc_state_alloc: AtomicU32,
+    plane_states: AtomicU32,
+    fail_plane_state_alloc: AtomicU32,
 }
 
 // No device reference: keeping a mode object alive must not create a device ownership cycle.
@@ -71,8 +73,10 @@ struct TestConnector {
     life: Lifetime,
 }
 
-#[derive(Clone, Default)]
-struct PlanePayload;
+struct PlanePayload {
+    counts: Arc<Counts>,
+    value: KBox<u64>,
+}
 struct CrtcPayload {
     counts: Arc<Counts>,
     value: KBox<u64>,
@@ -82,7 +86,37 @@ struct ConnectorPayload;
 
 impl plane::DriverPlaneState for PlanePayload {
     type Plane = TestPlane;
+
+    fn new(plane: &plane::Plane<Self::Plane>) -> Result<Self> {
+        Self::allocate(&plane.life.0, 0)
+    }
+
+    fn duplicate(&self) -> Result<Self> {
+        Self::allocate(&self.counts, *self.value)
+    }
 }
+
+impl PlanePayload {
+    fn allocate(counts: &Arc<Counts>, value: u64) -> Result<Self> {
+        // Reject at the payload boundary without injecting a slab allocation failure.
+        if counts.fail_plane_state_alloc.load(Ordering::Relaxed) != 0 {
+            return Err(ENOMEM);
+        }
+        let value = KBox::new(value, GFP_KERNEL)?;
+        counts.plane_states.fetch_add(1, Ordering::Relaxed);
+        Ok(Self {
+            counts: counts.clone(),
+            value,
+        })
+    }
+}
+
+impl Drop for PlanePayload {
+    fn drop(&mut self) {
+        self.counts.plane_states.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl crtc::DriverCrtcState for CrtcPayload {
     type Crtc = TestCrtc;
 
@@ -814,6 +848,99 @@ mod cases {
         }?;
         drop(drm);
         assert_eq!(observed, (7, 7));
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn plane_payload_initialization_failure_unwinds() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-plane-state-init", None)?;
+        counts.fail_plane_state_alloc.store(1, Ordering::Relaxed);
+        let failed = create(parent.as_ref(), &counts, false).err();
+        let remaining = counts.objects.load(Ordering::Relaxed);
+        counts.fail_plane_state_alloc.store(0, Ordering::Relaxed);
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let initialized = counts.plane_states.load(Ordering::Relaxed);
+        drop(drm);
+        assert_eq!(failed, Some(ENOMEM));
+        assert_eq!(remaining, 0);
+        assert_eq!(initialized, 1);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn plane_payload_duplication_failure_preserves_state() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-plane-state-dup", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: Full setup completed; the private device has no concurrent users.
+        let plane =
+            unsafe { plane::Plane::<TestPlane>::from_raw(drm.plane.load(Ordering::Relaxed)) };
+        let initial = unsafe { (*plane.as_raw()).state };
+        counts.fail_plane_state_alloc.store(1, Ordering::Relaxed);
+        // SAFETY: Initial states exist with no concurrent setup, registration or teardown.
+        let failed = unsafe {
+            atomic::run_check(&drm, |state| {
+                let _new = state.add_plane_state(plane)?;
+                Ok(())
+            })
+        };
+        // SAFETY: Validation returned; no other task modifies the published state.
+        let unchanged = unsafe { (*plane.as_raw()).state == initial };
+        let remaining = counts.plane_states.load(Ordering::Relaxed);
+        counts.fail_plane_state_alloc.store(0, Ordering::Relaxed);
+        // SAFETY: Same exclusive initialized-device lifetime as the failed check.
+        unsafe {
+            atomic::run_check(&drm, |state| {
+                let _new = state.add_plane_state(plane)?;
+                Ok(())
+            })
+        }?;
+        drop(drm);
+        assert_eq!(failed, Err(ENOMEM));
+        assert!(unchanged);
+        assert_eq!(remaining, 1);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn plane_payload_duplication_is_independent() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-plane-state-copy", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: Setup completed and this task exclusively owns the unregistered device.
+        let plane =
+            unsafe { plane::Plane::<TestPlane>::from_raw(drm.plane.load(Ordering::Relaxed)) };
+        let mut observed = (0, 0);
+        // SAFETY: Initial states exist and setup, registration and teardown are excluded.
+        unsafe {
+            atomic::run_update(&drm, |state| {
+                *state.add_plane_state(plane)?.value = 7;
+                Ok(())
+            })
+        }?;
+        // SAFETY: Same initialized-device exclusion as the preceding update. Only the
+        // unpublished copy is mutated; the old payload remains shared read-only.
+        unsafe {
+            atomic::run_check(&drm, |state| {
+                let mut new = state.add_plane_state(plane)?;
+                observed.0 = *new.value;
+                *new.value = 9;
+                observed.1 = *state.get_old_plane_state(plane).ok_or(EINVAL)?.value;
+                Ok(())
+            })
+        }?;
+        drop(drm);
+        assert_eq!(observed, (7, 7));
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
         assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())

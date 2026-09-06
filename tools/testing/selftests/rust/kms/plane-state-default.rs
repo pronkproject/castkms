@@ -4,9 +4,9 @@
 
 use kernel::drm::kms::plane::*;
 
-// Driver-private defaults remain available; only DRM constructs the wrapper
+// Driver-private defaults remain optional; only DRM constructs the wrapper
 // that promises an initialized parent plane.
-pub fn private_default<S: DriverPlaneState>() -> S {
+pub fn private_default<S: DriverPlaneState + Default>() -> S {
     S::default()
 }
 
