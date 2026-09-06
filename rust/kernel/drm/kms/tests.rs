@@ -619,18 +619,38 @@ where
     D: KmsDriver<Object = gem::shmem::Object<O>>,
     O: gem::DriverObject<Driver = D, Args = ()>,
 {
-    use gem::IntoGEMObject;
+    let object = gem::shmem::Object::<O>::new(dev, 640 * 480 * 4, Default::default(), ())?;
+    framebuffer_with_object(dev, object, 640, 480)
+}
+
+fn framebuffer_with_object<D, O>(
+    dev: &Device<D>,
+    object: gem::ObjectRef<gem::shmem::Object<O>>,
+    width: u32,
+    height: u32,
+) -> Result<framebuffer::FramebufferRef<D>>
+where
+    D: KmsDriver<Object = gem::shmem::Object<O>>,
+    O: gem::DriverObject<Driver = D>,
+{
+    use gem::{BaseObject, IntoGEMObject};
     const FUNCS: bindings::drm_framebuffer_funcs = bindings::drm_framebuffer_funcs {
         destroy: Some(bindings::drm_gem_fb_destroy),
         create_handle: Some(bindings::drm_gem_fb_create_handle),
         dirty: None,
     };
-    let object = gem::shmem::Object::<O>::new(dev, 640 * 480 * 4, Default::default(), ())?;
+    let pitch = width.checked_mul(4).ok_or(EOVERFLOW)?;
+    let size = (pitch as usize)
+        .checked_mul(height as usize)
+        .ok_or(EOVERFLOW)?;
+    if width == 0 || height == 0 || size > object.size() || !ptr::eq(object.dev(), dev) {
+        return Err(EINVAL);
+    }
     let mut fb = KBox::new(bindings::drm_framebuffer::default(), GFP_KERNEL)?;
     fb.dev = dev.as_raw();
-    fb.width = 640;
-    fb.height = 480;
-    fb.pitches[0] = 640 * 4;
+    fb.width = width;
+    fb.height = height;
+    fb.pitches[0] = pitch;
     fb.modifier = fourcc::FORMAT_MOD_LINEAR;
     // SAFETY: The known packed format has one four-byte plane, matching the allocation above.
     fb.format = unsafe { bindings::drm_format_info(fourcc::XRGB8888) };
@@ -862,6 +882,11 @@ mod cases {
         // Reading an imported table must not transfer its destruction to local shmem cleanup.
         let table = imported.sg_table(parent.as_ref().as_ref())? as *const _;
         assert_eq!(imported.sg_table(parent.as_ref().as_ref())? as *const _, table);
+        let fb = framebuffer_with_object(registration.device(), imported.clone(), 64, 64)?;
+        assert_eq!(fb.object::<TestObject>()?.as_raw(), imported.as_raw());
+        assert!(fb.vmap::<TestObject>().is_err());
+        assert!(fb.owned_vmap::<TestObject>().is_err());
+        drop(fb);
         drop(client);
         drop(source);
         drop(buffer);
