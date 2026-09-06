@@ -211,6 +211,11 @@ main suite, or `rust_drm*` to include the existing shared-memory and
 framebuffer helper tests as well. Read the KTAP results, which is KUnit's
 "ok / not ok" output. A boot that selected zero tests is not a pass.
 
+The buffer-handle cases need `CONFIG_DRM_CLIENT=y` and are skipped without
+it. Those cases use real internal DRM client files on temporary virtual
+devices, not a userspace compositor or a physical GPU. Check skipped cases
+as well as failures before deciding what a run established.
+
 The connector allocation-failure cases also need `CONFIG_FAULT_INJECTION=y`
 and `CONFIG_FAILSLAB=y`. Those options let a test ask the kernel allocator to
 fail on purpose. Run them only in a disposable kernel, without other
