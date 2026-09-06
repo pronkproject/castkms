@@ -12,7 +12,7 @@ use crate::{
     alloc::KBox,
     bindings,
     drm::{device::Device, kms::UnregisteredKmsDevice},
-    error::to_result,
+    error::{from_err_ptr, to_result},
     prelude::*,
     types::{NotThreadSafe, Opaque},
 };
@@ -132,14 +132,14 @@ pub trait DriverConnector: Send + Sync + Sized {
     /// The generated C vtable for this [`DriverConnector`] implementation
     const OPS: &'static DriverConnectorOps = &DriverConnectorOps {
         funcs: bindings::drm_connector_funcs {
-            atomic_create_state: None,
+            atomic_create_state: Some(atomic_create_state_callback::<Self::State>),
             dpms: None,
             atomic_get_property: None,
             atomic_set_property: None,
             early_unregister: None,
             late_register: None,
             set_property: None,
-            reset: Some(connector_reset_callback::<Self::State>),
+            reset: None,
             atomic_print_state: None,
             atomic_destroy_state: Some(atomic_destroy_state_callback::<Self::State>),
             destroy: Some(connector_destroy_callback::<Self>),
@@ -535,12 +535,17 @@ impl<T: DriverConnector> UnregisteredConnector<T> {
 
         // `drm_connector_attach_max_bpc_property()` writes the initial bpc values into the
         // connector state. `KmsDriver::create_objects()` runs before the mode-config-wide reset,
-        // so initialize our state through the driver's Rust reset callback when necessary.
+        // so create and publish our initial state when necessary, propagating allocation errors.
         let state = unsafe { (*self.as_raw()).state };
         if state.is_null() {
             // SAFETY: `self` is a newly initialized `Connector<T>` and this unregistered typestate
-            // prevents concurrent access. The callback creates the matching `ConnectorState<T>`.
-            unsafe { connector_reset_callback::<T::State>(self.as_raw()) };
+            // prevents concurrent access. The callback creates the matching state without
+            // publishing it. Do not call the property helper on allocation failure.
+            let new = from_err_ptr(unsafe {
+                atomic_create_state_callback::<T::State>(self.as_raw())
+            })?;
+            // SAFETY: We exclusively initialize this connector and now own its valid state.
+            unsafe { (*self.as_raw()).state = new };
         }
 
         // SAFETY: `self` is initialized and now owns a connector state. The validated bounds fit
@@ -1332,28 +1337,16 @@ unsafe extern "C" fn atomic_destroy_state_callback<T: DriverConnectorState>(
     drop(unsafe { KBox::from_raw(connector_state.cast::<ConnectorState<T>>()) });
 }
 
-unsafe extern "C" fn connector_reset_callback<T: DriverConnectorState>(
+unsafe extern "C" fn atomic_create_state_callback<T: DriverConnectorState>(
     connector: *mut bindings::drm_connector,
-) {
-    // SAFETY: DRM guarantees that `state` points to a valid instance of `drm_connector_state`
-    let state = unsafe { (*connector).state };
-    if !state.is_null() {
-        // SAFETY:
-        // - We're guaranteed `connector` is `Connector<T>` via type invariants
-        // - We're guaranteed `state` is `ConnectorState<T>` via type invariants.
-        unsafe { atomic_destroy_state_callback::<T>(connector, state) }
+) -> *mut bindings::drm_connector_state {
+    let new = match KBox::new(ConnectorState::<T>::default(), GFP_KERNEL) {
+        Ok(new) => KBox::into_raw(new).cast(),
+        Err(err) => return Error::from(err).to_ptr(),
+    };
 
-        // SAFETY: No special requirements here, DRM expects this to be NULL
-        unsafe { (*connector).state = null_mut() };
-    }
-
-    // Unfortunately, this is the best we can do at the moment as this FFI callback was mistakenly
-    // presumed to be infallible :(
-    let new = KBox::new(ConnectorState::<T>::default(), GFP_KERNEL).expect("Blame the API, sorry!");
-
-    // DRM takes ownership of the state from here, resets it, and then assigns it to the connector
-    // SAFETY:
-    // - DRM guarantees that `connector` points to a valid instance of `drm_connector`.
-    // - The cast to `drm_connector_state` is safe via `ConnectorState`s type invariants.
-    unsafe { bindings::__drm_atomic_helper_connector_reset(connector, Box::into_raw(new).cast()) };
+    // SAFETY: `new` is an owned ConnectorState<T> allocation and DRM supplies its valid parent.
+    // Initialize defaults without changing the connector's current state pointer.
+    unsafe { bindings::__drm_atomic_helper_connector_state_init(new, connector) };
+    new
 }
