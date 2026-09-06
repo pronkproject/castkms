@@ -236,6 +236,20 @@ reference. This path completes immediately through the fake vblank. It is not
 a delayed display event, and it is not a test of a GPU still reading the old
 buffer.
 
+### Private state, properties, and real allocation failure
+
+Drivers hang private data off CRTC, plane, and connector state. That
+allocation can fail, and a failed setup must not leave a half-attached
+property or a published copy that was never meant to be visible.
+
+The tests cover three transitions for CRTC state: construction failure,
+duplication failure, and a successful copy that can be changed without
+changing the published original. They retry after failure and check that live
+private-data counts return to zero. Failure is injected at the private-data
+hook, not in the kernel's object allocator. The native duplicate-state
+callback can only report failure as a null pointer, which becomes
+"out of memory."
+
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,
 userspace unbind stress, and real GPU execution remain separate work.
