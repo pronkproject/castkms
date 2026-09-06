@@ -36,8 +36,9 @@ whether legal driver code still type-checks and whether a deliberately illegal
 example is rejected for the documented reason.
 
 The runtime suite boots inside a disposable test kernel. It builds a fake
-virtual display with no physical panel and no compositor, then checks
-object ownership and setup failure for real.
+virtual display with no physical panel and no compositor, then runs ownership,
+modesetting, page-flip completion, allocation failure, and registration
+teardown for real.
 
 Passing either suite does not mean a virtual KMS driver is ready to capture
 frames. It means the shared types are less likely to lie before that driver is
@@ -284,6 +285,36 @@ retired buffer must disappear once disable releases the last display
 reference. This path completes immediately through the fake vblank. It is not
 a delayed display event, and it is not a test of a GPU still reading the old
 buffer.
+
+### Page flips and vblank
+
+Showing a new image is not the same as the old image becoming free. The old
+framebuffer has to stay until the fake display has actually passed the point
+where it would have scanned the new one.
+
+A second suite, `rust_drm_events`, uses a virtual driver with real pending
+flip-completion events and initialized vblank storage. It omits the optional
+Rust plane-update method on purpose, so the framework's do-nothing callback is
+used instead of a null C function pointer.
+
+Enable and disable send their completion events immediately. Replacing the
+image arms an event for a later vblank. The work after the update is accepted
+reports that hardware programming finished and returns without waiting for the
+flip. A second task blocks in that replacement. After programming completes,
+the test waits 20 milliseconds, checks that the replacement is still pending
+and that both framebuffers still exist, then drives vblank. Completion must
+retire the old image. Disable must release the remaining one.
+
+Turning vblank off instead of delivering the interrupt must drain the armed
+event and reject a later fake interrupt. As a negative control, removing the
+framework's automatic wait for flip completion makes both cases fail their
+"still pending" check. The driver callback omits an explicit wait, so the
+framework must supply it before releasing the old state.
+
+These events are internal completion objects. They are not the page-flip
+events userspace reads from a DRM file. The schedules do not claim to cover
+arbitrary interrupt races, a GPU still reading the old buffer, concurrent
+unplug, or delivery to a DRM file.
 
 ### Private state, properties, and real allocation failure
 
