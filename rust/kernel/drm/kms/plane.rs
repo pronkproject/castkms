@@ -109,50 +109,6 @@ impl BitOr for BlendModes {
 /// [`struct drm_plane_state`]: srctree/include/drm/drm_plane.h
 #[vtable]
 pub trait DriverPlane: Send + Sync + Sized {
-    /// The generated C vtable for this [`DriverPlane`] implementation.
-    const OPS: &'static DriverPlaneOps = &DriverPlaneOps {
-        funcs: bindings::drm_plane_funcs {
-            atomic_create_state: Some(atomic_create_state_callback::<Self::State>),
-            update_plane: Some(bindings::drm_atomic_helper_update_plane),
-            disable_plane: Some(bindings::drm_atomic_helper_disable_plane),
-            destroy: Some(plane_destroy_callback::<Self>),
-            reset: None,
-            set_property: None,
-            atomic_duplicate_state: Some(atomic_duplicate_state_callback::<Self::State>),
-            atomic_destroy_state: Some(atomic_destroy_state_callback::<Self::State>),
-            atomic_set_property: None,
-            atomic_get_property: None,
-            late_register: None,
-            early_unregister: None,
-            atomic_print_state: None,
-            format_mod_supported: None,
-            format_mod_supported_async: None,
-        },
-
-        helper_funcs: bindings::drm_plane_helper_funcs {
-            prepare_fb: None,
-            cleanup_fb: None,
-            begin_fb_access: None,
-            end_fb_access: None,
-            atomic_check: if Self::HAS_ATOMIC_CHECK {
-                Some(atomic_check_callback::<Self>)
-            } else {
-                None
-            },
-            atomic_update: if Self::HAS_ATOMIC_UPDATE {
-                Some(atomic_update_callback::<Self>)
-            } else {
-                None
-            },
-            atomic_enable: None,
-            atomic_disable: None,
-            atomic_async_check: None,
-            atomic_async_update: None,
-            panic_flush: None,
-            get_scanout_buffer: None,
-        },
-    };
-
     /// The type to pass to the `args` field of [`UnregisteredPlane::new`].
     ///
     /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
@@ -196,9 +152,56 @@ pub trait DriverPlane: Send + Sync + Sized {
 /// The generated C vtable for a [`DriverPlane`].
 ///
 /// This type is created internally by DRM.
-pub struct DriverPlaneOps {
+struct DriverPlaneOps {
     funcs: bindings::drm_plane_funcs,
     helper_funcs: bindings::drm_plane_helper_funcs,
+}
+
+// Keep callback generation outside the driver trait: its implementation must not substitute
+// callbacks that cast the C allocation to another Rust type.
+impl<T: DriverPlane> Plane<T> {
+    const OPS: &'static DriverPlaneOps = &DriverPlaneOps {
+        funcs: bindings::drm_plane_funcs {
+            atomic_create_state: Some(atomic_create_state_callback::<T::State>),
+            update_plane: Some(bindings::drm_atomic_helper_update_plane),
+            disable_plane: Some(bindings::drm_atomic_helper_disable_plane),
+            destroy: Some(plane_destroy_callback::<T>),
+            reset: None,
+            set_property: None,
+            atomic_duplicate_state: Some(atomic_duplicate_state_callback::<T::State>),
+            atomic_destroy_state: Some(atomic_destroy_state_callback::<T::State>),
+            atomic_set_property: None,
+            atomic_get_property: None,
+            late_register: None,
+            early_unregister: None,
+            atomic_print_state: None,
+            format_mod_supported: None,
+            format_mod_supported_async: None,
+        },
+
+        helper_funcs: bindings::drm_plane_helper_funcs {
+            prepare_fb: None,
+            cleanup_fb: None,
+            begin_fb_access: None,
+            end_fb_access: None,
+            atomic_check: if T::HAS_ATOMIC_CHECK {
+                Some(atomic_check_callback::<T>)
+            } else {
+                None
+            },
+            atomic_update: if T::HAS_ATOMIC_UPDATE {
+                Some(atomic_update_callback::<T>)
+            } else {
+                None
+            },
+            atomic_enable: None,
+            atomic_disable: None,
+            atomic_async_check: None,
+            atomic_async_update: None,
+            panic_flush: None,
+            get_scanout_buffer: None,
+        },
+    };
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -360,7 +363,7 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
         let this: Pin<KBox<Plane<T>>> = KBox::try_pin_init(
             try_pin_init!(Plane {
                 plane: Opaque::new(bindings::drm_plane {
-                    helper_private: &T::OPS.helper_funcs,
+                    helper_private: &Plane::<T>::OPS.helper_funcs,
                     ..Default::default()
                 }),
                 inner <- T::new(dev, args),
@@ -402,7 +405,7 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
                 dev.as_raw(),
                 this.as_raw(),
                 possible_crtcs,
-                &T::OPS.funcs,
+                &Plane::<T>::OPS.funcs,
                 formats.as_ptr(),
                 formats.len() as _,
                 format_modifiers_raw.as_ref().map_or(null(), |f| f.as_ptr()),
