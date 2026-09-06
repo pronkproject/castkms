@@ -1003,6 +1003,9 @@ impl<T: AsRawPlaneState + ?Sized> RawPlaneState for T {}
 /// allows access to whatever private data is contained within an implementor's [`DriverPlaneState`]
 /// type.
 ///
+/// Only DRM's state callbacks construct and initialize this wrapper with its parent plane.
+/// [`Default`] initializes the driver-private payload, not the wrapper.
+///
 /// # Invariants
 ///
 /// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
@@ -1014,7 +1017,6 @@ impl<T: AsRawPlaneState + ?Sized> RawPlaneState for T {}
 ///
 /// [`struct drm_plane_state`]: srctree/include/drm/drm_plane.h
 /// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
-#[derive(Default)]
 #[repr(C)]
 pub struct PlaneState<T: DriverPlaneState> {
     state: bindings::drm_plane_state,
@@ -1369,7 +1371,13 @@ unsafe extern "C" fn atomic_destroy_state_callback<T: DriverPlaneState>(
 unsafe extern "C" fn atomic_create_state_callback<T: DriverPlaneState>(
     plane: *mut bindings::drm_plane,
 ) -> *mut bindings::drm_plane_state {
-    let new = match KBox::new(PlaneState::<T>::default(), GFP_KERNEL) {
+    let new = match KBox::new(
+        PlaneState::<T> {
+            state: Default::default(),
+            inner: T::default(),
+        },
+        GFP_KERNEL,
+    ) {
         Ok(new) => KBox::into_raw(new).cast(),
         Err(err) => return Error::from(err).to_ptr(),
     };
