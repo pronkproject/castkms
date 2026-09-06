@@ -187,7 +187,7 @@ pub trait DriverConnector: Send + Sync + Sized {
     /// The [`DriverConnectorState`] implementation for this [`DriverConnector`].
     ///
     /// See [`DriverConnectorState`] for more info.
-    type State: DriverConnectorState;
+    type State: DriverConnectorState<Connector = Self>;
 
     /// The constructor for creating a [`Connector`] using this [`DriverConnector`] implementation.
     ///
@@ -1063,7 +1063,7 @@ pub struct ConnectorState<T: DriverConnectorState> {
 /// [`struct drm_connector_state`]: srctree/include/drm_connector.h
 pub trait DriverConnectorState: Clone + Default + Sized {
     /// The parent [`DriverConnector`].
-    type Connector: DriverConnector;
+    type Connector: DriverConnector<State = Self>;
 }
 
 impl<T: DriverConnectorState> Sealed for ConnectorState<T> {}
