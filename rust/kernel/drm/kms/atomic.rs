@@ -3,7 +3,10 @@
 //! [`struct drm_atomic_commit`] related bindings for rust.
 //!
 //! [`struct drm_atomic_commit`]: srctree/include/drm/drm_atomic.h
-use super::{connector::*, crtc::*, plane::*, KmsDriver, ModeObject};
+use super::{
+    connector::*, crtc::*, framebuffer::Framebuffer, modes::DisplayMode, plane::*, KmsDriver,
+    ModeObject,
+};
 use crate::{
     bindings,
     drm::device::{Device, Registered},
@@ -711,6 +714,22 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
 /// the owner fixed preserves the runner's association between state and acquire context.
 pub struct AtomicStateComposer<T: KmsDriver>(AtomicStateMutator<T>, PhantomPinned);
 
+/// Primary-plane scanout requested by a kernel display client.
+///
+/// All objects must belong to the transaction's device. The transaction takes its own references
+/// to the framebuffer and connectors and copies the mode, so this description is only borrowed
+/// while configuring the state. More advanced plane layouts use separate atomic properties.
+pub struct CrtcScanout<'a, T: KmsDriver> {
+    /// Timing to drive on the CRTC.
+    pub mode: &'a DisplayMode,
+    /// Framebuffer scanned out by the CRTC's primary plane.
+    pub framebuffer: &'a Framebuffer<T>,
+    /// Nonempty output routing set.
+    pub connectors: &'a [&'a Connector<T::Connector>],
+    /// Integer source origin, limited to the integral part of DRM's 16.16 coordinates.
+    pub position: (u16, u16),
+}
+
 impl<T: KmsDriver> Deref for AtomicStateComposer<T> {
     type Target = AtomicStateMutator<T>;
 
@@ -737,6 +756,59 @@ impl<T: KmsDriver> AtomicStateComposer<T> {
         // SAFETY: The unpublished, exclusively accessed transaction satisfies the mutator's
         // requirements. The caller supplies ownership or suppresses the composer's destructor.
         Self(unsafe { AtomicStateMutator::new(ptr) }, PhantomPinned)
+    }
+
+    /// Configure primary scanout on `crtc`, or disable it when `scanout` is `None`.
+    ///
+    /// This uses the same in-kernel helper as DRM's display clients. It updates mode, primary
+    /// plane and connector routing together; other planes are not implicitly disabled. Foreign
+    /// objects and empty routing sets are rejected before editing the transaction. Propagate
+    /// errors to the transaction runner, since a native failure may leave a partial attempt.
+    ///
+    /// Exclusive composer access prevents a helper from changing object states while a Rust
+    /// state guard is live. The core still validates the complete update before submission.
+    /// Unlike the legacy SETCRTC helper, this does not steal conflicting encoders by disabling
+    /// other connectors. Conflicting routing is rejected by atomic validation; callers must
+    /// explicitly include any required routing changes in their transaction.
+    pub fn set_crtc_config(
+        self: Pin<&mut Self>,
+        crtc: &Crtc<T::Crtc>,
+        scanout: Option<&CrtcScanout<'_, T>>,
+    ) -> Result {
+        if !core::ptr::eq(self.drm_dev(), crtc.drm_dev()) {
+            return Err(EINVAL);
+        }
+        let mut connectors = KVec::new();
+        let mut config = bindings::drm_mode_set {
+            crtc: crtc.as_raw(),
+            ..Default::default()
+        };
+        if let Some(scanout) = scanout {
+            if !core::ptr::eq(self.drm_dev(), scanout.framebuffer.drm_dev())
+                || scanout.connectors.is_empty()
+                || scanout.connectors.len() > i32::MAX as usize
+                || scanout
+                    .connectors
+                    .iter()
+                    .any(|c| !core::ptr::eq(self.drm_dev(), c.drm_dev()))
+            {
+                return Err(EINVAL);
+            }
+            for connector in scanout.connectors {
+                connectors.push(connector.as_raw(), GFP_KERNEL)?;
+            }
+            config.fb = scanout.framebuffer.as_raw();
+            // The native helper copies the mode without modifying the borrowed source.
+            config.mode = scanout.mode.as_raw().cast_mut();
+            config.connectors = connectors.as_mut_ptr();
+            config.num_connectors = connectors.len() as _;
+            config.x = scanout.position.0.into();
+            config.y = scanout.position.1.into();
+        }
+        // SAFETY: Objects belong to this initialized device, whose CRTC constructor requires
+        // a primary plane. Local storage remains alive through the synchronous helper call.
+        // The exclusive composer borrow excludes outstanding object-state accessors.
+        to_result(unsafe { bindings::__drm_atomic_helper_set_config(&mut config, self.as_raw()) })
     }
 
     /// Attempt to add the state for `crtc` to the atomic state for this composer if it hasn't
