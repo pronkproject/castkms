@@ -316,6 +316,14 @@ it must not lose the event. A later lookup can still arm it. After arming, a
 further lookup must see nothing. The old framebuffer still stays until the
 interrupt, and final disable still releases the remaining image.
 
+Arming that event with a vblank reference from the wrong CRTC must fail. The
+wrong CRTC belongs to a second virtual device of the same driver type.
+Taking that other reference can succeed; using it to arm the source event
+must return an invalid argument and drop the extra reference. Retrying with
+the source CRTC then follows the ordinary delayed-completion path. The case
+does not test two active outputs on one device or concurrent event-list
+updates.
+
 These events are internal completion objects. They are not the page-flip
 events userspace reads from a DRM file. The schedules do not claim to cover
 arbitrary interrupt races, a GPU still reading the old buffer, concurrent
