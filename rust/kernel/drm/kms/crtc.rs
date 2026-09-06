@@ -1156,6 +1156,7 @@ impl<'a, T: DriverCrtc> CrtcAtomicCheck<'a, T> {
         CrtcAtomicCheck,
         AtomicStateComposer,
         Crtc,
+        CrtcStateMutator<'a, CrtcState<T::State>>,
         use <'a, T>
     );
 }
@@ -1177,6 +1178,7 @@ impl<'a, T: DriverCrtc> CrtcAtomicCommit<'a, T> {
         CrtcAtomicCommit,
         AtomicStateMutator,
         Crtc,
+        CrtcStateMutator<'a, CrtcState<T::State>>,
         use <'a, T>
     );
 }

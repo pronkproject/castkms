@@ -248,6 +248,127 @@ unsafe impl<T: KmsDriver> AlwaysRefCounted for AtomicState<T> {
     }
 }
 
+/// Read-only object-state access during an atomic commit callback.
+///
+/// DRM publishes the new states before scheduling the commit worker. Another atomic check may
+/// already be duplicating their private payloads, so commit callbacks must not acquire mutable
+/// payload guards. This accessor is only borrowed from a callback; it deliberately does not expose
+/// the reference-counted [`AtomicState`], since retaining that object would not retain its new
+/// states after hardware completion.
+pub struct AtomicStateReader<T: KmsDriver>(ManuallyDrop<ARef<AtomicState<T>>>);
+
+impl<T: KmsDriver> AtomicStateReader<T> {
+    /// # Safety
+    ///
+    /// `ptr` must be a commit for `T` supplied to a DRM commit callback. The reader must not
+    /// outlive that callback, and hardware completion must not be signaled while it is in use.
+    pub(super) unsafe fn new(ptr: NonNull<bindings::drm_atomic_commit>) -> Self {
+        // SAFETY: The callback borrows DRM's reference, as required above. Suppress its put.
+        Self(ManuallyDrop::new(unsafe { ARef::from_raw(ptr.cast()) }))
+    }
+
+    /// Return the device that owns the commit.
+    pub fn drm_dev(&self) -> &Device<T> {
+        self.0.drm_dev()
+    }
+
+    /// Return the old state of `crtc` if it belongs to this commit's device and is present.
+    pub fn get_old_crtc_state<C>(&self, crtc: &C) -> Option<&C::State>
+    where
+        C: ModesettableCrtc + ModeObject<Driver = T>,
+    {
+        self.0.get_old_crtc_state(crtc)
+    }
+
+    /// Return the published new state of `crtc`, without granting mutable payload access.
+    pub fn get_new_crtc_state<C>(&self, crtc: &C) -> Option<&C::State>
+    where
+        C: ModesettableCrtc + ModeObject<Driver = T>,
+    {
+        if !core::ptr::eq(self.drm_dev(), crtc.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The device check validates the index. The reader's callback scope guarantees
+        // that a non-null new state is alive and its driver-private payload is shared read-only.
+        let state = unsafe {
+            bindings::drm_atomic_get_new_crtc_state(self.0.as_raw(), crtc.as_raw())
+        };
+        NonNull::new(state).map(|s| unsafe { C::State::from_raw(s.as_ptr()) })
+    }
+
+    /// Return the old state of `plane` if it belongs to this commit's device and is present.
+    pub fn get_old_plane_state<P>(&self, plane: &P) -> Option<&P::State>
+    where
+        P: ModesettablePlane + ModeObject<Driver = T>,
+    {
+        self.0.get_old_plane_state(plane)
+    }
+
+    /// Return the published new state of `plane`, without granting mutable payload access.
+    pub fn get_new_plane_state<P>(&self, plane: &P) -> Option<&P::State>
+    where
+        P: ModesettablePlane + ModeObject<Driver = T>,
+    {
+        if !core::ptr::eq(self.drm_dev(), plane.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The device check validates the index. The callback keeps the published state
+        // alive, and neither this reader nor another commit callback grants mutable access.
+        let state = unsafe {
+            bindings::drm_atomic_get_new_plane_state(self.0.as_raw(), plane.as_raw())
+        };
+        NonNull::new(state).map(|s| unsafe { P::State::from_raw(s.as_ptr()) })
+    }
+
+    /// Return the old connector state, if present in this device's commit.
+    pub fn get_old_connector_state<C>(&self, connector: &C) -> Option<&C::State>
+    where
+        C: ModesettableConnector + ModeObject<Driver = T>,
+    {
+        self.0.get_old_connector_state(connector)
+    }
+
+    /// Return the published new state of `connector`, without mutable payload access.
+    pub fn get_new_connector_state<C>(&self, connector: &C) -> Option<&C::State>
+    where
+        C: ModesettableConnector + ModeObject<Driver = T>,
+    {
+        if !core::ptr::eq(self.drm_dev(), connector.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The same-device check validates the index. The callback keeps the
+        // published state alive and private payload access is shared read-only.
+        let state = unsafe {
+            bindings::drm_atomic_get_new_connector_state(self.0.as_raw(), connector.as_raw())
+        };
+        NonNull::new(state).map(|s| unsafe { C::State::from_raw(s.as_ptr()) })
+    }
+
+    /// Invoke `f` for every CRTC with a published new state in this commit.
+    pub fn for_each_new_crtc_state<F>(&self, f: F)
+    where
+        F: FnMut(&Crtc<T::Crtc>, &OpaqueCrtcState<T>),
+    {
+        self.0.for_each_new_crtc_state(f)
+    }
+
+    /// Return the new state of the first connector routed to `crtc`, if any.
+    pub fn new_connector_state_for_crtc<C>(&self, crtc: &C) -> Option<&OpaqueConnectorState<T>>
+    where
+        C: ModesettableCrtc + ModeObject<Driver = T>,
+    {
+        self.0.new_connector_state_for_crtc(crtc)
+    }
+
+    /// Return the old state of the first connector routed to `crtc`, if any.
+    pub fn old_connector_state_for_crtc<C>(&self, crtc: &C) -> Option<&OpaqueConnectorState<T>>
+    where
+        C: ModesettableCrtc + ModeObject<Driver = T>,
+    {
+        self.0.old_connector_state_for_crtc(crtc)
+    }
+}
+
 /// A smart-pointer for modifying the contents of an atomic state.
 ///
 /// As it's not unreasonable for a modesetting driver to want to have references to the state of
@@ -606,6 +727,7 @@ macro_rules! impl_atomic_state_token_ops {
         $token_name:ident,
         $state:ident,
         $obj:ident,
+        $new_state:ty,
         use <$lifetime_a:lifetime, $meta:ident>
     ) => {
         kernel::macros::paste! {
@@ -634,7 +756,7 @@ macro_rules! impl_atomic_state_token_ops {
             pub fn take_all(self) -> (
                 &$lifetime_a $state<$meta::Driver>,
                 &$lifetime_a [<$obj State>]<$meta::State>,
-                [<$obj StateMutator>]<$lifetime_a, [<$obj State>]<$meta::State>>,
+                $new_state,
             ) {
                 let (old_state, new_state) = (
                     self.state.[<get_old_ $obj:lower _state>](self.[<$obj:lower>]),
@@ -663,9 +785,7 @@ macro_rules! impl_atomic_state_token_ops {
             }
 
             #[doc = concat!("Exchange this token for the new [`", stringify!($obj), "State`].")]
-            pub fn take_new_state(
-                self
-            ) -> [<$obj StateMutator>]<$lifetime_a, [<$obj State>]<$meta::State>> {
+            pub fn take_new_state(self) -> $new_state {
                 let new = self.state.[<get_new_ $obj:lower _state>](self.[<$obj:lower>]);
 
                 // SAFETY:
@@ -680,7 +800,7 @@ macro_rules! impl_atomic_state_token_ops {
                             stringify!($obj), "State`].")]
             pub fn take_old_new_state(self) -> (
                 &$lifetime_a [<$obj State>]<$meta::State>,
-                [<$obj StateMutator>]<$lifetime_a, [<$obj State>]<$meta::State>>,
+                $new_state,
             ) {
                 let (old_state, new_state) = (
                     self.state.[<get_old_ $obj:lower _state>](self.[<$obj:lower>]),
@@ -716,7 +836,7 @@ macro_rules! impl_atomic_state_token_ops {
                             "`] and the new [`", stringify!($obj), "State`].")]
             pub fn take_state_new_state(self) -> (
                 &$lifetime_a $state<$meta::Driver>,
-                [<$obj StateMutator>]<$lifetime_a, [<$obj State>]<$meta::State>>,
+                $new_state,
             ) {
                 let new = self.state.[<get_new_ $obj:lower _state>](self.[<$obj:lower>]);
 
@@ -907,12 +1027,12 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
 
     /// Signal completion of the hardware commit step.
     ///
-    /// This swaps the atomic state into the relevant atomic state pointers and marks the hardware
-    /// commit step as completed. Since this step can only happen after all plane updates and
+    /// The software states have already been published before entering the commit worker. This
+    /// marks hardware programming as completed. Since this step can only happen after plane updates and
     /// modesets within an [`AtomicCommitTail`] have been completed, it requires both a
     /// [`EnablesCommittedToken`] and a [`PlaneUpdatesCommittedToken`] to consume. After this
-    /// function is called, the caller no longer has exclusive access to the underlying atomic
-    /// state. As such, this function consumes the [`AtomicCommitTail`] object and returns a
+    /// function is called, another commit may replace and free the published new states. As such,
+    /// this function consumes the [`AtomicCommitTail`] object and returns a
     /// [`CommittedAtomicState`] accessor for performing post-hw commit tasks.
     pub fn commit_hw_done(
         self,
@@ -951,14 +1071,12 @@ pub(crate) unsafe extern "C" fn commit_tail_callback<T: KmsDriver>(
 
 /// An [`AtomicState`] which was just committed with [`AtomicCommitTail::commit_hw_done`].
 ///
-/// This object represents an [`AtomicState`] which has been fully committed to hardware, and as
-/// such may no longer be mutated as it is visible to userspace. It may be used to control what
-/// happens immediately after an atomic commit finishes within the [`atomic_commit_tail`] callback.
+/// Hardware programming has completed, but old scanout resources may still be in use. This
+/// accessor permits waiting for flip completion and releases old plane resources when dropped.
+/// It exposes neither the published new states nor mutable private payloads.
 ///
-/// Since acquiring this object means that all modesetting locks have been dropped, a non-blocking
-/// commit could happen at the same time an [`atomic_commit_tail`] implementer has access to this
-/// object. Thus, it cannot be assumed that this object represents the current hardware state - and
-/// instead only represents the final result of the [`AtomicCommitTail`] that was just committed.
+/// Commit workers do not hold modesetting locks. After hardware completion another commit may
+/// replace and destroy the new states, regardless of references held to the enclosing transaction.
 ///
 /// # Invariants
 ///
