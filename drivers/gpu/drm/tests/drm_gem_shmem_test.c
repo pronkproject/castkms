@@ -375,7 +375,25 @@ static int drm_gem_shmem_test_init(struct kunit *test)
 	return 0;
 }
 
+static void drm_gem_shmem_test_imported_size(struct kunit *test)
+{
+	struct drm_device *dev = test->priv;
+	struct drm_gem_shmem_object *shmem;
+	const size_t sizes[] = { 0, 1, PAGE_SIZE - 1, PAGE_SIZE + 1, SIZE_MAX };
+	unsigned int i;
+
+	shmem = kunit_kzalloc(test, sizeof(*shmem), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, shmem);
+	for (i = 0; i < ARRAY_SIZE(sizes); i++) {
+		KUNIT_EXPECT_EQ(test, drm_gem_shmem_init_imported(dev, shmem, sizes[i]),
+				-EINVAL);
+		KUNIT_EXPECT_NULL(test, shmem->base.dev);
+		KUNIT_EXPECT_NULL(test, shmem->base.filp);
+	}
+}
+
 static struct kunit_case drm_gem_shmem_test_cases[] = {
+	KUNIT_CASE(drm_gem_shmem_test_imported_size),
 	KUNIT_CASE(drm_gem_shmem_test_obj_create),
 	KUNIT_CASE(drm_gem_shmem_test_obj_create_private),
 	KUNIT_CASE(drm_gem_shmem_test_pin_pages),
