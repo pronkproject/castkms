@@ -97,6 +97,12 @@ plane implementation cannot borrow another plane's table, and likewise for
 CRTCs, connectors, and encoders. Vblank callbacks come only from the
 framework's supported path or from the framework's explicit disabled path.
 
+The per-file and memory-object types used by the device must name that same
+driver as their owner. Memory objects here are GEM buffers. GEM, or Graphics
+Execution Manager, provides shared machinery for managing graphics storage.
+The tests substitute a provider from another driver into an otherwise valid
+driver type and expect a compile error.
+
 Shared and exclusive views of unpublished atomic state cannot coexist. If one
 piece of code is allowed to change the next state, another cannot also hold a
 shared view of that same next state, including when the second attempt tries
