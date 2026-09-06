@@ -49,6 +49,9 @@
 #include <drm/drm_print.h>
 #include <drm/drm_file.h>
 
+#include <kunit/static_stub.h>
+#include <kunit/visibility.h>
+
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
 
@@ -135,8 +138,10 @@ void drm_crtc_unregister_all(struct drm_device *dev)
 	}
 }
 
-static int drm_crtc_crc_init(struct drm_crtc *crtc)
+VISIBLE_IF_KUNIT int drm_crtc_crc_init(struct drm_crtc *crtc)
 {
+	KUNIT_STATIC_STUB_REDIRECT(drm_crtc_crc_init, crtc);
+
 #ifdef CONFIG_DEBUG_FS
 	spin_lock_init(&crtc->crc.lock);
 	init_waitqueue_head(&crtc->crc.wq);
@@ -146,6 +151,7 @@ static int drm_crtc_crc_init(struct drm_crtc *crtc)
 #endif
 	return 0;
 }
+EXPORT_SYMBOL_IF_KUNIT(drm_crtc_crc_init);
 
 static void drm_crtc_crc_fini(struct drm_crtc *crtc)
 {
@@ -299,6 +305,13 @@ static int __drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *
 
 	crtc->base.properties = &crtc->properties;
 
+	ret = drm_crtc_crc_init(crtc);
+	if (ret) {
+		kfree(crtc->name);
+		drm_mode_object_unregister(dev, &crtc->base);
+		return ret;
+	}
+
 	list_add_tail(&crtc->head, &config->crtc_list);
 	crtc->index = config->num_crtc++;
 
@@ -308,12 +321,6 @@ static int __drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *
 		primary->possible_crtcs = drm_crtc_mask(crtc);
 	if (cursor && !cursor->possible_crtcs)
 		cursor->possible_crtcs = drm_crtc_mask(crtc);
-
-	ret = drm_crtc_crc_init(crtc);
-	if (ret) {
-		drm_mode_object_unregister(dev, &crtc->base);
-		return ret;
-	}
 
 	if (drm_core_check_feature(dev, DRIVER_ATOMIC)) {
 		drm_object_attach_property(&crtc->base, config->prop_active, 0);
