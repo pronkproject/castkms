@@ -242,6 +242,16 @@ impl<'a, T: Driver> Registration<'a, T> {
     pub fn device(&self) -> &drm::Device<T> {
         &self.drm
     }
+
+    /// Obtain a registered-device view that excludes concurrent parent unbind.
+    ///
+    /// Returns `None` if the device has been unplugged. Unlike [`Self::device`], the guarded
+    /// view permits operations that require completed registration and a bound parent.
+    pub fn registration_guard(&self) -> Option<drm::RegistrationGuard<'_, T>> {
+        // SAFETY: Registration construction called drm_dev_register successfully.
+        let dev = unsafe { self.drm.assume_ctx::<drm::Ioctl>() };
+        dev.registration_guard()
+    }
 }
 
 impl<T: Driver> Registration<'static, T> {
