@@ -93,8 +93,8 @@ pub(crate) mod private {
 ///         where // <-- An optional set of additional trait bounds to match against
 ///             T: DriverConnectorState<Connector = C>;
 ///         use
-///         //  | Type parameter that will contain ::OPS (the auto-generated vtable)
-///         //  |    | The driver trait implemented by the driver for generating the vtable
+///         //  | The concrete connector type selected by the associated-type bounds
+///         //  |    | The driver trait implemented by that type
 ///         //  |    | It will add the bound C: DriverConnector<Driver = D> to the function
 ///         //  v    v
 ///             C as DriverConnector,

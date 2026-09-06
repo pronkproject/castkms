@@ -129,52 +129,6 @@ pub enum ModeStatus {
 /// [`struct drm_connector_state`]: srctree/include/drm/drm_connector.h
 #[vtable]
 pub trait DriverConnector: Send + Sync + Sized {
-    /// The generated C vtable for this [`DriverConnector`] implementation
-    const OPS: &'static DriverConnectorOps = &DriverConnectorOps {
-        funcs: bindings::drm_connector_funcs {
-            atomic_create_state: Some(atomic_create_state_callback::<Self::State>),
-            dpms: None,
-            atomic_get_property: None,
-            atomic_set_property: None,
-            early_unregister: None,
-            late_register: None,
-            set_property: None,
-            reset: None,
-            atomic_print_state: None,
-            atomic_destroy_state: Some(atomic_destroy_state_callback::<Self::State>),
-            destroy: Some(connector_destroy_callback::<Self>),
-            force: None,
-            detect: if Self::HAS_DETECT {
-                Some(detect_callback::<Self>)
-            } else {
-                None
-            },
-            fill_modes: Some(bindings::drm_helper_probe_single_connector_modes),
-            debugfs_init: None,
-            oob_hotplug_event: None,
-            atomic_duplicate_state: Some(atomic_duplicate_state_callback::<Self::State>),
-            color_format: None,
-        },
-        helper_funcs: bindings::drm_connector_helper_funcs {
-            mode_valid: if Self::HAS_MODE_VALID {
-                Some(mode_valid_callback::<Self>)
-            } else {
-                None
-            },
-            atomic_check: None,
-            get_modes: Some(get_modes_callback::<Self>),
-            detect_ctx: None,
-            enable_hpd: None,
-            disable_hpd: None,
-            best_encoder: None,
-            atomic_commit: None,
-            mode_valid_ctx: None,
-            atomic_best_encoder: None,
-            prepare_writeback_job: None,
-            cleanup_writeback_job: None,
-        },
-    };
-
     /// The type to pass to the `args` field of [`UnregisteredConnector::new`].
     ///
     /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
@@ -229,9 +183,58 @@ pub trait DriverConnector: Send + Sync + Sized {
 /// The generated C vtable for a [`DriverConnector`].
 ///
 /// This type is created internally by DRM.
-pub struct DriverConnectorOps {
+struct DriverConnectorOps {
     funcs: bindings::drm_connector_funcs,
     helper_funcs: bindings::drm_connector_helper_funcs,
+}
+
+// Keep callback generation outside the driver trait: its implementation must not substitute
+// callbacks that cast the C allocation to another Rust type.
+impl<T: DriverConnector> Connector<T> {
+    const OPS: &'static DriverConnectorOps = &DriverConnectorOps {
+        funcs: bindings::drm_connector_funcs {
+            atomic_create_state: Some(atomic_create_state_callback::<T::State>),
+            dpms: None,
+            atomic_get_property: None,
+            atomic_set_property: None,
+            early_unregister: None,
+            late_register: None,
+            set_property: None,
+            reset: None,
+            atomic_print_state: None,
+            atomic_destroy_state: Some(atomic_destroy_state_callback::<T::State>),
+            destroy: Some(connector_destroy_callback::<T>),
+            force: None,
+            detect: if T::HAS_DETECT {
+                Some(detect_callback::<T>)
+            } else {
+                None
+            },
+            fill_modes: Some(bindings::drm_helper_probe_single_connector_modes),
+            debugfs_init: None,
+            oob_hotplug_event: None,
+            atomic_duplicate_state: Some(atomic_duplicate_state_callback::<T::State>),
+            color_format: None,
+        },
+        helper_funcs: bindings::drm_connector_helper_funcs {
+            mode_valid: if T::HAS_MODE_VALID {
+                Some(mode_valid_callback::<T>)
+            } else {
+                None
+            },
+            atomic_check: None,
+            get_modes: Some(get_modes_callback::<T>),
+            detect_ctx: None,
+            enable_hpd: None,
+            disable_hpd: None,
+            best_encoder: None,
+            atomic_commit: None,
+            mode_valid_ctx: None,
+            atomic_best_encoder: None,
+            prepare_writeback_job: None,
+            cleanup_writeback_job: None,
+        },
+    };
 }
 
 /// The main interface for a [`struct drm_connector`].
@@ -447,7 +450,7 @@ impl<T: DriverConnector> UnregisteredConnector<T> {
         let new: Pin<KBox<Connector<T>>> = KBox::try_pin_init(
             try_pin_init!(Connector {
                 connector: Opaque::new(bindings::drm_connector {
-                    helper_private: &T::OPS.helper_funcs,
+                    helper_private: &Connector::<T>::OPS.helper_funcs,
                     ..Default::default()
                 }),
                 inner <- T::new(dev, args),
@@ -461,7 +464,12 @@ impl<T: DriverConnector> UnregisteredConnector<T> {
         // - We just allocated `new` above
         // - `new` starts with `drm_connector` via its type invariants.
         to_result(unsafe {
-            bindings::drm_connector_init(dev.as_raw(), new.as_raw(), &T::OPS.funcs, type_ as i32)
+            bindings::drm_connector_init(
+                dev.as_raw(),
+                new.as_raw(),
+                &Connector::<T>::OPS.funcs,
+                type_ as i32,
+            )
         })?;
 
         // SAFETY: We don't move anything
