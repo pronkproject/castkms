@@ -266,6 +266,29 @@ mod cases {
     use plane::AsRawPlane;
 
     #[test]
+    fn plane_name_is_literal() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-plane-name", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: The device remains unregistered and owns the additional plane until teardown.
+        let dev = unsafe { UnregisteredKmsDevice::new(&drm) };
+        let name = c"plane-%%";
+        let plane = plane::UnregisteredPlane::<TestPlane>::new(
+            &dev,
+            1,
+            &[fourcc::XRGB8888],
+            None,
+            plane::Type::Overlay,
+            Some(name),
+            (),
+        )?;
+        // SAFETY: Successful initialization owns a NUL-terminated name for the device lifetime.
+        let stored = unsafe { CStr::from_char_ptr((*plane.as_raw()).name) };
+        assert_eq!(stored, name);
+        Ok(())
+    }
+
+    #[test]
     fn initial_state_has_parents() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-state", None)?;
