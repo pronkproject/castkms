@@ -30,6 +30,7 @@
 #include <linux/sync_file.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_bridge.h>
@@ -1991,7 +1992,24 @@ static int update_output_state(struct drm_atomic_commit *state,
 	return 0;
 }
 
-/* just used from drm-client and atomic-helper: */
+/**
+ * __drm_atomic_helper_set_config - configure primary scanout in an atomic update
+ * @set: CRTC, mode, primary framebuffer, source origin and connector routing
+ * @state: caller-owned, uncommitted atomic state with an acquire context
+ *
+ * Populate an atomic update using the same primary-plane configuration as
+ * drm_atomic_helper_set_config(), without checking or committing the update.
+ * A NULL mode disables the CRTC and requires a NULL framebuffer and no
+ * connectors. An enabled configuration requires a framebuffer and at least
+ * one connector. All objects must belong to the device owning @state.
+ *
+ * The caller must exclude concurrent access to the temporary state. On error
+ * the state may be partially populated; discard the attempt, performing the
+ * usual modeset backoff on -EDEADLK, before retrying. Other planes on the CRTC
+ * are not implicitly disabled.
+ *
+ * Returns: 0 on success, a negative error code on failure.
+ */
 int __drm_atomic_helper_set_config(struct drm_mode_set *set,
 				   struct drm_atomic_commit *state)
 {

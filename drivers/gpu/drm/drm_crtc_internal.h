@@ -250,8 +250,6 @@ void drm_atomic_debugfs_init(struct drm_device *dev);
 
 int __drm_atomic_helper_disable_plane(struct drm_plane *plane,
 				      struct drm_plane_state *plane_state);
-int __drm_atomic_helper_set_config(struct drm_mode_set *set,
-				   struct drm_atomic_commit *state);
 
 void drm_atomic_print_new_state(const struct drm_atomic_commit *state,
 		struct drm_printer *p);
