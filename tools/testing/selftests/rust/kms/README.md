@@ -200,6 +200,12 @@ main suite, or `rust_drm*` to include the existing shared-memory and
 framebuffer helper tests as well. Read the KTAP results, which is KUnit's
 "ok / not ok" output. A boot that selected zero tests is not a pass.
 
+The connector allocation-failure cases also need `CONFIG_FAULT_INJECTION=y`
+and `CONFIG_FAILSLAB=y`. Those options let a test ask the kernel allocator to
+fail on purpose. Run them only in a disposable kernel, without other
+fault-injection settings and without concurrent writers of the fault
+configuration.
+
 There is a separate C companion, the existing `drm_crtc` KUnit suite. Enable
 `CONFIG_DRM_KUNIT_TEST=y` and select `kunit.filter_glob=drm_crtc`. It stubs a
 test hook that would checksum scanned-out pixels so initialization returns
@@ -375,6 +381,22 @@ connector must succeed after the failure is cleared. Attaching max-bpc before
 the device-wide initial-state pass must keep the existing state pointer and
 both initialized values. This is not a full driver object-creation sequence,
 and it is not suspend or reset coverage.
+
+When fault injection is enabled, the `rust_drm_connector_alloc` suite fails
+the actual kernel object allocation inside the test connector's private data.
+Only that allocation uses non-waiting, non-warning flags, so the rest of the
+kernel is not asked to reclaim memory or print a warning for a failure the
+test itself requested. A
+task-local "fail the Nth allocation" request is installed immediately around
+it and cleared before error handling runs. Global failslab settings, the
+allocator's usual fault-injection knobs, are not changed. A pre-existing task
+request is rejected.
+
+The property path must see "out of memory," consume the injected fault, leave
+state and property absent, and succeed on retry. That case covers the
+private-data allocation. It does not cover the outer Rust state allocation,
+the native property allocation, or failures during ordinary reclaiming
+allocations.
 
 ### Registering and unregistering the virtual card
 

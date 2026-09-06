@@ -5,6 +5,8 @@
 //! Most cases keep their devices unregistered. Registration cases publish temporary virtual
 //! DRM devices, with no physical hardware or capture inputs.
 
+#[cfg(CONFIG_FAILSLAB)]
+mod allocation;
 mod events;
 mod inspection;
 mod properties;
@@ -30,6 +32,10 @@ struct Counts {
     fail_plane_state_alloc: AtomicU32,
     connector_states: AtomicU32,
     fail_connector_state_alloc: AtomicU32,
+    #[cfg(CONFIG_FAILSLAB)]
+    fail_connector_heap_alloc: AtomicU32,
+    #[cfg(CONFIG_FAILSLAB)]
+    connector_heap_failures: AtomicU32,
 }
 
 // No device reference: keeping a mode object alive must not create a device ownership cycle.
@@ -177,6 +183,17 @@ impl ConnectorPayload {
         if counts.fail_connector_state_alloc.load(Ordering::Relaxed) != 0 {
             return Err(ENOMEM);
         }
+        #[cfg(CONFIG_FAILSLAB)]
+        let value = if counts.fail_connector_heap_alloc.load(Ordering::Relaxed) != 0 {
+            let (result, consumed) = allocation::fail_value_allocation(value)?;
+            counts
+                .connector_heap_failures
+                .fetch_add(u32::from(consumed), Ordering::Relaxed);
+            result?
+        } else {
+            KBox::new(value, GFP_KERNEL)?
+        };
+        #[cfg(not(CONFIG_FAILSLAB))]
         let value = KBox::new(value, GFP_KERNEL)?;
         counts.connector_states.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
