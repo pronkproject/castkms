@@ -447,6 +447,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
     /// construct new [`UnregisteredCrtc`] objects.
     /// The device's nominated CRTC type must be `T`, since opaque state access relies on every
     /// CRTC belonging to that concrete implementation.
+    /// Both planes must belong to `dev`; foreign-device planes are rejected with `EINVAL`.
     ///
     /// [`KmsDriver::create_objects`]: kernel::drm::kms::KmsDriver::create_objects
     pub fn new<'a, PrimaryData, CursorData>(
@@ -465,6 +466,11 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
         if unsafe { (*primary.as_raw()).dev } != dev.as_raw() {
             return Err(EINVAL);
         }
+        // SAFETY: Every supplied cursor is initialized and its parent pointer is invariant.
+        if cursor.is_some_and(|plane| unsafe { (*plane.as_raw()).dev } != dev.as_raw()) {
+            return Err(EINVAL);
+        }
+
         if Crtc::<T>::has_vblank() {
             dev.has_vblanks.set(true)
         }
@@ -484,7 +490,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
         // SAFETY:
         // - `dev` handles destroying the CRTC and thus will outlive us.
         // - We just allocated `this`, and we won't move it since it's pinned
-        // - `primary` and `cursor` share the lifetime 'a with `dev`
+        // - Both planes belong to `dev`, which owns them beyond the initialization borrow.
         // - This function will memcpy the contents of `name` into its own storage.
         to_result(unsafe {
             bindings::drm_crtc_init_with_planes(
