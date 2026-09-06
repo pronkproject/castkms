@@ -411,6 +411,36 @@ static void drm_test_framebuffer_create(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, params->buffer_created, priv->buffer_created);
 }
 
+static void drm_test_framebuffer_layout_without_handles(struct kunit *test)
+{
+	struct drm_framebuffer_test_priv *priv = test->priv;
+	struct drm_mode_fb_cmd2 cmd = {
+		.width = 64, .height = 64, .pixel_format = DRM_FORMAT_XRGB8888,
+		.pitches = { 256 }, .flags = DRM_MODE_FB_MODIFIERS,
+	};
+	const struct drm_format_info *info;
+
+	info = drm_framebuffer_check_layout(&priv->dev, &cmd);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, info);
+	KUNIT_EXPECT_EQ(test, info->format, DRM_FORMAT_XRGB8888);
+	/* The ioctl still requires handles even though layout validation does not. */
+	priv->buffer_created = false;
+	drm_internal_framebuffer_create(&priv->dev, &cmd, NULL);
+	KUNIT_EXPECT_FALSE(test, priv->buffer_created);
+
+	cmd.handles[0] = 1;
+	cmd.handles[1] = 2;
+	info = drm_framebuffer_check_layout(&priv->dev, &cmd);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, info);
+	/* Unused handles remain an ioctl error when modifiers are explicit. */
+	drm_internal_framebuffer_create(&priv->dev, &cmd, NULL);
+	KUNIT_EXPECT_FALSE(test, priv->buffer_created);
+
+	cmd.pitches[0] = 1;
+	info = drm_framebuffer_check_layout(&priv->dev, &cmd);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(info));
+}
+
 static void drm_framebuffer_test_to_desc(const struct drm_framebuffer_test *t, char *desc)
 {
 	strscpy(desc, t->name, KUNIT_PARAM_DESC_SIZE);
@@ -700,6 +730,7 @@ static void drm_test_framebuffer_free(struct kunit *test)
 }
 
 static struct kunit_case drm_framebuffer_tests[] = {
+	KUNIT_CASE(drm_test_framebuffer_layout_without_handles),
 	KUNIT_CASE_PARAM(drm_test_framebuffer_check_src_coords, check_src_coords_gen_params),
 	KUNIT_CASE(drm_test_framebuffer_cleanup),
 	KUNIT_CASE_PARAM(drm_test_framebuffer_create, drm_framebuffer_create_gen_params),

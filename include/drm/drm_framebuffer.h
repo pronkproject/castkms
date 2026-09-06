@@ -213,6 +213,9 @@ struct drm_framebuffer {
 int drm_framebuffer_init(struct drm_device *dev,
 			 struct drm_framebuffer *fb,
 			 const struct drm_framebuffer_funcs *funcs);
+const struct drm_format_info *
+drm_framebuffer_check_layout(struct drm_device *dev,
+			     const struct drm_mode_fb_cmd2 *mode_cmd);
 struct drm_framebuffer *drm_framebuffer_lookup(struct drm_device *dev,
 					       struct drm_file *file_priv,
 					       uint32_t id);
