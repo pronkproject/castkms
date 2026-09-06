@@ -165,7 +165,7 @@ pub trait DriverPlane: Send + Sync + Sized {
     /// The [`DriverPlaneState`] implementation for this [`DriverPlane`].
     ///
     /// See [`DriverPlaneState`] for more info.
-    type State: DriverPlaneState;
+    type State: DriverPlaneState<Plane = Self>;
 
     /// The constructor for creating a [`Plane`] using this [`DriverPlane`] implementation.
     ///
@@ -1037,7 +1037,7 @@ pub struct PlaneState<T: DriverPlaneState> {
 /// [`struct drm_plane_state`]: srctree/include/drm_plane.h
 pub trait DriverPlaneState: Clone + Default + Sized {
     /// The type for this driver's drm_plane implementation
-    type Plane: DriverPlane;
+    type Plane: DriverPlane<State = Self>;
 }
 
 impl<T: DriverPlaneState> Sealed for PlaneState<T> {}
