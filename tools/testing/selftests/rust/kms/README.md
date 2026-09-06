@@ -227,6 +227,16 @@ A rejected update copies CRTC state, aborts, and retries with a new
 transaction. The error must propagate, the already published state must stay
 put, and the failed transaction's locks must be released.
 
+Two tasks can take CRTC and plane locks in opposite orders. DRM's deadlock
+protocol requires an actual "deadlock, please backoff" error, then a retry
+with fresh private state. Validation must leave published state unchanged.
+Commit publishes only the final successful attempt. Another case checks that
+retry still happens if the driver's callback catches the deadlock error.
+A separate case returns the same error value without a real lock conflict
+and requires the helper not to retry blindly. These are two-task schedules,
+not a proof of every lock order
+and not an allocator-stress test.
+
 A validation-only request can check a complete modeset without changing
 published state and without calling enable, disable, or plane-update. A later
 transaction then proves that the check released its resources. Success here is
