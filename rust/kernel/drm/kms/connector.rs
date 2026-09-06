@@ -433,13 +433,17 @@ impl<T: DriverConnector> UnregisteredConnector<T> {
     /// Construct a new [`UnregisteredConnector`].
     ///
     /// A driver may use this to create new [`UnregisteredConnector`] objects.
+    /// The device's nominated connector type must be `T`, as required by opaque conversions.
     ///
     /// [`KmsDriver::create_objects`]: kernel::drm::kms::KmsDriver::create_objects
     pub fn new<'a>(
         dev: &'a UnregisteredKmsDevice<'a, T::Driver>,
         type_: Type,
         args: T::Args,
-    ) -> Result<&'a Self> {
+    ) -> Result<&'a Self>
+    where
+        T::Driver: KmsDriver<Connector = T>,
+    {
         let new: Pin<KBox<Connector<T>>> = KBox::try_pin_init(
             try_pin_init!(Connector {
                 connector: Opaque::new(bindings::drm_connector {
