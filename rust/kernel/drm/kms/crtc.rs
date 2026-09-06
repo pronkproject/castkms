@@ -1069,7 +1069,7 @@ impl<'a, T: DriverCrtcState> CrtcStateMutator<'a, CrtcState<T>> {
         where
             T: DriverCrtcState<Crtc = C>;
         use
-            T as DriverCrtc,
+            C as DriverCrtc,
             D as KmsDriver<Crtc = ...>
     }
 }
