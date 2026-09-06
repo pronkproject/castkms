@@ -5,19 +5,13 @@
 //! C header: [`include/drm/drm_framebuffer.h`](srctree/include/drm/drm_framebuffer.h)
 
 use super::{KmsDriver, ModeObject, Sealed};
-use crate::{
-    drm::device::Device,
-    prelude::*,
-    sync::aref::{ARef, AlwaysRefCounted},
-    types::*,
-};
+use crate::{drm::device::Device, prelude::*, sync::aref::ARef, types::*};
 #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 use crate::{
     drm::gem::{self, shmem, BaseObject},
     io::{IoBase, SysMem},
 };
 use bindings;
-#[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 use core::ops::Deref;
 use core::{marker::*, ptr};
 
@@ -67,17 +61,43 @@ impl<T: KmsDriver> PartialEq for Framebuffer<T> {
 }
 impl<T: KmsDriver> Eq for Framebuffer<T> {}
 
-// SAFETY: DRM framebuffers use the refcount in their embedded mode object. The C get/put helpers
-// operate on that refcount and release the object only after the last reference is dropped.
-unsafe impl<T: KmsDriver> AlwaysRefCounted for Framebuffer<T> {
-    fn inc_ref(&self) {
-        // SAFETY: A shared reference proves the framebuffer and its refcount are live.
-        unsafe { bindings::drm_framebuffer_get(self.as_raw()) };
-    }
+/// An owned framebuffer reference that also retains its DRM device.
+///
+/// Native framebuffer references alone do not keep the device alive. Retain both until the
+/// framebuffer is released, since its destructor uses the device's mode configuration.
+/// This preserves allocation lifetime, not immutable pixels or permission for deferred reads.
+/// A driver storing this handle in device-owned state must release it during shutdown to avoid
+/// an ownership cycle, just as with an owned CRTC handle.
+pub struct FramebufferRef<T: KmsDriver> {
+    fb: ptr::NonNull<Framebuffer<T>>,
+    _dev: ARef<Device<T>>,
+}
 
-    unsafe fn dec_ref(obj: core::ptr::NonNull<Self>) {
-        // SAFETY: The caller transfers one live framebuffer reference to this method.
-        unsafe { bindings::drm_framebuffer_put(obj.as_ref().as_raw()) };
+// SAFETY: The framebuffer is thread-safe and both native allocations are retained by the handle.
+unsafe impl<T: KmsDriver> Send for FramebufferRef<T> {}
+// SAFETY: Shared access exposes only the thread-safe framebuffer interface.
+unsafe impl<T: KmsDriver> Sync for FramebufferRef<T> {}
+
+impl<T: KmsDriver> Deref for FramebufferRef<T> {
+    type Target = Framebuffer<T>;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: This handle owns a framebuffer reference and retains its device.
+        unsafe { self.fb.as_ref() }
+    }
+}
+
+impl<T: KmsDriver> Clone for FramebufferRef<T> {
+    fn clone(&self) -> Self {
+        self.to_owned_ref()
+    }
+}
+
+impl<T: KmsDriver> Drop for FramebufferRef<T> {
+    fn drop(&mut self) {
+        // SAFETY: Release our native reference before the device field is dropped. The native
+        // destructor may access the device, but must not use the framebuffer after this call.
+        unsafe { bindings::drm_framebuffer_put(self.as_raw()) };
     }
 }
 
@@ -223,9 +243,15 @@ impl<T: KmsDriver> Framebuffer<T> {
         unsafe { &*ptr.cast() }
     }
 
-    /// Return an owned reference to this framebuffer.
-    pub fn to_aref(&self) -> ARef<Self> {
-        self.into()
+    /// Return an owned reference retaining both this framebuffer and its DRM device.
+    pub fn to_owned_ref(&self) -> FramebufferRef<T> {
+        let dev = self.drm_dev().into();
+        // SAFETY: The shared borrow proves a live framebuffer and its device.
+        unsafe { bindings::drm_framebuffer_get(self.as_raw()) };
+        FramebufferRef {
+            fb: ptr::NonNull::from(self),
+            _dev: dev,
+        }
     }
 
     /// Return the framebuffer width in pixels.
