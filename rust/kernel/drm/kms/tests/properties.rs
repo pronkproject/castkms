@@ -34,6 +34,48 @@ mod allocation_cases {
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
+
+    #[test]
+    fn payload_heap_failure_preserves_published_state() -> Result {
+        let ((error, preserved, failures, live_states), counts) =
+            with_fresh_connector(|connector, drm, counts| {
+                connector.attach_max_bpc_property(8, 12)?;
+                // SAFETY: Property attachment initialized matching typed state. No other
+                // task accesses this unregistered device or changes its object graph.
+                let initial = unsafe { (*connector.as_raw()).state };
+                let connector =
+                    unsafe { connector::Connector::<TestConnector>::from_raw(connector.as_raw()) };
+                counts.fail_connector_heap_alloc.store(1, Ordering::Relaxed);
+                let result = unsafe {
+                    atomic::run_check(drm, |state| {
+                        let _new = state.add_connector_state(connector)?;
+                        Ok(())
+                    })
+                };
+                counts.fail_connector_heap_alloc.store(0, Ordering::Relaxed);
+                // SAFETY: Validation returned; the original state remains exclusively accessed.
+                let preserved = unsafe { (*connector.as_raw()).state == initial };
+                let failures = counts.connector_heap_failures.load(Ordering::Relaxed);
+                let live_states = counts.connector_states.load(Ordering::Relaxed);
+                // SAFETY: Same initialized, private-device lifetime as the failed check.
+                unsafe {
+                    atomic::run_check(drm, |state| {
+                        let _new = state.add_connector_state(connector)?;
+                        Ok(())
+                    })
+                }?;
+                Ok((result.err(), preserved, failures, live_states))
+            })?;
+        assert_eq!(error, Some(ENOMEM));
+        assert!(preserved);
+        assert_eq!(failures, 1);
+        assert_eq!(live_states, 2);
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 }
 
 fn with_fresh_connector<R>(
