@@ -445,6 +445,8 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
     ///
     /// A driver may use this from their [`KmsDriver::create_objects`] callback in order to
     /// construct new [`UnregisteredCrtc`] objects.
+    /// The device's nominated CRTC type must be `T`, since opaque state access relies on every
+    /// CRTC belonging to that concrete implementation.
     ///
     /// [`KmsDriver::create_objects`]: kernel::drm::kms::KmsDriver::create_objects
     pub fn new<'a, PrimaryData, CursorData>(
@@ -455,6 +457,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
         args: T::Args,
     ) -> Result<&'a Self>
     where
+        T::Driver: KmsDriver<Crtc = T>,
         PrimaryData: DriverPlane<Driver = T::Driver>,
         CursorData: DriverPlane<Driver = T::Driver>,
     {
