@@ -179,11 +179,6 @@ static int framebuffer_check(struct drm_device *dev,
 			return -EINVAL;
 		}
 
-		if (!r->handles[i]) {
-			drm_dbg_kms(dev, "no buffer object handle for plane %d\n", i);
-			return -EINVAL;
-		}
-
 		if (min_pitch > UINT_MAX)
 			return -ERANGE;
 
@@ -237,11 +232,6 @@ static int framebuffer_check(struct drm_device *dev,
 		if (!(r->flags & DRM_MODE_FB_MODIFIERS))
 			continue;
 
-		if (r->handles[i]) {
-			drm_dbg_kms(dev, "buffer object handle for unused plane %d\n", i);
-			return -EINVAL;
-		}
-
 		if (r->pitches[i]) {
 			drm_dbg_kms(dev, "non-zero pitch for unused plane %d\n", i);
 			return -EINVAL;
@@ -256,14 +246,24 @@ static int framebuffer_check(struct drm_device *dev,
 	return 0;
 }
 
-struct drm_framebuffer *
-drm_internal_framebuffer_create(struct drm_device *dev,
-				const struct drm_mode_fb_cmd2 *r,
-				struct drm_file *file_priv)
+/**
+ * drm_framebuffer_check_layout - Validate framebuffer metadata without handles
+ * @dev: DRM device with initialized, stable mode configuration
+ * @r: Framebuffer metadata; handle and framebuffer ID fields are ignored
+ *
+ * Checks dimensions, flags, formats, pitches, offsets and modifiers using the
+ * same rules as ADDFB2. Does not acquire backing storage or validate its size,
+ * plane support or driver-specific constraints. Callers must keep the device
+ * and mode configuration alive throughout validation and subsequent creation.
+ *
+ * Returns: The driver's format information, or an error pointer.
+ */
+const struct drm_format_info *
+drm_framebuffer_check_layout(struct drm_device *dev,
+			     const struct drm_mode_fb_cmd2 *r)
 {
 	struct drm_mode_config *config = &dev->mode_config;
 	const struct drm_format_info *info;
-	struct drm_framebuffer *fb;
 	int ret;
 
 	if (r->flags & ~(DRM_MODE_FB_INTERLACED | DRM_MODE_FB_MODIFIERS)) {
@@ -301,6 +301,38 @@ drm_internal_framebuffer_create(struct drm_device *dev,
 	ret = framebuffer_check(dev, info, r);
 	if (ret)
 		return ERR_PTR(ret);
+
+	return info;
+}
+EXPORT_SYMBOL_GPL(drm_framebuffer_check_layout);
+
+struct drm_framebuffer *
+drm_internal_framebuffer_create(struct drm_device *dev,
+				const struct drm_mode_fb_cmd2 *r,
+				struct drm_file *file_priv)
+{
+	const struct drm_format_info *info;
+	struct drm_framebuffer *fb;
+	unsigned int i;
+
+	info = drm_framebuffer_check_layout(dev, r);
+	if (IS_ERR(info))
+		return ERR_CAST(info);
+
+	for (i = 0; i < info->num_planes; i++) {
+		if (!r->handles[i]) {
+			drm_dbg_kms(dev, "no buffer object handle for plane %d\n", i);
+			return ERR_PTR(-EINVAL);
+		}
+	}
+	if (r->flags & DRM_MODE_FB_MODIFIERS) {
+		for (; i < ARRAY_SIZE(r->handles); i++) {
+			if (r->handles[i]) {
+				drm_dbg_kms(dev, "buffer object handle for unused plane %d\n", i);
+				return ERR_PTR(-EINVAL);
+			}
+		}
+	}
 
 	fb = dev->mode_config.funcs->fb_create(dev, file_priv, info, r);
 	if (IS_ERR(fb)) {
