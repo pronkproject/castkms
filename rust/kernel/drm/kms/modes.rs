@@ -142,6 +142,12 @@ impl DisplayMode {
         mode.vtotal = t.vtotal;
         mode.flags = t.flags.0;
 
+        // SAFETY: All input timing fields of this local mode have been initialized. Match
+        // drm_mode_convert_umode so kernel-created modes also have derived CRTC timings.
+        unsafe {
+            bindings::drm_mode_set_crtcinfo(&mut mode, bindings::CRTC_INTERLACE_HALVE_V as i32)
+        };
+
         Ok(Self {
             inner: Opaque::new(mode),
         })

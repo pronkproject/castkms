@@ -588,6 +588,16 @@ mod cases {
     use plane::AsRawPlane;
 
     #[test]
+    fn constructed_mode_has_crtc_timings() -> Result {
+        let mode = mode()?;
+        assert_eq!(mode.crtc_clock(), 25175);
+        assert_eq!(mode.crtc_vtotal(), 525);
+        assert_eq!(mode.crtc_vblank_start(), 480);
+        assert_eq!(mode.crtc_vblank_end(), 525);
+        Ok(())
+    }
+
+    #[test]
     fn plane_name_is_literal() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-plane-name", None)?;
