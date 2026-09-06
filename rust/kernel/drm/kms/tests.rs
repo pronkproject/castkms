@@ -263,6 +263,7 @@ fn create(
 #[kunit_tests(rust_drm_kms)]
 mod cases {
     use super::*;
+    use plane::AsRawPlane;
 
     #[test]
     fn initial_state_has_parents() -> Result {
@@ -310,6 +311,39 @@ mod cases {
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
         assert_eq!(create(parent.as_ref(), &counts, true).err(), Some(EINVAL));
         assert_eq!(counts.setup_failures.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn foreign_primary_is_rejected() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent_a = faux::Registration::new(c"rust-kms-primary-a", None)?;
+        let parent_b = faux::Registration::new(c"rust-kms-primary-b", None)?;
+        let a = create(parent_a.as_ref(), &counts, false)?;
+        let b = create(parent_b.as_ref(), &counts, false)?;
+        // SAFETY: Both devices remain unregistered; the observed plane is owned by b and its
+        // reference is confined to these device borrows. No transaction modifies either device.
+        let dev_a = unsafe { UnregisteredKmsDevice::new(&a) };
+        let foreign = unsafe {
+            plane::UnregisteredPlane::<TestPlane>::from_raw(b.plane.load(Ordering::Relaxed))
+        };
+        assert_eq!(
+            crtc::UnregisteredCrtc::<TestCrtc>::new(
+                &dev_a,
+                foreign,
+                None::<&plane::UnregisteredPlane<TestPlane>>,
+                None,
+                (),
+            )
+            .err(),
+            Some(EINVAL)
+        );
+        assert_eq!(a.num_crtcs(), 1);
+        assert_eq!(b.num_crtcs(), 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 8);
+        drop(a);
+        drop(b);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
