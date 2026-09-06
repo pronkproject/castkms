@@ -218,6 +218,14 @@ Enable and disable callback counts show that the helper drove the CRTC's
 software callbacks. The test driver runs the
 Rust work that happens after the update is accepted, including a fake vblank.
 
+Replacing a framebuffer without changing the mode drops the client's first
+buffer after the output is enabled, then submits a second image. The selected
+image must change, plane-update must run, a full modeset must not, and the
+retired buffer must disappear once disable releases the last display
+reference. This path completes immediately through the fake vblank. It is not
+a delayed display event, and it is not a test of a GPU still reading the old
+buffer.
+
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,
 userspace unbind stress, and real GPU execution remain separate work.
