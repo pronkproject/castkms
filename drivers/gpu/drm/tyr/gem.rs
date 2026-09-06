@@ -12,10 +12,7 @@ use kernel::{
         shmem, //
     },
     prelude::*,
-    sync::{
-        aref::ARef,
-        Arc, //
-    }, //
+    sync::Arc,
 };
 
 use crate::{
@@ -54,7 +51,7 @@ impl gem::DriverObject for BoData {
 pub(crate) type Bo = gem::shmem::Object<BoData>;
 
 /// Creates a dummy GEM object to serve as the root of a GPUVM.
-pub(crate) fn new_dummy_object(ddev: &TyrDrmDevice) -> Result<ARef<Bo>> {
+pub(crate) fn new_dummy_object(ddev: &TyrDrmDevice) -> Result<gem::ObjectRef<Bo>> {
     let bo = Bo::new(
         ddev,
         4096,
@@ -84,7 +81,7 @@ pub(crate) enum KernelBoVaAlloc {
 /// When dropped, the buffer is automatically unmapped from the GPU VA space.
 pub(crate) struct KernelBo<'drm> {
     /// The underlying GEM buffer object.
-    bo: ARef<Bo>,
+    bo: gem::ObjectRef<Bo>,
     /// The GPU VM this buffer is mapped into.
     vm: Arc<Vm<'drm>>,
     /// The GPU VA range occupied by this buffer.
@@ -145,7 +142,7 @@ impl Drop for KernelBo<'_> {
 
         if let Err(e) = self.vm.unmap_range(va, size) {
             // If unmap_range fails, it is still safe to drop the
-            // KernelBo and its ARef to the GEM buffer object because
+            // KernelBo and its owned GEM buffer reference because
             // GPUVM also holds a reference to the GEM buffer object.
             // The physical pages won't be freed or reallocated.
             dev_err!(
