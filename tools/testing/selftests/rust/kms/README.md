@@ -1,4 +1,4 @@
-# Compiler checks for the Rust display API
+# Compiler and runtime checks for the Rust display API
 
 CastKMS wants a virtual monitor whose kernel side is written in Rust. The
 kernel should own display state, timing,
@@ -28,14 +28,20 @@ been published, carrying a commit step out of the function that is allowed to
 take it, or treating an allocated-but-not-yet-visible device as if userspace
 could already see it.
 
+There are two kinds of tests. They answer different questions.
+
 The compiler suite never loads a driver and never talks to hardware. It asks
 the Rust compiler, against the compiled Rust kernel library you just built,
 whether legal driver code still type-checks and whether a deliberately illegal
 example is rejected for the documented reason.
 
-Passing the compiler suite does not mean a virtual KMS driver is ready to
-capture frames. It means the shared types are less likely to lie before
-that driver is written.
+The runtime suite boots inside a disposable test kernel. It builds a fake
+virtual display with no physical panel and no compositor, then checks
+object ownership and setup failure for real.
+
+Passing either suite does not mean a virtual KMS driver is ready to capture
+frames. It means the shared types are less likely to lie before that driver is
+written.
 
 ## Compiler checks
 
@@ -101,3 +107,39 @@ These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
 uphold. They do not test runtime device identity, allocator failure, reset,
 page-flip events, suspend, or GPU execution.
+
+## Runtime checks
+
+The in-kernel suite lives in `rust/kernel/drm/kms/tests.rs`. Its cases build
+an unregistered virtual display: a fake bus device that never publishes a DRM
+character device, so userspace never sees a `/dev/dri/card*`. Run those in a
+virtual machine or a dedicated test boot, not on the desktop you are working
+on. No case talks to a physical panel, a capture pipeline, or a compositor.
+
+### How to run them
+
+KUnit is the kernel's in-process unit test framework. Build and boot a
+disposable test kernel with KUnit, Rust DRM, and the shared-memory GEM helper
+that the test driver consumes. That helper is selected by the consuming
+driver. Check that it appears in the generated configuration; setting a hidden
+option by hand may not survive.
+
+On the kernel command line, select `kunit.filter_glob=rust_drm_kms` for the
+main suite, or `rust_drm*` to include the existing shared-memory and
+framebuffer helper tests as well. Read the KTAP results, which is KUnit's
+"ok / not ok" output. A boot that selected zero tests is not a pass.
+
+### Building a fake display
+
+Before anyone modesets, the fake pipeline has to come up as a consistent set
+of objects and go away again without leaking them.
+
+The basic cases check that each plane, CRTC, and connector's initial state
+points at the object that owns it, that destroying those objects drops the
+expected counts, and that a deliberately rejected partial setup unwinds. They
+also reject attaching a primary or cursor plane that belongs to a different
+device.
+
+Object destruction counters are not a leak detector. Partial setup rejection
+is not allocator fault injection. Delayed GPU-reader retirement, suspend,
+userspace unbind stress, and real GPU execution remain separate work.
