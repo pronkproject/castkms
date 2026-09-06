@@ -8,7 +8,6 @@ use kernel::{
     },
     page,
     prelude::*,
-    sync::aref::ARef,
 };
 
 use crate::{
@@ -31,7 +30,7 @@ impl gem::DriverObject for NovaObject {
 
 impl NovaObject {
     /// Create a new DRM GEM object.
-    pub(crate) fn new(dev: &NovaDevice, size: usize) -> Result<ARef<gem::Object<Self>>> {
+    pub(crate) fn new(dev: &NovaDevice, size: usize) -> Result<gem::ObjectRef<gem::Object<Self>>> {
         if size == 0 {
             return Err(EINVAL);
         }
@@ -45,7 +44,7 @@ impl NovaObject {
     pub(crate) fn lookup_handle(
         file: &drm::File<File>,
         handle: u32,
-    ) -> Result<ARef<gem::Object<Self>>> {
+    ) -> Result<gem::ObjectRef<gem::Object<Self>>> {
         gem::Object::lookup_handle(file, handle)
     }
 }

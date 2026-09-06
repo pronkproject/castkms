@@ -173,7 +173,7 @@ so reading a cached mode or cached duration through that lock is rejected. A
 timer driver has to copy validated timings into storage it actually
 synchronizes.
 
-Framebuffer handles keep the DRM device alive because
+Framebuffer handles and GEM buffer handles keep the DRM device alive because
 destroying those buffers still needs the device. A native C reference does
 not, by itself, retain the Rust device wrapper used by those methods. The
 compiler rejects converting to an owned reference that forgets that pairing.
@@ -310,6 +310,10 @@ caller's device handle is dropped, then release every piece of driver-private
 state when that last handle goes away. The native framebuffer reference does
 not retain the DRM device; the Rust owned handle retains both and releases the
 framebuffer first.
+
+A compiler case checks the ownership interface for base GEM buffers.
+It accepts the handle that retains both buffer and device and rejects an
+unpaired reference. It does not allocate on physical graphics hardware.
 
 ### Page flips and vblank
 
