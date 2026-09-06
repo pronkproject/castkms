@@ -320,6 +320,7 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
     ///
     /// A driver may use this from their [`KmsDriver::create_objects`] callback in order to
     /// construct new [`UnregisteredPlane`] objects.
+    /// The device's nominated plane type must be `T`, as required by opaque plane conversions.
     ///
     /// The returned plane cannot outlive the device borrow:
     ///
@@ -351,7 +352,10 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
         type_: Type,
         name: Option<&CStr>,
         args: T::Args,
-    ) -> Result<&'a Self> {
+    ) -> Result<&'a Self>
+    where
+        T::Driver: KmsDriver<Plane = T>,
+    {
         let this: Pin<KBox<Plane<T>>> = KBox::try_pin_init(
             try_pin_init!(Plane {
                 plane: Opaque::new(bindings::drm_plane {
