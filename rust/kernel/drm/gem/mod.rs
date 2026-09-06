@@ -31,6 +31,16 @@ use core::{
 #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 pub mod shmem;
 
+// Native GEM initialization asserts page alignment instead of returning an error. Validate
+// before allocating a payload, and leave rounding to callers so its size matches the object.
+pub(crate) fn validate_size(size: usize) -> Result {
+    if size == 0 || size & (crate::page::PAGE_SIZE - 1) != 0 {
+        Err(EINVAL)
+    } else {
+        Ok(())
+    }
+}
+
 /// An owned GEM reference retaining the object's DRM device until after object release.
 ///
 /// Native GEM references do not themselves retain the device. Keep this handle for detached
@@ -370,11 +380,12 @@ impl<T: DriverObject, Ctx: DeviceContext> Object<T, Ctx> {
 }
 
 impl<T: DriverObject> Object<T> {
-    /// Create a new GEM object.
+    /// Create a new GEM object with a nonzero, page-aligned size.
     pub fn new(dev: &drm::Device<T::Driver>, size: usize, args: T::Args) -> Result<ObjectRef<Self>>
     where
         T::Driver: drm::Driver<Object = Self>,
     {
+        validate_size(size)?;
         let obj: Pin<KBox<Self>> = KBox::pin_init(
             try_pin_init!(Self {
                 obj: Opaque::new(bindings::drm_gem_object::default()),
