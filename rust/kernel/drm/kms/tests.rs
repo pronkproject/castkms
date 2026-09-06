@@ -856,6 +856,63 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn object_framebuffer_rejects_invalid_layouts() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-bad-object-fb", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let object = gem::shmem::Object::<TestObject>::new(
+            &dev,
+            4096,
+            gem::shmem::ObjectConfig::default(),
+            (),
+        )?;
+        for (width, height, pitch, offset, format, modifier, count) in [
+            (0, 16, 256, 0, fourcc::XRGB8888, 0, 1),
+            (64, 0, 256, 0, fourcc::XRGB8888, 0, 1),
+            (641, 1, 2564, 0, fourcc::XRGB8888, 0, 1),
+            (64, 16, 1, 0, fourcc::XRGB8888, 0, 1),
+            (64, 16, 256, 1, fourcc::XRGB8888, 0, 1),
+            (64, 16, u32::MAX, 0, fourcc::XRGB8888, 0, 1),
+            (64, 16, 256, u32::MAX, fourcc::XRGB8888, 0, 1),
+            (64, 16, 256, 0, 0, 0, 1),
+            (64, 16, 256, 0, fourcc::XRGB8888, u64::MAX, 1),
+            (64, 16, 256, 0, fourcc::XRGB8888, 0, 0),
+            (64, 16, 256, 0, fourcc::XRGB8888, 0, 2),
+            (64, 16, 256, 0, fourcc::NV12, 0, 1),
+        ] {
+            let planes = [
+                framebuffer::FramebufferPlane {
+                    object: &*object,
+                    pitch,
+                    offset,
+                },
+                framebuffer::FramebufferPlane {
+                    object: &*object,
+                    pitch,
+                    offset,
+                },
+            ];
+            let layout = framebuffer::FramebufferLayout {
+                width,
+                height,
+                format,
+                modifier: Some(modifier),
+                interlaced: false,
+                planes: &planes[..count],
+            };
+            // SAFETY: This test owns initialized, unregistered KMS state and excludes teardown.
+            let result = unsafe { framebuffer::Framebuffer::from_objects_unchecked(&dev, &layout) };
+            assert!(result.is_err());
+            assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 1);
+        }
+        drop(object);
+        drop(dev);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
     fn foreign_import_rejection_releases_attachment() -> Result {
