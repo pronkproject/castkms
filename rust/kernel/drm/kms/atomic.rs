@@ -80,7 +80,11 @@ impl<T: KmsDriver> AtomicState<T> {
     where
         P: ModesettablePlane + ModeObject<Driver = T>,
     {
-        // SAFETY: This function either returns NULL or a valid pointer to a `drm_plane_state`
+        if !core::ptr::eq(self.drm_dev(), plane.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The plane belongs to this device, so its index addresses this transaction.
+        // This function either returns NULL or a valid pointer to a `drm_plane_state`.
         unsafe {
             bindings::drm_atomic_get_old_plane_state(self.as_raw(), plane.as_raw())
                 .as_ref()
@@ -427,7 +431,11 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
     where
         P: ModesettablePlane + ModeObject<Driver = T>,
     {
-        // SAFETY: DRM either returns NULL or a valid pointer to a `drm_plane_state`.
+        if !core::ptr::eq(self.drm_dev(), plane.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The plane belongs to this device, so its index addresses this transaction.
+        // DRM either returns NULL or a valid pointer to a `drm_plane_state`.
         let state =
             unsafe { bindings::drm_atomic_get_new_plane_state(self.as_raw(), plane.as_raw()) };
 
@@ -518,7 +526,10 @@ impl<T: KmsDriver> AtomicStateComposer<T> {
     where
         P: ModesettablePlane + ModeObject<Driver = T>,
     {
-        // SAFETY: DRM will only return a valid pointer to a `drm_plane_state` - or an error.
+        if !core::ptr::eq(self.drm_dev(), plane.drm_dev()) {
+            return Err(EINVAL);
+        }
+        // SAFETY: The plane belongs to this device. DRM returns a valid state pointer or an error.
         let state = unsafe {
             from_err_ptr(bindings::drm_atomic_get_plane_state(
                 self.as_raw(),
