@@ -633,42 +633,23 @@ where
     D: KmsDriver<Object = gem::shmem::Object<O>>,
     O: gem::DriverObject<Driver = D>,
 {
-    use gem::{BaseObject, IntoGEMObject};
-    const FUNCS: bindings::drm_framebuffer_funcs = bindings::drm_framebuffer_funcs {
-        destroy: Some(bindings::drm_gem_fb_destroy),
-        create_handle: Some(bindings::drm_gem_fb_create_handle),
-        dirty: None,
-    };
     let pitch = width.checked_mul(4).ok_or(EOVERFLOW)?;
-    let size = (pitch as usize)
-        .checked_mul(height as usize)
-        .ok_or(EOVERFLOW)?;
-    if width == 0 || height == 0 || size > object.size() || !ptr::eq(object.dev(), dev) {
-        return Err(EINVAL);
-    }
-    let mut fb = KBox::new(bindings::drm_framebuffer::default(), GFP_KERNEL)?;
-    fb.dev = dev.as_raw();
-    fb.width = width;
-    fb.height = height;
-    fb.pitches[0] = pitch;
-    fb.modifier = fourcc::FORMAT_MOD_LINEAR;
-    // SAFETY: The known packed format has one four-byte plane, matching the allocation above.
-    fb.format = unsafe { bindings::drm_format_info(fourcc::XRGB8888) };
-    fb.obj[0] = object.as_raw();
-    // SAFETY: All metadata and the owned GEM reference are initialized before publication.
-    // Failure leaves both Rust allocations owned locally for normal unwind.
-    crate::error::to_result(unsafe {
-        bindings::drm_framebuffer_init(dev.as_raw(), &mut *fb, &FUNCS)
-    })?;
-    // Transfer the GEM reference to drm_gem_fb_destroy.
-    // SAFETY: The framebuffer's native users retain `dev`; Rust handles pair its lifetime too.
-    let _ = unsafe { object.into_native() };
-    let raw = KBox::into_raw(fb);
-    // SAFETY: The initializer gave us a live framebuffer, with `dev` borrowed throughout.
-    let owned = unsafe { framebuffer::Framebuffer::<D>::from_raw(raw) }.to_owned_ref();
-    // SAFETY: Drop the initial native reference; `owned` now retains the framebuffer and device.
-    unsafe { bindings::drm_framebuffer_put(raw) };
-    Ok(owned)
+    let planes = [framebuffer::FramebufferPlane {
+        object: &*object,
+        pitch,
+        offset: 0,
+    }];
+    let layout = framebuffer::FramebufferLayout {
+        width,
+        height,
+        format: fourcc::XRGB8888,
+        modifier: Some(fourcc::FORMAT_MOD_LINEAR),
+        interlaced: false,
+        planes: &planes,
+    };
+    // SAFETY: These fixtures own initialized KMS devices and exclude setup or teardown while
+    // creating framebuffers. Every native framebuffer owner retains the device independently.
+    unsafe { framebuffer::Framebuffer::<D>::from_objects_unchecked(dev, &layout) }
 }
 
 fn mode() -> Result<modes::DisplayMode> {
