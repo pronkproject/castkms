@@ -322,6 +322,11 @@ count; dropping the owned handle must release exactly one reference. That is
 allocation lifetime, not a claim that the parent CRTC remains usable for
 hardware access.
 
+If the virtual enable callback returns an I/O error, native acquisition must
+surface that error and undo the reference it took. Clearing the error must
+allow a later balanced acquire and drop. This injects a callback error, not an
+allocator failure or a real interrupt-controller failure.
+
 ### Private state, properties, and real allocation failure
 
 Drivers hang private data off CRTC, plane, and connector state. That
