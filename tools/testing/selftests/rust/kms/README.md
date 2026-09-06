@@ -130,6 +130,13 @@ check the distinction without actually registering a DRM device. In the API
 those two methods are `Registration::device()` and
 `Registration::registration_guard()`.
 
+Kernel-initiated atomic updates, the kind that do not come from a userspace
+ioctl (a device request made through an open file), also require the live
+registered view. The callback may borrow a transaction, but it cannot keep
+a handle to the next state after the callback returns. The helper that edits
+the configuration cannot be sent to another task even when the driver type
+itself can. A shareable device reference is not a substitute.
+
 These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
 uphold. They do not test runtime device identity, allocator failure, reset,
@@ -184,6 +191,15 @@ dropped, and acquired again, and it reports the owning device. The tests do
 not call the operations that are illegal before initialization. Those are
 rejected by the compiler suite instead of being executed as undefined behavior
 in the virtual machine.
+
+### Atomic updates without a real compositor
+
+The next question is whether an update can fail, retry, and refuse to mix
+objects from the wrong place, without a userspace compositor in the loop.
+
+A rejected update copies CRTC state, aborts, and retries with a new
+transaction. The error must propagate, the already published state must stay
+put, and the failed transaction's locks must be released.
 
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,

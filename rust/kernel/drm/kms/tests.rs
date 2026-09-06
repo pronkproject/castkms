@@ -2,6 +2,8 @@
 
 //! Runtime consumers of the shared KMS interfaces. Devices are never registered with userspace.
 
+mod inspection;
+
 use super::*;
 use crate::{
     drm::{self, fourcc, gem, UnregisteredDevice},
@@ -403,6 +405,47 @@ mod cases {
         drop(drm);
         assert!(first_matches);
         assert!(second_matches);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_atomic_update_preserves_state() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-reject-update", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: Setup completed and this task exclusively owns the unregistered device.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        // SAFETY: No concurrent update accesses the initial published state.
+        let initial = unsafe { (*crtc.as_raw()).state };
+        let mut attempts = 0;
+        let mut duplicated = false;
+        // SAFETY: Initial state exists, with no registration, object creation or teardown during
+        // either call. Reentering after rejection checks that the prior call released its lock.
+        let rejected = unsafe {
+            atomic::run_update(&drm, |state| {
+                attempts += 1;
+                let new = state.add_crtc_state(crtc)?;
+                duplicated = state.get_old_crtc_state(crtc).is_some();
+                drop(new);
+                Err(EINVAL)
+            })
+        };
+        let retried = unsafe {
+            atomic::run_update(&drm, |state| {
+                attempts += 1;
+                let _new = state.add_crtc_state(crtc)?;
+                Err(ECANCELED)
+            })
+        };
+        // SAFETY: Both blocking calls finished; there is no concurrent update.
+        let final_state = unsafe { (*crtc.as_raw()).state };
+        drop(drm);
+        assert_eq!(rejected, Err(EINVAL));
+        assert_eq!(retried, Err(ECANCELED));
+        assert!(duplicated);
+        assert_eq!(attempts, 2);
+        assert_eq!(initial, final_state);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }

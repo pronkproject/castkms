@@ -6,13 +6,120 @@
 use super::{connector::*, crtc::*, plane::*, KmsDriver, ModeObject};
 use crate::{
     bindings,
-    drm::device::Device,
+    drm::device::{Device, Registered},
     error::{from_err_ptr, to_result},
     prelude::*,
     sync::aref::{ARef, AlwaysRefCounted},
     types::*,
 };
 use core::{cell::Cell, marker::*, mem::ManuallyDrop, ops::*, ptr::NonNull};
+
+// The acquire context contains intrusive lists and belongs to its initializing task. Keep it
+// pinned inside the transaction runner, where neither it nor its locks can escape the callback.
+#[pin_data(PinnedDrop)]
+struct ModesetAcquireContext {
+    #[pin]
+    raw: Opaque<bindings::drm_modeset_acquire_ctx>,
+    _task: NotThreadSafe,
+}
+
+impl ModesetAcquireContext {
+    fn new() -> impl PinInit<Self> {
+        pin_init!(Self {
+            raw <- Opaque::ffi_init(|slot| {
+                // SAFETY: The slot is pinned, writable storage for the acquire context.
+                unsafe { bindings::drm_modeset_acquire_init(slot, 0) };
+            }),
+            _task: NotThreadSafe,
+        })
+    }
+}
+
+#[pinned_drop]
+impl PinnedDrop for ModesetAcquireContext {
+    fn drop(self: Pin<&mut Self>) {
+        // SAFETY: The context is initialized on this task and outlives every transaction using
+        // it. All temporary state has been released before dropping locks and finalizing it.
+        unsafe {
+            bindings::drm_modeset_drop_locks(self.raw.get());
+            bindings::drm_modeset_acquire_fini(self.raw.get());
+        }
+    }
+}
+
+impl<T: KmsDriver> Device<T, Registered> {
+    /// Build and submit a blocking atomic update from the kernel.
+    ///
+    /// The callback edits a private transaction, using the same object-state helpers as driver
+    /// callbacks. The framework owns the acquire context, validation, commit and cleanup; no
+    /// userspace file or ioctl is involved. The registered-device borrow excludes unplug.
+    ///
+    /// Lock contention may discard an attempt and invoke `update` again with fresh state. The
+    /// callback must propagate errors and be replayable: defer external side effects until this
+    /// method succeeds. Do not enter with modeset locks held or recursively submit updates from
+    /// the callback. State guards and references cannot escape the callback.
+    pub fn atomic_update(
+        &self,
+        update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+    ) -> Result {
+        // SAFETY: Registration proves completed KMS initialization and excludes teardown.
+        unsafe { run_update(self, update) }
+    }
+}
+
+/// Run an update on an initialized device, also used by the unregistered runtime consumer.
+///
+/// # Safety
+///
+/// KMS setup, including initial object states, must have completed. The caller must exclude
+/// mode-object creation, device registration and teardown throughout this call.
+pub(super) unsafe fn run_update<T: KmsDriver>(
+    dev: &Device<T>,
+    mut update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+) -> Result {
+    pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new());
+    loop {
+        let (result, retry) = {
+            // SAFETY: The caller guarantees completed KMS initialization and a live device.
+            let raw = NonNull::new(unsafe { bindings::drm_atomic_commit_alloc(dev.as_raw()) })
+                .ok_or(ENOMEM)?;
+            // SAFETY: This unpublished allocation is exclusively owned by the runner.
+            unsafe { (*raw.as_ptr()).acquire_ctx = ctx.raw.get() };
+            // SAFETY: Transfer the allocation's reference to the composer with its initialized
+            // acquire context already attached. Its drop runs before the context is destroyed.
+            // No access to this state survives the callback or commit.
+            let mut state = core::pin::pin!(unsafe { AtomicStateComposer::<T>::new(raw) });
+            let result = update(state.as_mut());
+            // A callback that accidentally consumes EDEADLK must still back off, never commit a
+            // partial transaction. Only actual contention calls the native slow-lock path.
+            // SAFETY: The initialized context belongs exclusively to this task.
+            let contended = unsafe { !(*ctx.raw.get()).contended.is_null() };
+            let result = if contended {
+                Err(EDEADLK)
+            } else {
+                result.and_then(|()| {
+                    // SAFETY: All callback borrows have ended. The transaction is unpublished and
+                    // holds the required locks; the core performs validation before publishing it.
+                    to_result(unsafe { bindings::drm_atomic_commit(raw.as_ptr()) })
+                })
+            };
+            // The driver may discover contention during validation, after the callback returned.
+            // SAFETY: Validation uses this task's initialized context synchronously.
+            let retry = unsafe { !(*ctx.raw.get()).contended.is_null() };
+            // SAFETY: No operation uses the acquire pointer after commit returns. Remove the
+            // stack pointer even if DRM still holds another reference to the completed transaction.
+            unsafe { (*raw.as_ptr()).acquire_ctx = core::ptr::null_mut() };
+            // The pinned owner is dropped in place before backoff releases its acquire context.
+            (result, retry)
+        };
+        if retry {
+            // SAFETY: Temporary states are gone, and this task owns a contended acquire context.
+            to_result(unsafe { bindings::drm_modeset_backoff(ctx.raw.get()) })?;
+        } else {
+            return result;
+        }
+    }
+}
 
 /// The main wrapper around [`struct drm_atomic_commit`].
 ///
@@ -599,7 +706,10 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
 /// Since it's not yet part of a commit operation, new mode objects may be added to the state. It
 /// also holds a reference to the underlying [`AtomicState`] that will be released when this object
 /// is dropped.
-pub struct AtomicStateComposer<T: KmsDriver>(AtomicStateMutator<T>);
+///
+/// Kernel update callbacks receive a pinned borrow, not a movable transaction owner. Keeping
+/// the owner fixed preserves the runner's association between state and acquire context.
+pub struct AtomicStateComposer<T: KmsDriver>(AtomicStateMutator<T>, PhantomPinned);
 
 impl<T: KmsDriver> Deref for AtomicStateComposer<T> {
     type Target = AtomicStateMutator<T>;
@@ -619,10 +729,14 @@ impl<T: KmsDriver> Drop for AtomicStateComposer<T> {
 impl<T: KmsDriver> AtomicStateComposer<T> {
     /// # Safety
     ///
-    /// The caller guarantees that `ptr` points to a valid instance of `drm_atomic_commit`.
+    /// `ptr` must be an unpublished transaction for `T`, with an initialized acquire context
+    /// owned by the current task. The caller must exclude other access to its new states while
+    /// the composer is borrowed. Both the device and acquire context must outlive the composer.
+    /// Transfer one owned reference, or suppress drop when borrowing a C callback's reference.
     pub(crate) unsafe fn new(ptr: NonNull<bindings::drm_atomic_commit>) -> Self {
-        // SAFETY: see `AtomicStateMutator::from_raw()`
-        Self(unsafe { AtomicStateMutator::new(ptr) })
+        // SAFETY: The unpublished, exclusively accessed transaction satisfies the mutator's
+        // requirements. The caller supplies ownership or suppresses the composer's destructor.
+        Self(unsafe { AtomicStateMutator::new(ptr) }, PhantomPinned)
     }
 
     /// Attempt to add the state for `crtc` to the atomic state for this composer if it hasn't
