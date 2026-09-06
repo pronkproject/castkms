@@ -95,7 +95,9 @@ not. The compiler, not a runtime panic, is what rejects a mismatch.
 The C callback tables generated for those objects are not interchangeable. A
 plane implementation cannot borrow another plane's table, and likewise for
 CRTCs, connectors, and encoders. Vblank callbacks come only from the
-framework's supported path or from the framework's explicit disabled path.
+framework's supported path or from the framework's explicit "this CRTC has no
+vblank" path. A driver cannot claim vblank support on a CRTC whose vblank
+array was never initialized.
 
 The per-file and memory-object types used by the device must name that same
 driver as their owner. Memory objects here are GEM buffers. GEM, or Graphics
