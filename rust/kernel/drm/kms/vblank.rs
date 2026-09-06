@@ -4,7 +4,7 @@
 //!
 //! C header: [`include/drm/drm_vblank.h`](srcfree/include/drm/drm_vblank.h)
 
-use super::{crtc::*, modes::*, ModeObject};
+use super::{crtc::*, ModeObject};
 use bindings;
 use core::{
     marker::*,
@@ -482,24 +482,6 @@ impl<'a, T: VblankDriverCrtc> VblankGuard<'a, T> {
     pub(crate) unsafe fn new(crtc: &'a Crtc<T>, _irq: &'a LocalInterruptDisabled) -> Self {
         // INVARIANT: The caller promises that we've acquired `vbl_lock`
         Self(crtc.vblank_crtc())
-    }
-
-    /// Returns the duration of a single scanout frame in ns.
-    pub fn frame_duration(&self) -> i32 {
-        // SAFETY: We hold the appropriate lock for this read via our type invariants.
-        unsafe { *self.as_raw() }.framedur_ns
-    }
-
-    /// Return the vblank core's cached copy of the currently set display mode.
-    ///
-    /// If the display is disabled, this will return `None`.
-    pub fn hwmode(&self) -> Option<&DisplayMode> {
-        // SAFETY: We hold the appropriate lock for this read via our type invariants.
-        let ptr = unsafe { &raw const (*self.as_raw()).hwmode };
-
-        // SAFETY: We check here if the cached DisplayMode is Null, which means the only other
-        // possibility is that the pointer points to a valid initialized drm_display_mode.
-        (!ptr.is_null()).then(|| unsafe { DisplayMode::as_ref(ptr) })
     }
 }
 
