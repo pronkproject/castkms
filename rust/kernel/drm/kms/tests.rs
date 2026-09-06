@@ -7,6 +7,7 @@
 
 mod events;
 mod inspection;
+mod properties;
 
 use super::*;
 use crate::{

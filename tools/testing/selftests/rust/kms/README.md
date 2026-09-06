@@ -362,6 +362,15 @@ injected at the private-data hook. It is not, in these cases, a fault in the
 kernel's object allocator. The native duplicate-state callback can only
 report failure as a null pointer, which becomes "out of memory."
 
+Connector properties are attached before any atomic transaction. An invalid
+max-bpc range, which is the maximum bits-per-component the connector claims to
+support, must leave both the property and the connector state absent. A
+state-construction callback failure must do the same, and retrying on the same
+connector must succeed after the failure is cleared. Attaching max-bpc before
+the device-wide initial-state pass must keep the existing state pointer and
+both initialized values. This is not a full driver object-creation sequence,
+and it is not suspend or reset coverage.
+
 ### Registering and unregistering the virtual card
 
 Publishing a `/dev/dri/card*` is the point at which the fake monitor becomes
