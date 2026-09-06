@@ -126,7 +126,7 @@ pub type FramebufferVMap<'a, O> = FramebufferMapping<O, &'a shmem::Object<O>>;
 /// This is suitable for a bounded scanout-registration cache: dropping it releases the mapping and
 /// object reference, while retaining it keeps the validated CPU view stable across atomic commits.
 #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
-pub type FramebufferVMapOwned<O> = FramebufferMapping<O, ARef<shmem::Object<O>>>;
+pub type FramebufferVMapOwned<O> = FramebufferMapping<O, gem::ObjectRef<shmem::Object<O>>>;
 
 #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 struct PackedLayout {

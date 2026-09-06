@@ -113,12 +113,6 @@ pub struct Object<T: DriverObject> {
     inner: T,
 }
 
-super::impl_aref_for_gem_obj! {
-    impl<T> for Object<T>
-    where
-        T: DriverObject
-}
-
 // The child retains a native reference to its reservation owner. Retaining the child's own
 // device here would form an implicit cycle when native KMS state owns the child. A foreign
 // parent's device instead needs an independent reference because the child's lifetime does not
@@ -334,7 +328,7 @@ impl<T: DriverObject> Object<T> {
         size: usize,
         config: ObjectConfig<'_, T>,
         args: T::Args,
-    ) -> Result<ARef<Self>> {
+    ) -> Result<gem::ObjectRef<Self>> {
         let new: Pin<KBox<Self>> = KBox::try_pin_init(
             try_pin_init!(Self {
                 obj <- Opaque::init_zeroed(),
@@ -356,7 +350,7 @@ impl<T: DriverObject> Object<T> {
         let new = KBox::into_raw(unsafe { Pin::into_inner_unchecked(new) });
 
         // SAFETY: We're taking over the owned refcount from `drm_gem_shmem_init`.
-        let obj = unsafe { ARef::from_raw(NonNull::new_unchecked(new)) };
+        let obj = unsafe { gem::ObjectRef::from_native(NonNull::new_unchecked(new)) };
 
         // Start filling out values from `config`
         if let Some(parent_resv) = config.parent_resv_obj {
@@ -477,7 +471,7 @@ where
 pub type VMapRef<'a, D, const SIZE: usize = 0> = VMap<D, &'a Object<D>, SIZE>;
 
 /// An alias type for an owned reference to a shmem-based GEM object's VMap.
-pub type VMapOwned<D, const SIZE: usize = 0> = VMap<D, ARef<Object<D>>, SIZE>;
+pub type VMapOwned<D, const SIZE: usize = 0> = VMap<D, gem::ObjectRef<Object<D>>, SIZE>;
 
 impl<D, R, const SIZE: usize> VMap<D, R, SIZE>
 where
