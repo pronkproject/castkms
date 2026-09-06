@@ -5,6 +5,37 @@
 use super::*;
 use connector::AsRawConnector;
 
+#[cfg(CONFIG_FAILSLAB)]
+#[kunit_tests(rust_drm_connector_alloc)]
+mod allocation_cases {
+    use super::*;
+
+    #[test]
+    fn payload_heap_failure_allows_property_retry() -> Result {
+        let ((error, absent, failures), counts) = with_fresh_connector(|connector, _, counts| {
+            counts.fail_connector_heap_alloc.store(1, Ordering::Relaxed);
+            let error = connector.attach_max_bpc_property(8, 12).err();
+            counts.fail_connector_heap_alloc.store(0, Ordering::Relaxed);
+            // SAFETY: Property attachment has returned and the device is private.
+            let absent = unsafe {
+                (*connector.as_raw()).state.is_null()
+                    && (*connector.as_raw()).max_bpc_property.is_null()
+            };
+            let failures = counts.connector_heap_failures.load(Ordering::Relaxed);
+            connector.attach_max_bpc_property(8, 12)?;
+            Ok((error, absent, failures))
+        })?;
+        assert_eq!(error, Some(ENOMEM));
+        assert!(absent);
+        assert_eq!(failures, 1);
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+}
+
 fn with_fresh_connector<R>(
     test: impl FnOnce(
         &connector::UnregisteredConnector<TestConnector>,
