@@ -387,8 +387,8 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
         // SAFETY:
         // - `dev` handles destroying the plane, and thus will outlive us and always be valid.
         // - We just allocated `this`, and we won't move it since it's pinned
-        // - We just allocated the `format_modifiers_raw` vec and added the sentinel DRM expects
-        //   above
+        // - `format_modifiers_raw` owns the sentinel-terminated array and remains alive throughout
+        //   the call. Borrowing the vector below keeps its storage available to the initializer.
         // - `drm_universal_plane_init` will memcpy() the following parameters into its own storage,
         //   so it's safe for them to become inaccessible after this call returns:
         //   - `formats`
@@ -403,7 +403,7 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
                 &T::OPS.funcs,
                 formats.as_ptr(),
                 formats.len() as _,
-                format_modifiers_raw.map_or(null(), |f| f.as_ptr()),
+                format_modifiers_raw.as_ref().map_or(null(), |f| f.as_ptr()),
                 type_ as _,
                 name.map_or(null(), |n| n.as_char_ptr()),
             )
