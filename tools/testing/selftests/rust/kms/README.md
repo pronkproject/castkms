@@ -108,6 +108,22 @@ callback, handed to another transaction, handed to another driver, reused
 after it was consumed, or used to skip a required step. Both step orderings
 that the framework actually supports still compile.
 
+Device lifetime is staged on purpose. An allocated DRM device is not yet an
+initialized KMS setup, and an initialized setup is not yet a device visible to
+userspace. Locking the mode configuration requires one of the later views.
+Reading the CRTC count requires either the single-threaded setup view or a
+completed registration, so a device pointer that escaped during setup cannot
+be used for a racing count read. Hotplug events, the "a monitor appeared or
+disappeared" notifications, require the live registration view. The driver
+interface also has to select KMS setup on the registration path; a driver
+cannot claim to be a KMS driver and then skip that step.
+
+A general device handle still does not prove that the device is registered.
+The registration object has a separate handle for that. The compiler tests
+check the distinction without actually registering a DRM device. In the API
+those two methods are `Registration::device()` and
+`Registration::registration_guard()`.
+
 These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
 uphold. They do not test runtime device identity, allocator failure, reset,
@@ -156,6 +172,12 @@ Names that contain a percent sign are copied as literal text. They must not be
 interpreted as `printf` format strings, which could make a display name trigger
 invalid memory access. That is checked independently for planes,
 CRTCs, and encoders.
+
+Once KMS setup has finished, the mode-configuration mutex can be acquired,
+dropped, and acquired again, and it reports the owning device. The tests do
+not call the operations that are illegal before initialization. Those are
+rejected by the compiler suite instead of being executed as undefined behavior
+in the virtual machine.
 
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,
