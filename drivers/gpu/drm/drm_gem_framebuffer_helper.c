@@ -129,6 +129,30 @@ int drm_gem_fb_create_handle(struct drm_framebuffer *fb, struct drm_file *file,
 }
 EXPORT_SYMBOL(drm_gem_fb_create_handle);
 
+static int drm_gem_fb_check_object(struct drm_device *dev,
+				   const struct drm_format_info *info,
+				   const struct drm_mode_fb_cmd2 *mode_cmd,
+				   struct drm_gem_object *obj, unsigned int plane)
+{
+	unsigned int width = drm_format_info_plane_width(info, mode_cmd->width, plane);
+	unsigned int height = drm_format_info_plane_height(info, mode_cmd->height, plane);
+	u64 min_size = (u64)(height - 1) * mode_cmd->pitches[plane]
+		     + drm_format_info_min_pitch(info, plane, width)
+		     + mode_cmd->offsets[plane];
+
+	if (!obj || obj->dev != dev) {
+		drm_dbg_kms(dev, "Invalid GEM object device for plane %u\n", plane);
+		return -EINVAL;
+	}
+	if (obj->size < min_size) {
+		drm_dbg_kms(dev, "GEM object size (%zu) smaller than minimum size (%llu) for plane %u\n",
+			    obj->size, min_size, plane);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 /**
  * drm_gem_fb_init_with_funcs() - Helper function for implementing
  *				  &drm_mode_config_funcs.fb_create
@@ -172,10 +196,6 @@ int drm_gem_fb_init_with_funcs(struct drm_device *dev,
 	}
 
 	for (i = 0; i < info->num_planes; i++) {
-		unsigned int width = drm_format_info_plane_width(info, mode_cmd->width, i);
-		unsigned int height = drm_format_info_plane_height(info, mode_cmd->height, i);
-		unsigned int min_size;
-
 		objs[i] = drm_gem_object_lookup(file, mode_cmd->handles[i]);
 		if (!objs[i]) {
 			drm_dbg_kms(dev, "Failed to lookup GEM object\n");
@@ -183,16 +203,9 @@ int drm_gem_fb_init_with_funcs(struct drm_device *dev,
 			goto err_gem_object_put;
 		}
 
-		min_size = (height - 1) * mode_cmd->pitches[i]
-			 + drm_format_info_min_pitch(info, i, width)
-			 + mode_cmd->offsets[i];
-
-		if (objs[i]->size < min_size) {
-			drm_dbg_kms(dev,
-				    "GEM object size (%zu) smaller than minimum size (%u) for plane %d\n",
-				    objs[i]->size, min_size, i);
+		ret = drm_gem_fb_check_object(dev, info, mode_cmd, objs[i], i);
+		if (ret) {
 			drm_gem_object_put(objs[i]);
-			ret = -EINVAL;
 			goto err_gem_object_put;
 		}
 	}
