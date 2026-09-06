@@ -56,6 +56,9 @@
 #include <drm/drm_vblank.h>
 #include <kunit/test.h>
 #include <linux/auxiliary_bus.h>
+#ifdef CONFIG_DMA_SHARED_BUFFER
+#include <linux/dma-buf.h>
+#endif
 #include <linux/bitmap.h>
 #include <linux/blk-mq.h>
 #include <linux/blk_types.h>
