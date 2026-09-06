@@ -348,12 +348,31 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
 
     /// Invoke `f` for every CRTC this state carries a new state for.
     ///
-    /// See [`AtomicState::for_each_new_crtc_state`].
-    pub fn for_each_new_crtc_state<F>(&self, f: F)
+    /// See [`AtomicState::for_each_new_crtc_state`]. The exclusive borrow excludes outstanding
+    /// mutable guards and prevents callbacks from reacquiring a guard through this mutator.
+    pub fn for_each_new_crtc_state<F>(&mut self, f: F)
     where
         F: FnMut(&Crtc<T::Crtc>, &OpaqueCrtcState<T>),
     {
         self.state.for_each_new_crtc_state(f)
+    }
+
+    /// Inspect new CRTC states through a check token's shared composer.
+    ///
+    /// No CRTC guard may be outstanding. All CRTC slots remain borrowed throughout traversal,
+    /// so reentrant mutation and nested traversal are rejected. References cannot escape `f`.
+    /// This is conservative: even a guard for a different CRTC prevents traversal.
+    pub fn try_for_each_new_crtc_state<F>(&self, f: F) -> Result
+    where
+        F: FnMut(&Crtc<T::Crtc>, &OpaqueCrtcState<T>),
+    {
+        if self.borrowed_crtcs.get() != 0 {
+            return Err(EBUSY);
+        }
+        self.borrowed_crtcs.set(u32::MAX);
+        let _restore = ScopeGuard::new(|| self.borrowed_crtcs.set(0));
+        self.state.for_each_new_crtc_state(f);
+        Ok(())
     }
 
     /// Return the old state of the first connector routed to `crtc`, if any.
