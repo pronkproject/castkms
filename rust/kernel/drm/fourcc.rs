@@ -30,6 +30,9 @@ pub const XBGR8888: u32 = fourcc_code(b'X', b'B', b'2', b'4');
 /// 32 bpp BGR with alpha.
 pub const ABGR8888: u32 = fourcc_code(b'A', b'B', b'2', b'4');
 
+/// Two-plane YUV 4:2:0 with an interleaved CbCr chroma plane.
+pub const NV12: u32 = fourcc_code(b'N', b'V', b'1', b'2');
+
 /// 30 bpp 10:10:10 RGB with unused alpha.
 pub const XRGB2101010: u32 = fourcc_code(b'X', b'R', b'3', b'0');
 
