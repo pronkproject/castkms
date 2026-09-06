@@ -588,6 +588,67 @@ mod cases {
     }
 
     #[test]
+    fn atomic_primary_flip_retires_framebuffer() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-flip", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let first = framebuffer(&drm)?;
+        let second = framebuffer(&drm)?;
+        let mode = mode()?;
+        // SAFETY: Setup completed and this task exclusively owns the unregistered device.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        let connector = unsafe {
+            <connector::Connector<TestConnector> as connector::AsRawConnector>::from_raw(
+                drm.connector.load(Ordering::Relaxed),
+            )
+        };
+        let scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &first,
+            connectors: &[connector],
+            position: (0, 0),
+        };
+        // SAFETY: Initial state exists with no concurrent registration, setup or teardown.
+        unsafe { atomic::run_update(&drm, |state| state.set_crtc_config(crtc, Some(&scanout))) }?;
+        // Leave the first framebuffer owned only by the published scanout state.
+        drop(first);
+        let scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &second,
+            connectors: &[connector],
+            position: (0, 0),
+        };
+        // SAFETY: Same exclusively owned, initialized device as the first update.
+        unsafe { atomic::run_update(&drm, |state| state.set_crtc_config(crtc, Some(&scanout))) }?;
+        // SAFETY: Blocking commit completed. This private device has no concurrent framebuffer
+        // allocations or commits, so its count and published state are stable for inspection.
+        let (remaining, selected) = unsafe {
+            (
+                (*drm.as_raw()).mode_config.num_fb,
+                (*(*drm.plane.load(Ordering::Relaxed)).state).fb,
+            )
+        };
+        let matches = selected == second.as_raw();
+        let updates = counts.plane_updates.load(Ordering::Relaxed);
+        let enables = counts.enables.load(Ordering::Relaxed);
+        let disables = counts.disables.load(Ordering::Relaxed);
+        // SAFETY: Same exclusive initialized-device lifetime as the two updates above.
+        unsafe { atomic::run_update(&drm, |state| state.set_crtc_config(crtc, None)) }?;
+        drop(second);
+        // SAFETY: No other task owns or allocates framebuffers on this test device.
+        let after_disable = unsafe { (*drm.as_raw()).mode_config.num_fb };
+        drop(drm);
+        assert_eq!(remaining, 1);
+        assert!(matches);
+        assert_eq!(updates, 2);
+        assert_eq!(enables, 1);
+        assert_eq!(disables, 0);
+        assert_eq!(after_disable, 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn partial_object_setup_unwinds() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
