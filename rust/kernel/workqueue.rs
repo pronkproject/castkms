@@ -1053,6 +1053,15 @@ pub fn system_long() -> &'static Queue {
     unsafe { Queue::from_raw(bindings::system_long_wq) }
 }
 
+/// Returns the default unbound system work queue (`system_dfl_wq`).
+///
+/// Workers are not bound to a specific CPU. Work starts subject to the queue's active-work
+/// limit and available resources. Prefer this queue for work without CPU-locality requirements.
+pub fn system_dfl() -> &'static Queue {
+    // SAFETY: `system_dfl_wq` is a permanent initialized C workqueue global.
+    unsafe { Queue::from_raw(bindings::system_dfl_wq) }
+}
+
 /// Returns the system unbound work queue (`system_unbound_wq`).
 ///
 /// Workers are not bound to any specific CPU, not concurrency managed, and all queued work items
