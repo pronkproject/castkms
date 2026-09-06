@@ -1009,15 +1009,13 @@ impl<T: AsRawPlaneState + ?Sized> RawPlaneState for T {}
 ///
 /// # Invariants
 ///
-/// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
-///   up until [`drm_atomic_helper_commit_hw_done`] is called. Therefore, `plane` follows rust's
-///   data aliasing rules and does not need to be behind an [`Opaque`] type.
+/// - New state is exclusively mutable during atomic checking. After publication, callbacks
+///   only receive shared access, including while another atomic check duplicates the state.
 /// - `state` and `inner` initialized for as long as this object is exposed to users.
 /// - The data layout of this structure begins with [`struct drm_plane_state`].
 /// - The plane for this atomic state can always be assumed to be of type [`Plane<T::Plane>`].
 ///
 /// [`struct drm_plane_state`]: srctree/include/drm/drm_plane.h
-/// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
 #[repr(C)]
 pub struct PlaneState<T: DriverPlaneState> {
     state: bindings::drm_plane_state,
@@ -1128,14 +1126,12 @@ impl<T: DriverPlaneState> PlaneState<T> {
 ///
 /// # Invariants
 ///
-/// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
-///   up until [`drm_atomic_helper_commit_hw_done`] is called. Therefore, `plane` follows rust's
-///   data aliasing rules and does not need to be behind an [`Opaque`] type.
+/// - New state is exclusively mutable during atomic checking and shared read-only after
+///   publication, including before hardware completion.
 /// - `state` is initialized for as long as this object is exposed to users.
 /// - The data layout of this structure is identical to [`struct drm_plane_state`].
 ///
 /// [`struct drm_plane_state`]: srctree/include/drm/drm_plane.h
-/// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
 #[repr(transparent)]
 pub struct OpaquePlaneState<T: KmsDriver> {
     state: bindings::drm_plane_state,
@@ -1300,19 +1296,19 @@ impl<'a, T: DriverPlane> PlaneAtomicCheck<'a, T> {
 ///
 /// # Invariants
 ///
-/// This token is proof that the old and new atomic state of `plane` are present in `state` and do
-/// not have any mutators taken out.
+/// Both states are present and their private payloads are read-only: DRM has already published
+/// the new state, and another atomic check may duplicate it concurrently.
 pub struct PlaneAtomicCommit<'a, T: DriverPlane> {
-    state: &'a AtomicStateMutator<T::Driver>,
+    state: &'a AtomicStateReader<T::Driver>,
     plane: &'a Plane<T>,
 }
 
 impl<'a, T: DriverPlane> PlaneAtomicCommit<'a, T> {
     impl_atomic_state_token_ops!(
         PlaneAtomicCommit,
-        AtomicStateMutator,
+        AtomicStateReader,
         Plane,
-        PlaneStateMutator<'a, PlaneState<T::State>>,
+        &'a PlaneState<T::State>,
         use <'a, T>
     );
 }
@@ -1405,13 +1401,12 @@ unsafe extern "C" fn atomic_update_callback<T: DriverPlane>(
     let plane = unsafe { Plane::from_raw(plane) };
 
     // SAFETY: DRM guarantees `state` points to a valid `drm_atomic_commit`
-    let state = unsafe { AtomicStateMutator::new(NonNull::new_unchecked(state)) };
+    let state = unsafe { AtomicStateReader::new(NonNull::new_unchecked(state)) };
 
     // SAFETY:
     // - Since we're in the atomic_update callback, we're guaranteed by DRM that both the old and new
     //   plane state are resent in this atomic state.
-    // - We just created the state mutator above, so other mutators cannot be taken out on the plane
-    //   state yet.
+    // - Published private state is only exposed read-only by commit callbacks.
     let commit = unsafe { PlaneAtomicCommit::new(plane, &state) };
 
     T::atomic_update(commit);

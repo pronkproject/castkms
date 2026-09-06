@@ -378,6 +378,9 @@ impl<T: KmsDriver> AtomicStateReader<T> {
 /// To honor Rust's aliasing rules regarding mutable references, this structure ensures only one
 /// mutable reference to a mode object's atomic state may exist at a time - and refuses to provide
 /// another if one has already been taken out using runtime checks.
+///
+/// Mutable access is restricted to atomic checking, before the new states are published.
+/// Commit callbacks use [`AtomicStateReader`] instead, even before hardware completion.
 pub struct AtomicStateMutator<T: KmsDriver> {
     /// The state being mutated. Note that the use of `ManuallyDrop` here is because mutators are
     /// only constructed in FFI callbacks and thus borrow their references to the atomic state from
