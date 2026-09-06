@@ -30,6 +30,14 @@ impl<T: DriverCrtc> Default for Payload<T> {
 
 impl<T: DriverCrtc> DriverCrtcState for Payload<T> {
     type Crtc = Replacement<T>;
+
+    fn new(_: &Crtc<Self::Crtc>) -> Result<Self> {
+        Ok(Self(PhantomData))
+    }
+
+    fn duplicate(&self) -> Result<Self> {
+        Ok(Self(PhantomData))
+    }
 }
 
 #[vtable]
