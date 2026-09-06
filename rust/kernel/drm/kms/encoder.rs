@@ -264,6 +264,7 @@ impl<T: DriverEncoder> Deref for UnregisteredEncoder<T> {
 
 impl<T: DriverEncoder> UnregisteredEncoder<T> {
     /// Construct a new [`UnregisteredEncoder`].
+    /// The device's nominated encoder type must be `T`, as required by opaque conversions.
     ///
     /// A driver may use this from their [`KmsDriver::create_objects`] callback in order to
     /// construct new [`UnregisteredEncoder`] objects.
@@ -296,7 +297,10 @@ impl<T: DriverEncoder> UnregisteredEncoder<T> {
         possible_clones: u32,
         name: Option<&CStr>,
         args: T::Args,
-    ) -> Result<&'a Self> {
+    ) -> Result<&'a Self>
+    where
+        T::Driver: KmsDriver<Encoder = T>,
+    {
         let this: Pin<KBox<Encoder<T>>> = KBox::try_pin_init(
             try_pin_init!(Encoder {
                 encoder: Opaque::new(bindings::drm_encoder {
