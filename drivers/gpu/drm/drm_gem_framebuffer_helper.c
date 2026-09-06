@@ -271,6 +271,74 @@ static const struct drm_framebuffer_funcs drm_gem_fb_funcs = {
 };
 
 /**
+ * drm_gem_fb_create_from_objects - Create a framebuffer without a DRM file
+ * @dev: DRM device with initialized, stable mode configuration
+ * @mode_cmd: Framebuffer layout; handles and framebuffer ID are ignored
+ * @objects: Borrowed GEM objects, one entry per format plane
+ * @num_objects: Number of entries in @objects
+ *
+ * Validates metadata using ADDFB2's layout checks and backing storage using
+ * the generic GEM framebuffer checks. Every object must belong to @dev.
+ * Aliased planes are allowed and retain one reference per plane. No reference
+ * is consumed from the caller, on either success or failure. No CPU mapping,
+ * handle allocation or producer synchronization is performed.
+ *
+ * Intended for drivers using the generic GEM framebuffer representation.
+ * Drivers with additional alignment, modifier or framebuffer-subclass
+ * requirements must validate those separately or use their own constructor.
+ * Callers must keep mode configuration alive through creation and retain the
+ * device until all references to the returned framebuffer have been released.
+ *
+ * Returns: One owned framebuffer reference, or an error pointer.
+ */
+struct drm_framebuffer *
+drm_gem_fb_create_from_objects(struct drm_device *dev,
+			       const struct drm_mode_fb_cmd2 *mode_cmd,
+			       struct drm_gem_object * const *objects,
+			       unsigned int num_objects)
+{
+	struct drm_gem_object *objs[DRM_FORMAT_MAX_PLANES];
+	const struct drm_format_info *info;
+	struct drm_framebuffer *fb;
+	unsigned int i;
+	int ret;
+
+	info = drm_framebuffer_check_layout(dev, mode_cmd);
+	if (IS_ERR(info))
+		return ERR_CAST(info);
+	if (!objects || num_objects != info->num_planes ||
+	    num_objects > ARRAY_SIZE(objs))
+		return ERR_PTR(-EINVAL);
+	if (drm_drv_uses_atomic_modeset(dev) &&
+	    !drm_any_plane_has_format(dev, mode_cmd->pixel_format,
+				      mode_cmd->modifier[0]))
+		return ERR_PTR(-EINVAL);
+
+	for (i = 0; i < num_objects; i++) {
+		ret = drm_gem_fb_check_object(dev, info, mode_cmd, objects[i], i);
+		if (ret)
+			return ERR_PTR(ret);
+	}
+	fb = kzalloc_obj(*fb);
+	if (!fb)
+		return ERR_PTR(-ENOMEM);
+	for (i = 0; i < num_objects; i++) {
+		objs[i] = objects[i];
+		drm_gem_object_get(objs[i]);
+	}
+	ret = drm_gem_fb_init(dev, fb, info, mode_cmd, objs, num_objects,
+			      &drm_gem_fb_funcs);
+	if (ret) {
+		for (i = 0; i < num_objects; i++)
+			drm_gem_object_put(objs[i]);
+		kfree(fb);
+		return ERR_PTR(ret);
+	}
+	return fb;
+}
+EXPORT_SYMBOL_GPL(drm_gem_fb_create_from_objects);
+
+/**
  * drm_gem_fb_create() - Helper function for the
  *                       &drm_mode_config_funcs.fb_create callback
  * @dev: DRM device
