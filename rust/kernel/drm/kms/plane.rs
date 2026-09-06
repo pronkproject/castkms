@@ -1029,6 +1029,9 @@ pub struct PlaneState<T: DriverPlaneState> {
 /// A driver may store driver-private data within the implementor's type, which will be available
 /// when using a full typed [`PlaneState`] object.
 ///
+/// DRM may move or destroy the payload on a commit worker and duplicate published state while
+/// another callback reads it. The payload must support both thread transfer and shared access.
+///
 /// # Invariants
 ///
 /// - Any C FFI callbacks generated using this trait are guaranteed that passed-in
@@ -1038,7 +1041,7 @@ pub struct PlaneState<T: DriverPlaneState> {
 ///
 /// [`struct drm_plane`]: srctree/include/drm_plane.h
 /// [`struct drm_plane_state`]: srctree/include/drm_plane.h
-pub trait DriverPlaneState: Clone + Default + Sized {
+pub trait DriverPlaneState: Clone + Default + Sized + Send + Sync {
     /// The type for this driver's drm_plane implementation
     type Plane: DriverPlane<State = Self>;
 }
