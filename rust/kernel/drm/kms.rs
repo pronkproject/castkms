@@ -204,12 +204,14 @@ impl<'a, T: Driver> UnregisteredKmsDevice<'a, T> {
 
 /// A trait which must be implemented by drivers that wish to support KMS
 ///
-/// It should be implemented for the same type that implements [`Driver`]. Drivers which don't
-/// support KMS should use [`PhantomData<Self>`].
+/// Implement this for the type implementing [`Driver`] and select `Self` as [`Driver::Kms`].
+/// The associated-type equality ensures that registered KMS devices have actually run KMS setup.
+/// Drivers without KMS support should select [`PhantomData<Self>`] in [`Driver::Kms`] instead of
+/// implementing this trait.
 ///
 /// [`PhantomData<Self>`]: PhantomData
 #[vtable]
-pub trait KmsDriver: Driver {
+pub trait KmsDriver: Driver<Kms = Self> + Sized {
     /// The driver's [`DriverConnector`] implementation.
     ///
     /// TODO: This will be unneeded in the future once we support multiple [`DriverConnector`]
