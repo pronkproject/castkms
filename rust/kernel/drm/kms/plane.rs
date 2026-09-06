@@ -1290,6 +1290,7 @@ impl<'a, T: DriverPlane> PlaneAtomicCheck<'a, T> {
         PlaneAtomicCheck,
         AtomicStateComposer,
         Plane,
+        PlaneStateMutator<'a, PlaneState<T::State>>,
         use <'a, T>
     );
 }
@@ -1311,6 +1312,7 @@ impl<'a, T: DriverPlane> PlaneAtomicCommit<'a, T> {
         PlaneAtomicCommit,
         AtomicStateMutator,
         Plane,
+        PlaneStateMutator<'a, PlaneState<T::State>>,
         use <'a, T>
     );
 }
