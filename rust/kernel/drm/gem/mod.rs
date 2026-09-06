@@ -71,21 +71,6 @@ impl<O: IntoGEMObject + AllocImpl> ObjectRef<O> {
             _device: device.into(),
         }
     }
-
-    /// Transfer the native GEM reference, releasing this handle's device reference.
-    ///
-    /// # Safety
-    ///
-    /// The caller must independently retain the device until the transferred reference is
-    /// released. The recipient must release exactly one reference with the native GEM API.
-    pub(crate) unsafe fn into_native(self) -> *mut bindings::drm_gem_object {
-        let mut this = core::mem::ManuallyDrop::new(self);
-        let raw = this.as_raw();
-        // SAFETY: ManuallyDrop suppresses our destructor. Transfer the GEM reference and drop
-        // exactly the device field; the caller supplies its independent device lifetime.
-        unsafe { core::ptr::drop_in_place(&raw mut this._device) };
-        raw
-    }
 }
 
 impl<O: IntoGEMObject + AllocImpl> From<&O> for ObjectRef<O> {
