@@ -494,6 +494,17 @@ fn mode() -> Result<modes::DisplayMode> {
     })
 }
 
+fn device_references<D: KmsDriver>(dev: &Device<D>) -> i32 {
+    // SAFETY: The device borrow keeps its aligned native kref counter alive. Read it through
+    // the kernel atomic API, matching the native refcount access discipline.
+    unsafe {
+        crate::sync::atomic::Atomic::<i32>::from_ptr(
+            &raw mut (*dev.as_raw()).ref_.refcount.refs.counter,
+        )
+        .load(crate::sync::atomic::Relaxed)
+    }
+}
+
 struct ContentionResult {
     result: Result,
     older_errno: i32,
@@ -845,6 +856,35 @@ mod cases {
         assert_eq!(plane_updates, 1);
         assert_eq!(counts.enables.load(Ordering::Relaxed), 1);
         assert_eq!(counts.disables.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn shared_reservation_does_not_retain_own_device() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-reservation-owner", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let baseline = device_references(&drm);
+        let owner = gem::shmem::Object::<TestObject>::new(&drm, 4096, Default::default(), ())?;
+        let child = gem::shmem::Object::<TestObject>::new(
+            &drm,
+            4096,
+            gem::shmem::ObjectConfig {
+                parent_resv_obj: Some(&owner),
+                ..Default::default()
+            },
+            (),
+        )?;
+        drop(owner);
+        // Only the child Rust handle should retain the device. Its embedded reservation-owner
+        // reference must not create a device cycle if native KMS state later retains the child.
+        let references = device_references(&drm);
+        drop(child);
+        let after_drop = device_references(&drm);
+        drop(drm);
+        assert_eq!(references, baseline + 1);
+        assert_eq!(after_drop, baseline);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
