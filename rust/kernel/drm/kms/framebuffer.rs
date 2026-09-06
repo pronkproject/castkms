@@ -5,11 +5,16 @@
 //! C header: [`include/drm/drm_framebuffer.h`](srctree/include/drm/drm_framebuffer.h)
 
 use super::{KmsDriver, ModeObject, Sealed};
-use crate::{drm::device::Device, prelude::*, sync::aref::ARef, types::*};
 #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 use crate::{
     drm::gem::{self, shmem, BaseObject},
     io::{IoBase, SysMem},
+};
+use crate::{
+    drm::{device::Device, gem::IntoGEMObject},
+    prelude::*,
+    sync::aref::ARef,
+    types::*,
 };
 use bindings;
 use core::ops::Deref;
@@ -60,6 +65,32 @@ impl<T: KmsDriver> PartialEq for Framebuffer<T> {
     }
 }
 impl<T: KmsDriver> Eq for Framebuffer<T> {}
+
+/// One format plane of a framebuffer, backed by the driver's nominated GEM storage.
+pub struct FramebufferPlane<'a, T: KmsDriver> {
+    /// Borrowed storage; multiple planes may name the same object.
+    pub object: &'a T::Object,
+    /// Scanline pitch in bytes.
+    pub pitch: u32,
+    /// Byte offset within the object.
+    pub offset: u32,
+}
+
+/// Framebuffer metadata independent of a DRM file or its handle namespace.
+pub struct FramebufferLayout<'a, T: KmsDriver> {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// DRM fourcc format.
+    pub format: u32,
+    /// Explicit modifier shared by all planes; `None` selects implicit linear layout.
+    pub modifier: Option<u64>,
+    /// Whether the layout describes an interlaced framebuffer.
+    pub interlaced: bool,
+    /// Exactly one entry per plane of the format, at most four.
+    pub planes: &'a [FramebufferPlane<'a, T>],
+}
 
 /// An owned framebuffer reference that also retains its DRM device.
 ///
@@ -240,6 +271,75 @@ where
 }
 
 impl<T: KmsDriver> Framebuffer<T> {
+    /// Create a generic GEM framebuffer from borrowed objects without installing handles.
+    ///
+    /// Uses the same metadata and storage checks as the native generic GEM framebuffer path.
+    /// Success retains each plane's object and the DRM device. Imported storage is allowed;
+    /// creation neither maps pixels nor synchronizes producer access. The registered borrow
+    /// keeps mode configuration stable during creation. Scanout validation remains part of
+    /// the subsequent atomic transaction.
+    pub fn from_objects(
+        dev: &Device<T, crate::drm::device::Registered>,
+        layout: &FramebufferLayout<'_, T>,
+    ) -> Result<FramebufferRef<T>> {
+        // SAFETY: The registration guard excludes unplug and protects initialized KMS state.
+        unsafe { Self::from_objects_unchecked(dev, layout) }
+    }
+
+    /// Create a framebuffer while an internal caller independently protects KMS setup.
+    ///
+    /// # Safety
+    ///
+    /// Mode configuration and all mode objects must be initialized. The caller must exclude
+    /// concurrent setup, registration and teardown throughout creation, and retain the device
+    /// through every native framebuffer owner's lifetime.
+    pub(crate) unsafe fn from_objects_unchecked(
+        dev: &Device<T>,
+        layout: &FramebufferLayout<'_, T>,
+    ) -> Result<FramebufferRef<T>> {
+        if layout.planes.is_empty() || layout.planes.len() > 4 {
+            return Err(EINVAL);
+        }
+        let mut command = bindings::drm_mode_fb_cmd2 {
+            width: layout.width,
+            height: layout.height,
+            pixel_format: layout.format,
+            flags: if layout.interlaced {
+                bindings::DRM_MODE_FB_INTERLACED
+            } else {
+                0
+            },
+            ..Default::default()
+        };
+        if layout.modifier.is_some() {
+            command.flags |= bindings::DRM_MODE_FB_MODIFIERS;
+        }
+        let mut objects = [ptr::null_mut(); 4];
+        for (index, plane) in layout.planes.iter().enumerate() {
+            objects[index] = plane.object.as_raw();
+            command.pitches[index] = plane.pitch;
+            command.offsets[index] = plane.offset;
+            command.modifier[index] = layout.modifier.unwrap_or(0);
+        }
+        // SAFETY: Objects and metadata are borrowed throughout the call. The native helper
+        // checks device identity, layout, plane count and backing size before publication,
+        // acquiring its own object references only on successful creation. The caller
+        // independently protects initialized mode configuration.
+        let raw = crate::error::from_err_ptr(unsafe {
+            bindings::drm_gem_fb_create_from_objects(
+                dev.as_raw(),
+                &command,
+                objects.as_ptr(),
+                layout.planes.len() as u32,
+            )
+        })?;
+        // SAFETY: The native constructor returned an initialized framebuffer reference.
+        let owned = unsafe { Self::from_raw(raw) }.to_owned_ref();
+        // SAFETY: Replace the constructor's reference with the paired Rust/device owner.
+        unsafe { bindings::drm_framebuffer_put(raw) };
+        Ok(owned)
+    }
+
     pub(super) fn as_raw(&self) -> *mut bindings::drm_framebuffer {
         self.0.get()
     }
