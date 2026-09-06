@@ -283,6 +283,29 @@ impl<T: Driver> Registration<'static, T> {
         // registration teardown precedes parent unbind.
         unsafe { Self::new(dev, drm, reg_data, flags) }
     }
+
+    /// Register with owned data for the duration of a callback.
+    ///
+    /// The callback borrows the registration, so it cannot move or forget the teardown owner.
+    /// The framework unplugs the device before returning, while the parent borrow is still bound.
+    /// Retained device references remain valid allocations but no longer admit registration guards.
+    /// The callback must release its guards before returning and must not block waiting for an
+    /// unplug that can only happen after it returns.
+    pub fn with_static<E, R>(
+        dev: &device::Device<device::Bound>,
+        drm: drm::UnregisteredDevice<T>,
+        reg_data: impl PinInit<T::RegistrationData<'static>, E>,
+        flags: usize,
+        callback: impl FnOnce(&Self) -> Result<R>,
+    ) -> Result<R>
+    where
+        Error: From<E>,
+    {
+        // SAFETY: The local owner cannot escape into the callback. It is dropped on both success
+        // and error before the parent borrow ends, including the unplug synchronization barrier.
+        let registration = unsafe { Self::new_static(dev, drm, reg_data, flags)? };
+        callback(&registration)
+    }
 }
 
 // SAFETY: `Registration` doesn't offer any methods or access to fields when shared between

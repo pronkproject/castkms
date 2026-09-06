@@ -1210,6 +1210,71 @@ mod cases {
     }
 
     #[test]
+    fn scoped_registration_retires_before_return() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-scoped", None)?;
+        let retained: ARef<Device<TestDriver>> = drm::Registration::with_static(
+            parent.as_ref().as_ref(),
+            allocate(parent.as_ref(), &counts, false)?,
+            Ok::<(), Error>(()),
+            0,
+            |registration| {
+                let guard = registration.registration_guard().ok_or(ENODEV)?;
+                guard.check_atomic_update(|_| Ok(()))?;
+                Ok(registration.device().into())
+            },
+        )?;
+        // SAFETY: The scoped operation completed registration and then synchronously unplugged.
+        let rejected = unsafe { retained.assume_ctx::<drm::Ioctl>() }
+            .registration_guard()
+            .is_none();
+        drop(parent);
+        // The escaped allocation is still valid after removal, but no longer proves binding.
+        let remaining = counts.objects.load(Ordering::Relaxed);
+        drop(retained);
+        assert!(rejected);
+        assert_eq!(remaining, 4);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn scoped_registration_failure_unplugs() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-scoped-failure", None)?;
+        let mut retained: Option<ARef<Device<TestDriver>>> = None;
+        let result: Result = drm::Registration::with_static(
+            parent.as_ref().as_ref(),
+            allocate(parent.as_ref(), &counts, false)?,
+            Ok::<(), Error>(()),
+            0,
+            |registration| {
+                retained = Some(registration.device().into());
+                registration
+                    .registration_guard()
+                    .ok_or(ENODEV)?
+                    .check_atomic_update(|_| Err(ECANCELED))
+            },
+        );
+        let retained = retained.ok_or(ENODEV)?;
+        // SAFETY: The callback ran after successful registration; failure still unplugs it.
+        let rejected = unsafe { retained.assume_ctx::<drm::Ioctl>() }
+            .registration_guard()
+            .is_none();
+        drop(retained);
+        assert_eq!(result, Err(ECANCELED));
+        assert!(rejected);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn partial_object_setup_unwinds() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
