@@ -23,6 +23,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 struct Counts {
     gem_objects: AtomicU32,
     fail_gem_open: AtomicU32,
+    fail_prime_import: AtomicU32,
     objects: AtomicU32,
     setup_failures: AtomicU32,
     plane_updates: AtomicU32,
@@ -247,6 +248,14 @@ impl gem::DriverObject for TestObject {
 
     fn dumb_create_args(_: &Device<TestDriver>, _: usize) -> Result<()> {
         Ok(())
+    }
+
+    fn prime_import_args(dev: &Device<TestDriver>, _: usize) -> Result<()> {
+        if dev.counts.fail_prime_import.load(Ordering::Relaxed) != 0 {
+            Err(EACCES)
+        } else {
+            Ok(())
+        }
     }
 
     fn open(obj: &gem::DriverAllocImpl<Self>, _: &gem::DriverFile<Self>) -> Result {
@@ -503,6 +512,33 @@ impl HandleClient {
         // TestFile::open. The client retains it until drop; the result borrows that ownership.
         unsafe { drm::File::from_raw((*self.raw.get()).file) }
     }
+
+    fn export_dumb(&self) -> Result<ARef<crate::dma_buf::DmaBuf>> {
+        let dev = self.file().device_raw();
+        let mut args = bindings::drm_mode_create_dumb {
+            width: 64,
+            height: 64,
+            bpp: 32,
+            ..Default::default()
+        };
+        // SAFETY: The native client owns a matching live file and device; arguments are private.
+        crate::error::to_result(unsafe {
+            (*(*dev).driver).dumb_create.unwrap()(self.file().as_raw(), dev, &mut args)
+        })?;
+        // SAFETY: Export the newly created handle through native PRIME's file/cache protocol.
+        // This returns a DMA-BUF reference without installing a descriptor in any task.
+        let raw = crate::error::from_err_ptr(unsafe {
+            bindings::drm_gem_prime_handle_to_dmabuf(
+                dev,
+                self.file().as_raw(),
+                args.handle,
+                bindings::O_RDWR,
+            )
+        })?;
+        let raw = NonNull::new(raw).ok_or(ENOMEM)?;
+        // SAFETY: Native PRIME returned one owned reference to an initialized DMA-BUF.
+        Ok(unsafe { crate::dma_buf::DmaBuf::from_owned_raw(raw) })
+    }
 }
 
 #[cfg(CONFIG_DRM_CLIENT)]
@@ -698,6 +734,76 @@ mod cases {
     use crtc::AsRawCrtc;
     use encoder::AsRawEncoder;
     use plane::AsRawPlane;
+
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
+    fn foreign_import_retains_typed_storage_without_vmap() -> Result {
+        use gem::{BaseObject, IntoGEMObject};
+
+        let source_counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let target_counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-prime-import", None)?;
+        let raw_parent = parent.as_ref().as_ref().as_raw();
+        // SAFETY: This private faux device has no DMA users yet. Provide stable mask storage
+        // for native direct-DMA mappings in the test VM; no physical device is accessed.
+        unsafe { (*raw_parent).dma_mask = &raw mut (*raw_parent).coherent_dma_mask };
+        // SAFETY: The private test device has no allocations or mappings with an older mask.
+        crate::error::to_result(unsafe {
+            bindings::dma_set_mask_and_coherent(raw_parent, u64::MAX)
+        })?;
+        let source = create(parent.as_ref(), &source_counts, false)?;
+        let client = HandleClient::new(&source)?;
+        let original = client.export_dumb()?;
+        let buffer = original.clone();
+        drop(original);
+        assert_eq!(buffer.size(), 16384);
+        // SAFETY: Registration is dropped before the owning faux parent on every return path.
+        let registration = unsafe {
+            drm::Registration::new_static(
+                parent.as_ref().as_ref(),
+                allocate(parent.as_ref(), &target_counts, false)?,
+                Ok::<(), Error>(()),
+                0,
+            )?
+        };
+        let imported = {
+            let guard = registration.registration_guard().ok_or(ENODEV)?;
+            gem::shmem::Object::<TestObject>::import(&guard, &buffer)?
+        };
+        assert_eq!(imported.size(), 16384);
+        assert_eq!(imported.allocated_size, 16384);
+        assert_eq!(target_counts.gem_objects.load(Ordering::Relaxed), 1);
+        // SAFETY: Import completed before publication. These backing fields remain immutable.
+        let (attachment, filp, reservation, source_reservation) = unsafe {
+            (
+                (*imported.as_raw()).import_attach,
+                (*imported.as_raw()).filp,
+                (*imported.as_raw()).resv,
+                (*buffer.as_raw()).resv,
+            )
+        };
+        assert!(!attachment.is_null());
+        assert!(filp.is_null());
+        assert_eq!(reservation, source_reservation);
+        // Reading an imported table must not transfer its destruction to local shmem cleanup.
+        let table = imported.sg_table(parent.as_ref().as_ref())? as *const _;
+        assert_eq!(imported.sg_table(parent.as_ref().as_ref())? as *const _, table);
+        drop(client);
+        drop(source);
+        drop(buffer);
+        drop(registration);
+        assert_eq!(source_counts.gem_objects.load(Ordering::Relaxed), 1);
+        assert_eq!(target_counts.gem_objects.load(Ordering::Relaxed), 1);
+        drop(imported);
+        // SAFETY: KUnit runs in a kernel thread; drain deferred file release before inspecting
+        // exporter lifetime. No object or reservation locks are held across the flush.
+        unsafe { bindings::flush_delayed_fput() };
+        assert_eq!(source_counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(target_counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(source_counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(target_counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
