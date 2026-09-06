@@ -224,7 +224,10 @@ impl<'a, T: Driver> Registration<'a, T> {
         }
 
         #[cfg(CONFIG_DRM_CLIENT)]
-        if let Some(ref info) = mode_config_info {
+        if let Some(info) = mode_config_info
+            .as_ref()
+            .filter(|info| info.enable_default_client)
+        {
             if let Some(fourcc) = info.preferred_fourcc {
                 // SAFETY: The DRM device was successfully registered above.
                 unsafe { bindings::drm_client_setup_with_fourcc(drm.as_raw(), fourcc) }

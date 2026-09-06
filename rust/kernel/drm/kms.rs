@@ -395,6 +395,12 @@ pub struct ModeConfigInfo {
     pub preferred_depth: u32,
     /// An optional default fourcc format code to be preferred for clients.
     pub preferred_fourcc: Option<u32>,
+    /// Whether registration should start the configured default in-kernel display client.
+    ///
+    /// The driver must support the selected client's allocation and display operations. In
+    /// particular, the fbdev client requires a matching fbdev probe implementation. Leave this
+    /// disabled for devices that expose KMS without providing those client operations.
+    pub enable_default_client: bool,
 }
 
 impl<T: KmsDriver> Device<T> {
