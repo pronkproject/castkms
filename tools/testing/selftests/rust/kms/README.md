@@ -130,6 +130,23 @@ check the distinction without actually registering a DRM device. In the API
 those two methods are `Registration::device()` and
 `Registration::registration_guard()`.
 
+Holding driver-private data does not, by itself, keep the parent device bound
+to its driver or keep resources released during unbind available.
+The constructor that lets a registration escape its setup function is unsafe
+for the same reason the borrowed constructor is unsafe: the caller must finish
+unplug, meaning the device is no longer visible and its users have drained,
+before releasing parent resources that the registration still refers to.
+Installing a managed cleanup action is not proof of that ordering for
+resources added afterwards. The compiler rejects calling that escaping
+constructor outside an unsafe block. In the API it is
+`Registration::new_static()`.
+
+The safe alternative lends registration to a callback while the parent is
+still bound, and the framework owns teardown. Returning a registration handle
+from that callback is a compile error. There is no safe long-lived owner that
+can escape the callback. In the API that constructor is
+`Registration::with_static()`.
+
 Kernel-initiated atomic updates, the kind that do not come from a userspace
 ioctl (a device request made through an open file), also require the live
 registered view. The callback may borrow a
@@ -268,6 +285,20 @@ One case commits an image through that public handle, then drops registration
 without first disabling the CRTC. Teardown must turn the output off, release
 the framebuffer, and reject later handles. This does not cover concurrent ioctl
 users or delayed page-flip events.
+
+The scoped constructor is the same story with a callback. The device
+allocation can outlive the callback after success and after a cancelled check.
+In both cases, new registration handles must be rejected, and dropping the
+allocation must release the mode objects.
+
+Concurrent teardown moves registration and its fake parent to a background
+job, dropping them in that order. A handshake holds teardown until the test
+has a registration handle. New handles are rejected while teardown is blocked.
+The existing handle can still validate an update. Releasing it lets teardown
+finish. The background job is allocated before the handle is taken, so a
+failed spawn cannot wait on the caller. This proves the kernel waits for
+current users before the device is destroyed. It does not prove arbitrary
+parent-resource ordering or concurrent userspace ioctls.
 
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,
