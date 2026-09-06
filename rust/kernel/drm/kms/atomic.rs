@@ -314,14 +314,36 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
 
     /// Return the new state of the first connector routed to `crtc`, if any.
     ///
-    /// See [`AtomicState::new_connector_state_for_crtc`]. This borrows the connector state rather
-    /// than taking a mutator out for it, so it does not participate in the mutator bookkeeping and
-    /// cannot conflict with [`Self::get_new_connector_state`].
-    pub fn new_connector_state_for_crtc<C>(&self, crtc: &C) -> Option<&OpaqueConnectorState<T>>
+    /// See [`AtomicState::new_connector_state_for_crtc`]. The exclusive borrow prevents any
+    /// mutable state guard from coexisting with the returned shared state. An opaque state can
+    /// be converted to a typed state, so it must obey the same borrowing rules.
+    pub fn new_connector_state_for_crtc<C>(&mut self, crtc: &C) -> Option<&OpaqueConnectorState<T>>
     where
         C: ModesettableCrtc + ModeObject<Driver = T>,
     {
         self.state.new_connector_state_for_crtc(crtc)
+    }
+
+    /// Inspect the first new connector state routed to `crtc` during atomic checking.
+    ///
+    /// Unlike the exclusive-borrow lookup, this is callable through a check token's shared
+    /// composer. The callback cannot retain the state reference. An outstanding connector
+    /// guard or nested inspection returns `EBUSY`; connector mutation is excluded until the
+    /// callback returns. A missing route is passed as `None`.
+    pub fn with_new_connector_state_for_crtc<C, R>(
+        &self,
+        crtc: &C,
+        inspect: impl FnOnce(Option<&OpaqueConnectorState<T>>) -> R,
+    ) -> Result<R>
+    where
+        C: ModesettableCrtc + ModeObject<Driver = T>,
+    {
+        if self.borrowed_connectors.get() != 0 {
+            return Err(EBUSY);
+        }
+        self.borrowed_connectors.set(u32::MAX);
+        let _restore = ScopeGuard::new(|| self.borrowed_connectors.set(0));
+        Ok(inspect(self.state.new_connector_state_for_crtc(crtc)))
     }
 
     /// Invoke `f` for every CRTC this state carries a new state for.
