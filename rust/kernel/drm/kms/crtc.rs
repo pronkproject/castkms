@@ -742,6 +742,9 @@ impl<T: DriverCrtcState> Sealed for CrtcState<T> {}
 /// A driver may store driver-private data within the implementor's type, which will be available
 /// when using a full typed [`CrtcState`] object.
 ///
+/// DRM may move or destroy the payload on a commit worker and duplicate published state while
+/// another callback reads it. The payload must support both thread transfer and shared access.
+///
 /// # Invariants
 ///
 /// - Any C FFI callbacks generated using this trait are guaranteed that passed-in
@@ -751,7 +754,7 @@ impl<T: DriverCrtcState> Sealed for CrtcState<T> {}
 ///
 /// [`struct drm_crtc`]: srctree/include/drm_crtc.h
 /// [`struct drm_crtc_state`]: srctree/include/drm_crtc.h
-pub trait DriverCrtcState: Clone + Default + Unpin {
+pub trait DriverCrtcState: Clone + Default + Unpin + Send + Sync {
     /// The parent CRTC driver for this CRTC state
     type Crtc: DriverCrtc<State = Self>
     where
