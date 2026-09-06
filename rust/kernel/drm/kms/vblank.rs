@@ -301,13 +301,19 @@ impl<'a, T: VblankDriverCrtc> PendingVblankEvent<'a, T> {
     /// [`PendingVblankEvent`]. As well, it requires a [`VblankRef`] so that vblank interrupts
     /// remain enabled until the [`PendingVblankEvent`] has been sent out by the driver's vblank
     /// interrupt handler.
-    pub fn arm(self, vbl_ref: VblankRef<'_, T>) {
+    ///
+    /// A reference for a different CRTC returns `EINVAL`, leaving the event attached to its
+    /// state. The caller may obtain the event again to send it or retry with a matching reference.
+    pub fn arm(self, vbl_ref: VblankRef<'_, T>) -> Result {
+        if !core::ptr::eq(self.crtc, vbl_ref.0) {
+            return Err(EINVAL);
+        }
         let event_lock = self.crtc.drm_dev().event_lock();
         let _guard = event_lock.lock();
 
         // SAFETY:
         // - We now hold the appropriate lock to call this function
-        // - Vblanks are enabled as proved by `vbl_ref`, as per the C api requirements
+        // - The checked reference keeps vblanks enabled for this event's CRTC.
         // - Our interface is proof that `event` is non-null
         unsafe { bindings::drm_crtc_arm_vblank_event(self.crtc.as_raw(), (*self.state).event) };
 
@@ -316,6 +322,7 @@ impl<'a, T: VblankDriverCrtc> PendingVblankEvent<'a, T> {
 
         // DRM took ownership of `vbl_ref` after we called `drm_crtc_arm_vblank_event`
         mem::forget(vbl_ref);
+        Ok(())
     }
 }
 
