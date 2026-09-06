@@ -583,7 +583,10 @@ impl<T: KmsDriver> AtomicStateComposer<T> {
     where
         C: ModesettableCrtc + ModeObject<Driver = T>,
     {
-        // SAFETY: Both .as_raw() values are guaranteed to return a valid pointer
+        if !core::ptr::eq(self.drm_dev(), crtc.drm_dev()) {
+            return Err(EINVAL);
+        }
+        // SAFETY: Both pointers are valid and the CRTC belongs to the transaction's device.
         to_result(unsafe { bindings::drm_atomic_add_affected_planes(self.as_raw(), crtc.as_raw()) })
     }
 }
