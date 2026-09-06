@@ -772,6 +772,9 @@ pub trait DriverCrtcState: Clone + Default + Unpin + Send + Sync {
 /// - `state` and `inner` initialized for as long as this object is exposed to users.
 /// - The data layout of this structure begins with [`struct drm_crtc_state`].
 /// - The CRTC for this type can always be assumed to be of type [`Crtc<T::Crtc>`].
+/// - Driver-private payload mutation is restricted to exclusive guards before publication.
+///   Published payloads are shared read-only, including during concurrent duplication and
+///   commit callbacks. Native event mutation is separate and follows DRM's event locking.
 ///
 /// [`struct drm_crtc_state`]: srctree/include/drm/drm_crtc.h
 #[repr(C)]
@@ -1166,21 +1169,34 @@ impl<'a, T: DriverCrtc> CrtcAtomicCheck<'a, T> {
 ///
 /// # Invariants
 ///
-/// This token is proof that the old and new atomic state of `crtc` are present in `state` and do
-/// not have any mutators taken out.
+/// Both states are present and their private payloads are read-only: DRM has already published
+/// the new state, and another atomic check may duplicate it concurrently.
 pub struct CrtcAtomicCommit<'a, T: DriverCrtc> {
-    state: &'a AtomicStateMutator<T::Driver>,
+    state: &'a AtomicStateReader<T::Driver>,
     crtc: &'a Crtc<T>,
 }
 
 impl<'a, T: DriverCrtc> CrtcAtomicCommit<'a, T> {
     impl_atomic_state_token_ops!(
         CrtcAtomicCommit,
-        AtomicStateMutator,
+        AtomicStateReader,
         Crtc,
-        CrtcStateMutator<'a, CrtcState<T::State>>,
+        &'a CrtcState<T::State>,
         use <'a, T>
     );
+}
+
+impl<T: VblankDriverCrtc> CrtcAtomicCommit<'_, T> {
+    /// Borrow the event belonging to this commit for sending or arming.
+    ///
+    /// Event ownership is separate from the published driver-private payload. The mutable token
+    /// borrow prevents a second event operation until the returned handle has been consumed.
+    pub fn get_pending_vblank_event(&mut self) -> Option<PendingVblankEvent<'_, T>> {
+        let state = self.state.get_new_crtc_state(self.crtc)?;
+        // SAFETY: This callback owns event handling for its CRTC. The token borrow excludes
+        // another event handle, and the callback keeps the CRTC and its new state alive.
+        unsafe { PendingVblankEvent::new(self.crtc, state.as_raw()) }
+    }
 }
 
 unsafe extern "C" fn crtc_destroy_callback<T: DriverCrtc>(crtc: *mut bindings::drm_crtc) {
@@ -1306,13 +1322,12 @@ unsafe extern "C" fn atomic_begin_callback<T: DriverCrtc>(
 
     // SAFETY: DRM guarantees that `state` points to a valid
     // `drm_atomic_commit`.
-    let state = unsafe { AtomicStateMutator::new(NonNull::new_unchecked(state)) };
+    let state = unsafe { AtomicStateReader::new(NonNull::new_unchecked(state)) };
 
     // SAFETY:
     // - Since we're in the atomic_begin callback, we're guaranteed by DRM that both the old and new
     //   crtc state are resent in this atomic state.
-    // - We just created the state mutator above, so other mutators cannot be taken out on the crtc
-    //   state yet.
+    // - Published private state is only exposed read-only by commit callbacks.
     let commit = unsafe { CrtcAtomicCommit::new(crtc, &state) };
 
     T::atomic_begin(commit);
@@ -1329,13 +1344,12 @@ unsafe extern "C" fn atomic_flush_callback<T: DriverCrtc>(
 
     // SAFETY: DRM guarantees that `state` points to a valid
     // `drm_atomic_commit`.
-    let state = unsafe { AtomicStateMutator::new(NonNull::new_unchecked(state)) };
+    let state = unsafe { AtomicStateReader::new(NonNull::new_unchecked(state)) };
 
     // SAFETY:
     // - Since we're in the atomic_flush callback, we're guaranteed by DRM that both the old and new
     //   crtc state are resent in this atomic state.
-    // - We just created the state mutator above, so other mutators cannot be taken out on the crtc
-    //   state yet.
+    // - Published private state is only exposed read-only by commit callbacks.
     let commit = unsafe { CrtcAtomicCommit::new(crtc, &state) };
 
     T::atomic_flush(commit);
@@ -1351,13 +1365,12 @@ unsafe extern "C" fn atomic_enable_callback<T: DriverCrtc>(
     let crtc = unsafe { Crtc::from_raw(crtc) };
 
     // SAFETY: DRM never passes an invalid ptr for `state`
-    let state = unsafe { AtomicStateMutator::new(NonNull::new_unchecked(state)) };
+    let state = unsafe { AtomicStateReader::new(NonNull::new_unchecked(state)) };
 
     // SAFETY:
     // - Since we're in the atomic_enable callback, we're guaranteed by DRM that both the old and
     //   new crtc state are present in this atomic state.
-    // - We just created the state mutator above, so other mutators cannot be taken out on the crtc
-    //   state yet.
+    // - Published private state is only exposed read-only by commit callbacks.
     let commit = unsafe { CrtcAtomicCommit::new(crtc, &state) };
 
     T::atomic_enable(commit);
@@ -1373,13 +1386,12 @@ unsafe extern "C" fn atomic_disable_callback<T: DriverCrtc>(
     let crtc = unsafe { Crtc::from_raw(crtc) };
 
     // SAFETY: We're guaranteed that `state` points to a valid `drm_crtc_state` by DRM
-    let state = unsafe { AtomicStateMutator::new(NonNull::new_unchecked(state)) };
+    let state = unsafe { AtomicStateReader::new(NonNull::new_unchecked(state)) };
 
     // SAFETY:
     // - Since we're in the atomic_disable callback, we're guaranteed by DRM that both the old and
     //   new crtc state are present in this atomic state.
-    // - We just created the state mutator above, so other mutators cannot be taken out on the crtc
-    //   state yet.
+    // - Published private state is only exposed read-only by commit callbacks.
     let commit = unsafe { CrtcAtomicCommit::new(crtc, &state) };
 
     T::atomic_disable(commit);

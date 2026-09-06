@@ -255,57 +255,44 @@ impl<T: VblankDriverCrtc> Crtc<T> {
     }
 }
 
-/// Common methods available on any [`CrtcState`] whose [`Crtc`] implements [`VblankSupport`].
+/// Exclusive access to a commit's pending vblank event, not to its private state.
 ///
-/// This trait is implemented automatically by DRM for any [`DriverCrtc`] implementation that
-/// implements [`VblankSupport`].
-pub trait RawVblankCrtcState: AsRawCrtcState {
-    /// Return the [`PendingVblankEvent`] for this CRTC state, if there is one.
-    fn get_pending_vblank_event(&mut self) -> Option<PendingVblankEvent<'_, Self>>
-    where
-        Self: Sized,
-    {
-        // SAFETY: The driver is the only one that will ever modify this data, and since our
-        // interface follows rust's data aliasing rules that means this is safe to read
-        let event_ptr = unsafe { *self.as_raw() }.event;
+/// Obtained through [`CrtcAtomicCommit::get_pending_vblank_event`]. Dropping the handle without
+/// sending or arming leaves the event attached to the state for subsequent handling.
+pub struct PendingVblankEvent<'a, T: VblankDriverCrtc> {
+    crtc: &'a Crtc<T>,
+    state: *mut bindings::drm_crtc_state,
+}
 
-        (!event_ptr.is_null()).then_some(PendingVblankEvent(self))
+impl<'a, T: VblankDriverCrtc> PendingVblankEvent<'a, T> {
+    /// # Safety
+    ///
+    /// `state` must be the live new state of `crtc` during its commit callback. The caller must
+    /// retain exclusive permission to handle its event for `'a`, without signaling hardware
+    /// completion or allowing another event handle during that borrow.
+    pub(super) unsafe fn new(
+        crtc: &'a Crtc<T>,
+        state: *mut bindings::drm_crtc_state,
+    ) -> Option<Self> {
+        // SAFETY: The caller owns event handling and keeps the state alive for the handle.
+        (!unsafe { (*state).event }.is_null()).then_some(Self { crtc, state })
     }
-}
 
-impl<T, C> RawVblankCrtcState for T
-where
-    T: AsRawCrtcState<Crtc = Crtc<C>>,
-    C: VblankDriverCrtc,
-{
-}
-
-/// A pending vblank event from an atomic state
-pub struct PendingVblankEvent<'a, T: RawVblankCrtcState>(&'a mut T);
-
-impl<'a, T: RawVblankCrtcState> PendingVblankEvent<'a, T> {
     /// Send this [`PendingVblankEvent`].
     ///
     /// A [`PendingVblankEvent`] can only be sent once, so this function consumes the
     /// [`PendingVblankEvent`].
-    pub fn send<C>(self)
-    where
-        T: RawVblankCrtcState<Crtc = Crtc<C>>,
-        C: VblankDriverCrtc,
-    {
-        let crtc: &Crtc<C> = self.0.crtc();
-        let event_lock = crtc.drm_dev().event_lock();
+    pub fn send(self) {
+        let event_lock = self.crtc.drm_dev().event_lock();
         let _guard = event_lock.lock();
 
         // SAFETY:
         // - We now hold the appropriate lock to call this function
-        // - Vblanks are enabled as proved by `vbl_ref`, as per the C api requirements
-        // - Our interface is proof that `event` is non-null
-        unsafe { bindings::drm_crtc_send_vblank_event(crtc.as_raw(), (*self.0.as_raw()).event) };
+        // - Our exclusive event handle proves `event` is non-null and has not been consumed.
+        unsafe { bindings::drm_crtc_send_vblank_event(self.crtc.as_raw(), (*self.state).event) };
 
-        // SAFETY: The mutable reference in `self.state` is proof that it is safe to mutate this,
-        // and DRM expects us to set this to NULL once we've sent the vblank event.
-        unsafe { (*self.0.as_raw()).event = null_mut() };
+        // SAFETY: The handle exclusively owns event handling. DRM expects NULL after sending.
+        unsafe { (*self.state).event = null_mut() };
     }
 
     /// Arm this [`PendingVblankEvent`] to be sent later by the CRTC's vblank interrupt handler.
@@ -314,24 +301,18 @@ impl<'a, T: RawVblankCrtcState> PendingVblankEvent<'a, T> {
     /// [`PendingVblankEvent`]. As well, it requires a [`VblankRef`] so that vblank interrupts
     /// remain enabled until the [`PendingVblankEvent`] has been sent out by the driver's vblank
     /// interrupt handler.
-    pub fn arm<C>(self, vbl_ref: VblankRef<'_, C>)
-    where
-        T: RawVblankCrtcState<Crtc = Crtc<C>>,
-        C: VblankDriverCrtc,
-    {
-        let crtc: &Crtc<C> = self.0.crtc();
-        let event_lock = crtc.drm_dev().event_lock();
+    pub fn arm(self, vbl_ref: VblankRef<'_, T>) {
+        let event_lock = self.crtc.drm_dev().event_lock();
         let _guard = event_lock.lock();
 
         // SAFETY:
         // - We now hold the appropriate lock to call this function
         // - Vblanks are enabled as proved by `vbl_ref`, as per the C api requirements
         // - Our interface is proof that `event` is non-null
-        unsafe { bindings::drm_crtc_arm_vblank_event(crtc.as_raw(), (*self.0.as_raw()).event) };
+        unsafe { bindings::drm_crtc_arm_vblank_event(self.crtc.as_raw(), (*self.state).event) };
 
-        // SAFETY: The mutable reference in `self.state` is proof that it is safe to mutate this,
-        // and DRM expects us to set this to NULL once we've armed the vblank event.
-        unsafe { (*self.0.as_raw()).event = null_mut() };
+        // SAFETY: The handle exclusively owns event handling. DRM expects NULL after arming.
+        unsafe { (*self.state).event = null_mut() };
 
         // DRM took ownership of `vbl_ref` after we called `drm_crtc_arm_vblank_event`
         mem::forget(vbl_ref);
