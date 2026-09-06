@@ -1179,6 +1179,7 @@ unsafe impl<T: KmsDriver> ModeObjectVtable for OpaquePlaneState<T> {
 /// This type is typically returned by an [`AtomicStateMutator`] within contexts where it is
 /// possible to safely mutate a plane's state. In order to uphold rust's data-aliasing rules, only
 /// [`PlaneStateMutator`] may exist at a time.
+#[repr(C)]
 pub struct PlaneStateMutator<'a, T: FromRawPlaneState> {
     state: &'a mut T,
     mask: &'a Cell<u32>,
