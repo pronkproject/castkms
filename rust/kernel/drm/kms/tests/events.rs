@@ -24,6 +24,9 @@ struct Observations {
     event_error: AtomicI32,
     armed: AtomicU32,
     dropped_handle: AtomicU32,
+    rejected_arm: AtomicI32,
+    other_references_before: AtomicI32,
+    other_references: AtomicI32,
     detached: AtomicU32,
     clock: AtomicI32,
     #[pin]
@@ -42,6 +45,8 @@ struct Data {
 enum EventAction {
     Arm,
     DropThenArm,
+    // The other device has no reference back to this one. Its test parent outlives both.
+    RejectOther(crtc::CrtcRef<EventCrtc>),
 }
 
 struct EventDriver;
@@ -192,6 +197,26 @@ impl crtc::DriverCrtc for EventCrtc {
                         .dropped_handle
                         .store(u32::from(event.is_some()), Ordering::Relaxed);
                     drop(event);
+                }
+                EventAction::RejectOther(other) => {
+                    let other = other.crtc();
+                    other.vblank_on();
+                    let result = other.vblank_get().and_then(|reference| {
+                        observations
+                            .other_references_before
+                            .store(vblank_references(other), Ordering::Relaxed);
+                        commit
+                            .get_pending_vblank_event()
+                            .ok_or(ENOENT)?
+                            .arm(reference)
+                    });
+                    observations
+                        .rejected_arm
+                        .store(result.err().map_or(0, Error::to_errno), Ordering::Relaxed);
+                    observations
+                        .other_references
+                        .store(vblank_references(other), Ordering::Relaxed);
+                    other.vblank_off();
                 }
             }
             let result = crtc.vblank_get().and_then(|reference| {
@@ -383,7 +408,9 @@ fn create_with_action(
             counts: counts.clone(), delay: AtomicU32::new(0),
             fail_enable: AtomicU32::new(0), enable_calls: AtomicU32::new(0),
             event_error: AtomicI32::new(0), armed: AtomicU32::new(0),
-            dropped_handle: AtomicU32::new(0), detached: AtomicU32::new(0),
+            dropped_handle: AtomicU32::new(0), rejected_arm: AtomicI32::new(0),
+            other_references_before: AtomicI32::new(-1),
+            other_references: AtomicI32::new(-1), detached: AtomicU32::new(0),
             clock: AtomicI32::new(0), programmed <- Completion::new(),
         }),
         GFP_KERNEL,
@@ -536,6 +563,53 @@ mod cases {
             result.observations.counts.objects.load(Ordering::Relaxed),
             0
         );
+        Ok(())
+    }
+
+    #[test]
+    fn wrong_crtc_arm_preserves_event_for_retry() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-other-vblank", None)?;
+        let other = create(parent.as_ref(), &counts)?;
+        // SAFETY: Setup completed; the owned CRTC retains the other device until the source
+        // test device releases it. The faux parent remains bound until both devices are gone.
+        let crtc = unsafe { crtc::Crtc::<EventCrtc>::from_raw(other.crtc.load(Ordering::Relaxed)) };
+        let result =
+            delayed_flip_with_action(EventAction::RejectOther(crtc.to_owned_ref()), |crtc| {
+                crtc.handle_vblank()
+            });
+        drop(other);
+        drop(parent);
+        let result = result?;
+        assert!(result.pending);
+        assert!(result.delivered);
+        assert_eq!(result.before, 2);
+        assert_eq!(result.after, 1);
+        assert_eq!(result.disabled, 0);
+        assert_eq!(result.error, 0);
+        assert_eq!(
+            result.observations.rejected_arm.load(Ordering::Relaxed),
+            EINVAL.to_errno()
+        );
+        assert_eq!(
+            result
+                .observations
+                .other_references_before
+                .load(Ordering::Relaxed),
+            1
+        );
+        assert_eq!(
+            result.observations.other_references.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(result.observations.armed.load(Ordering::Relaxed), 1);
+        assert_eq!(result.observations.event_error.load(Ordering::Relaxed), 0);
+        assert_eq!(result.observations.detached.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            result.observations.counts.objects.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
 
