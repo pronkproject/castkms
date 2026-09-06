@@ -369,13 +369,15 @@ impl<T: Driver> private::KmsImpl for PhantomData<T> {
 
 impl<T: Driver> KmsImpl for PhantomData<T> {}
 
-impl<T: KmsDriver, C: crate::drm::device::DeviceContext> Device<T, C> {
+impl<T: KmsDriver> Device<T, Registered> {
     /// Send a hotplug uevent to userspace, prompting it to re-probe connector state.
     ///
     /// This is useful for drivers which detect connector changes out of band, for example when a
-    /// dock supplies an EDID after bring-up.
+    /// dock supplies an EDID after bring-up. The registration guard keeps the parent bound
+    /// while the event accesses the registered device's sysfs objects and DRM clients.
     pub fn hotplug_event(&self) {
-        // SAFETY: `self.as_raw()` is a live KMS-capable DRM device.
+        // SAFETY: KmsDriver selects KMS setup, and Registered guarantees successful registration
+        // and excludes concurrent unplug for the duration of the call.
         unsafe { bindings::drm_kms_helper_hotplug_event(self.as_raw()) };
     }
 }
