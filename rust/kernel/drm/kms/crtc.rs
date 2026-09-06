@@ -217,7 +217,7 @@ pub trait DriverCrtc: Send + Sync + Sized {
     /// The [`DriverCrtcState`] implementation for this [`DriverCrtc`].
     ///
     /// See [`DriverCrtcState`] for more info.
-    type State: DriverCrtcState;
+    type State: DriverCrtcState<Crtc = Self>;
 
     /// The driver's optional hardware vblank implementation
     ///
