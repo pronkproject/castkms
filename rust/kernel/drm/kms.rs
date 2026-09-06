@@ -332,10 +332,10 @@ impl<T: KmsDriver> private::KmsImpl for T {
             to_result(unsafe { bindings::drm_vblank_init(drm.as_raw(), drm.num_crtcs()) })?;
         }
 
-        // TODO: Eventually add a hook to customize how state readback happens, for now just reset
-        // SAFETY: Since all static modesetting objects were created in `T::create_objects()`, and
-        // that is the only place they can be created, this fulfills the C API requirements.
-        unsafe { bindings::drm_mode_config_reset(drm.as_raw()) };
+        // SAFETY: All static modesetting objects have been created and remain unregistered.
+        // Every Rust stateful object provides atomic_create_state, so missing initial state is
+        // allocated fallibly. Preserve state already initialized for connector properties.
+        to_result(unsafe { bindings::drm_mode_config_create_initial_state(drm.as_raw()) })?;
 
         Ok(mode_config_info)
     }
