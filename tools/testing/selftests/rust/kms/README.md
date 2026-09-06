@@ -316,6 +316,12 @@ events userspace reads from a DRM file. The schedules do not claim to cover
 arbitrary interrupt races, a GPU still reading the old buffer, concurrent
 unplug, or delivery to a DRM file.
 
+An owned vblank reference can outlive the borrowed device handle used to
+create it. Converting a borrow into an owned handle must not change the native
+count; dropping the owned handle must release exactly one reference. That is
+allocation lifetime, not a claim that the parent CRTC remains usable for
+hardware access.
+
 ### Private state, properties, and real allocation failure
 
 Drivers hang private data off CRTC, plane, and connector state. That
