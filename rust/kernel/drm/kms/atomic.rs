@@ -1158,6 +1158,14 @@ pub struct PlaneUpdatesCommittedToken<'a, T: KmsDriver>(CommitScope<'a, T>);
 pub struct AtomicCommitTail<'a, T: KmsDriver>(&'a AtomicState<T>, CommitScope<'a, T>);
 
 impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
+    /// Return the device whose hardware is being updated.
+    ///
+    /// This provides driver data, not registration or modeset-lock ownership. It does not expose
+    /// the published object states after hardware completion.
+    pub fn drm_dev(&self) -> &Device<T> {
+        self.0.drm_dev()
+    }
+
     /// Commit modesets which would disable outputs.
     ///
     /// This function commits any modesets which would shut down outputs, along with preparing them
