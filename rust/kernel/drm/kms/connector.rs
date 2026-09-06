@@ -1136,6 +1136,14 @@ impl<T: DriverConnectorState> FromRawConnectorState for ConnectorState<T> {
     }
 }
 
+impl<T: DriverConnectorState> Deref for ConnectorState<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
 // SAFETY: `funcs` is initialized by DRM when the connector is allocated
 unsafe impl<T: DriverConnectorState> ModeObjectVtable for ConnectorState<T> {
     type Vtable = bindings::drm_connector_funcs;
