@@ -68,6 +68,19 @@ impl<T: KmsDriver> Device<T, Registered> {
         // SAFETY: Registration proves completed KMS initialization and excludes teardown.
         unsafe { run_update(self, update) }
     }
+
+    /// Validate a kernel atomic update without publishing state or running commit callbacks.
+    ///
+    /// The callback has the same replay and locking obligations as [`Self::atomic_update`].
+    /// Success describes only the checked configuration: locks and temporary state are released
+    /// before returning, so a later commit must construct and validate its own transaction.
+    pub fn check_atomic_update(
+        &self,
+        update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+    ) -> Result {
+        // SAFETY: Registration proves completed KMS initialization and excludes teardown.
+        unsafe { run_check(self, update) }
+    }
 }
 
 /// Run an update on an initialized device, also used by the unregistered runtime consumer.
@@ -78,7 +91,31 @@ impl<T: KmsDriver> Device<T, Registered> {
 /// mode-object creation, device registration and teardown throughout this call.
 pub(super) unsafe fn run_update<T: KmsDriver>(
     dev: &Device<T>,
+    update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+) -> Result {
+    // SAFETY: The caller supplies the initialized-device and exclusion guarantees.
+    unsafe { run_transaction(dev, update, false) }
+}
+
+/// Validate an update on an initialized device without publishing it.
+///
+/// # Safety
+///
+/// The initialized-device and exclusion requirements of [`run_update`] apply.
+pub(super) unsafe fn run_check<T: KmsDriver>(
+    dev: &Device<T>,
+    update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+) -> Result {
+    // SAFETY: The caller supplies the same guarantees as for a committing transaction.
+    unsafe { run_transaction(dev, update, true) }
+}
+
+// Both terminal operations use the same ownership, callback and backoff boundaries. This
+// function inherits run_update's safety contract; check_only changes only the terminal helper.
+unsafe fn run_transaction<T: KmsDriver>(
+    dev: &Device<T>,
     mut update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+    check_only: bool,
 ) -> Result {
     pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new());
     loop {
@@ -103,7 +140,13 @@ pub(super) unsafe fn run_update<T: KmsDriver>(
                 result.and_then(|()| {
                     // SAFETY: All callback borrows have ended. The transaction is unpublished and
                     // holds the required locks; the core performs validation before publishing it.
-                    to_result(unsafe { bindings::drm_atomic_commit(raw.as_ptr()) })
+                    to_result(unsafe {
+                        if check_only {
+                            bindings::drm_atomic_check_only(raw.as_ptr())
+                        } else {
+                            bindings::drm_atomic_commit(raw.as_ptr())
+                        }
+                    })
                 })
             };
             // The driver may discover contention during validation, after the callback returned.

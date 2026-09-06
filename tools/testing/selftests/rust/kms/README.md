@@ -140,6 +140,11 @@ handles cannot race it. That configuration helper cannot be sent to another
 task even when the driver type itself can. A shareable device reference is
 not a substitute.
 
+The same callback and registration rules apply to a validation-only request,
+which is an atomic check that must not change published state. The compiler
+rejects keeping its state handle after the callback, and rejects calling it
+through a merely allocated device.
+
 These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
 uphold. They do not test runtime device identity, allocator failure, reset,
@@ -203,6 +208,11 @@ objects from the wrong place, without a userspace compositor in the loop.
 A rejected update copies CRTC state, aborts, and retries with a new
 transaction. The error must propagate, the already published state must stay
 put, and the failed transaction's locks must be released.
+
+A validation-only request can check a complete modeset without changing
+published state and without calling enable, disable, or plane-update. A later
+transaction then proves that the check released its resources. Success here is
+not a reservation that a later commit will succeed.
 
 ### Selecting an image for a virtual output
 
