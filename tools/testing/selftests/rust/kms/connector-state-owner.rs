@@ -18,4 +18,12 @@ pub struct Other<S>(S);
 #[cfg(negative)]
 impl<S: DriverConnectorState> DriverConnectorState for Other<S> {
     type Connector = S::Connector;
+
+    fn new(_: &Connector<Self::Connector>) -> kernel::error::Result<Self> {
+        Err(kernel::error::code::EINVAL)
+    }
+
+    fn duplicate(&self) -> kernel::error::Result<Self> {
+        Err(kernel::error::code::EINVAL)
+    }
 }

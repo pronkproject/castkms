@@ -4,9 +4,9 @@
 
 use kernel::drm::kms::connector::*;
 
-// Driver-private defaults remain available; only DRM constructs the wrapper
+// Driver-private defaults remain optional; only DRM constructs the wrapper
 // that promises an initialized parent connector.
-pub fn private_default<S: DriverConnectorState>() -> S {
+pub fn private_default<S: DriverConnectorState + Default>() -> S {
     S::default()
 }
 

@@ -151,6 +151,14 @@ impl Drop for CrtcPayload {
 }
 impl connector::DriverConnectorState for ConnectorPayload {
     type Connector = TestConnector;
+
+    fn new(_: &connector::Connector<Self::Connector>) -> Result<Self> {
+        Ok(Self)
+    }
+
+    fn duplicate(&self) -> Result<Self> {
+        Ok(Self)
+    }
 }
 
 impl drm::file::DriverFile for TestFile {
