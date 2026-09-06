@@ -142,7 +142,7 @@ device.
 
 Names that contain a percent sign are copied as literal text. They must not be
 interpreted as `printf` format strings, which could make a display name trigger
-invalid memory access. That is checked for planes.
+invalid memory access. That is checked for planes and CRTCs.
 
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,
