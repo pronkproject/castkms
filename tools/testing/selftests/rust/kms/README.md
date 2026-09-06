@@ -152,10 +152,11 @@ page-flip events, suspend, or GPU execution.
 
 ## Runtime checks
 
-The in-kernel suite lives in `rust/kernel/drm/kms/tests.rs`. Its cases build
+The in-kernel suite lives in `rust/kernel/drm/kms/tests.rs`. Most cases build
 an unregistered virtual display: a fake bus device that never publishes a DRM
-character device, so userspace never sees a `/dev/dri/card*`. Run those in a
-virtual machine or a dedicated test boot, not on the desktop you are working
+character device, so userspace never sees a `/dev/dri/card*`. A few
+registration cases deliberately publish a temporary virtual card. Run those in
+a virtual machine or a dedicated test boot, not on the desktop you are working
 on. No case talks to a physical panel, a capture pipeline, or a compositor.
 
 ### How to run them
@@ -250,6 +251,23 @@ shared typed wrapper while only the unpublished copy is changed. Failure is
 injected at the private-data hook. It is not, in these cases, a fault in the
 kernel's object allocator. The native duplicate-state callback can only
 report failure as a null pointer, which becomes "out of memory."
+
+### Registering and unregistering the virtual card
+
+Publishing a `/dev/dri/card*` is the point at which the fake monitor becomes
+visible. Taking it back must turn the output off and refuse new users,
+including when another thread is still holding a handle.
+
+The public constructor that registers for the rest of the device's life can
+obtain a registered-device handle and run validation through the public API.
+After registration is dropped, a leftover device reference must not be able to
+obtain a new handle. The remaining mode objects disappear when that leftover
+reference is dropped.
+
+One case commits an image through that public handle, then drops registration
+without first disabling the CRTC. Teardown must turn the output off, release
+the framebuffer, and reject later handles. This does not cover concurrent ioctl
+users or delayed page-flip events.
 
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,
