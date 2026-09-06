@@ -112,6 +112,34 @@ int drm_gem_shmem_init(struct drm_device *dev, struct drm_gem_shmem_object *shme
 }
 EXPORT_SYMBOL_GPL(drm_gem_shmem_init);
 
+/**
+ * drm_gem_shmem_init_imported - Initialize preallocated imported shmem storage
+ * @dev: DRM device
+ * @shmem: Preallocated, zeroed shmem GEM object
+ * @size: Nonzero, page-aligned buffer size in bytes
+ *
+ * Initialize the native GEM and shmem state without allocating a shmem file.
+ * The caller owns the surrounding allocation and may set its object functions
+ * before initialization. On failure native resources are unwound, but the
+ * surrounding allocation is neither freed nor passed to its free callback.
+ *
+ * On success, the PRIME import callback must install the mapped scatter/gather
+ * table, and the PRIME import core must install the attachment and reservation
+ * before publishing or releasing the object. This helper consumes neither an
+ * attachment nor a scatter/gather table.
+ *
+ * Return: 0 on success, or a negative error code on failure.
+ */
+int drm_gem_shmem_init_imported(struct drm_device *dev,
+			       struct drm_gem_shmem_object *shmem, size_t size)
+{
+	if (!size || !PAGE_ALIGNED(size))
+		return -EINVAL;
+
+	return __drm_gem_shmem_init(dev, shmem, size, true);
+}
+EXPORT_SYMBOL_GPL(drm_gem_shmem_init_imported);
+
 static struct drm_gem_shmem_object *
 __drm_gem_shmem_create(struct drm_device *dev, size_t size, bool private)
 {
