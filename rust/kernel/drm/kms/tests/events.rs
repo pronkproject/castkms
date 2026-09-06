@@ -111,6 +111,7 @@ impl drm::file::DriverFile for EventFile {
     }
 }
 
+#[vtable]
 impl gem::DriverObject for EventObject {
     type Driver = EventDriver;
     type Args = ();

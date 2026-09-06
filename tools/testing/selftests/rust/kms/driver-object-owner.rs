@@ -20,7 +20,9 @@ impl<D: drm::Driver + 'static> drm::file::DriverFile for LocalFile<D> {
     }
 }
 
+#[vtable]
 impl<D: drm::Driver + 'static> gem::DriverObject for LocalObject<D> {
+    type OwnerModule = D::OwnerModule;
     type Driver = Replacement<D>;
     type Args = ();
     fn new(_: &Device<Self::Driver>, _: usize, _: ()) -> impl PinInit<Self, Error> {

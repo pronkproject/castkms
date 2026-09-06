@@ -217,6 +217,7 @@ impl drm::file::DriverFile for TestFile {
     }
 }
 
+#[vtable]
 impl gem::DriverObject for TestObject {
     type Driver = TestDriver;
     type Args = ();

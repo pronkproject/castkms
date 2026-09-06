@@ -122,6 +122,7 @@ pub type DriverFile<T> = drm::File<<<T as DriverObject>::Driver as drm::Driver>:
 pub type DriverAllocImpl<T> = <<T as DriverObject>::Driver as drm::Driver>::Object;
 
 /// GEM object functions, which must be implemented by drivers.
+#[vtable]
 pub trait DriverObject: Sync + Send + Sized + 'static {
     /// Parent `Driver` for this object.
     type Driver: drm::Driver;
@@ -135,6 +136,15 @@ pub trait DriverObject: Sync + Send + Sized + 'static {
         size: usize,
         args: Self::Args,
     ) -> impl PinInit<Self, Error>;
+
+    /// Supply payload arguments for a standard shmem dumb-buffer allocation.
+    ///
+    /// Implementing this method opts shmem storage into native dumb-buffer creation. The size
+    /// has already been validated and page-aligned by DRM. Allocation still goes through
+    /// [`Self::new`], so native and in-kernel construction initialize the same payload.
+    fn dumb_create_args(_dev: &drm::Device<Self::Driver>, _size: usize) -> Result<Self::Args> {
+        Err(EOPNOTSUPP)
+    }
 
     /// Open a new handle to an existing object, associated with a File.
     fn open(_obj: &DriverAllocImpl<Self>, _file: &DriverFile<Self>) -> Result {
