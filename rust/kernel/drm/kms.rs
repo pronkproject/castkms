@@ -75,7 +75,9 @@ pub(crate) mod private {
 /// macro that we can use for consistently implementing try_from_opaque()/from_opaque() functions to
 /// convert from Opaque mode objects to fully typed mode objects. This macro handles that, and can
 /// generate said functions for any kind of type which the original mode object driver trait can be
-/// derived from. All conversions check the mode object's vtable. For example:
+/// derived from. Associated-type bounds select the driver's nominated concrete object type;
+/// constructors enforce that selection. These conversions do not compare vtable addresses.
+/// For example:
 ///
 /// ```ignore
 /// impl<'a, T: DriverConnectorState> ConnectorState<T> {
@@ -119,8 +121,10 @@ macro_rules! impl_from_opaque_mode_obj {
     ) => {
         #[doc = "Try to convert `opaque` into a fully qualified `Self`."]
         #[doc = ""]
-        #[doc = concat!("This will try to convert `opaque` into `Self` if it shares the same [`",
-                        stringify!($obj_trait), "`] implementation as `Self`.")]
+        #[doc = "The associated-type bounds select the device's nominated concrete type."]
+        #[doc = "Safe constructors enforce that selection, and state traits tie each payload"]
+        #[doc = "to its owning object. No runtime type or vtable comparison is performed."]
+        #[doc = "The currently supported homogeneous model always returns `Ok`."]
         pub fn try_from_opaque<$( $lifetime, )? $( $decl_bound_id ),* >(
             opaque: $opaque
         ) -> Result<$inner_ret_ty, $opaque>
@@ -129,26 +133,16 @@ macro_rules! impl_from_opaque_mode_obj {
             $obj_trait_param: $obj_trait<Driver = $drv_trait_param>
             $( , $( $extra_bound_id: $extra_trait<$( $extra_assoc = $extra_param_match ),+> ),+ )?
         {
-            // FIXME: What we really want to be doing here is comparing vtable pointers, but this is
-            // currently blocked on getting unique vtable macros to ensure that each vtable has a
-            // consistent memory pointer.
-            // For the time being, we simply restrict things to one object type per driver and do a
-            // transmutation based on that assumption holding true.
-            // SAFETY: We currently only allow one object type per-driver, so this transmute is
-            // always safe.
+            // SAFETY: Safe mode-object constructors require the driver's nominated type, and
+            // object/state associated types are reciprocal. The bounds select that same type.
+            // Opaque and typed wrappers have identical layouts and preserve the access lifetime.
             Ok(unsafe { core::mem::transmute(opaque) })
         }
 
         #[doc = "Convert `opaque` into a fully qualified `Self`."]
         #[doc = ""]
-        #[doc = concat!("This is an infallible version of [`Self::try_from_opaque`]. This ",
-                        "function is mainly useful for drivers where only a single [`",
-                        stringify!($obj_trait), "`] implementation exists.")]
-        #[doc = ""]
-        #[doc = "# Panics"]
-        #[doc = ""]
-        #[doc = concat!("This function will panic if `opaque` belongs to a different [`",
-                        stringify!($obj_trait), "`] implementation.")]
+        #[doc = "This is an infallible version of [`Self::try_from_opaque`], with the same"]
+        #[doc = "compile-time type selection. It does not accept heterogeneous object types."]
         pub fn from_opaque<$( $lifetime, )? $( $decl_bound_id ),* >(
             opaque: $opaque
         ) -> $inner_ret_ty
