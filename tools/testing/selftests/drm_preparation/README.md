@@ -29,6 +29,8 @@ The initial cases cover:
 - Terminal worker loss without inventing native completion.
 - Native error ending access without erasing the error status.
 - One declared nominal schedule at independent staging depths of 1, 2, 4, 8.
+- All 40,320 orderings of a bounded eight-event close/accept/release scenario,
+  checking retained seals and no early source retirement after every decision.
 
 The nominal schedule gives each admitted job a submission/release turn before
 replacement. Its iteration count is not a measured frame rate or a fairness
@@ -38,7 +40,7 @@ The model intentionally retains historical objects for assertions; their maps
 are not proposed bounded production queues. It does not yet integrate the
 separate output-authorization model or model producer validity,
 same-framebuffer content updates, result credits, asynchronous predecessor
-resolution, request rebuilding, or exhaustive interleavings. It also does not
+resolution, request rebuilding, or unbounded interleavings. It also does not
 model GPU implicit dependencies or make crash-time ordering guarantees.
 
 Passing these cases is an initial Phase 1A result, not completion of its gate.
