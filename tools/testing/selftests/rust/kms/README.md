@@ -327,6 +327,13 @@ surface that error and undo the reference it took. Clearing the error must
 allow a later balanced acquire and drop. This injects a callback error, not an
 allocator failure or a real interrupt-controller failure.
 
+Keeping an existing vblank reference while vblank is turned off must leave
+that reference intact, reject a new acquisition, and then allow acquisition
+again after vblank is turned back on. Dropping the old reference leaves only
+the private reference that shutdown itself holds. Every case disables vblank
+and releases objects before checking results. None of them rely on a
+background hardware interrupt.
+
 ### Private state, properties, and real allocation failure
 
 Drivers hang private data off CRTC, plane, and connector state. That

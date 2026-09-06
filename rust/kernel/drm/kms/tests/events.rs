@@ -541,6 +541,35 @@ mod cases {
     }
 
     #[test]
+    fn vblank_off_rejects_new_references() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-vblank-off-get", None)?;
+        let drm = create(parent.as_ref(), &counts)?;
+        // SAFETY: Setup completed and teardown is excluded until the test finishes.
+        let crtc = unsafe { crtc::Crtc::<EventCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        crtc.vblank_on();
+        let result = (|| -> Result<_> {
+            let held = crtc.vblank_get()?;
+            crtc.vblank_off();
+            let rejected = crtc.vblank_get().err().map(Error::to_errno);
+            let after_rejection = vblank_references(crtc);
+            drop(held);
+            let after_drop = vblank_references(crtc);
+            crtc.vblank_on();
+            let retried = crtc.vblank_get()?;
+            let after_retry = vblank_references(crtc);
+            drop(retried);
+            Ok((rejected, after_rejection, after_drop, after_retry))
+        })();
+        crtc.vblank_off();
+        drop(drm);
+        drop(parent);
+        assert_eq!(result?, (Some(EINVAL.to_errno()), 2, 1, 1));
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn delayed_flip_retains_old_framebuffer() -> Result {
         let result = delayed_flip(|crtc| crtc.handle_vblank())?;
         // Assert only after releasing the pending worker and all display resources.
