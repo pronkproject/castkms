@@ -19,6 +19,8 @@ struct Counts {
     plane_updates: AtomicU32,
     enables: AtomicU32,
     disables: AtomicU32,
+    crtc_states: AtomicU32,
+    fail_crtc_state_alloc: AtomicU32,
 }
 
 // No device reference: keeping a mode object alive must not create a device ownership cycle.
@@ -71,8 +73,10 @@ struct TestConnector {
 
 #[derive(Clone, Default)]
 struct PlanePayload;
-#[derive(Clone, Default)]
-struct CrtcPayload;
+struct CrtcPayload {
+    counts: Arc<Counts>,
+    value: KBox<u64>,
+}
 #[derive(Clone, Default)]
 struct ConnectorPayload;
 
@@ -81,6 +85,35 @@ impl plane::DriverPlaneState for PlanePayload {
 }
 impl crtc::DriverCrtcState for CrtcPayload {
     type Crtc = TestCrtc;
+
+    fn new(crtc: &crtc::Crtc<Self::Crtc>) -> Result<Self> {
+        Self::allocate(&crtc.life.0, 0)
+    }
+
+    fn duplicate(&self) -> Result<Self> {
+        Self::allocate(&self.counts, *self.value)
+    }
+}
+
+impl CrtcPayload {
+    fn allocate(counts: &Arc<Counts>, value: u64) -> Result<Self> {
+        // Deterministic failure at the driver's payload boundary, not slab fault injection.
+        if counts.fail_crtc_state_alloc.load(Ordering::Relaxed) != 0 {
+            return Err(ENOMEM);
+        }
+        let value = KBox::new(value, GFP_KERNEL)?;
+        counts.crtc_states.fetch_add(1, Ordering::Relaxed);
+        Ok(Self {
+            counts: counts.clone(),
+            value,
+        })
+    }
+}
+
+impl Drop for CrtcPayload {
+    fn drop(&mut self) {
+        self.counts.crtc_states.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 impl connector::DriverConnectorState for ConnectorPayload {
     type Connector = TestConnector;
@@ -694,6 +727,94 @@ mod cases {
         assert!(!active);
         assert!(selected.is_null());
         assert_eq!(callbacks, (0, 0, 0));
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn crtc_payload_initialization_failure_unwinds() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-crtc-state-init", None)?;
+        counts.fail_crtc_state_alloc.store(1, Ordering::Relaxed);
+        let failed = create(parent.as_ref(), &counts, false).err();
+        let remaining = counts.objects.load(Ordering::Relaxed);
+        counts.fail_crtc_state_alloc.store(0, Ordering::Relaxed);
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let initialized = counts.crtc_states.load(Ordering::Relaxed);
+        drop(drm);
+        assert_eq!(failed, Some(ENOMEM));
+        assert_eq!(remaining, 0);
+        assert_eq!(initialized, 1);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn crtc_payload_duplication_failure_preserves_state() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-crtc-state-dup", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: Full setup completed; the private device has no concurrent users.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        let initial = unsafe { (*crtc.as_raw()).state };
+        counts.fail_crtc_state_alloc.store(1, Ordering::Relaxed);
+        // SAFETY: Initial states exist with no concurrent setup, registration or teardown.
+        let failed = unsafe {
+            atomic::run_check(&drm, |state| {
+                let _new = state.add_crtc_state(crtc)?;
+                Ok(())
+            })
+        };
+        // SAFETY: Validation returned; no other task modifies the published state.
+        let unchanged = unsafe { (*crtc.as_raw()).state == initial };
+        let remaining = counts.crtc_states.load(Ordering::Relaxed);
+        counts.fail_crtc_state_alloc.store(0, Ordering::Relaxed);
+        // SAFETY: Same exclusive initialized-device lifetime as the failed check.
+        unsafe {
+            atomic::run_check(&drm, |state| {
+                let _new = state.add_crtc_state(crtc)?;
+                Ok(())
+            })
+        }?;
+        drop(drm);
+        assert_eq!(failed, Err(ENOMEM));
+        assert!(unchanged);
+        assert_eq!(remaining, 1);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn crtc_payload_duplication_is_independent() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-crtc-state-copy", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: Setup completed and this task exclusively owns the unregistered device.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        let mut observed = (0, 0);
+        // SAFETY: Initial states exist and setup, registration and teardown are excluded.
+        unsafe {
+            atomic::run_update(&drm, |state| {
+                *state.add_crtc_state(crtc)?.value = 7;
+                Ok(())
+            })
+        }?;
+        // SAFETY: Same initialized-device exclusion as the preceding update. Mutate only the
+        // unpublished copy and observe the old payload through the transaction's read accessor.
+        unsafe {
+            atomic::run_check(&drm, |state| {
+                let mut new = state.add_crtc_state(crtc)?;
+                observed.0 = *new.value;
+                *new.value = 9;
+                observed.1 = *state.get_old_crtc_state(crtc).ok_or(EINVAL)?.value;
+                Ok(())
+            })
+        }?;
+        drop(drm);
+        assert_eq!(observed, (7, 7));
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }

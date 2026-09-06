@@ -760,11 +760,22 @@ impl<T: DriverCrtcState> Sealed for CrtcState<T> {}
 ///
 /// [`struct drm_crtc`]: srctree/include/drm_crtc.h
 /// [`struct drm_crtc_state`]: srctree/include/drm_crtc.h
-pub trait DriverCrtcState: Clone + Default + Unpin + Send + Sync {
+pub trait DriverCrtcState: Sized + Unpin + Send + Sync {
     /// The parent CRTC driver for this CRTC state
-    type Crtc: DriverCrtc<State = Self>
-    where
-        Self: Sized;
+    type Crtc: DriverCrtc<State = Self>;
+
+    /// Construct the initial private payload before the state is published.
+    ///
+    /// Failure aborts initial-state setup with the returned error. The CRTC and its driver data
+    /// are initialized, but its published atomic state need not exist yet.
+    fn new(crtc: &Crtc<Self::Crtc>) -> Result<Self>;
+
+    /// Duplicate a published private payload for an unpublished transaction.
+    ///
+    /// The source remains shared read-only. Allocate private storage fallibly here instead of
+    /// hiding allocations in `Clone`. DRM's duplicate-state callback reports any failure as
+    /// `ENOMEM`; it does not carry a distinct error code.
+    fn duplicate(&self) -> Result<Self>;
 }
 
 /// The main interface for a [`struct drm_crtc_state`].
@@ -1233,7 +1244,7 @@ unsafe extern "C" fn atomic_duplicate_state_callback<T: DriverCrtcState>(
 
     let new: Result<KBox<_>> = KBox::try_init(
         try_init!(CrtcState {
-            inner: UnsafeCell::new((*state).clone()),
+            inner: UnsafeCell::new(T::duplicate(state)?),
             state: Opaque::new(Default::default()),
         }),
         GFP_KERNEL,
@@ -1271,10 +1282,12 @@ unsafe extern "C" fn atomic_destroy_state_callback<T: DriverCrtcState>(
 unsafe extern "C" fn atomic_create_state_callback<T: DriverCrtcState>(
     crtc: *mut bindings::drm_crtc,
 ) -> *mut bindings::drm_crtc_state {
+    // SAFETY: The generated callback belongs to this initialized Rust CRTC type.
+    let parent = unsafe { Crtc::<T::Crtc>::from_raw(crtc) };
     let new: Result<KBox<CrtcState<T>>> = KBox::try_init(
         try_init!(CrtcState {
             state: Opaque::new(Default::default()),
-            inner: UnsafeCell::new(Default::default()),
+            inner: UnsafeCell::new(T::new(parent)?),
         }),
         GFP_KERNEL,
     );

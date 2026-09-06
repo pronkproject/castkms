@@ -19,4 +19,12 @@ where
     C: DriverCrtc<State = Self> + Clone + Default + Unpin,
 {
     type Crtc = C;
+
+    fn new(_: &Crtc<Self::Crtc>) -> kernel::error::Result<Self> {
+        Ok(Self::default())
+    }
+
+    fn duplicate(&self) -> kernel::error::Result<Self> {
+        Ok(self.clone())
+    }
 }
