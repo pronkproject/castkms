@@ -393,8 +393,11 @@ allocator's usual fault-injection knobs, are not changed. A pre-existing task
 request is rejected.
 
 The property path must see "out of memory," consume the injected fault, leave
-state and property absent, and succeed on retry. That case covers the
-private-data allocation. It does not cover the outer Rust state allocation,
+state and property absent, and succeed on retry. Duplication is a second path:
+the allocator fails while an atomic check is copying connector state. The
+already published state and both live private copies must still be there, and
+a later check must succeed once injection is turned off. Those cases cover the
+private-data allocation. They do not cover the outer Rust state allocation,
 the native property allocation, or failures during ordinary reclaiming
 allocations.
 
