@@ -1033,6 +1033,9 @@ impl<T: AsRawConnectorState> RawConnectorState for T {}
 /// addition, it allows access to whatever private data is contained within an implementor's
 /// [`DriverConnectorState`] type.
 ///
+/// Only DRM's state callbacks construct and initialize this wrapper with its parent connector.
+/// [`Default`] initializes the driver-private payload, not the wrapper.
+///
 /// # Invariants
 ///
 /// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
@@ -1045,7 +1048,6 @@ impl<T: AsRawConnectorState> RawConnectorState for T {}
 ///
 /// [`struct drm_connector_state`]: srctree/include/drm/drm_connector.h
 /// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
-#[derive(Default)]
 #[repr(C)]
 pub struct ConnectorState<T: DriverConnectorState> {
     state: bindings::drm_connector_state,
@@ -1340,7 +1342,13 @@ unsafe extern "C" fn atomic_destroy_state_callback<T: DriverConnectorState>(
 unsafe extern "C" fn atomic_create_state_callback<T: DriverConnectorState>(
     connector: *mut bindings::drm_connector,
 ) -> *mut bindings::drm_connector_state {
-    let new = match KBox::new(ConnectorState::<T>::default(), GFP_KERNEL) {
+    let new = match KBox::new(
+        ConnectorState::<T> {
+            state: Default::default(),
+            inner: T::default(),
+        },
+        GFP_KERNEL,
+    ) {
         Ok(new) => KBox::into_raw(new).cast(),
         Err(err) => return Error::from(err).to_ptr(),
     };
