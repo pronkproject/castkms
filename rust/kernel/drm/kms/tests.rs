@@ -264,6 +264,7 @@ fn create(
 mod cases {
     use super::*;
     use crtc::AsRawCrtc;
+    use encoder::AsRawEncoder;
     use plane::AsRawPlane;
 
     #[test]
@@ -315,6 +316,28 @@ mod cases {
         )?;
         // SAFETY: Successful initialization owns a NUL-terminated name for the device lifetime.
         let stored = unsafe { CStr::from_char_ptr((*crtc.as_raw()).name) };
+        assert_eq!(stored, name);
+        Ok(())
+    }
+
+    #[test]
+    fn encoder_name_is_literal() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-encoder-name", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: The device remains unregistered and owns the additional encoder until teardown.
+        let dev = unsafe { UnregisteredKmsDevice::new(&drm) };
+        let name = c"encoder-%%";
+        let encoder = encoder::UnregisteredEncoder::<TestEncoder>::new(
+            &dev,
+            encoder::Type::Virtual,
+            1,
+            0,
+            Some(name),
+            (),
+        )?;
+        // SAFETY: Successful initialization owns a NUL-terminated name for the device lifetime.
+        let stored = unsafe { CStr::from_char_ptr((*encoder.as_raw()).name) };
         assert_eq!(stored, name);
         Ok(())
     }
