@@ -19,6 +19,8 @@ use crtc::{AsRawCrtc, RawCrtc, RawCrtcState};
 struct Observations {
     counts: Arc<Counts>,
     delay: AtomicU32,
+    fail_enable: AtomicU32,
+    enable_calls: AtomicU32,
     event_error: AtomicI32,
     armed: AtomicU32,
     clock: AtomicI32,
@@ -201,10 +203,15 @@ impl crtc::DriverCrtc for EventCrtc {
 impl vblank::VblankSupport for EventCrtc {
     type Crtc = Self;
     fn enable_vblank(
-        _: &crtc::Crtc<Self>,
+        crtc: &crtc::Crtc<Self>,
         _: &vblank::VblankGuard<'_, Self>,
         _: &LocalInterruptDisabled,
     ) -> Result {
+        let observations = &crtc.drm_dev().observations;
+        observations.enable_calls.fetch_add(1, Ordering::Relaxed);
+        if observations.fail_enable.load(Ordering::Relaxed) != 0 {
+            return Err(EIO);
+        }
         Ok(())
     }
     fn disable_vblank(
@@ -344,6 +351,7 @@ fn create(
     let observations = Arc::pin_init(
         pin_init!(Observations {
             counts: counts.clone(), delay: AtomicU32::new(0),
+            fail_enable: AtomicU32::new(0), enable_calls: AtomicU32::new(0),
             event_error: AtomicI32::new(0), armed: AtomicU32::new(0),
             clock: AtomicI32::new(0), programmed <- Completion::new(),
         }),
@@ -499,6 +507,35 @@ mod cases {
         assert_eq!(retained, 4);
         assert_eq!(off, 2);
         assert_eq!(released, 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn rejected_vblank_enable_balances_reference() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-vblank-enable-error", None)?;
+        let drm = create(parent.as_ref(), &counts)?;
+        let observations = drm.observations.clone();
+        // SAFETY: Setup completed and teardown is excluded until the test finishes.
+        let crtc = unsafe { crtc::Crtc::<EventCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        crtc.vblank_on();
+        observations.fail_enable.store(1, Ordering::Relaxed);
+        let rejected = crtc.vblank_get().err().map(Error::to_errno);
+        let after_rejection = vblank_references(crtc);
+        observations.fail_enable.store(0, Ordering::Relaxed);
+        let retried = crtc.vblank_get().map(|reference| {
+            let held = vblank_references(crtc);
+            drop(reference);
+            (held, vblank_references(crtc))
+        });
+        crtc.vblank_off();
+        drop(drm);
+        drop(parent);
+        assert_eq!(rejected, Some(EIO.to_errno()));
+        assert_eq!(after_rejection, 0);
+        assert_eq!(retried?, (1, 0));
+        assert_eq!(observations.enable_calls.load(Ordering::Relaxed), 2);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
