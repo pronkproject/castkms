@@ -1033,6 +1033,7 @@ unsafe impl<T: KmsDriver> ModeObjectVtable for OpaqueCrtcState<T> {
 /// # Invariants
 ///
 /// `self.state` always points to a valid instance of a [`FromRawCrtcState`] object.
+#[repr(C)]
 pub struct CrtcStateMutator<'a, T: FromRawCrtcState> {
     state: NonNull<T>,
     mask: &'a Cell<u32>,

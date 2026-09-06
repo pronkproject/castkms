@@ -1196,6 +1196,7 @@ unsafe impl<T: KmsDriver> ModeObjectVtable for OpaqueConnectorState<T> {
 /// This type is typically returned by an [`AtomicStateMutator`] within contexts where it is
 /// possible to safely mutate a connector's state. In order to uphold rust's data-aliasing rules,
 /// only [`ConnectorStateMutator`] may exist at a time.
+#[repr(C)]
 pub struct ConnectorStateMutator<'a, T: FromRawConnectorState> {
     state: &'a mut T,
     mask: &'a Cell<u32>,
