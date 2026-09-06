@@ -71,6 +71,84 @@ macro_rules! impl_aref_for_gem_obj {
 #[cfg_attr(not(CONFIG_RUST_DRM_GEM_SHMEM_HELPER), allow(unused))]
 pub(crate) use impl_aref_for_gem_obj;
 
+/// An owned GEM reference retaining the object's DRM device until after object release.
+///
+/// Native GEM references do not themselves retain the device. Keep this handle for detached
+/// Rust work; a driver storing it in device-owned state must break that ownership cycle during
+/// shutdown. Allocation lifetime does not establish permission to read or write buffer contents.
+pub struct ObjectRef<O: IntoGEMObject + AllocImpl> {
+    object: NonNull<O>,
+    _device: ARef<drm::Device<O::Driver>>,
+}
+
+// SAFETY: The owned object and device are retained, and the object permits thread transfer.
+unsafe impl<O: IntoGEMObject + AllocImpl + Send + Sync> Send for ObjectRef<O> {}
+// SAFETY: Shared access exposes only the object's thread-safe borrowed interface.
+unsafe impl<O: IntoGEMObject + AllocImpl + Sync> Sync for ObjectRef<O> {}
+
+impl<O: IntoGEMObject + AllocImpl> ObjectRef<O> {
+    /// Adopt one native GEM reference while acquiring a reference to its device.
+    ///
+    /// # Safety
+    ///
+    /// `object` must point to an initialized `O` with one owned native reference. Its device
+    /// must be live and have driver `O::Driver`. Ownership transfers to the returned handle.
+    pub(crate) unsafe fn from_native(object: NonNull<O>) -> Self {
+        // SAFETY: The caller supplies a typed live object and a live matching device.
+        let device = unsafe { drm::Device::<O::Driver>::from_raw((*object.as_ref().as_raw()).dev) };
+        Self {
+            object,
+            _device: device.into(),
+        }
+    }
+
+    /// Transfer the native GEM reference, releasing this handle's device reference.
+    ///
+    /// # Safety
+    ///
+    /// The caller must independently retain the device until the transferred reference is
+    /// released. The recipient must release exactly one reference with the native GEM API.
+    pub(crate) unsafe fn into_native(self) -> *mut bindings::drm_gem_object {
+        let mut this = core::mem::ManuallyDrop::new(self);
+        let raw = this.as_raw();
+        // SAFETY: ManuallyDrop suppresses our destructor. Transfer the GEM reference and drop
+        // exactly the device field; the caller supplies its independent device lifetime.
+        unsafe { core::ptr::drop_in_place(&raw mut this._device) };
+        raw
+    }
+}
+
+impl<O: IntoGEMObject + AllocImpl> From<&O> for ObjectRef<O> {
+    fn from(object: &O) -> Self {
+        // SAFETY: A valid borrowed object proves its native reference and device are live.
+        unsafe { bindings::drm_gem_object_get(object.as_raw()) };
+        // SAFETY: Transfer the reference just acquired, with the device live through the borrow.
+        unsafe { Self::from_native(object.into()) }
+    }
+}
+
+impl<O: IntoGEMObject + AllocImpl> Deref for ObjectRef<O> {
+    type Target = O;
+
+    fn deref(&self) -> &O {
+        // SAFETY: Both the object and its device are retained by this handle.
+        unsafe { self.object.as_ref() }
+    }
+}
+
+impl<O: IntoGEMObject + AllocImpl> Clone for ObjectRef<O> {
+    fn clone(&self) -> Self {
+        Self::from(&**self)
+    }
+}
+
+impl<O: IntoGEMObject + AllocImpl> Drop for ObjectRef<O> {
+    fn drop(&mut self) {
+        // SAFETY: Release our native reference while the device field is still live.
+        unsafe { bindings::drm_gem_object_put(self.as_raw()) };
+    }
+}
+
 /// A type alias for retrieving a [`Driver`]s [`DriverFile`] implementation from its
 /// [`DriverObject`] implementation.
 ///
@@ -202,9 +280,9 @@ pub trait BaseObject: IntoGEMObject {
     }
 
     /// Looks up an object by its handle for a given `File`.
-    fn lookup_handle<D, F>(file: &drm::File<F>, handle: u32) -> Result<ARef<Self>>
+    fn lookup_handle<D, F>(file: &drm::File<F>, handle: u32) -> Result<ObjectRef<Self>>
     where
-        Self: AllocImpl<Driver = D> + AlwaysRefCounted,
+        Self: AllocImpl<Driver = D>,
         D: drm::Driver<Object = Self, File = F>,
         F: drm::file::DriverFile<Driver = D>,
     {
@@ -226,7 +304,7 @@ pub trait BaseObject: IntoGEMObject {
         // - We take ownership of the reference of `drm_gem_object_lookup()`.
         // - Our `NonNull` comes from an immutable reference, thus ensuring it is a valid pointer to
         //   `Self`.
-        Ok(unsafe { ARef::from_raw(obj.into()) })
+        Ok(unsafe { ObjectRef::from_native(obj.into()) })
     }
 
     /// Creates an mmap offset to map the object from userspace.
@@ -323,7 +401,11 @@ impl<T: DriverObject, Ctx: DeviceContext> Object<T, Ctx> {
 
 impl<T: DriverObject> Object<T> {
     /// Create a new GEM object.
-    pub fn new(dev: &drm::Device<T::Driver>, size: usize, args: T::Args) -> Result<ARef<Self>> {
+    pub fn new(
+        dev: &drm::Device<T::Driver>,
+        size: usize,
+        args: T::Args,
+    ) -> Result<ObjectRef<Self>> {
         let obj: Pin<KBox<Self>> = KBox::pin_init(
             try_pin_init!(Self {
                 obj: Opaque::new(bindings::drm_gem_object::default()),
@@ -350,21 +432,15 @@ impl<T: DriverObject> Object<T> {
             return Err(err);
         }
 
-        // SAFETY: We will never move out of `Self` as `ARef<Self>` is always treated as pinned.
+        // SAFETY: The owned reference never moves the object allocation.
         let ptr = KBox::into_raw(unsafe { Pin::into_inner_unchecked(obj) });
 
         // SAFETY: `ptr` comes from `KBox::into_raw` and hence can't be NULL.
         let ptr = unsafe { NonNull::new_unchecked(ptr) };
 
         // SAFETY: We take over the initial reference count from `drm_gem_object_init()`.
-        Ok(unsafe { ARef::from_raw(ptr) })
+        Ok(unsafe { ObjectRef::from_native(ptr) })
     }
-}
-
-impl_aref_for_gem_obj! {
-    impl<T> for Object<T>
-    where
-        T: DriverObject
 }
 
 impl<T: DriverObject, Ctx: DeviceContext> super::private::Sealed for Object<T, Ctx> {}
