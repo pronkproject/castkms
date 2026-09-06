@@ -22,6 +22,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 #[derive(Default)]
 struct Counts {
     gem_objects: AtomicU32,
+    gem_creations: AtomicU32,
     fail_gem_open: AtomicU32,
     fail_prime_import: AtomicU32,
     objects: AtomicU32,
@@ -241,6 +242,7 @@ impl gem::DriverObject for TestObject {
             allocated_size: size,
             counts: {
                 dev.counts.gem_objects.fetch_add(1, Ordering::Relaxed);
+                dev.counts.gem_creations.fetch_add(1, Ordering::Relaxed);
                 dev.counts.clone()
             },
         })
@@ -550,6 +552,66 @@ impl Drop for HandleClient {
     }
 }
 
+#[cfg(CONFIG_DRM_CLIENT)]
+fn failed_foreign_import(native_setup: bool) -> Result {
+    let source_counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+    let target_counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+    let parent = faux::Registration::new(c"rust-kms-prime-failure", None)?;
+    let raw_parent = parent.as_ref().as_ref().as_raw();
+    // SAFETY: The private faux device has no existing DMA users. Its embedded mask storage
+    // remains stable until all test mappings and both DRM devices have been released.
+    unsafe { (*raw_parent).dma_mask = &raw mut (*raw_parent).coherent_dma_mask };
+    // SAFETY: No earlier allocation or mapping constrains this private test device's DMA mask.
+    crate::error::to_result(unsafe { bindings::dma_set_mask_and_coherent(raw_parent, u64::MAX) })?;
+    let source = create(parent.as_ref(), &source_counts, false)?;
+    let client = HandleClient::new(&source)?;
+    let buffer = client.export_dumb()?;
+    // SAFETY: Every return path releases registration before the owning faux parent.
+    let registration = unsafe {
+        drm::Registration::new_static(
+            parent.as_ref().as_ref(),
+            allocate(parent.as_ref(), &target_counts, false)?,
+            Ok::<(), Error>(()),
+            0,
+        )?
+    };
+    let expected = if native_setup {
+        // SAFETY: This private target has no GEM objects, mappings, or concurrent clients.
+        // Replace its empty offset manager with a one-page window: native initialization of
+        // the four-page import must fail after the Rust payload has been constructed.
+        unsafe {
+            let manager = (*registration.device().as_raw()).vma_offset_manager;
+            bindings::drm_vma_offset_manager_destroy(manager);
+            bindings::drm_vma_offset_manager_init(manager, 1 << 20, 1);
+        }
+        ENOSPC
+    } else {
+        target_counts.fail_prime_import.store(1, Ordering::Relaxed);
+        EACCES
+    };
+    let error = {
+        let guard = registration.registration_guard().ok_or(ENODEV)?;
+        gem::shmem::Object::<TestObject>::import(&guard, &buffer).err()
+    };
+    assert_eq!(error, Some(expected));
+    assert_eq!(target_counts.gem_objects.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        target_counts.gem_creations.load(Ordering::Relaxed),
+        u32::from(native_setup)
+    );
+    drop(client);
+    drop(source);
+    drop(buffer);
+    drop(registration);
+    // SAFETY: No locks are held; KUnit's kernel thread drains delayed DMA-BUF file release.
+    unsafe { bindings::flush_delayed_fput() };
+    assert_eq!(source_counts.gem_objects.load(Ordering::Relaxed), 0);
+    assert_eq!(target_counts.gem_objects.load(Ordering::Relaxed), 0);
+    assert_eq!(source_counts.objects.load(Ordering::Relaxed), 0);
+    assert_eq!(target_counts.objects.load(Ordering::Relaxed), 0);
+    Ok(())
+}
+
 // A fixed valid GEM framebuffer fixture, built with kernel helpers rather than a fake DRM file.
 // Keep the raw setup here; display transactions below use the shared typed configuration API.
 fn framebuffer<D, O>(dev: &Device<D>) -> Result<framebuffer::FramebufferRef<D>>
@@ -734,6 +796,18 @@ mod cases {
     use crtc::AsRawCrtc;
     use encoder::AsRawEncoder;
     use plane::AsRawPlane;
+
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
+    fn foreign_import_rejection_releases_attachment() -> Result {
+        failed_foreign_import(false)
+    }
+
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
+    fn foreign_import_native_failure_drops_payload() -> Result {
+        failed_foreign_import(true)
+    }
 
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
