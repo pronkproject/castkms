@@ -13,6 +13,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 #[derive(Default)]
 struct Counts {
     objects: AtomicU32,
+    setup_failures: AtomicU32,
 }
 
 // No device reference: keeping a mode object alive must not create a device ownership cycle.
@@ -34,6 +35,7 @@ impl Drop for Lifetime {
 #[pin_data]
 struct Data {
     counts: Arc<Counts>,
+    fail_after_plane: bool,
     // Non-owning observations, filled before setup returns. Tests borrow the owning DRM device
     // before using them; they never survive its teardown or expose objects to another thread.
     plane: AtomicPtr<bindings::drm_plane>,
@@ -206,6 +208,10 @@ impl KmsDriver for TestDriver {
             (),
         )?;
         dev.plane.store(plane.as_raw(), Ordering::Relaxed);
+        if dev.fail_after_plane {
+            dev.counts.setup_failures.fetch_add(1, Ordering::Relaxed);
+            return Err(EINVAL);
+        }
         let crtc = crtc::UnregisteredCrtc::<TestCrtc>::new(
             dev,
             plane,
@@ -236,11 +242,13 @@ impl KmsDriver for TestDriver {
 fn create(
     parent: &faux::Device<device::Bound>,
     counts: &Arc<Counts>,
+    fail_after_plane: bool,
 ) -> Result<UnregisteredDevice<TestDriver>> {
     let drm = UnregisteredDevice::new(
         parent,
         try_pin_init!(Data {
             counts: counts.clone(),
+            fail_after_plane,
             plane: AtomicPtr::new(ptr::null_mut()),
             crtc: AtomicPtr::new(ptr::null_mut()),
             connector: AtomicPtr::new(ptr::null_mut()),
@@ -260,7 +268,7 @@ mod cases {
     fn initial_state_has_parents() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-state", None)?;
-        let drm = create(parent.as_ref(), &counts)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
         assert_eq!(drm.num_crtcs(), 1);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 4);
         let plane = drm.plane.load(Ordering::Relaxed);
@@ -289,9 +297,19 @@ mod cases {
     fn mode_objects_are_destroyed() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-destroy", None)?;
-        let drm = create(parent.as_ref(), &counts)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
         assert_eq!(counts.objects.load(Ordering::Relaxed), 4);
         drop(drm);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_object_setup_unwinds() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
+        assert_eq!(create(parent.as_ref(), &counts, true).err(), Some(EINVAL));
+        assert_eq!(counts.setup_failures.load(Ordering::Relaxed), 1);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
