@@ -1060,6 +1060,9 @@ pub struct ConnectorState<T: DriverConnectorState> {
 /// A driver may store driver-private data within the implementor's type, which will be available
 /// when using a full typed [`ConnectorState`] object.
 ///
+/// DRM may move or destroy the payload on a commit worker and duplicate published state while
+/// another callback reads it. The payload must support both thread transfer and shared access.
+///
 /// # Invariants
 ///
 /// - Any C FFI callbacks generated using this trait are guaranteed that passed-in
@@ -1069,7 +1072,7 @@ pub struct ConnectorState<T: DriverConnectorState> {
 ///
 /// [`struct drm_connector`]: srctree/include/drm_connector.h
 /// [`struct drm_connector_state`]: srctree/include/drm_connector.h
-pub trait DriverConnectorState: Clone + Default + Sized {
+pub trait DriverConnectorState: Clone + Default + Sized + Send + Sync {
     /// The parent [`DriverConnector`].
     type Connector: DriverConnector<State = Self>;
 }
