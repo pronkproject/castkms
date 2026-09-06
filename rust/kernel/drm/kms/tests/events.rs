@@ -478,4 +478,25 @@ mod cases {
         );
         Ok(())
     }
+
+    #[test]
+    fn vblank_off_drains_armed_flip() -> Result {
+        let result = delayed_flip(|crtc| {
+            crtc.vblank_off();
+            !crtc.handle_vblank()
+        })?;
+        assert!(result.pending);
+        assert!(result.delivered);
+        assert_eq!(result.before, 2);
+        assert_eq!(result.after, 1);
+        assert_eq!(result.disabled, 0);
+        assert_eq!(result.error, 0);
+        assert_eq!(result.observations.armed.load(Ordering::Relaxed), 1);
+        assert_eq!(result.observations.event_error.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            result.observations.counts.objects.load(Ordering::Relaxed),
+            0
+        );
+        Ok(())
+    }
 }
