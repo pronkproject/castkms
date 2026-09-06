@@ -405,7 +405,7 @@ impl KmsDriver for TestDriver {
         let plane = plane::UnregisteredPlane::<TestPlane>::new(
             dev,
             0,
-            &[fourcc::XRGB8888],
+            &[fourcc::XRGB8888, fourcc::NV12],
             Some(&[fourcc::FORMAT_MOD_LINEAR]),
             plane::Type::Primary,
             None,
@@ -797,6 +797,64 @@ mod cases {
     use crtc::AsRawCrtc;
     use encoder::AsRawEncoder;
     use plane::AsRawPlane;
+
+    #[test]
+    fn registered_framebuffer_retains_aliased_planes() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-object-fb", None)?;
+        // SAFETY: The registration is released before the owning faux parent.
+        let registration = unsafe {
+            drm::Registration::new_static(
+                parent.as_ref().as_ref(),
+                allocate(parent.as_ref(), &counts, false)?,
+                Ok::<(), Error>(()),
+                0,
+            )?
+        };
+        let object = gem::shmem::Object::<TestObject>::new(
+            registration.device(),
+            8192,
+            gem::shmem::ObjectConfig::default(),
+            (),
+        )?;
+        let fb = {
+            let guard = registration.registration_guard().ok_or(ENODEV)?;
+            let planes = [
+                framebuffer::FramebufferPlane {
+                    object: &*object,
+                    pitch: 64,
+                    offset: 0,
+                },
+                framebuffer::FramebufferPlane {
+                    object: &*object,
+                    pitch: 64,
+                    offset: 4096,
+                },
+            ];
+            framebuffer::Framebuffer::from_objects(
+                &guard,
+                &framebuffer::FramebufferLayout {
+                    width: 64,
+                    height: 64,
+                    format: fourcc::NV12,
+                    modifier: Some(fourcc::FORMAT_MOD_LINEAR),
+                    interlaced: false,
+                    planes: &planes,
+                },
+            )?
+        };
+        assert_eq!(fb.format(), fourcc::NV12);
+        assert_eq!(fb.pitch(0)?, 64);
+        assert_eq!(fb.pitch(1)?, 64);
+        assert!(fb.pitch(2).is_err());
+        drop(object);
+        drop(registration);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 1);
+        drop(fb);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
