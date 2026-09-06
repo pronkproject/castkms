@@ -260,8 +260,8 @@ pub trait KmsDriver: Driver {
     /// [`drm_atomic_helper_commit_tail`]: srctree/include/drm/drm_atomic_helpers.h
     fn atomic_commit_tail<'a>(
         _state: atomic::AtomicCommitTail<'a, Self>,
-        _modeset_token: atomic::ModesetsReadyToken<'_>,
-        _plane_update_token: atomic::PlaneUpdatesReadyToken<'_>,
+        _modeset_token: atomic::ModesetsReadyToken<'a, Self>,
+        _plane_update_token: atomic::PlaneUpdatesReadyToken<'a, Self>,
     ) -> atomic::CommittedAtomicState<'a, Self>
     where
         Self: Sized,

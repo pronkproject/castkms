@@ -702,12 +702,29 @@ macro_rules! impl_atomic_state_token_ops {
 
 pub(crate) use impl_atomic_state_token_ops;
 
+// Invariant in `'id`: overlapping transactions cannot shorten their lifetimes to a common one.
+// Only `with_commit_scope` creates these brands. Its higher-ranked callback gives each invocation
+// a fresh identity that cannot escape through the callback's lifetime-independent return type.
+struct CommitScope<'id, T>(PhantomData<fn(&'id T) -> &'id T>);
+
+impl<T> Copy for CommitScope<'_, T> {}
+
+impl<T> Clone for CommitScope<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+fn with_commit_scope<T, R>(f: impl for<'id> FnOnce(CommitScope<'id, T>) -> R) -> R {
+    f(CommitScope(PhantomData))
+}
+
 /// A token proving that no modesets for a commit have completed.
 ///
 /// This token is proof that no commits have yet completed, and is provided as an argument to
 /// [`KmsDriver::atomic_commit_tail`]. This may be used with
 /// [`AtomicCommitTail::commit_modeset_disables`].
-pub struct ModesetsReadyToken<'a>(PhantomData<&'a ()>);
+pub struct ModesetsReadyToken<'a, T: KmsDriver>(CommitScope<'a, T>);
 
 /// A token proving that modeset disables for a commit have completed.
 ///
@@ -715,27 +732,27 @@ pub struct ModesetsReadyToken<'a>(PhantomData<&'a ()>);
 /// committing any operations which disable mode objects. It is returned by
 /// [`AtomicCommitTail::commit_modeset_disables`], and can be used with
 /// [`AtomicCommitTail::commit_modeset_enables`] to acquire a [`EnablesCommittedToken`].
-pub struct DisablesCommittedToken<'a>(PhantomData<&'a ()>);
+pub struct DisablesCommittedToken<'a, T: KmsDriver>(CommitScope<'a, T>);
 
 /// A token proving that modeset enables for a commit have completed.
 ///
 /// This token is proof that an implementor's [`KmsDriver::atomic_commit_tail`] phase has finished
 /// committing any operations which enable mode objects. It is returned by
 /// [`AtomicCommitTail::commit_modeset_enables`].
-pub struct EnablesCommittedToken<'a>(PhantomData<&'a ()>);
+pub struct EnablesCommittedToken<'a, T: KmsDriver>(CommitScope<'a, T>);
 
 /// A token proving that no plane updates for a commit have completed.
 ///
 /// This token is proof that no plane updates have yet been completed within an implementor's
 /// [`KmsDriver::atomic_commit_tail`] implementation, and that we are ready to begin updating planes. It
 /// is provided as an argument to [`KmsDriver::atomic_commit_tail`].
-pub struct PlaneUpdatesReadyToken<'a>(PhantomData<&'a ()>);
+pub struct PlaneUpdatesReadyToken<'a, T: KmsDriver>(CommitScope<'a, T>);
 
 /// A token proving that all plane updates for a commit have completed.
 ///
 /// This token is proof that all plane updates within an implementor's [`KmsDriver::atomic_commit_tail`]
 /// implementation have completed. It is returned by [`AtomicCommitTail::commit_planes`].
-pub struct PlaneUpdatesCommittedToken<'a>(PhantomData<&'a ()>);
+pub struct PlaneUpdatesCommittedToken<'a, T: KmsDriver>(CommitScope<'a, T>);
 
 /// An [`AtomicState`] interface that allows a driver to control the [`atomic_commit_tail`]
 /// callback.
@@ -746,10 +763,11 @@ pub struct PlaneUpdatesCommittedToken<'a>(PhantomData<&'a ()>);
 ///
 /// # Invariants
 ///
-/// Same as [`AtomicState`].
+/// Same as [`AtomicState`]. The invariant brand and the state borrow are scoped to one invocation
+/// of the commit-tail callback; only tokens carrying that brand and driver type are accepted.
 ///
 /// [`atomic_commit_tail`]: srctree/include/drm/drm_modeset_helper_vtables.h
-pub struct AtomicCommitTail<'a, T: KmsDriver>(&'a AtomicState<T>);
+pub struct AtomicCommitTail<'a, T: KmsDriver>(&'a AtomicState<T>, CommitScope<'a, T>);
 
 impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
     /// Commit modesets which would disable outputs.
@@ -771,10 +789,10 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
     /// [`commit_planes`]: AtomicCommitTail::commit_planes
     #[inline]
     #[must_use]
-    pub fn commit_modeset_disables<'b>(
+    pub fn commit_modeset_disables(
         &mut self,
-        _token: ModesetsReadyToken<'_>,
-    ) -> DisablesCommittedToken<'b> {
+        token: ModesetsReadyToken<'a, T>,
+    ) -> DisablesCommittedToken<'a, T> {
         // SAFETY: Both `as_raw()` calls are guaranteed to return valid pointers
         unsafe {
             bindings::drm_atomic_helper_commit_modeset_disables(
@@ -783,7 +801,7 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
             )
         }
 
-        DisablesCommittedToken(PhantomData)
+        DisablesCommittedToken(token.0)
     }
 
     /// Commit all plane updates.
@@ -794,11 +812,11 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
     /// [`PlaneUpdatesCommittedToken`] to prove that plane updates for the state have completed.
     #[inline]
     #[must_use]
-    pub fn commit_planes<'b>(
+    pub fn commit_planes(
         &mut self,
-        _token: PlaneUpdatesReadyToken<'_>,
+        token: PlaneUpdatesReadyToken<'a, T>,
         flags: PlaneCommitFlags,
-    ) -> PlaneUpdatesCommittedToken<'b> {
+    ) -> PlaneUpdatesCommittedToken<'a, T> {
         // SAFETY: Both `as_raw()` calls are guaranteed to return valid pointers
         unsafe {
             bindings::drm_atomic_helper_commit_planes(
@@ -808,7 +826,7 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
             )
         }
 
-        PlaneUpdatesCommittedToken(PhantomData)
+        PlaneUpdatesCommittedToken(token.0)
     }
 
     /// Commit modesets which would enable outputs.
@@ -823,10 +841,10 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
     /// been completed.
     #[inline]
     #[must_use]
-    pub fn commit_modeset_enables<'b>(
+    pub fn commit_modeset_enables(
         &mut self,
-        _token: DisablesCommittedToken<'_>,
-    ) -> EnablesCommittedToken<'b> {
+        token: DisablesCommittedToken<'a, T>,
+    ) -> EnablesCommittedToken<'a, T> {
         // SAFETY: Both `as_raw()` calls are guaranteed to return valid pointers
         unsafe {
             bindings::drm_atomic_helper_commit_modeset_enables(
@@ -835,7 +853,7 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
             )
         }
 
-        EnablesCommittedToken(PhantomData)
+        EnablesCommittedToken(token.0)
     }
 
     /// Fake vblank events if needed.
@@ -860,20 +878,20 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
     /// function is called, the caller no longer has exclusive access to the underlying atomic
     /// state. As such, this function consumes the [`AtomicCommitTail`] object and returns a
     /// [`CommittedAtomicState`] accessor for performing post-hw commit tasks.
-    pub fn commit_hw_done<'b>(
+    pub fn commit_hw_done(
         self,
-        _modeset_token: EnablesCommittedToken<'_>,
-        _plane_updates_token: PlaneUpdatesCommittedToken<'_>,
-    ) -> CommittedAtomicState<'b, T>
-    where
-        'a: 'b,
-    {
+        _modeset_token: EnablesCommittedToken<'a, T>,
+        _plane_updates_token: PlaneUpdatesCommittedToken<'a, T>,
+    ) -> CommittedAtomicState<'a, T> {
         // SAFETY: we consume the `AtomicCommitTail` object, making it impossible for the user to
         // mutate the state after this function has been called - which upholds the safety
         // requirements of the C API allowing us to safely call this function
         unsafe { bindings::drm_atomic_helper_commit_hw_done(self.0.as_raw()) };
 
-        CommittedAtomicState(self.0)
+        CommittedAtomicState {
+            state: self.0,
+            _scope: self.1,
+        }
     }
 }
 
@@ -881,17 +899,18 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
 pub(crate) unsafe extern "C" fn commit_tail_callback<T: KmsDriver>(
     state: *mut bindings::drm_atomic_commit,
 ) {
-    // SAFETY:
-    // - We're guaranteed by DRM that `state` always points to a valid instance of
-    //   `bindings::drm_atomic_commit`
-    // - This conversion is safe via the type invariants
-    let state = unsafe { AtomicState::from_raw(state.cast_const()) };
+    with_commit_scope(|scope| {
+        // SAFETY: DRM supplies a valid commit for this driver's callback. The shared state
+        // borrow is confined to the fresh invariant scope, and the callback finishes before
+        // returning to C. No branded tail or phase token can escape this closure.
+        let state = unsafe { AtomicState::from_raw(state.cast_const()) };
 
-    T::atomic_commit_tail(
-        AtomicCommitTail(state),
-        ModesetsReadyToken(PhantomData),
-        PlaneUpdatesReadyToken(PhantomData),
-    );
+        T::atomic_commit_tail(
+            AtomicCommitTail(state, scope),
+            ModesetsReadyToken(scope),
+            PlaneUpdatesReadyToken(scope),
+        );
+    });
 }
 
 /// An [`AtomicState`] which was just committed with [`AtomicCommitTail::commit_hw_done`].
@@ -908,11 +927,15 @@ pub(crate) unsafe extern "C" fn commit_tail_callback<T: KmsDriver>(
 /// # Invariants
 ///
 /// It may be assumed that [`drm_atomic_helper_commit_hw_done`] has been called as long as this type
-/// exists.
+/// exists. The invariant transaction scope is retained through cleanup, so a completed state
+/// cannot be shortened to substitute for another callback's completion proof.
 ///
 /// [`atomic_commit_tail`]: KmsDriver::atomic_commit_tail
 /// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
-pub struct CommittedAtomicState<'a, T: KmsDriver>(&'a AtomicState<T>);
+pub struct CommittedAtomicState<'a, T: KmsDriver> {
+    state: &'a AtomicState<T>,
+    _scope: CommitScope<'a, T>,
+}
 
 impl<'a, T: KmsDriver> CommittedAtomicState<'a, T> {
     /// Wait for page flips on this state to complete
@@ -920,8 +943,8 @@ impl<'a, T: KmsDriver> CommittedAtomicState<'a, T> {
         // SAFETY: `drm_atomic_helper_commit_hw_done` has been called via our invariants
         unsafe {
             bindings::drm_atomic_helper_wait_for_flip_done(
-                self.0.drm_dev().as_raw(),
-                self.0.as_raw(),
+                self.state.drm_dev().as_raw(),
+                self.state.as_raw(),
             )
         }
     }
@@ -933,7 +956,10 @@ impl<'a, T: KmsDriver> Drop for CommittedAtomicState<'a, T> {
         // * This interface represents the last atomic state accessor which could be affected as a
         //   result of resources from an atomic commit being cleaned up.
         unsafe {
-            bindings::drm_atomic_helper_cleanup_planes(self.0.drm_dev().as_raw(), self.0.as_raw())
+            bindings::drm_atomic_helper_cleanup_planes(
+                self.state.drm_dev().as_raw(),
+                self.state.as_raw(),
+            )
         }
     }
 }
