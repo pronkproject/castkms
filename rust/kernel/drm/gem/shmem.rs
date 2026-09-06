@@ -361,6 +361,65 @@ impl<T: DriverObject> Object<T> {
         unsafe { Self::new_dumb_unchecked(dev, width, height, bpp) }
     }
 
+    /// Import shared storage without requiring a CPU mapping or a userspace handle.
+    ///
+    /// The registered-device borrow excludes unplug during attachment and import. Native PRIME
+    /// retains the DMA-BUF attachment until object release. Allocation ownership does not provide
+    /// producer synchronization or permission to read pixels from a retired display use.
+    pub fn import(
+        dev: &Device<T::Driver, crate::drm::device::Registered>,
+        buffer: &crate::dma_buf::DmaBuf,
+    ) -> Result<gem::ObjectRef<Self>>
+    where
+        T::Driver: driver::Driver<Object = Self>,
+    {
+        // SAFETY: The registered device and borrowed DMA-BUF remain live during native import.
+        let raw =
+            from_err_ptr(unsafe { bindings::drm_gem_prime_import(dev.as_raw(), buffer.as_raw()) })?;
+        let raw = NonNull::new(raw).ok_or(ENOMEM)?;
+        // SAFETY: The nominated storage constraint identifies all same-device objects; foreign
+        // import uses our installed typed allocation callback. Success transfers one reference.
+        let object = unsafe { Self::from_raw(raw.as_ptr()) };
+        // SAFETY: Adopt the native reference while the registered device is borrowed.
+        Ok(unsafe { gem::ObjectRef::from_native(object.into()) })
+    }
+
+    unsafe extern "C" fn prime_import_callback(
+        dev: *mut bindings::drm_device,
+        attach: *mut bindings::dma_buf_attachment,
+        sgt: *mut bindings::sg_table,
+    ) -> *mut bindings::drm_gem_object {
+        let result = (|| -> Result<*mut bindings::drm_gem_object> {
+            // SAFETY: Native PRIME supplies its live device and an attached DMA-BUF. The
+            // installed allocation operations establish that this driver nominates Object<T>.
+            let dev = unsafe { Device::<T::Driver>::from_raw(dev) };
+            // SAFETY: The native import caller owns the attachment and mapped table until
+            // successful return, when it completes the object's import ownership fields.
+            let size = unsafe { (*(*attach).dmabuf).size };
+            let size = crate::page::page_align(size).ok_or(EOVERFLOW)?;
+            gem::validate_size(size)?;
+            let args = T::prime_import_args(dev, size)?;
+            let new = Self::allocate_payload(dev, size, ObjectConfig::default(), args)?;
+            // SAFETY: The complete Rust wrapper has stable storage; native initialization
+            // unwinds its own resources on error, leaving Rust payload destruction to KBox.
+            to_result(unsafe {
+                bindings::drm_gem_shmem_init_imported(dev.as_raw(), new.as_raw_shmem(), size)
+            })?;
+            // SAFETY: No fallible operation remains. Transfer the stable complete allocation
+            // to PRIME; it installs import_attach and resv before exposing or releasing it.
+            let new = KBox::into_raw(unsafe { Pin::into_inner_unchecked(new) });
+            // SAFETY: Exclusive access before publication. The caller transfers the mapped
+            // table on successful return; the completed native import owns its later cleanup.
+            unsafe { (*(*new).as_raw_shmem()).sgt = sgt };
+            // SAFETY: The allocated native GEM base is initialized and remains live.
+            Ok(unsafe { (*new).as_raw() })
+        })();
+        match result {
+            Ok(object) => object,
+            Err(error) => error.to_ptr(),
+        }
+    }
+
     // SAFETY: The caller must establish that the device nominates Self as its GEM object.
     unsafe fn new_dumb_unchecked(
         dev: &Device<T::Driver>,
@@ -429,6 +488,27 @@ impl<T: DriverObject> Object<T> {
         args: T::Args,
     ) -> Result<gem::ObjectRef<Self>> {
         gem::validate_size(size)?;
+        let new = Self::allocate_payload(dev, size, config, args)?;
+
+        // SAFETY: The complete Rust wrapper has stable allocated native storage. Native setup
+        // initializes that storage and unwinds its own resources on failure.
+        to_result(unsafe { bindings::drm_gem_shmem_init(dev.as_raw(), new.as_raw_shmem(), size) })?;
+
+        // SAFETY: We never move the initialized object out of its pinned allocation.
+        let new = KBox::into_raw(unsafe { Pin::into_inner_unchecked(new) });
+
+        // SAFETY: Transfer the owned initial native reference while the device remains borrowed.
+        Ok(unsafe { gem::ObjectRef::from_native(NonNull::new_unchecked(new)) })
+    }
+
+    // Allocate the Rust wrapper, but do not publish it or initialize native GEM ownership.
+    // Both local and imported construction must complete native setup before transferring it.
+    fn allocate_payload(
+        dev: &Device<T::Driver>,
+        size: usize,
+        config: ObjectConfig<'_, T>,
+        args: T::Args,
+    ) -> Result<Pin<KBox<Self>>> {
         let new: Pin<KBox<Self>> = KBox::try_pin_init(
             try_pin_init!(Self {
                 obj <- Opaque::init_zeroed(),
@@ -443,28 +523,19 @@ impl<T: DriverObject> Object<T> {
         // SAFETY: `obj.as_raw()` is guaranteed to be valid by the initialization above.
         unsafe { (*new.as_raw()).funcs = &Self::VTABLE };
 
-        // SAFETY: The arguments are all valid via the type invariants.
-        to_result(unsafe { bindings::drm_gem_shmem_init(dev.as_raw(), new.as_raw_shmem(), size) })?;
-
-        // SAFETY: We never move out of `self`.
-        let new = KBox::into_raw(unsafe { Pin::into_inner_unchecked(new) });
-
-        // SAFETY: We're taking over the owned refcount from `drm_gem_shmem_init`.
-        let obj = unsafe { gem::ObjectRef::from_native(NonNull::new_unchecked(new)) };
-
         // Start filling out values from `config`
         if let Some(parent_resv) = config.parent_resv_obj {
             // SAFETY: We have yet to expose the new gem object outside of this function, so it is
             // safe to modify this field.
-            unsafe { (*obj.obj.get()).base.resv = parent_resv.raw_dma_resv() };
+            unsafe { (*new.obj.get()).base.resv = parent_resv.raw_dma_resv() };
         }
 
         // SAFETY: We have yet to expose this object outside of this function, so we're guaranteed
         // to have exclusive access - thus making this safe to hold a mutable reference to.
-        let shmem = unsafe { &mut *obj.as_raw_shmem() };
+        let shmem = unsafe { &mut *new.as_raw_shmem() };
         shmem.set_map_wc(config.map_wc);
 
-        Ok(obj)
+        Ok(new)
     }
 
     /// Creates and returns an owned reference to a virtual kernel memory mapping for this object.
@@ -517,9 +588,12 @@ impl<T: DriverObject> driver::AllocImpl for Object<T> {
         prime_handle_to_fd: None,
         prime_fd_to_handle: None,
         gem_prime_import: None,
-        // The C allocation helpers allocate only drm_gem_shmem_object, not Object<T>.
-        // Keep allocation entry points disabled until they initialize the Rust payload too.
-        gem_prime_import_sg_table: None,
+        // Native allocation must construct Object<T>, not just its embedded C shmem object.
+        gem_prime_import_sg_table: if T::HAS_PRIME_IMPORT_ARGS {
+            Some(Self::prime_import_callback)
+        } else {
+            None
+        },
         dumb_create: if T::HAS_DUMB_CREATE_ARGS {
             Some(Self::dumb_create_callback)
         } else {
@@ -678,6 +752,13 @@ impl<T: DriverObject> Drop for SGTableMap<T> {
     fn drop(&mut self) {
         // SAFETY: `obj` is always valid via our type invariants
         let obj = unsafe { self.obj.as_ref() };
+        // Imported tables belong to the PRIME attachment, not to local shmem storage.
+        // Native GEM release unmaps them through the exporter and detaches exactly once.
+        // The object outlives this wrapper, including when devres revokes access on unbind.
+        // SAFETY: Import provenance is fixed before the object is published.
+        if unsafe { !(*obj.as_raw()).import_attach.is_null() } {
+            return;
+        }
         let _lock = DmaResvGuard::new(obj);
 
         // SAFETY: We acquired the lock needed for calling this function above

@@ -156,6 +156,14 @@ pub trait DriverObject: Sync + Send + Sized + 'static {
         Err(EOPNOTSUPP)
     }
 
+    /// Supply payload arguments for a foreign DMA-BUF imported into shmem storage.
+    ///
+    /// Implementing this method enables the shmem PRIME import callback. The size is nonzero
+    /// and page-aligned. Import does not imply that the allocation supports CPU mapping.
+    fn prime_import_args(_dev: &drm::Device<Self::Driver>, _size: usize) -> Result<Self::Args> {
+        Err(EOPNOTSUPP)
+    }
+
     /// Open a new handle to an existing object, associated with a File.
     fn open(_obj: &DriverAllocImpl<Self>, _file: &DriverFile<Self>) -> Result {
         Ok(())
