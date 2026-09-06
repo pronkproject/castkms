@@ -69,6 +69,9 @@ struct seq_file;
 struct work_struct;
 
 /* drm_crtc.c */
+#if IS_ENABLED(CONFIG_KUNIT)
+int drm_crtc_crc_init(struct drm_crtc *crtc);
+#endif
 int drm_mode_crtc_set_obj_prop(struct drm_mode_object *obj,
 			       struct drm_property *property,
 			       uint64_t value);
