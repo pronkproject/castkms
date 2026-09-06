@@ -308,13 +308,6 @@ impl<T: Driver> Registration<'static, T> {
     }
 }
 
-// SAFETY: `Registration` doesn't offer any methods or access to fields when shared between
-// threads, hence it's safe to share it.
-unsafe impl<T: Driver> Sync for Registration<'_, T> {}
-
-// SAFETY: Registration with and unregistration from the DRM subsystem can happen from any thread.
-unsafe impl<T: Driver> Send for Registration<'_, T> {}
-
 impl<T: Driver> Drop for Registration<'_, T> {
     fn drop(&mut self) {
         // Use `drm_dev_unplug` rather than `drm_dev_unregister` to ensure that existing
