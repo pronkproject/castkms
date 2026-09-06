@@ -130,7 +130,7 @@ pub trait Driver {
     type Object: AllocImpl;
 
     /// The type used to represent a DRM File (client)
-    type File: drm::file::DriverFile;
+    type File: drm::file::DriverFile<Driver = Self>;
 
     /// The bus device type of the parent device that the DRM device is associated with.
     type ParentDevice<Ctx: device::DeviceContext>: device::AsBusDevice<Ctx>;
