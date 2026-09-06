@@ -91,6 +91,17 @@ impl<'a, T: DriverObject> Default for ObjectConfig<'a, T> {
     }
 }
 
+/// A typed dumb buffer and its scanline pitch in bytes.
+///
+/// The buffer owns its device and initialized driver payload. Creating it does not require a
+/// DRM file or install a userspace handle; callers may use the ordinary GEM handle API later.
+pub struct DumbBuffer<T: DriverObject> {
+    /// The allocated shmem object.
+    pub object: gem::ObjectRef<Object<T>>,
+    /// Distance between consecutive scanlines, in bytes.
+    pub pitch: u32,
+}
+
 /// A shmem-backed GEM object.
 ///
 /// # Invariants
@@ -332,6 +343,91 @@ impl<T: DriverObject> Object<T> {
     where
         T::Driver: driver::Driver<Object = Self>,
     {
+        // SAFETY: The associated-type bound proves that Self is the nominated storage.
+        unsafe { Self::new_unchecked(dev, size, config, args) }
+    }
+
+    /// Allocate a standard dumb buffer without requiring a userspace DRM file.
+    pub fn new_dumb(
+        dev: &Device<T::Driver>,
+        width: u32,
+        height: u32,
+        bpp: u32,
+    ) -> Result<DumbBuffer<T>>
+    where
+        T::Driver: driver::Driver<Object = Self>,
+    {
+        // SAFETY: The associated-type bound proves that Self is the nominated storage.
+        unsafe { Self::new_dumb_unchecked(dev, width, height, bpp) }
+    }
+
+    // SAFETY: The caller must establish that the device nominates Self as its GEM object.
+    unsafe fn new_dumb_unchecked(
+        dev: &Device<T::Driver>,
+        width: u32,
+        height: u32,
+        bpp: u32,
+    ) -> Result<DumbBuffer<T>> {
+        if !T::HAS_DUMB_CREATE_ARGS {
+            return Err(EOPNOTSUPP);
+        }
+        if width == 0 || height == 0 || bpp == 0 {
+            return Err(EINVAL);
+        }
+        let mut layout = bindings::drm_mode_create_dumb {
+            width,
+            height,
+            bpp,
+            ..Default::default()
+        };
+        // SAFETY: The live device and exclusive initialized layout satisfy the native API.
+        to_result(unsafe { bindings::drm_mode_size_dumb(dev.as_raw(), &mut layout, 0, 0) })?;
+        let size = usize::try_from(layout.size).map_err(|_| EOVERFLOW)?;
+        let args = T::dumb_create_args(dev, size)?;
+        // SAFETY: The caller establishes nominated storage; allocation has not escaped yet.
+        let object = unsafe { Self::new_unchecked(dev, size, ObjectConfig::default(), args) }?;
+        Ok(DumbBuffer {
+            object,
+            pitch: layout.pitch,
+        })
+    }
+
+    unsafe extern "C" fn dumb_create_callback(
+        file: *mut bindings::drm_file,
+        dev: *mut bindings::drm_device,
+        args: *mut bindings::drm_mode_create_dumb,
+    ) -> core::ffi::c_int {
+        let result = (|| -> Result {
+            // SAFETY: DRM invokes the installed allocation callback with its live device,
+            // matching open file, and exclusive ioctl arguments. Installation through
+            // Driver::Object establishes that the driver nominates Object<T>.
+            let dev = unsafe { Device::<T::Driver>::from_raw(dev) };
+            // SAFETY: The ioctl dispatcher owns these arguments for the callback duration.
+            let args = unsafe { &mut *args };
+            // SAFETY: The installed allocation operations establish nominated storage.
+            let buffer =
+                unsafe { Self::new_dumb_unchecked(dev, args.width, args.height, args.bpp) }?;
+            let mut handle = 0;
+            // SAFETY: DRM supplies the matching live file. The typed object remains owned
+            // throughout handle creation; success adds the file's native GEM reference.
+            to_result(unsafe {
+                bindings::drm_gem_handle_create(file, buffer.object.as_raw(), &mut handle)
+            })?;
+            args.handle = handle;
+            args.pitch = buffer.pitch;
+            args.size = buffer.object.size() as u64;
+            Ok(())
+        })();
+        result.err().map_or(0, Error::to_errno)
+    }
+
+    // SAFETY: The caller must establish that the device nominates Self as its GEM object.
+    unsafe fn new_unchecked(
+        dev: &Device<T::Driver>,
+        size: usize,
+        config: ObjectConfig<'_, T>,
+        args: T::Args,
+    ) -> Result<gem::ObjectRef<Self>> {
         let new: Pin<KBox<Self>> = KBox::try_pin_init(
             try_pin_init!(Self {
                 obj <- Opaque::init_zeroed(),
@@ -423,7 +519,11 @@ impl<T: DriverObject> driver::AllocImpl for Object<T> {
         // The C allocation helpers allocate only drm_gem_shmem_object, not Object<T>.
         // Keep allocation entry points disabled until they initialize the Rust payload too.
         gem_prime_import_sg_table: None,
-        dumb_create: None,
+        dumb_create: if T::HAS_DUMB_CREATE_ARGS {
+            Some(Self::dumb_create_callback)
+        } else {
+            None
+        },
         dumb_map_offset: None,
         fbdev_probe: None,
     };
@@ -615,16 +715,34 @@ mod tests {
         faux,
         io::Io,
         page::PAGE_SIZE, //
+        sync::Arc,
     };
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     // The bare minimum needed to create a fake drm driver for kunit
 
     #[pin_data]
-    struct KunitData {}
+    struct KunitData {
+        counts: Arc<Counts>,
+    }
+    struct Counts {
+        live: AtomicUsize,
+        reject: AtomicBool,
+    }
     struct KunitDriver;
     struct KunitFile;
-    #[pin_data]
-    struct KunitObject {}
+    #[pin_data(PinnedDrop)]
+    struct KunitObject {
+        size: usize,
+        counts: Arc<Counts>,
+    }
+
+    #[pinned_drop]
+    impl PinnedDrop for KunitObject {
+        fn drop(self: Pin<&mut Self>) {
+            self.counts.live.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
 
     const INFO: drm::DriverInfo = drm::DriverInfo {
         major: 0,
@@ -642,16 +760,31 @@ mod tests {
         }
     }
 
+    #[vtable]
     impl gem::DriverObject for KunitObject {
         type Driver = KunitDriver;
         type Args = ();
 
         fn new(
-            _dev: &drm::Device<KunitDriver>,
-            _size: usize,
+            dev: &drm::Device<KunitDriver>,
+            size: usize,
             _args: Self::Args,
         ) -> impl PinInit<Self, Error> {
-            try_pin_init!(KunitObject {})
+            try_pin_init!(KunitObject {
+                size,
+                counts: {
+                    dev.counts.live.fetch_add(1, Ordering::Relaxed);
+                    dev.counts.clone()
+                },
+            })
+        }
+
+        fn dumb_create_args(dev: &drm::Device<KunitDriver>, _size: usize) -> Result<()> {
+            if dev.counts.reject.load(Ordering::Relaxed) {
+                Err(EACCES)
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -670,12 +803,60 @@ mod tests {
 
     fn create_drm_dev() -> Result<(faux::Registration, UnregisteredDevice<KunitDriver>)> {
         // Create a faux DRM device so we can test gem object creation.
-        let data = try_pin_init!(KunitData {});
+        let data = try_pin_init!(KunitData {
+            counts: Arc::new(
+                Counts {
+                    live: AtomicUsize::new(0),
+                    reject: AtomicBool::new(false),
+                },
+                GFP_KERNEL
+            )?,
+        });
         let reg = faux::Registration::new(c"Kunit", None)?;
         let fdev = reg.as_ref();
         let drm = UnregisteredDevice::new(fdev, data)?;
 
         Ok((reg, drm))
+    }
+
+    #[test]
+    fn typed_dumb_allocation() -> Result {
+        let (_parent, drm) = create_drm_dev()?;
+        assert!(<Object<KunitObject> as driver::AllocImpl>::ALLOC_OPS
+            .dumb_create
+            .is_some());
+        let buffer = Object::<KunitObject>::new_dumb(&drm, 641, 3, 32)?;
+        assert_eq!(buffer.pitch, 641 * 4);
+        assert_eq!(buffer.object.size(), 2 * PAGE_SIZE);
+        assert_eq!(buffer.object.inner.size, 2 * PAGE_SIZE);
+        assert_eq!(drm.counts.live.load(Ordering::Relaxed), 1);
+        let mapping = buffer.object.owned_vmap::<PAGE_SIZE>()?;
+        mapping.write32(0xfeedcafe, 0);
+        drop(buffer);
+        assert_eq!(drm.counts.live.load(Ordering::Relaxed), 1);
+        assert_eq!(mapping.read32(0), 0xfeedcafe);
+        drop(mapping);
+        assert_eq!(drm.counts.live.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn typed_dumb_rejection() -> Result {
+        let (_parent, drm) = create_drm_dev()?;
+        for (width, height, bpp) in [(0, 3, 32), (3, 0, 32), (3, 3, 0), (u32::MAX, 3, 32)] {
+            assert_eq!(
+                Object::<KunitObject>::new_dumb(&drm, width, height, bpp).err(),
+                Some(EINVAL)
+            );
+            assert_eq!(drm.counts.live.load(Ordering::Relaxed), 0);
+        }
+        drm.counts.reject.store(true, Ordering::Relaxed);
+        assert_eq!(
+            Object::<KunitObject>::new_dumb(&drm, 64, 64, 32).err(),
+            Some(EACCES)
+        );
+        assert_eq!(drm.counts.live.load(Ordering::Relaxed), 0);
+        Ok(())
     }
 
     #[test]
