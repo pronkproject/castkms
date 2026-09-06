@@ -30,6 +30,14 @@ impl<T: DriverConnector> Default for Payload<T> {
 
 impl<T: DriverConnector> DriverConnectorState for Payload<T> {
     type Connector = Replacement<T>;
+
+    fn new(_: &Connector<Self::Connector>) -> Result<Self> {
+        Ok(Self(PhantomData))
+    }
+
+    fn duplicate(&self) -> Result<Self> {
+        Ok(Self(PhantomData))
+    }
 }
 
 #[vtable]

@@ -1042,7 +1042,7 @@ impl<T: AsRawConnectorState> RawConnectorState for T {}
 /// [`DriverConnectorState`] type.
 ///
 /// Only DRM's state callbacks construct and initialize this wrapper with its parent connector.
-/// [`Default`] initializes the driver-private payload, not the wrapper.
+/// [`DriverConnectorState::new`] initializes the driver-private payload, not the wrapper.
 ///
 /// # Invariants
 ///
@@ -1077,9 +1077,23 @@ pub struct ConnectorState<T: DriverConnectorState> {
 ///
 /// [`struct drm_connector`]: srctree/include/drm_connector.h
 /// [`struct drm_connector_state`]: srctree/include/drm_connector.h
-pub trait DriverConnectorState: Clone + Default + Sized + Send + Sync {
+pub trait DriverConnectorState: Sized + Send + Sync {
     /// The parent [`DriverConnector`].
     type Connector: DriverConnector<State = Self>;
+
+    /// Construct the initial private payload before the state is published.
+    ///
+    /// Failure aborts initial-state setup with the returned error. The connector and its driver
+    /// data are initialized, but its published atomic state need not exist yet. Property setup
+    /// may request this payload before mode-configuration-wide initial-state creation.
+    fn new(connector: &Connector<Self::Connector>) -> Result<Self>;
+
+    /// Duplicate a published private payload for an unpublished transaction.
+    ///
+    /// The source remains shared read-only. Allocate private storage fallibly here instead of
+    /// hiding allocations in `Clone`. DRM's duplicate-state callback reports any failure as
+    /// `ENOMEM`; it does not carry a distinct error code.
+    fn duplicate(&self) -> Result<Self>;
 }
 
 impl<T: DriverConnectorState> Sealed for ConnectorState<T> {}
@@ -1309,9 +1323,9 @@ unsafe extern "C" fn atomic_duplicate_state_callback<T: DriverConnectorState>(
     // - This cast is guaranteed to be safe via our type invariants.
     let state = unsafe { ConnectorState::<T>::from_raw(state) };
 
-    let new: Result<KBox<_>> = KBox::init(
-        init!(ConnectorState::<T> {
-            inner: state.inner.clone(),
+    let new: Result<KBox<_>> = KBox::try_init(
+        try_init!(ConnectorState::<T> {
+            inner: state.inner.duplicate()?,
             state: bindings::drm_connector_state {
                 ..Default::default()
             },
@@ -1321,7 +1335,7 @@ unsafe extern "C" fn atomic_duplicate_state_callback<T: DriverConnectorState>(
 
     if let Ok(mut new) = new {
         // SAFETY:
-        // - `new` provides a valid pointer to a newly allocated `drm_plane_state` via type
+        // - `new` provides a valid pointer to a newly allocated `drm_connector_state` via type
         //   invariants
         // - This initializes `new` via memcpy()
         unsafe {
@@ -1350,15 +1364,18 @@ unsafe extern "C" fn atomic_destroy_state_callback<T: DriverConnectorState>(
 unsafe extern "C" fn atomic_create_state_callback<T: DriverConnectorState>(
     connector: *mut bindings::drm_connector,
 ) -> *mut bindings::drm_connector_state {
-    let new = match KBox::new(
-        ConnectorState::<T> {
+    // SAFETY: The generated callback belongs to this initialized Rust connector type.
+    let parent = unsafe { Connector::<T::Connector>::from_raw(connector) };
+    let new: Result<KBox<ConnectorState<T>>> = KBox::try_init(
+        try_init!(ConnectorState {
             state: Default::default(),
-            inner: T::default(),
-        },
+            inner: T::new(parent)?,
+        }),
         GFP_KERNEL,
-    ) {
+    );
+    let new = match new {
         Ok(new) => KBox::into_raw(new).cast(),
-        Err(err) => return Error::from(err).to_ptr(),
+        Err(err) => return err.to_ptr(),
     };
 
     // SAFETY: `new` is an owned ConnectorState<T> allocation and DRM supplies its valid parent.

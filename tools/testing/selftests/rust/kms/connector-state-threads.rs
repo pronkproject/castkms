@@ -19,4 +19,12 @@ where
     C: DriverConnector<State = Self> + Clone + Default,
 {
     type Connector = C;
+
+    fn new(_: &Connector<Self::Connector>) -> kernel::error::Result<Self> {
+        Ok(Self::default())
+    }
+
+    fn duplicate(&self) -> kernel::error::Result<Self> {
+        Ok(self.clone())
+    }
 }
