@@ -135,76 +135,6 @@ impl ColorCtm {
 /// [`struct drm_crtc_state`]: srctree/include/drm/drm_crtc.h
 #[vtable]
 pub trait DriverCrtc: Send + Sync + Sized {
-    /// The generated C vtable for this [`DriverCrtc`] implementation.
-    const OPS: &'static DriverCrtcOps = &DriverCrtcOps {
-        funcs: bindings::drm_crtc_funcs {
-            atomic_create_state: Some(atomic_create_state_callback::<Self::State>),
-            atomic_destroy_state: Some(atomic_destroy_state_callback::<Self::State>),
-            atomic_duplicate_state: Some(atomic_duplicate_state_callback::<Self::State>),
-            atomic_get_property: None,
-            atomic_print_state: None,
-            atomic_set_property: None,
-            cursor_move: None,
-            cursor_set2: None,
-            cursor_set: None,
-            destroy: Some(crtc_destroy_callback::<Self>),
-            disable_vblank: <Self::VblankImpl as VblankImpl>::VBLANK_OPS.disable_vblank,
-            early_unregister: None,
-            enable_vblank: <Self::VblankImpl as VblankImpl>::VBLANK_OPS.enable_vblank,
-            gamma_set: None,
-            get_crc_sources: None,
-            get_vblank_counter: None,
-            get_vblank_timestamp: <Self::VblankImpl as VblankImpl>::VBLANK_OPS.get_vblank_timestamp,
-            late_register: None,
-            page_flip: Some(bindings::drm_atomic_helper_page_flip),
-            page_flip_target: None,
-            reset: None,
-            set_config: Some(bindings::drm_atomic_helper_set_config),
-            set_crc_source: None,
-            set_property: None,
-            verify_crc_source: None,
-        },
-
-        helper_funcs: bindings::drm_crtc_helper_funcs {
-            atomic_disable: if Self::HAS_ATOMIC_DISABLE {
-                Some(atomic_disable_callback::<Self>)
-            } else {
-                None
-            },
-            atomic_enable: if Self::HAS_ATOMIC_ENABLE {
-                Some(atomic_enable_callback::<Self>)
-            } else {
-                None
-            },
-            atomic_check: if Self::HAS_ATOMIC_CHECK {
-                Some(atomic_check_callback::<Self>)
-            } else {
-                None
-            },
-            dpms: None,
-            commit: None,
-            prepare: None,
-            disable: None,
-            mode_set: None,
-            mode_valid: None,
-            mode_fixup: None,
-            atomic_begin: if Self::HAS_ATOMIC_BEGIN {
-                Some(atomic_begin_callback::<Self>)
-            } else {
-                None
-            },
-            atomic_flush: if Self::HAS_ATOMIC_FLUSH {
-                Some(atomic_flush_callback::<Self>)
-            } else {
-                None
-            },
-            mode_set_nofb: None,
-            mode_set_base: None,
-            get_scanout_position: None,
-            handle_vblank_timeout: None,
-        },
-    };
-
     /// The type to pass to the `args` field of [`UnregisteredCrtc::new`].
     ///
     /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
@@ -282,9 +212,82 @@ pub trait DriverCrtc: Send + Sync + Sized {
 /// The generated C vtable for a [`DriverCrtc`].
 ///
 /// This type is created internally by DRM.
-pub struct DriverCrtcOps {
+struct DriverCrtcOps {
     funcs: bindings::drm_crtc_funcs,
     helper_funcs: bindings::drm_crtc_helper_funcs,
+}
+
+// Keep callback generation outside the driver trait: its implementation must not substitute
+// callbacks that cast the C allocation to another Rust type.
+impl<T: DriverCrtc> Crtc<T> {
+    const OPS: &'static DriverCrtcOps = &DriverCrtcOps {
+        funcs: bindings::drm_crtc_funcs {
+            atomic_create_state: Some(atomic_create_state_callback::<T::State>),
+            atomic_destroy_state: Some(atomic_destroy_state_callback::<T::State>),
+            atomic_duplicate_state: Some(atomic_duplicate_state_callback::<T::State>),
+            atomic_get_property: None,
+            atomic_print_state: None,
+            atomic_set_property: None,
+            cursor_move: None,
+            cursor_set2: None,
+            cursor_set: None,
+            destroy: Some(crtc_destroy_callback::<T>),
+            disable_vblank: <T::VblankImpl as VblankImpl>::VBLANK_OPS.disable_vblank,
+            early_unregister: None,
+            enable_vblank: <T::VblankImpl as VblankImpl>::VBLANK_OPS.enable_vblank,
+            gamma_set: None,
+            get_crc_sources: None,
+            get_vblank_counter: None,
+            get_vblank_timestamp: <T::VblankImpl as VblankImpl>::VBLANK_OPS.get_vblank_timestamp,
+            late_register: None,
+            page_flip: Some(bindings::drm_atomic_helper_page_flip),
+            page_flip_target: None,
+            reset: None,
+            set_config: Some(bindings::drm_atomic_helper_set_config),
+            set_crc_source: None,
+            set_property: None,
+            verify_crc_source: None,
+        },
+
+        helper_funcs: bindings::drm_crtc_helper_funcs {
+            atomic_disable: if T::HAS_ATOMIC_DISABLE {
+                Some(atomic_disable_callback::<T>)
+            } else {
+                None
+            },
+            atomic_enable: if T::HAS_ATOMIC_ENABLE {
+                Some(atomic_enable_callback::<T>)
+            } else {
+                None
+            },
+            atomic_check: if T::HAS_ATOMIC_CHECK {
+                Some(atomic_check_callback::<T>)
+            } else {
+                None
+            },
+            dpms: None,
+            commit: None,
+            prepare: None,
+            disable: None,
+            mode_set: None,
+            mode_valid: None,
+            mode_fixup: None,
+            atomic_begin: if T::HAS_ATOMIC_BEGIN {
+                Some(atomic_begin_callback::<T>)
+            } else {
+                None
+            },
+            atomic_flush: if T::HAS_ATOMIC_FLUSH {
+                Some(atomic_flush_callback::<T>)
+            } else {
+                None
+            },
+            mode_set_nofb: None,
+            mode_set_base: None,
+            get_scanout_position: None,
+            handle_vblank_timeout: None,
+        },
+    };
 }
 
 /// The main interface for a [`struct drm_crtc`].
@@ -373,7 +376,7 @@ impl<T: DriverCrtc> Crtc<T> {
     }
 
     pub(crate) const fn has_vblank() -> bool {
-        T::OPS.funcs.enable_vblank.is_some()
+        Crtc::<T>::OPS.funcs.enable_vblank.is_some()
     }
 
     /// Returns an owned handle to this [`Crtc`].
@@ -479,7 +482,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
         let this: Pin<KBox<Crtc<T>>> = KBox::try_pin_init(
             try_pin_init!(Crtc {
                 crtc: Opaque::new(bindings::drm_crtc {
-                    helper_private: &T::OPS.helper_funcs,
+                    helper_private: &Crtc::<T>::OPS.helper_funcs,
                     ..Default::default()
                 }),
                 inner <- T::new(dev, &args),
@@ -501,7 +504,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
                 this.as_raw(),
                 primary.as_raw(),
                 cursor.map_or(null_mut(), |c| c.as_raw()),
-                &T::OPS.funcs,
+                &Crtc::<T>::OPS.funcs,
                 name.map_or(null(), |_| c"%s".as_char_ptr()),
                 name.map_or(null(), |n| n.as_char_ptr()),
             )
