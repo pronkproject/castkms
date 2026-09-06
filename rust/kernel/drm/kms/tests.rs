@@ -21,6 +21,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
 #[derive(Default)]
 struct Counts {
+    gem_objects: AtomicU32,
+    fail_gem_open: AtomicU32,
     objects: AtomicU32,
     setup_failures: AtomicU32,
     plane_updates: AtomicU32,
@@ -68,8 +70,19 @@ struct Data {
 
 struct TestDriver;
 struct TestFile;
-#[pin_data]
-struct TestObject {}
+#[pin_data(PinnedDrop)]
+struct TestObject {
+    #[cfg_attr(not(CONFIG_DRM_CLIENT), expect(dead_code))]
+    allocated_size: usize,
+    counts: Arc<Counts>,
+}
+
+#[pinned_drop]
+impl PinnedDrop for TestObject {
+    fn drop(self: Pin<&mut Self>) {
+        self.counts.gem_objects.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 #[pin_data]
 struct TestPlane {
     life: Lifetime,
@@ -222,8 +235,26 @@ impl gem::DriverObject for TestObject {
     type Driver = TestDriver;
     type Args = ();
 
-    fn new(_: &Device<TestDriver>, _: usize, _: ()) -> impl PinInit<Self, Error> {
-        try_pin_init!(Self {})
+    fn new(dev: &Device<TestDriver>, size: usize, _: ()) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
+            allocated_size: size,
+            counts: {
+                dev.counts.gem_objects.fetch_add(1, Ordering::Relaxed);
+                dev.counts.clone()
+            },
+        })
+    }
+
+    fn dumb_create_args(_: &Device<TestDriver>, _: usize) -> Result<()> {
+        Ok(())
+    }
+
+    fn open(obj: &gem::DriverAllocImpl<Self>, _: &gem::DriverFile<Self>) -> Result {
+        if obj.counts.fail_gem_open.load(Ordering::Relaxed) != 0 {
+            Err(EACCES)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -442,6 +473,47 @@ fn create(
     Ok(drm)
 }
 
+// Use a real internal DRM client for handle tests. Unlike a framebuffer fixture, a handle
+// operation needs the native file's GEM tables and the driver's initialized file payload.
+// The client is never registered for callbacks; this owner unwinds its initialized resources.
+#[cfg(CONFIG_DRM_CLIENT)]
+struct HandleClient {
+    raw: KBox<crate::types::Opaque<bindings::drm_client_dev>>,
+}
+
+#[cfg(CONFIG_DRM_CLIENT)]
+impl HandleClient {
+    fn new(dev: &Device<TestDriver>) -> Result<Self> {
+        let raw = KBox::new(crate::types::Opaque::new(Default::default()), GFP_KERNEL)?;
+        // SAFETY: The zeroed client has stable heap storage and no previous initialization.
+        // The borrowed device has completed KMS setup. Success retains a native device reference.
+        crate::error::to_result(unsafe {
+            bindings::drm_client_init(
+                dev.as_raw(),
+                raw.get(),
+                c"rust-kms-handles".as_ptr().cast(),
+                ptr::null(),
+            )
+        })?;
+        Ok(Self { raw })
+    }
+
+    fn file(&self) -> &drm::File<TestFile> {
+        // SAFETY: Successful client initialization opens a native file on TestDriver and calls
+        // TestFile::open. The client retains it until drop; the result borrows that ownership.
+        unsafe { drm::File::from_raw((*self.raw.get()).file) }
+    }
+}
+
+#[cfg(CONFIG_DRM_CLIENT)]
+impl Drop for HandleClient {
+    fn drop(&mut self) {
+        // SAFETY: Release the initialized, unregistered client's file and modeset resources
+        // exactly once, before freeing its stable storage. No callback registration escaped.
+        unsafe { bindings::drm_client_release(self.raw.get()) };
+    }
+}
+
 // A fixed valid GEM framebuffer fixture, built with kernel helpers rather than a fake DRM file.
 // Keep the raw setup here; display transactions below use the shared typed configuration API.
 fn framebuffer<D, O>(dev: &Device<D>) -> Result<framebuffer::FramebufferRef<D>>
@@ -626,6 +698,48 @@ mod cases {
     use crtc::AsRawCrtc;
     use encoder::AsRawEncoder;
     use plane::AsRawPlane;
+
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
+    fn native_dumb_handle_retains_typed_object() -> Result {
+        use gem::BaseObject;
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-dumb-handle", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let client = HandleClient::new(&drm)?;
+        let mut args = bindings::drm_mode_create_dumb {
+            width: 64,
+            height: 64,
+            bpp: 32,
+            ..Default::default()
+        };
+        // SAFETY: The installed callback belongs to the live, privately owned device. The
+        // native client file belongs to that device and the arguments are exclusively owned.
+        let result = unsafe {
+            (*(*drm.as_raw()).driver).dumb_create.unwrap()(
+                client.file().as_raw(),
+                drm.as_raw(),
+                &mut args,
+            )
+        };
+        crate::error::to_result(result)?;
+        assert_ne!(args.handle, 0);
+        assert_eq!(args.pitch, 256);
+        assert_eq!(args.size, 16384);
+        let object = gem::shmem::Object::<TestObject>::lookup_handle(client.file(), args.handle)?;
+        assert_eq!(object.size(), 16384);
+        assert_eq!(object.allocated_size, 16384);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 1);
+        drop(client);
+        drop(drm);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 4);
+        assert_eq!(object.allocated_size, 16384);
+        drop(object);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[test]
     fn constructed_mode_has_crtc_timings() -> Result {
