@@ -898,6 +898,10 @@ pub trait RawPlaneState: AsRawPlaneState {
     }
 
     /// Run the atomic check helper for this plane and the given CRTC state.
+    ///
+    /// Both states must belong to the same transaction. An assigned plane must use the state of
+    /// its assigned CRTC. A disabled plane with no CRTC may use a CRTC state from the transaction.
+    /// Mismatches return [`EINVAL`] before calling the native helper or changing derived state.
     fn atomic_helper_check<S, D>(
         &mut self,
         crtc_state: &CrtcStateMutator<'_, S>,
@@ -910,8 +914,17 @@ pub trait RawPlaneState: AsRawPlaneState {
         S::Crtc: ModesettableCrtc + ModeObject<Driver = D>,
         Self::Plane: ModeObject<Driver = D>,
     {
+        let plane = self.as_raw();
+        // SAFETY: The CRTC mutator holds a valid state throughout this call.
+        let crtc = unsafe { &*crtc_state.as_raw() };
+        if plane.state.is_null()
+            || plane.state != crtc.state
+            || (!plane.crtc.is_null() && plane.crtc != crtc.crtc)
+        {
+            return Err(EINVAL);
+        }
         // SAFETY: We're passing the mutable reference from `self.as_raw_mut()` directly to DRM,
-        // which is safe.
+        // with a CRTC state from the same transaction and matching any assigned CRTC.
         to_result(unsafe {
             bindings::drm_atomic_helper_check_plane_state(
                 self.as_raw_mut(),

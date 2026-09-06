@@ -237,6 +237,13 @@ and requires the helper not to retry blindly. These are two-task schedules,
 not a proof of every lock order
 and not an allocator-stress test.
 
+A plane check must not accept a CRTC from another output, and it must not
+accept CRTC state from another transaction. The first case adds a second CRTC,
+rejects the mismatch without changing the plane's computed position, then
+accepts the assigned CRTC. The second allocates two transactions on one task,
+never commits the extra one, and rejects the mixed pair. Both use real DRM
+allocations. They do not fabricate object pointers.
+
 A validation-only request can check a complete modeset without changing
 published state and without calling enable, disable, or plane-update. A later
 transaction then proves that the check released its resources. Success here is
