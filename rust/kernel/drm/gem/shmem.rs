@@ -103,7 +103,7 @@ pub struct Object<T: DriverObject> {
     #[pin]
     obj: Opaque<bindings::drm_gem_shmem_object>,
     /// Parent object that owns this object's DMA reservation object.
-    parent_resv_obj: Option<ARef<Object<T>>>,
+    parent_resv_obj: Option<ParentReservation<T>>,
     /// Devres object for unmapping any SGTable on driver-unbind.
     sgt_res: ManuallyDrop<SetOnce<Devres<SGTableMap<T>>>>,
     #[pin]
@@ -117,6 +117,36 @@ super::impl_aref_for_gem_obj! {
     impl<T> for Object<T>
     where
         T: DriverObject
+}
+
+// The child retains a native reference to its reservation owner. Retaining the child's own
+// device here would form an implicit cycle when native KMS state owns the child. A foreign
+// parent's device instead needs an independent reference because the child's lifetime does not
+// protect it. Access is private and confined to the child's valid object/device lifetime.
+struct ParentReservation<T: DriverObject> {
+    object: NonNull<Object<T>>,
+    _foreign_device: Option<ARef<Device<T::Driver>>>,
+}
+
+impl<T: DriverObject> ParentReservation<T> {
+    fn new(parent: &Object<T>, dev: &Device<T::Driver>) -> Self {
+        let foreign = !ptr::eq(parent.dev(), dev);
+        let foreign_device = foreign.then(|| parent.dev().into());
+        // SAFETY: The borrowed parent is live. The child will protect its own device, and the
+        // optional reference retains a different parent's device until after parent destruction.
+        unsafe { bindings::drm_gem_object_get(parent.as_raw()) };
+        Self {
+            object: parent.into(),
+            _foreign_device: foreign_device,
+        }
+    }
+}
+
+impl<T: DriverObject> Drop for ParentReservation<T> {
+    fn drop(&mut self) {
+        // SAFETY: Release the owned parent reference before the optional device reference.
+        unsafe { bindings::drm_gem_object_put(self.object.as_ref().as_raw()) };
+    }
 }
 
 // SAFETY: All GEM objects are thread-safe.
@@ -308,7 +338,7 @@ impl<T: DriverObject> Object<T> {
         let new: Pin<KBox<Self>> = KBox::try_pin_init(
             try_pin_init!(Self {
                 obj <- Opaque::init_zeroed(),
-                parent_resv_obj: config.parent_resv_obj.map(|p| p.into()),
+                parent_resv_obj: config.parent_resv_obj.map(|p| ParentReservation::new(p, dev)),
                 sgt_res: ManuallyDrop::new(SetOnce::new()),
                 sgt_lock <- new_mutex!(()),
                 inner <- T::new(dev, size, args),
