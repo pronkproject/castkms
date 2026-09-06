@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
-//! Runtime consumers of the shared KMS interfaces. Devices are never registered with userspace.
+//! Runtime consumers of the shared KMS interfaces for disposable test kernels.
+//!
+//! Most cases keep their devices unregistered. Registration cases publish temporary virtual
+//! DRM devices, with no physical hardware or capture inputs.
 
 mod inspection;
 
@@ -388,12 +391,12 @@ impl KmsDriver for TestDriver {
     }
 }
 
-fn create(
+fn allocate(
     parent: &faux::Device<device::Bound>,
     counts: &Arc<Counts>,
     fail_after_plane: bool,
 ) -> Result<UnregisteredDevice<TestDriver>> {
-    let drm = UnregisteredDevice::new(
+    UnregisteredDevice::new(
         parent,
         try_pin_init!(Data {
             counts: counts.clone(),
@@ -402,7 +405,15 @@ fn create(
             crtc: AtomicPtr::new(ptr::null_mut()),
             connector: AtomicPtr::new(ptr::null_mut()),
         }),
-    )?;
+    )
+}
+
+fn create(
+    parent: &faux::Device<device::Bound>,
+    counts: &Arc<Counts>,
+    fail_after_plane: bool,
+) -> Result<UnregisteredDevice<TestDriver>> {
+    let drm = allocate(parent, counts, fail_after_plane)?;
     // SAFETY: The device was just allocated and remains unregistered. Exercise the same setup
     // hook as normal registration without publishing a DRM minor or enabling external access.
     unsafe { <TestDriver as private::KmsImpl>::setup_kms(&drm) }?;
@@ -1085,6 +1096,39 @@ mod cases {
         }?;
         drop(drm);
         assert_eq!(observed, (7, 7));
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn registered_device_lifecycle() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-registration", None)?;
+        let registration = drm::Registration::new_static(
+            parent.as_ref().as_ref(),
+            allocate(parent.as_ref(), &counts, false)?,
+            Ok::<(), Error>(()),
+            0,
+        )?;
+        let retained: ARef<Device<TestDriver>> = registration.device().into();
+        let crtc_count = {
+            let registered = registration.registration_guard().ok_or(ENODEV)?;
+            registered.check_atomic_update(|_| Ok(()))?;
+            registered.num_crtcs()
+        };
+        drop(registration);
+        // SAFETY: Registration succeeded and retained owns the device after unplug. Ioctl
+        // context requires past registration, not current registration or a bound parent.
+        let unplugged = unsafe { retained.assume_ctx::<drm::Ioctl>() };
+        let rejected = unplugged.registration_guard().is_none();
+        let remaining = counts.objects.load(Ordering::Relaxed);
+        drop(retained);
+        assert_eq!(crtc_count, 1);
+        assert!(rejected);
+        assert_eq!(remaining, 4);
         assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
         assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
         assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
