@@ -63,7 +63,11 @@ impl<T: KmsDriver> AtomicState<T> {
     where
         C: ModesettableCrtc + ModeObject<Driver = T>,
     {
-        // SAFETY: This function either returns NULL or a valid pointer to a `drm_crtc_state`
+        if !core::ptr::eq(self.drm_dev(), crtc.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The CRTC belongs to this device, so its index addresses this transaction.
+        // This function either returns NULL or a valid pointer to a `drm_crtc_state`.
         unsafe {
             bindings::drm_atomic_get_old_crtc_state(self.as_raw(), crtc.as_raw())
                 .as_ref()
@@ -404,7 +408,11 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
     where
         C: ModesettableCrtc + ModeObject<Driver = T>,
     {
-        // SAFETY: DRM either returns NULL or a valid pointer to a `drm_crtc_state`
+        if !core::ptr::eq(self.drm_dev(), crtc.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The CRTC belongs to this device, so its index addresses this transaction.
+        // DRM either returns NULL or a valid pointer to a `drm_crtc_state`.
         let state =
             unsafe { bindings::drm_atomic_get_new_crtc_state(self.as_raw(), crtc.as_raw()) };
 
@@ -486,7 +494,10 @@ impl<T: KmsDriver> AtomicStateComposer<T> {
     where
         C: ModesettableCrtc + ModeObject<Driver = T>,
     {
-        // SAFETY: DRM will only return a valid pointer to a `drm_crtc_state` - or an error.
+        if !core::ptr::eq(self.drm_dev(), crtc.drm_dev()) {
+            return Err(EINVAL);
+        }
+        // SAFETY: The CRTC belongs to this device. DRM returns a valid state pointer or an error.
         let state = unsafe {
             from_err_ptr(bindings::drm_atomic_get_crtc_state(
                 self.as_raw(),
