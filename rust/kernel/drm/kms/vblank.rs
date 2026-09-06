@@ -79,6 +79,15 @@ mod private {
     impl<T: VblankSupport> VblankImpl for T {}
 
     impl<T: DriverCrtc<VblankImpl = PhantomData<T>>> VblankImpl for PhantomData<T> {}
+
+    pub trait VblankDriverCrtc {}
+
+    impl<T, V> VblankDriverCrtc for T
+    where
+        T: DriverCrtc<VblankImpl = V>,
+        V: VblankSupport<Crtc = T>,
+    {
+    }
 }
 
 /// C FFI callbacks for vblank management.
@@ -194,7 +203,7 @@ pub struct VblankTimestamp {
 /// This trait is implemented internally by DRM for any [`DriverCrtc`] implementation that
 /// implements [`VblankSupport`]. It is used to expose hardware-vblank driver exclusive methods and
 /// data to users.
-pub trait VblankDriverCrtc: DriverCrtc {}
+pub trait VblankDriverCrtc: DriverCrtc + private::VblankDriverCrtc {}
 
 impl<T, V> VblankDriverCrtc for T
 where
