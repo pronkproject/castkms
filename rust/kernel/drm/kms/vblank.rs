@@ -304,6 +304,11 @@ impl<'a, T: VblankDriverCrtc> PendingVblankEvent<'a, T> {
     ///
     /// A reference for a different CRTC returns `EINVAL`, leaving the event attached to its
     /// state. The caller may obtain the event again to send it or retry with a matching reference.
+    ///
+    /// Arming does not synchronize display programming with the next interrupt. The driver must
+    /// keep that interrupt from racing the update and this call, so that it reports the intended
+    /// flip. A virtual clock must follow the same ordering. The event lock serializes the native
+    /// event list, not hardware latching or driver timer state.
     pub fn arm(self, vbl_ref: VblankRef<'_, T>) -> Result {
         if !core::ptr::eq(self.crtc, vbl_ref.0) {
             return Err(EINVAL);
