@@ -5,6 +5,7 @@
 //! Most cases keep their devices unregistered. Registration cases publish temporary virtual
 //! DRM devices, with no physical hardware or capture inputs.
 
+mod events;
 mod inspection;
 
 use super::*;
@@ -423,14 +424,18 @@ fn create(
 
 // A fixed valid GEM framebuffer fixture, built with kernel helpers rather than a fake DRM file.
 // Keep the raw setup here; display transactions below use the shared typed configuration API.
-fn framebuffer(dev: &Device<TestDriver>) -> Result<ARef<framebuffer::Framebuffer<TestDriver>>> {
+fn framebuffer<D, O>(dev: &Device<D>) -> Result<ARef<framebuffer::Framebuffer<D>>>
+where
+    D: KmsDriver<Object = gem::shmem::Object<O>>,
+    O: gem::DriverObject<Driver = D, Args = ()>,
+{
     use gem::IntoGEMObject;
     const FUNCS: bindings::drm_framebuffer_funcs = bindings::drm_framebuffer_funcs {
         destroy: Some(bindings::drm_gem_fb_destroy),
         create_handle: Some(bindings::drm_gem_fb_create_handle),
         dirty: None,
     };
-    let object = gem::shmem::Object::<TestObject>::new(dev, 640 * 480 * 4, Default::default(), ())?;
+    let object = gem::shmem::Object::<O>::new(dev, 640 * 480 * 4, Default::default(), ())?;
     let mut fb = KBox::new(bindings::drm_framebuffer::default(), GFP_KERNEL)?;
     fb.dev = dev.as_raw();
     fb.width = 640;
