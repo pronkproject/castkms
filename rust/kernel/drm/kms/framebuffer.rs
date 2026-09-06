@@ -183,7 +183,20 @@ fn validate_object(
     }
     // SAFETY: The object is non-null and live while its framebuffer owns it.
     let object = unsafe { &*object };
-    if object.dev != raw.dev || !object.import_attach.is_null() {
+    if object.dev != raw.dev {
+        return Err(EINVAL);
+    }
+    Ok(())
+}
+
+#[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
+fn validate_local_mapping(
+    raw: &bindings::drm_framebuffer,
+    object: *mut bindings::drm_gem_object,
+) -> Result {
+    validate_object(raw, object)?;
+    // SAFETY: Validation established a live non-null object owned by this framebuffer.
+    if !unsafe { (*object).import_attach }.is_null() {
         return Err(EINVAL);
     }
     Ok(())
@@ -300,11 +313,11 @@ impl<T: KmsDriver> Framebuffer<T> {
         // SAFETY: The framebuffer is initialized via its type invariant.
         let raw = unsafe { &*self.0.get() };
         let object_raw = raw.obj[0];
-        validate_object(raw, object_raw)?;
+        validate_local_mapping(raw, object_raw)?;
 
         // SAFETY:
         // - `T::Object` is exactly `shmem::Object<O>` by the associated-type bound above.
-        // - `validate_object` checked that this is a local, non-imported object owned by this
+        // - `validate_local_mapping` checked that this is a local, non-imported object owned by this
         //   framebuffer's instance of `T`.
         // - The framebuffer keeps its backing object alive for this borrow.
         let object = unsafe { <shmem::Object<O> as gem::IntoGEMObject>::from_raw(object_raw) };
@@ -324,9 +337,9 @@ impl<T: KmsDriver> Framebuffer<T> {
 
     /// Returns the GEM object backing plane 0 of this framebuffer.
     ///
-    /// A driver needs this to hand the buffer to a client, which is done by minting a handle for it
-    /// in that client's file. The same type, ownership, import and device checks as [`Self::vmap`]
-    /// apply, so the returned reference is known to belong to this driver.
+    /// Both local and imported storage belong to the importing device's nominated Rust object
+    /// type. Borrowing the object does not require a CPU mapping, authorize pixel access, or make
+    /// its contents immutable. Mapping eligibility is checked separately by [`Self::vmap`].
     #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
     pub fn object<O>(&self) -> Result<&shmem::Object<O>>
     where
@@ -338,8 +351,9 @@ impl<T: KmsDriver> Framebuffer<T> {
         let object_raw = raw.obj[0];
         validate_object(raw, object_raw)?;
 
-        // SAFETY: `validate_object` established that `object_raw` is a live object of this
-        // driver's type, and it is owned by the framebuffer for at least this borrow.
+        // SAFETY: The framebuffer owns a live object on this device. The associated-type bound
+        // identifies its nominated wrapper; both local and foreign allocation construct that
+        // complete Rust type before publication. The framebuffer retains it for this borrow.
         Ok(unsafe { <shmem::Object<O> as gem::IntoGEMObject>::from_raw(object_raw) })
     }
 
@@ -357,7 +371,7 @@ impl<T: KmsDriver> Framebuffer<T> {
         // SAFETY: The framebuffer is initialized via its type invariant.
         let raw = unsafe { &*self.0.get() };
         let object_raw = raw.obj[0];
-        validate_object(raw, object_raw)?;
+        validate_local_mapping(raw, object_raw)?;
 
         // SAFETY: The same type, ownership, import, and device checks as `vmap` hold here. The
         // returned VMap takes its own object reference before this framebuffer borrow can end.
@@ -420,14 +434,14 @@ mod tests {
     }
 
     #[test]
-    fn imported_object_is_rejected() {
+    fn imported_object_is_rejected_for_mapping() {
         let mut fb = linear_fb(4, 2, 16, 0);
         let dev = ptr::NonNull::<bindings::drm_device>::dangling().as_ptr();
         fb.dev = dev;
         let mut object = bindings::drm_gem_object::default();
         object.dev = dev;
         object.import_attach = ptr::NonNull::<bindings::dma_buf_attachment>::dangling().as_ptr();
-        assert!(validate_object(&fb, &raw mut object).is_err());
+        assert!(validate_local_mapping(&fb, &raw mut object).is_err());
     }
 
     #[test]
