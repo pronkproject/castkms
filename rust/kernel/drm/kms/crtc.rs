@@ -1211,6 +1211,21 @@ impl<'a, T: DriverCrtc> CrtcAtomicCommit<'a, T> {
         &'a CrtcState<T::State>,
         use <'a, T>
     );
+
+    /// Inspect the old and new states without giving up pending-event handling.
+    ///
+    /// Both private payloads are immutable after publication. Event operations change only the
+    /// separately owned event field, which these state views do not expose.
+    pub fn old_new_state(&self) -> (&'a CrtcState<T::State>, &'a CrtcState<T::State>) {
+        // SAFETY: The commit token guarantees that both states belong to this callback and
+        // remain alive until it returns. The reader supplies no mutable private-state access.
+        unsafe {
+            (
+                self.state.get_old_crtc_state(self.crtc).unwrap_unchecked(),
+                self.state.get_new_crtc_state(self.crtc).unwrap_unchecked(),
+            )
+        }
+    }
 }
 
 impl<T: VblankDriverCrtc> CrtcAtomicCommit<'_, T> {

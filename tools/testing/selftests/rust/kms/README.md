@@ -108,7 +108,9 @@ driver type and expect a compile error.
 Shared and exclusive views of unpublished atomic state cannot coexist. If one
 piece of code is allowed to change the next state, another cannot also hold a
 shared view of that same next state, including when the second attempt tries
-the reverse lock order or re-enters an iterator.
+the reverse lock order or re-enters an iterator. After a commit, event
+handling may still look at old and new CRTC state, but it may not change the
+driver's private data through that path.
 
 An atomic commit walks through named steps, such as programming the mode and
 then updating planes. Proof that a step happened cannot be returned from the
