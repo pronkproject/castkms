@@ -132,10 +132,13 @@ those two methods are `Registration::device()` and
 
 Kernel-initiated atomic updates, the kind that do not come from a userspace
 ioctl (a device request made through an open file), also require the live
-registered view. The callback may borrow a transaction, but it cannot keep
-a handle to the next state after the callback returns. The helper that edits
-the configuration cannot be sent to another task even when the driver type
-itself can. A shareable device reference is not a substitute.
+registered view. The callback may borrow a
+transaction, but it cannot keep a handle to the next state after the callback
+returns. Programming the primary plane and connector routing needs exclusive
+access to the helper that edits that configuration, so outstanding state
+handles cannot race it. That configuration helper cannot be sent to another
+task even when the driver type itself can. A shareable device reference is
+not a substitute.
 
 These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
@@ -200,6 +203,20 @@ objects from the wrong place, without a userspace compositor in the loop.
 A rejected update copies CRTC state, aborts, and retries with a new
 transaction. The error must propagate, the already published state must stay
 put, and the failed transaction's locks must be released.
+
+### Selecting an image for a virtual output
+
+The fake monitor must select an image, replace it, and agree with the kernel
+about the mode timings. Those checks inspect display state; they do not render
+or visually compare pixels.
+
+The primary modeset case allocates a GEM framebuffer, meaning a pixel buffer
+backed by the kernel's GPU buffer objects, programs a 640x480 image for the
+controller to send to the fake display, observes that the published
+framebuffer is the one just set, and disables the output before teardown.
+Enable and disable callback counts show that the helper drove the CRTC's
+software callbacks. The test driver runs the
+Rust work that happens after the update is accepted, including a fake vblank.
 
 Object destruction counters are not a leak detector. Partial setup rejection
 is not allocator fault injection. Delayed GPU-reader retirement, suspend,
