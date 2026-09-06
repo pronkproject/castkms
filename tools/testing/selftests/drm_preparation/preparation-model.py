@@ -8,6 +8,7 @@ revocation of GPU imports or treats worker death as native completion.
 """
 
 from dataclasses import dataclass, field
+from itertools import permutations
 import unittest
 
 
@@ -371,6 +372,54 @@ class PreparationTests(unittest.TestCase):
                 frames += 1
             self.assertEqual(frames, 60)
             self.assertTrue(all(owner is None for owner in model.staging.values()))
+
+    def test_serialized_close_accept_release_interleavings(self):
+        # Enumerate a bounded event set, not every possible execution. An event
+        # whose input object does not yet exist is an unavailable action.
+        events = ("submit", "release", "prepare", "ready", "accept", "close", "signal", "complete")
+        accepted = retired = ready_observed = 0
+        for schedule in permutations(events):
+            model = Model()
+            old = model.current[0]
+            claim = self.claimed(model)
+            fence = ticket = commit = None
+            for event in schedule:
+                try:
+                    if event == "submit":
+                        fence = model.submit_source(claim)
+                    elif event == "release":
+                        model.release(claim, model.claims[claim].submitted)
+                    elif event == "prepare":
+                        ticket = model.prepare([0])
+                    elif event == "ready" and ticket is not None:
+                        model.ready(ticket)
+                    elif event == "accept" and ticket is not None:
+                        commit = model.accept(ticket)
+                        accepted += 1
+                    elif event == "close" and ticket is not None:
+                        model.close(ticket)
+                    elif event == "signal" and fence is not None:
+                        model.signal(fence)
+                    elif event == "complete" and commit is not None:
+                        model.complete_commit(commit)
+                        retired += 1
+                except Rejected:
+                    pass  # An ordinary precondition failure changes no ownership.
+                scene = model.scenes[old]
+                if commit is not None and not scene.retired:
+                    self.assertIn(("commit", commit), scene.seals, schedule)
+                if scene.retired:
+                    self.assertFalse(scene.claims, schedule)
+                    self.assertTrue(all(model.native[f] is not None
+                                        for f in scene.fences), schedule)
+                if ticket is not None and model.tickets[ticket].state == "READY":
+                    ready_observed += 1
+                    self.assertFalse(scene.claims, schedule)
+                    self.assertIn(("ticket", ticket), scene.seals, schedule)
+        # A suite consisting exclusively of rejected operations is not useful.
+        self.assertGreater(accepted, 0)
+        self.assertGreater(retired, 0)
+        self.assertGreater(ready_observed, 0)
 
 
 if __name__ == "__main__":
