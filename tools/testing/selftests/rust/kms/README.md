@@ -173,6 +173,14 @@ so reading a cached mode or cached duration through that lock is rejected. A
 timer driver has to copy validated timings into storage it actually
 synchronizes.
 
+Framebuffer handles keep the DRM device alive because
+destroying those buffers still needs the device. A native C reference does
+not, by itself, retain the Rust device wrapper used by those methods. The
+compiler rejects converting to an owned reference that forgets that pairing.
+These checks are about allocation lifetime. They do not prove that a producer
+finished writing, that pixels are immutable, or that a later capture read is
+authorized.
+
 These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
 uphold. They do not test runtime device identity, allocator failure, reset,
@@ -291,6 +299,17 @@ retired buffer must disappear once disable releases the last display
 reference. This path completes immediately through the fake vblank. It is not
 a delayed display event, and it is not a test of a GPU still reading the old
 buffer.
+
+### Keeping buffers and devices alive together
+
+A pixel buffer is useless if destroying it needs a device that already went
+away, and a device is a leak if a buffer keeps it alive forever.
+
+A cloned framebuffer handle must keep the mode objects alive after the
+caller's device handle is dropped, then release every piece of driver-private
+state when that last handle goes away. The native framebuffer reference does
+not retain the DRM device; the Rust owned handle retains both and releases the
+framebuffer first.
 
 ### Page flips and vblank
 

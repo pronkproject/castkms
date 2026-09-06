@@ -442,7 +442,7 @@ fn create(
 
 // A fixed valid GEM framebuffer fixture, built with kernel helpers rather than a fake DRM file.
 // Keep the raw setup here; display transactions below use the shared typed configuration API.
-fn framebuffer<D, O>(dev: &Device<D>) -> Result<ARef<framebuffer::Framebuffer<D>>>
+fn framebuffer<D, O>(dev: &Device<D>) -> Result<framebuffer::FramebufferRef<D>>
 where
     D: KmsDriver<Object = gem::shmem::Object<O>>,
     O: gem::DriverObject<Driver = D, Args = ()>,
@@ -468,11 +468,14 @@ where
     crate::error::to_result(unsafe {
         bindings::drm_framebuffer_init(dev.as_raw(), &mut *fb, &FUNCS)
     })?;
-    // Transfer the GEM reference to drm_gem_fb_destroy, and the framebuffer reference to ARef.
+    // Transfer the GEM reference to drm_gem_fb_destroy.
     let _ = ARef::into_raw(object);
-    // SAFETY: The successful initializer gave us one owned framebuffer reference. Its C destroy
-    // function releases the GEM reference and the kmalloc-compatible KBox allocation.
-    Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(KBox::into_raw(fb).cast())) })
+    let raw = KBox::into_raw(fb);
+    // SAFETY: The initializer gave us a live framebuffer, with `dev` borrowed throughout.
+    let owned = unsafe { framebuffer::Framebuffer::<D>::from_raw(raw) }.to_owned_ref();
+    // SAFETY: Drop the initial native reference; `owned` now retains the framebuffer and device.
+    unsafe { bindings::drm_framebuffer_put(raw) };
+    Ok(owned)
 }
 
 fn mode() -> Result<modes::DisplayMode> {
@@ -842,6 +845,29 @@ mod cases {
         assert_eq!(counts.enables.load(Ordering::Relaxed), 1);
         assert_eq!(counts.disables.load(Ordering::Relaxed), 1);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn owned_framebuffer_retains_device() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-framebuffer-owner", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let fb = framebuffer(&drm)?;
+        let copy = fb.clone();
+        drop(fb);
+        drop(drm);
+        // No KMS state references the framebuffer. The remaining owned copy must retain both
+        // allocations, including the device's mode objects, until its destructor has run.
+        let objects_while_owned = counts.objects.load(Ordering::Relaxed);
+        let dimensions = (copy.width(), copy.height());
+        drop(copy);
+        assert_eq!(objects_while_owned, 4);
+        assert_eq!(dimensions, (640, 480));
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
         Ok(())
     }
 
