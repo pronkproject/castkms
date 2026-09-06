@@ -350,6 +350,7 @@ impl KmsDriver for TestDriver {
             max_cursor: (64, 64),
             preferred_depth: 24,
             preferred_fourcc: Some(fourcc::XRGB8888),
+            enable_default_client: false,
         })
     }
 
