@@ -112,11 +112,11 @@ pub trait DriverPlane: Send + Sync + Sized {
     /// The generated C vtable for this [`DriverPlane`] implementation.
     const OPS: &'static DriverPlaneOps = &DriverPlaneOps {
         funcs: bindings::drm_plane_funcs {
-            atomic_create_state: None,
+            atomic_create_state: Some(atomic_create_state_callback::<Self::State>),
             update_plane: Some(bindings::drm_atomic_helper_update_plane),
             disable_plane: Some(bindings::drm_atomic_helper_disable_plane),
             destroy: Some(plane_destroy_callback::<Self>),
-            reset: Some(plane_reset_callback::<Self>),
+            reset: None,
             set_property: None,
             atomic_duplicate_state: Some(atomic_duplicate_state_callback::<Self::State>),
             atomic_destroy_state: Some(atomic_destroy_state_callback::<Self::State>),
@@ -1366,31 +1366,18 @@ unsafe extern "C" fn atomic_destroy_state_callback<T: DriverPlaneState>(
     drop(unsafe { KBox::from_raw(state.cast::<PlaneState<T>>()) });
 }
 
-unsafe extern "C" fn plane_reset_callback<T: DriverPlane>(plane: *mut bindings::drm_plane) {
-    // SAFETY: DRM guarantees that `state` points to a valid instance of `drm_plane_state`
-    let state = unsafe { (*plane).state };
-    if !state.is_null() {
-        // SAFETY:
-        // - We're guaranteed `plane` is `Plane<T>` via type invariants
-        // - We're guaranteed `state` is `PlaneState<T>` via type invariants.
-        unsafe { atomic_destroy_state_callback::<T::State>(plane, state) }
+unsafe extern "C" fn atomic_create_state_callback<T: DriverPlaneState>(
+    plane: *mut bindings::drm_plane,
+) -> *mut bindings::drm_plane_state {
+    let new = match KBox::new(PlaneState::<T>::default(), GFP_KERNEL) {
+        Ok(new) => KBox::into_raw(new).cast(),
+        Err(err) => return Error::from(err).to_ptr(),
+    };
 
-        // SAFETY: No special requirements here, DRM expects this to be NULL
-        unsafe {
-            (*plane).state = null_mut();
-        }
-    }
-
-    // Unfortunately, this is the best we can do at the moment as this FFI callback was mistakenly
-    // presumed to be infallible :(
-    let new =
-        KBox::new(PlaneState::<T::State>::default(), GFP_KERNEL).expect("Blame the API, sorry!");
-
-    // DRM takes ownership of the state from here, resets it, and then assigns it to the plane
-    // SAFETY:
-    // - DRM guarantees that `plane` points to a valid instance of `drm_plane`.
-    // - The cast to `drm_plane_state` is safe via `PlaneState`s type invariants.
-    unsafe { bindings::__drm_atomic_helper_plane_reset(plane, KBox::into_raw(new).cast()) };
+    // SAFETY: `new` is an owned PlaneState<T> allocation and DRM supplies its valid parent plane.
+    // Initialize defaults without publishing the state; the caller owns that transition.
+    unsafe { bindings::__drm_atomic_helper_plane_state_init(new, plane) };
+    new
 }
 
 unsafe extern "C" fn atomic_update_callback<T: DriverPlane>(
