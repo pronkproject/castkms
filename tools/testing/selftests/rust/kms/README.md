@@ -92,6 +92,11 @@ object type. Turning a generic CRTC handle into the driver's own mutable view
 follows the same rule: a matching type compiles, another driver's type does
 not. The compiler, not a runtime panic, is what rejects a mismatch.
 
+The C callback tables generated for those objects are not interchangeable. A
+plane implementation cannot borrow another plane's table, and likewise for
+CRTCs, connectors, and encoders. Vblank callbacks come only from the
+framework's supported path or from the framework's explicit disabled path.
+
 Shared and exclusive views of unpublished atomic state cannot coexist. If one
 piece of code is allowed to change the next state, another cannot also hold a
 shared view of that same next state, including when the second attempt tries
