@@ -469,7 +469,8 @@ where
         bindings::drm_framebuffer_init(dev.as_raw(), &mut *fb, &FUNCS)
     })?;
     // Transfer the GEM reference to drm_gem_fb_destroy.
-    let _ = ARef::into_raw(object);
+    // SAFETY: The framebuffer's native users retain `dev`; Rust handles pair its lifetime too.
+    let _ = unsafe { object.into_native() };
     let raw = KBox::into_raw(fb);
     // SAFETY: The initializer gave us a live framebuffer, with `dev` borrowed throughout.
     let owned = unsafe { framebuffer::Framebuffer::<D>::from_raw(raw) }.to_owned_ref();
@@ -844,6 +845,38 @@ mod cases {
         assert_eq!(plane_updates, 1);
         assert_eq!(counts.enables.load(Ordering::Relaxed), 1);
         assert_eq!(counts.disables.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn owned_shmem_retains_device() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-shmem-owner", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let object = gem::shmem::Object::<TestObject>::new(&drm, 4096, Default::default(), ())?;
+        let copy = object.clone();
+        drop(object);
+        drop(drm);
+        let objects_while_owned = counts.objects.load(Ordering::Relaxed);
+        drop(copy);
+        assert_eq!(objects_while_owned, 4);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn owned_shmem_mapping_retains_device() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-shmem-map-owner", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let object = gem::shmem::Object::<TestObject>::new(&drm, 4096, Default::default(), ())?;
+        let mapping = object.owned_vmap::<4096>()?;
+        drop(object);
+        drop(drm);
+        let objects_while_mapped = counts.objects.load(Ordering::Relaxed);
+        drop(mapping);
+        assert_eq!(objects_while_mapped, 4);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }

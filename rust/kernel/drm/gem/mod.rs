@@ -19,10 +19,7 @@ use crate::{
     },
     error::to_result,
     prelude::*,
-    sync::aref::{
-        ARef,
-        AlwaysRefCounted, //
-    },
+    sync::aref::ARef,
     types::Opaque,
 };
 use core::{
@@ -33,43 +30,6 @@ use core::{
 
 #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 pub mod shmem;
-
-/// A macro for implementing [`AlwaysRefCounted`] for any GEM object type.
-///
-/// Since all GEM objects use the same refcounting scheme.
-#[macro_export]
-macro_rules! impl_aref_for_gem_obj {
-    (
-        impl $( <$( $tparam_id:ident ),+> )? for $type:ty
-        $(
-            where
-                $( $bind_param:path : $bind_trait:path ),+
-        )?
-    ) => {
-        // SAFETY: All GEM objects are refcounted.
-        unsafe impl $( <$( $tparam_id ),+> )? $crate::sync::aref::AlwaysRefCounted for $type
-        where
-            Self: IntoGEMObject,
-            $( $( $bind_param : $bind_trait ),+ )?
-        {
-            fn inc_ref(&self) {
-                // SAFETY: The existence of a shared reference guarantees that the refcount is
-                // non-zero.
-                unsafe { bindings::drm_gem_object_get(self.as_raw()) };
-            }
-
-            unsafe fn dec_ref(obj: core::ptr::NonNull<Self>) {
-                // SAFETY: `obj` is a valid pointer to an `Object<T>`.
-                let obj = unsafe { obj.as_ref() }.as_raw();
-
-                // SAFETY: The safety requirements guarantee that the refcount is non-zero.
-                unsafe { bindings::drm_gem_object_put(obj) };
-            }
-        }
-    };
-}
-#[cfg_attr(not(CONFIG_RUST_DRM_GEM_SHMEM_HELPER), allow(unused))]
-pub(crate) use impl_aref_for_gem_obj;
 
 /// An owned GEM reference retaining the object's DRM device until after object release.
 ///

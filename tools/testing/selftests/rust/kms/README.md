@@ -62,7 +62,10 @@ illegal operation. It is just a broken test environment.
 ### How to run them
 
 Build an x86-64 kernel with Rust and DRM enabled, using the kernel's documented
-Rust toolchain. After configuring an out-of-tree build:
+Rust toolchain. The full set of fixtures also uses the Rust shared-memory GEM
+helper, selected by a consuming driver; verify
+`CONFIG_RUST_DRM_GEM_SHMEM_HELPER=y` in the generated configuration. After
+configuring an out-of-tree build:
 
 ```sh
 make O=/path/to/build LLVM=1 rustavailable
@@ -173,13 +176,13 @@ so reading a cached mode or cached duration through that lock is rejected. A
 timer driver has to copy validated timings into storage it actually
 synchronizes.
 
-Framebuffer handles and GEM buffer handles keep the DRM device alive because
-destroying those buffers still needs the device. A native C reference does
-not, by itself, retain the Rust device wrapper used by those methods. The
-compiler rejects converting to an owned reference that forgets that pairing.
-These checks are about allocation lifetime. They do not prove that a producer
-finished writing, that pixels are immutable, or that a later capture read is
-authorized.
+Framebuffer handles, GEM buffer handles, and shared-memory buffer handles are
+allowed to keep the DRM device alive because destroying those buffers still
+needs the device. A native C reference does not, by itself, retain the Rust
+device wrapper used by those methods. The compiler rejects converting to an
+owned reference that forgets that pairing. These checks are about allocation
+lifetime. They do not prove that a producer finished writing, that pixels are
+immutable, or that a later capture read is authorized.
 
 These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
@@ -311,9 +314,11 @@ state when that last handle goes away. The native framebuffer reference does
 not retain the DRM device; the Rust owned handle retains both and releases the
 framebuffer first.
 
-A compiler case checks the ownership interface for base GEM buffers.
-It accepts the handle that retains both buffer and device and rejects an
-unpaired reference. It does not allocate on physical graphics hardware.
+Compiler cases check the ownership interface for both base GEM buffers and
+the shared-memory helper. Runtime cases exercise shared-memory storage.
+A mapping can be the last owner: dropping the original buffer and
+device handles must keep the device alive until unmap and buffer release
+finish. A borrowed mapping still cannot outlive the borrowed buffer.
 
 ### Page flips and vblank
 
