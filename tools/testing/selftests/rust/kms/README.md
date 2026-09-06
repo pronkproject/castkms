@@ -325,6 +325,10 @@ ordinary delayed-completion path. Only the source output is scanning out.
 This is not coverage of two outputs showing images at once, and it is not a
 test of concurrent updates to the native event list.
 
+Once the source event is armed correctly, a vblank on the other CRTC must not
+consume it or release the source's old framebuffer. Only a later vblank on the
+source CRTC may retire that image.
+
 These events are internal completion objects. They are not the page-flip
 events userspace reads from a DRM file. The schedules do not claim to cover
 arbitrary interrupt races, a GPU still reading the old buffer, concurrent
