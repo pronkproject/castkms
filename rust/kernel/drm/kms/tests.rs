@@ -16,6 +16,9 @@ use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 struct Counts {
     objects: AtomicU32,
     setup_failures: AtomicU32,
+    plane_updates: AtomicU32,
+    enables: AtomicU32,
+    disables: AtomicU32,
 }
 
 // No device reference: keeping a mode object alive must not create a device ownership cycle.
@@ -130,6 +133,25 @@ impl plane::DriverPlane for TestPlane {
             life: Lifetime::new(&dev.counts)
         })
     }
+
+    fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
+        use plane::RawPlaneState;
+        let (state, mut new) = check.take_state_new_state();
+        if let Some(crtc) = new.crtc() {
+            let crtc_state = state.add_crtc_state(crtc)?;
+            new.atomic_helper_check(&crtc_state, false, false)?;
+        }
+        Ok(())
+    }
+
+    fn atomic_update(commit: plane::PlaneAtomicCommit<'_, Self>) {
+        commit
+            .plane()
+            .life
+            .0
+            .plane_updates
+            .fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 #[vtable]
@@ -143,6 +165,19 @@ impl crtc::DriverCrtc for TestCrtc {
         try_pin_init!(Self {
             life: Lifetime::new(&dev.counts)
         })
+    }
+
+    fn atomic_enable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        commit.crtc().life.0.enables.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn atomic_disable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        commit
+            .crtc()
+            .life
+            .0
+            .disables
+            .fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -239,6 +274,18 @@ impl KmsDriver for TestDriver {
         dev.connector.store(connector.as_raw(), Ordering::Relaxed);
         Ok(())
     }
+
+    fn atomic_commit_tail<'a>(
+        mut tail: atomic::AtomicCommitTail<'a, Self>,
+        modesets: atomic::ModesetsReadyToken<'a, Self>,
+        planes: atomic::PlaneUpdatesReadyToken<'a, Self>,
+    ) -> atomic::CommittedAtomicState<'a, Self> {
+        let disabled = tail.commit_modeset_disables(modesets);
+        let planes = tail.commit_planes(planes, atomic::PlaneCommitFlags::default());
+        let enabled = tail.commit_modeset_enables(disabled);
+        tail.fake_vblank();
+        tail.commit_hw_done(enabled, planes)
+    }
 }
 
 fn create(
@@ -260,6 +307,52 @@ fn create(
     // hook as normal registration without publishing a DRM minor or enabling external access.
     unsafe { <TestDriver as private::KmsImpl>::setup_kms(&drm) }?;
     Ok(drm)
+}
+
+// A fixed valid GEM framebuffer fixture, built with kernel helpers rather than a fake DRM file.
+// Keep the raw setup here; display transactions below use the shared typed configuration API.
+fn framebuffer(dev: &Device<TestDriver>) -> Result<ARef<framebuffer::Framebuffer<TestDriver>>> {
+    use gem::IntoGEMObject;
+    const FUNCS: bindings::drm_framebuffer_funcs = bindings::drm_framebuffer_funcs {
+        destroy: Some(bindings::drm_gem_fb_destroy),
+        create_handle: Some(bindings::drm_gem_fb_create_handle),
+        dirty: None,
+    };
+    let object = gem::shmem::Object::<TestObject>::new(dev, 640 * 480 * 4, Default::default(), ())?;
+    let mut fb = KBox::new(bindings::drm_framebuffer::default(), GFP_KERNEL)?;
+    fb.dev = dev.as_raw();
+    fb.width = 640;
+    fb.height = 480;
+    fb.pitches[0] = 640 * 4;
+    fb.modifier = fourcc::FORMAT_MOD_LINEAR;
+    // SAFETY: The known packed format has one four-byte plane, matching the allocation above.
+    fb.format = unsafe { bindings::drm_format_info(fourcc::XRGB8888) };
+    fb.obj[0] = object.as_raw();
+    // SAFETY: All metadata and the owned GEM reference are initialized before publication.
+    // Failure leaves both Rust allocations owned locally for normal unwind.
+    crate::error::to_result(unsafe {
+        bindings::drm_framebuffer_init(dev.as_raw(), &mut *fb, &FUNCS)
+    })?;
+    // Transfer the GEM reference to drm_gem_fb_destroy, and the framebuffer reference to ARef.
+    let _ = ARef::into_raw(object);
+    // SAFETY: The successful initializer gave us one owned framebuffer reference. Its C destroy
+    // function releases the GEM reference and the kmalloc-compatible KBox allocation.
+    Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(KBox::into_raw(fb).cast())) })
+}
+
+fn mode() -> Result<modes::DisplayMode> {
+    modes::DisplayMode::from_timings(modes::ModeTimings {
+        clock_khz: 25175,
+        hdisplay: 640,
+        hsync_start: 656,
+        hsync_end: 752,
+        htotal: 800,
+        vdisplay: 480,
+        vsync_start: 490,
+        vsync_end: 492,
+        vtotal: 525,
+        flags: modes::ModeFlags::NHSYNC | modes::ModeFlags::NVSYNC,
+    })
 }
 
 #[kunit_tests(rust_drm_kms)]
@@ -446,6 +539,50 @@ mod cases {
         assert!(duplicated);
         assert_eq!(attempts, 2);
         assert_eq!(initial, final_state);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn atomic_primary_modeset() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-modeset", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let fb = framebuffer(&drm)?;
+        let mode = mode()?;
+        // SAFETY: The fully initialized, unregistered device owns these objects exclusively.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        let connector = unsafe {
+            <connector::Connector<TestConnector> as connector::AsRawConnector>::from_raw(
+                drm.connector.load(Ordering::Relaxed),
+            )
+        };
+        let scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &fb,
+            connectors: &[connector],
+            position: (0, 0),
+        };
+        // SAFETY: Initial states exist; setup, registration and teardown are excluded.
+        unsafe { atomic::run_update(&drm, |state| state.set_crtc_config(crtc, Some(&scanout))) }?;
+        // SAFETY: The blocking update completed, and no other task modifies this device.
+        let (active, selected_fb) = unsafe {
+            (
+                (*(*crtc.as_raw()).state).active,
+                (*(*drm.plane.load(Ordering::Relaxed)).state).fb,
+            )
+        };
+        let matches = selected_fb == fb.as_raw();
+        let plane_updates = counts.plane_updates.load(Ordering::Relaxed);
+        // SAFETY: Same exclusive initialized-device lifetime as the modeset above.
+        unsafe { atomic::run_update(&drm, |state| state.set_crtc_config(crtc, None)) }?;
+        drop(fb);
+        drop(drm);
+        assert!(active);
+        assert!(matches);
+        assert_eq!(plane_updates, 1);
+        assert_eq!(counts.enables.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.disables.load(Ordering::Relaxed), 1);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
