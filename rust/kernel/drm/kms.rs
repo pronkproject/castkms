@@ -418,6 +418,14 @@ impl<T: KmsDriver> Device<T, Registered> {
         // INVARIANT: The guard owns this device's mode configuration mutex for its lifetime.
         ModeConfigGuard(mutex.lock(), PhantomData)
     }
+
+    /// Return the number of registered [`Crtc`](crtc::Crtc) objects on this [`Device`].
+    #[inline]
+    pub fn num_crtcs(&self) -> u32 {
+        // SAFETY: Registration completed static object creation. The count is nonnegative and
+        // does not change while the registered device remains alive.
+        unsafe { (*self.as_raw()).mode_config.num_crtc as u32 }
+    }
 }
 
 impl<T: KmsDriver> UnregisteredKmsDevice<'_, T> {
@@ -429,17 +437,12 @@ impl<T: KmsDriver> UnregisteredKmsDevice<'_, T> {
         // INVARIANT: The guard owns this device's mode configuration mutex for its lifetime.
         ModeConfigGuard(mutex.lock(), PhantomData)
     }
-}
 
-impl<T: KmsDriver> Device<T> {
-    /// Return the number of registered [`Crtc`](crtc::Crtc) objects on this [`Device`].
+    /// Return the number of CRTCs created so far during single-threaded setup.
     #[inline]
     pub fn num_crtcs(&self) -> u32 {
-        // SAFETY:
-        // * This can only be modified during the single-threaded context before registration, so
-        //   this is safe
-        // * num_crtc could be >= 0, but no less - so casting to u32 is fine (and better to prevent
-        //   errors)
+        // SAFETY: The setup view confines object creation to this thread. The initialized count
+        // is nonnegative, and no other thread can change it.
         unsafe { (*self.as_raw()).mode_config.num_crtc as u32 }
     }
 }

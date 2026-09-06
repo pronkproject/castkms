@@ -347,7 +347,10 @@ mod cases {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-state", None)?;
         let drm = create(parent.as_ref(), &counts, false)?;
-        assert_eq!(drm.num_crtcs(), 1);
+        // SAFETY: Successful setup initialized the mode configuration; the device is still
+        // unregistered and no other thread accesses its objects.
+        let dev = unsafe { UnregisteredKmsDevice::new(&drm) };
+        assert_eq!(dev.num_crtcs(), 1);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 4);
         let plane = drm.plane.load(Ordering::Relaxed);
         let crtc = drm.crtc.load(Ordering::Relaxed);
@@ -438,8 +441,10 @@ mod cases {
             .err(),
             Some(EINVAL)
         );
-        assert_eq!(a.num_crtcs(), 1);
-        assert_eq!(b.num_crtcs(), 1);
+        // SAFETY: b has completed setup, remains unregistered and is only accessed here.
+        let dev_b = unsafe { UnregisteredKmsDevice::new(&b) };
+        assert_eq!(dev_a.num_crtcs(), 1);
+        assert_eq!(dev_b.num_crtcs(), 1);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 8);
         drop(a);
         drop(b);
@@ -475,8 +480,8 @@ mod cases {
                 .err(),
             Some(EINVAL)
         );
-        assert_eq!(a.num_crtcs(), 1);
-        assert_eq!(b.num_crtcs(), 1);
+        assert_eq!(dev_a.num_crtcs(), 1);
+        assert_eq!(dev_b.num_crtcs(), 1);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 9);
         drop(a);
         drop(b);
