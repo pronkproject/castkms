@@ -1523,6 +1523,133 @@ mod cases {
     }
 
     #[test]
+    fn plane_check_rejects_another_crtc() -> Result {
+        use connector::AsRawConnector;
+        use plane::{AsRawPlaneStatePrivate, RawPlaneState};
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-plane-check-crtc", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: The device remains unregistered and this task exclusively extends its setup.
+        let setup = unsafe { UnregisteredKmsDevice::new(&dev) };
+        let extra_plane = plane::UnregisteredPlane::<TestPlane>::new(
+            &setup,
+            0,
+            &[fourcc::XRGB8888],
+            Some(&[fourcc::FORMAT_MOD_LINEAR]),
+            plane::Type::Primary,
+            None,
+            (),
+        )?;
+        let extra_crtc = crtc::UnregisteredCrtc::<TestCrtc>::new(
+            &setup,
+            extra_plane,
+            None::<&plane::UnregisteredPlane<TestPlane>>,
+            None,
+            (),
+        )?;
+        // SAFETY: Complete only the newly added objects' initial states before any transaction.
+        // The native helper skips the existing objects whose initial states already exist.
+        crate::error::to_result(unsafe {
+            bindings::drm_mode_config_create_initial_state(dev.as_raw())
+        })?;
+        // SAFETY: Setup is complete and all object references remain within the device lifetime.
+        let extra_crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(extra_crtc.as_raw()) };
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(dev.crtc.load(Ordering::Relaxed)) };
+        let plane =
+            unsafe { plane::Plane::<TestPlane>::from_raw(dev.plane.load(Ordering::Relaxed)) };
+        let connector = unsafe {
+            connector::Connector::<TestConnector>::from_raw(dev.connector.load(Ordering::Relaxed))
+        };
+        let fb = framebuffer(&dev)?;
+        let mode = mode()?;
+        let scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &fb,
+            connectors: &[connector],
+            position: (0, 0),
+        };
+        let mut derived_unchanged = true;
+        // SAFETY: No further setup, registration or teardown occurs during either transaction.
+        let rejected = unsafe {
+            atomic::run_check(&dev, |mut state| {
+                state.as_mut().set_crtc_config(crtc, Some(&scanout))?;
+                let mut plane = state.add_plane_state(plane)?;
+                let wrong = state.add_crtc_state(extra_crtc)?;
+                let before = (plane.as_raw().src.x2, plane.as_raw().dst.x2);
+                let result = plane.atomic_helper_check(&wrong, false, false);
+                derived_unchanged &= before == (plane.as_raw().src.x2, plane.as_raw().dst.x2);
+                result
+            })
+        };
+        let accepted = unsafe {
+            atomic::run_check(&dev, |mut state| {
+                state.as_mut().set_crtc_config(crtc, Some(&scanout))?;
+                let mut plane = state.add_plane_state(plane)?;
+                let matching = state.add_crtc_state(crtc)?;
+                plane.atomic_helper_check(&matching, false, false)
+            })
+        };
+        drop(fb);
+        drop(dev);
+        assert_eq!(rejected, Err(EINVAL));
+        assert_eq!(accepted, Ok(()));
+        assert!(derived_unchanged);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn plane_check_rejects_another_transaction() -> Result {
+        use plane::RawPlaneState;
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-plane-check-state", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: Setup completed and the device owns these objects until both checks finish.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(dev.crtc.load(Ordering::Relaxed)) };
+        let plane =
+            unsafe { plane::Plane::<TestPlane>::from_raw(dev.plane.load(Ordering::Relaxed)) };
+        // SAFETY: The device remains unregistered; no setup or teardown overlaps these checks.
+        let rejected = unsafe {
+            atomic::run_check(&dev, |state| {
+                let mut plane = state.add_plane_state(plane)?;
+                let raw =
+                    NonNull::new(bindings::drm_atomic_commit_alloc(dev.as_raw())).ok_or(ENOMEM)?;
+                // Use the same task's acquire context, not a nested lock-acquisition context.
+                // The second transaction has separately allocated private state and is never
+                // committed. It is dropped locally before the outer callback or context ends.
+                (*raw.as_ptr()).acquire_ctx = (*state.as_raw()).acquire_ctx;
+                let other = atomic::AtomicStateComposer::<TestDriver>::new(raw);
+                let result = {
+                    let other_crtc = other.add_crtc_state(crtc)?;
+                    plane.atomic_helper_check(&other_crtc, false, false)
+                };
+                (*raw.as_ptr()).acquire_ctx = ptr::null_mut();
+                drop(other);
+                result
+            })
+        };
+        // SAFETY: The same setup exclusion holds; the disabled plane and CRTC now share state.
+        let accepted = unsafe {
+            atomic::run_check(&dev, |state| {
+                let mut plane = state.add_plane_state(plane)?;
+                let matching = state.add_crtc_state(crtc)?;
+                plane.atomic_helper_check(&matching, false, false)
+            })
+        };
+        drop(dev);
+        assert_eq!(rejected, Err(EINVAL));
+        assert_eq!(accepted, Ok(()));
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn partial_object_setup_unwinds() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
