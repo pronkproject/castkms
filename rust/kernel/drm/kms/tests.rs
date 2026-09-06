@@ -649,6 +649,56 @@ mod cases {
     }
 
     #[test]
+    fn atomic_check_does_not_publish() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-check-only", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let fb = framebuffer(&drm)?;
+        let mode = mode()?;
+        // SAFETY: The initialized device owns these objects and has no concurrent updates.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        let connector = unsafe {
+            <connector::Connector<TestConnector> as connector::AsRawConnector>::from_raw(
+                drm.connector.load(Ordering::Relaxed),
+            )
+        };
+        let initial = unsafe { (*crtc.as_raw()).state };
+        let scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &fb,
+            connectors: &[connector],
+            position: (0, 0),
+        };
+        // SAFETY: Full setup completed; registration, object creation and teardown are excluded.
+        unsafe { atomic::run_check(&drm, |state| state.set_crtc_config(crtc, Some(&scanout))) }?;
+        // SAFETY: Validation returned and no other task accesses the device's published state.
+        let (unchanged, active, selected) = unsafe {
+            (
+                (*crtc.as_raw()).state == initial,
+                (*(*crtc.as_raw()).state).active,
+                (*(*drm.plane.load(Ordering::Relaxed)).state).fb,
+            )
+        };
+        let callbacks = (
+            counts.plane_updates.load(Ordering::Relaxed),
+            counts.enables.load(Ordering::Relaxed),
+            counts.disables.load(Ordering::Relaxed),
+        );
+        // SAFETY: A fresh transaction owns the same exclusively accessed initialized device.
+        // Successful submission also checks that validation released its lock and temporary state.
+        unsafe { atomic::run_update(&drm, |state| state.set_crtc_config(crtc, Some(&scanout))) }?;
+        unsafe { atomic::run_update(&drm, |state| state.set_crtc_config(crtc, None)) }?;
+        drop(fb);
+        drop(drm);
+        assert!(unchanged);
+        assert!(!active);
+        assert!(selected.is_null());
+        assert_eq!(callbacks, (0, 0, 0));
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn partial_object_setup_unwinds() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
