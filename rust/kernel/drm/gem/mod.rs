@@ -361,11 +361,10 @@ impl<T: DriverObject, Ctx: DeviceContext> Object<T, Ctx> {
 
 impl<T: DriverObject> Object<T> {
     /// Create a new GEM object.
-    pub fn new(
-        dev: &drm::Device<T::Driver>,
-        size: usize,
-        args: T::Args,
-    ) -> Result<ObjectRef<Self>> {
+    pub fn new(dev: &drm::Device<T::Driver>, size: usize, args: T::Args) -> Result<ObjectRef<Self>>
+    where
+        T::Driver: drm::Driver<Object = Self>,
+    {
         let obj: Pin<KBox<Self>> = KBox::pin_init(
             try_pin_init!(Self {
                 obj: Opaque::new(bindings::drm_gem_object::default()),
