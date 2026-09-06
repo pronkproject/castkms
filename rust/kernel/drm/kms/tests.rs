@@ -913,6 +913,29 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn object_framebuffer_rejects_foreign_device() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let foreign_counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-foreign-object-fb", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let foreign = create(parent.as_ref(), &foreign_counts, false)?;
+        let object = gem::shmem::Object::<TestObject>::new(
+            &foreign,
+            4096,
+            gem::shmem::ObjectConfig::default(),
+            (),
+        )?;
+        assert!(framebuffer_with_object(&dev, object.clone(), 64, 16).is_err());
+        drop(object);
+        drop(dev);
+        drop(foreign);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(foreign_counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(foreign_counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
     fn foreign_import_rejection_releases_attachment() -> Result {
