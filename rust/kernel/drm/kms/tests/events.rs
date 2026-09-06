@@ -328,6 +328,15 @@ fn framebuffer_count(dev: &Device<EventDriver>) -> i32 {
     }
 }
 
+fn vblank_references(crtc: &crtc::Crtc<EventCrtc>) -> i32 {
+    use crate::sync::atomic::{Atomic, Relaxed};
+
+    // SAFETY: The initialized CRTC borrows its device's vblank allocation. The native
+    // refcount is an aligned atomic_t; use an LKMM atomic load of its counter field.
+    unsafe { Atomic::<i32>::from_ptr(&raw mut (*crtc.vblank_crtc().as_raw()).refcount.counter) }
+        .load(Relaxed)
+}
+
 fn create(
     parent: &faux::Device<device::Bound>,
     counts: &Arc<Counts>,
@@ -458,6 +467,41 @@ fn delayed_flip(deliver: impl FnOnce(&crtc::Crtc<EventCrtc>) -> bool) -> Result<
 #[kunit_tests(rust_drm_events)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn owned_vblank_reference_retains_device() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-owned-vblank", None)?;
+        let drm = create(parent.as_ref(), &counts)?;
+        // SAFETY: Setup completed and the device owns the CRTC until its final reference drops.
+        let crtc = unsafe { crtc::Crtc::<EventCrtc>::from_raw(drm.crtc.load(Ordering::Relaxed)) };
+        crtc.vblank_on();
+        let owned = match crtc.vblank_get() {
+            Ok(reference) => reference.into_owned(),
+            Err(error) => {
+                crtc.vblank_off();
+                return Err(error);
+            }
+        };
+        let transferred = vblank_references(owned.crtc());
+        drop(drm);
+        let retained = counts.objects.load(Ordering::Relaxed);
+        // Disable before teardown. Native off contributes its own reference, independently
+        // of the reference being tested. A separate owner permits inspection after its drop.
+        owned.crtc().vblank_off();
+        let off = vblank_references(owned.crtc());
+        let observer = owned.crtc().to_owned_ref();
+        drop(owned);
+        let released = vblank_references(observer.crtc());
+        drop(observer);
+        drop(parent);
+        assert_eq!(transferred, 1);
+        assert_eq!(retained, 4);
+        assert_eq!(off, 2);
+        assert_eq!(released, 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[test]
     fn delayed_flip_retains_old_framebuffer() -> Result {
