@@ -129,6 +129,13 @@ main suite, or `rust_drm*` to include the existing shared-memory and
 framebuffer helper tests as well. Read the KTAP results, which is KUnit's
 "ok / not ok" output. A boot that selected zero tests is not a pass.
 
+There is a separate C companion, the existing `drm_crtc` KUnit suite. Enable
+`CONFIG_DRM_KUNIT_TEST=y` and select `kunit.filter_glob=drm_crtc`. It stubs a
+test hook that would checksum scanned-out pixels so initialization returns
+"out of memory," checks that the rejected CRTC did not leak into the device
+list, count, or plane mask, and retries on the same device. It does not
+exercise the allocator itself.
+
 ### Building a fake display
 
 Before anyone modesets, the fake pipeline has to come up as a consistent set
