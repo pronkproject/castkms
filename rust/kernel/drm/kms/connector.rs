@@ -242,16 +242,15 @@ pub struct DriverConnectorOps {
 ///
 /// # Invariants
 ///
-/// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
-///   up until [`drm_atomic_helper_commit_hw_done`] is called. Therefore, `connector` follows rust's
-///   data aliasing rules and does not need to be behind an [`Opaque`] type.
+/// - The native connector is behind [`Opaque`]; DRM may update it through shared references under
+///   the appropriate modeset locks. Mutable driver-private state access is confined to atomic
+///   checking, before state publication. Commit callbacks expose shared state views only.
 /// - `connector` and `inner` are initialized for as long as this object is made available to users.
 /// - The data layout of this structure begins with [`struct drm_connector`].
 /// - The atomic state for this type can always be assumed to be of type
 ///   [`ConnectorState<T::State>`].
 ///
 /// [`struct drm_connector`]: srctree/include/drm/drm_connector.h
-/// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
 #[repr(C)]
 #[pin_data]
 pub struct Connector<T: DriverConnector> {
@@ -1039,16 +1038,14 @@ impl<T: AsRawConnectorState> RawConnectorState for T {}
 ///
 /// # Invariants
 ///
-/// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
-///   up until [`drm_atomic_helper_commit_hw_done`] is called. Therefore, `connector` follows rust's
-///   data aliasing rules and does not need to be behind an [`Opaque`] type.
+/// - New state is exclusively mutable during atomic checking and shared read-only after
+///   publication, including before hardware completion.
 /// - `state` and `inner` initialized for as long as this object is exposed to users.
 /// - The data layout of this structure begins with [`struct drm_connector_state`].
 /// - The connector for this atomic state can always be assumed to be of type
 ///   [`Connector<T::Connector>`].
 ///
 /// [`struct drm_connector_state`]: srctree/include/drm/drm_connector.h
-/// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
 #[repr(C)]
 pub struct ConnectorState<T: DriverConnectorState> {
     state: bindings::drm_connector_state,
@@ -1147,12 +1144,10 @@ impl<T: DriverConnectorState> ConnectorState<T> {
 ///
 /// - `state` is initialized for as long as this object is exposed to users.
 /// - The data layout of this type is identical to [`struct drm_connector_state`].
-/// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
-///   up until [`drm_atomic_helper_commit_hw_done`] is called. Therefore, `connector` follows rust's
-///   data aliasing rules and does not need to be behind an [`Opaque`] type.
+/// - New state is exclusively mutable during atomic checking and shared read-only after
+///   publication, including before hardware completion.
 ///
 /// [`struct drm_connector_state`]: srctree/include/drm/drm_connector.h
-/// [`drm_atomic_helper_commit_hw_done`]: srctree/include/drm/drm_atomic_helper.h
 #[repr(transparent)]
 pub struct OpaqueConnectorState<T: KmsDriver> {
     state: bindings::drm_connector_state,
