@@ -404,6 +404,7 @@ unsafe impl<T: DriverConnector> ModesettableConnector for Connector<T> {
 ///
 /// - This object can only exist before its respective KMS device has been registered.
 /// - Otherwise, it inherits all invariants of [`Connector`] and has an identical data layout.
+#[repr(transparent)]
 pub struct UnregisteredConnector<T: DriverConnector>(Connector<T>, NotThreadSafe);
 
 // SAFETY: We share the invariants of `Connector`

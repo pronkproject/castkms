@@ -237,6 +237,7 @@ impl<T: DriverEncoder> Encoder<T> {
 ///
 /// - This object can only exist before its respective KMS device has been registered.
 /// - Otherwise, it inherits all invariants of [`Encoder`] and has an identical data layout.
+#[repr(transparent)]
 pub struct UnregisteredEncoder<T: DriverEncoder>(Encoder<T>, NotThreadSafe);
 
 // SAFETY: We inherit all relevant invariants of `Encoder`

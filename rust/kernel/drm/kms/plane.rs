@@ -290,6 +290,7 @@ impl<T: DriverPlane> Plane<T> {
 ///
 /// - This object can only exist before its respective KMS device has been registered.
 /// - Otherwise, it inherits all invariants of [`Plane`] and has an identical data layout.
+#[repr(transparent)]
 pub struct UnregisteredPlane<T: DriverPlane>(Plane<T>, NotThreadSafe);
 
 // SAFETY: We share the invariants of `Plane`

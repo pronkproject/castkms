@@ -438,6 +438,7 @@ impl<T: DriverCrtc> Clone for CrtcRef<T> {
 ///
 /// - This object can only exist before its respective KMS device has been registered.
 /// - Otherwise, it inherits all invariants of [`Crtc`] and has an identical data layout.
+#[repr(transparent)]
 pub struct UnregisteredCrtc<T: DriverCrtc>(Crtc<T>, NotThreadSafe);
 
 impl<T: DriverCrtc> UnregisteredCrtc<T> {
