@@ -11,6 +11,9 @@ pub mod modes;
 pub mod plane;
 pub mod vblank;
 
+#[cfg(all(CONFIG_KUNIT, CONFIG_RUST_DRM_GEM_SHMEM_HELPER))]
+mod tests;
+
 use crate::{
     container_of, device,
     drm::{device::Device, driver::Driver, private::Sealed},
