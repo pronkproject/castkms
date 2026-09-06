@@ -1275,6 +1275,72 @@ mod cases {
     }
 
     #[test]
+    fn unplug_waits_for_registration_guard() -> Result {
+        use crate::{sync::Completion, workqueue};
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-concurrent-unplug", None)?;
+        let start = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+        let done = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+        let finished = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
+        // SAFETY: The registration is always destroyed before parent, including spawn failure.
+        let registration = unsafe {
+            drm::Registration::new_static(
+                parent.as_ref().as_ref(),
+                allocate(parent.as_ref(), &counts, false)?,
+                Ok::<(), Error>(()),
+                0,
+            )?
+        };
+        let retained: ARef<Device<TestDriver>> = registration.device().into();
+        // SAFETY: The device completed registration. Its independent reference lets the worker
+        // own teardown while this task holds a guard through the already-registered view.
+        let device = unsafe { retained.assume_ctx::<drm::Ioctl>() };
+        // A tuple drops its fields in order even if allocating the work item fails. Capturing
+        // the whole tuple with drop(owners) preserves registration-before-parent teardown.
+        let owners = (registration, parent);
+        let worker_start = start.clone();
+        let worker_done = done.clone();
+        let worker_finished = finished.clone();
+        // Spawn before taking a guard: failed allocation drops the closure synchronously and
+        // would otherwise wait for a guard held by this very task.
+        workqueue::system_dfl().try_spawn(GFP_KERNEL, move || {
+            worker_start.wait_for_completion();
+            drop(owners);
+            worker_finished.store(1, Ordering::Release);
+            worker_done.complete_all();
+        })?;
+        let guard = device.registration_guard();
+        // From here, every path releases the worker and joins it before assertions or return.
+        start.complete_all();
+        let mut closed = false;
+        for _ in 0..1000 {
+            if device.registration_guard().is_none() {
+                closed = true;
+                break;
+            }
+            // SAFETY: The test runs in sleepable task context, including the SRCU guard.
+            unsafe { bindings::msleep(1) };
+        }
+        let early = finished.load(Ordering::Acquire);
+        let check = guard
+            .as_ref()
+            .ok_or(ENODEV)
+            .and_then(|guard| guard.check_atomic_update(|_| Ok(())));
+        drop(guard);
+        done.wait_for_completion();
+        let rejected = device.registration_guard().is_none();
+        drop(retained);
+        assert!(closed);
+        assert_eq!(early, 0);
+        assert_eq!(check, Ok(()));
+        assert!(rejected);
+        assert_eq!(finished.load(Ordering::Acquire), 1);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn partial_object_setup_unwinds() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-unwind", None)?;
