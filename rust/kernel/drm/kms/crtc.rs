@@ -493,6 +493,8 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
         // - We just allocated `this`, and we won't move it since it's pinned
         // - Both planes belong to `dev`, which owns them beyond the initialization borrow.
         // - This function will memcpy the contents of `name` into its own storage.
+        // - A supplied name is a string argument to the fixed "%s" format, not a format itself.
+        //   A NULL format preserves DRM's default name when no name was supplied.
         to_result(unsafe {
             bindings::drm_crtc_init_with_planes(
                 dev.as_raw(),
@@ -500,6 +502,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
                 primary.as_raw(),
                 cursor.map_or(null_mut(), |c| c.as_raw()),
                 &T::OPS.funcs,
+                name.map_or(null(), |_| c"%s".as_char_ptr()),
                 name.map_or(null(), |n| n.as_char_ptr()),
             )
         })?;

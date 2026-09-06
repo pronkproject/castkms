@@ -263,6 +263,7 @@ fn create(
 #[kunit_tests(rust_drm_kms)]
 mod cases {
     use super::*;
+    use crtc::AsRawCrtc;
     use plane::AsRawPlane;
 
     #[test]
@@ -284,6 +285,36 @@ mod cases {
         )?;
         // SAFETY: Successful initialization owns a NUL-terminated name for the device lifetime.
         let stored = unsafe { CStr::from_char_ptr((*plane.as_raw()).name) };
+        assert_eq!(stored, name);
+        Ok(())
+    }
+
+    #[test]
+    fn crtc_name_is_literal() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-crtc-name", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        // SAFETY: The device remains unregistered and owns the additional objects until teardown.
+        let dev = unsafe { UnregisteredKmsDevice::new(&drm) };
+        let primary = plane::UnregisteredPlane::<TestPlane>::new(
+            &dev,
+            0,
+            &[fourcc::XRGB8888],
+            None,
+            plane::Type::Primary,
+            None,
+            (),
+        )?;
+        let name = c"crtc-%%";
+        let crtc = crtc::UnregisteredCrtc::<TestCrtc>::new(
+            &dev,
+            primary,
+            None::<&plane::UnregisteredPlane<TestPlane>>,
+            Some(name),
+            (),
+        )?;
+        // SAFETY: Successful initialization owns a NUL-terminated name for the device lifetime.
+        let stored = unsafe { CStr::from_char_ptr((*crtc.as_raw()).name) };
         assert_eq!(stored, name);
         Ok(())
     }
