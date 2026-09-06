@@ -16,7 +16,11 @@ mod tests;
 
 use crate::{
     container_of, device,
-    drm::{device::Device, driver::Driver, private::Sealed},
+    drm::{
+        device::{Device, Registered},
+        driver::Driver,
+        private::Sealed,
+    },
     error::to_result,
     prelude::*,
     sync::{
@@ -64,7 +68,8 @@ pub(crate) mod private {
         ///
         /// # Safety
         ///
-        /// `drm` must be unregistered.
+        /// `drm` must be unregistered and KMS setup must not have been attempted before. The
+        /// caller must serialize setup against registration and any other mode-config access.
         unsafe fn setup_kms(_drm: &Device<Self::Driver>) -> Result<ModeConfigInfo> {
             build_error::build_error("This should never be reachable")
         }
@@ -169,6 +174,12 @@ pub(crate) use impl_from_opaque_mode_obj;
 /// This type is identical to [`Device`], except that it is able to create new static KMS resources.
 /// It represents a KMS device that is not yet visible to userspace, and also contains miscellaneous
 /// state required during the initialization process of a [`Device`].
+///
+/// # Invariants
+///
+/// The mode configuration is initialized and remains alive for `'a`. Object creation is confined
+/// to the setup thread, and registration cannot run while this view exists. A general [`Device`]
+/// reference obtained through dereferencing this view does not carry those setup guarantees.
 pub struct UnregisteredKmsDevice<'a, T: Driver> {
     drm: &'a Device<T>,
     // TODO: Get rid of this - I think the solution we came up on the C side to just make it so that
@@ -193,7 +204,8 @@ impl<'a, T: Driver> UnregisteredKmsDevice<'a, T> {
     ///
     /// # Safety
     ///
-    /// The caller promises that `drm` is an unregistered [`Device`].
+    /// The mode configuration of `drm` must be initialized and remain alive for `'a`. The device
+    /// must stay unregistered for `'a`, and only this thread may create its modesetting objects.
     pub(crate) unsafe fn new(drm: &'a Device<T>) -> Self {
         Self {
             drm,
@@ -307,8 +319,8 @@ impl<T: KmsDriver> private::KmsImpl for T {
         let ops = unsafe { T::MODE_CONFIG_OPS.unwrap_unchecked() };
 
         // SAFETY:
-        // - This function can only be called before registration via our safety contract.
-        // - Before registration, we are the only ones with access to this device.
+        // - Setup has not been attempted before and is serialized with other mode-config access.
+        // - Device allocation alone does not initialize mode configuration.
         unsafe {
             (*drm.as_raw()).mode_config = bindings::drm_mode_config {
                 funcs: &ops.kms_vtable,
@@ -327,7 +339,8 @@ impl<T: KmsDriver> private::KmsImpl for T {
         // SAFETY: We just setup all of the required info this function needs in `drm_device`
         to_result(unsafe { bindings::drmm_mode_config_init(drm.as_raw()) })?;
 
-        // SAFETY: `drm` is guaranteed to be unregistered via our safety contract.
+        // SAFETY: Mode configuration initialization succeeded. Setup remains single-threaded
+        // and serialized against registration, as required by our safety contract.
         let drm = unsafe { UnregisteredKmsDevice::new(drm) };
 
         T::create_objects(&drm)?;
@@ -384,20 +397,41 @@ pub struct ModeConfigInfo {
 
 impl<T: KmsDriver> Device<T> {
     /// Retrieve a pointer to the mode_config mutex
+    ///
+    /// # Safety
+    ///
+    /// Mode configuration initialization must have succeeded. It must not be reinitialized or
+    /// destroyed while the returned reference exists.
     #[inline]
-    pub(crate) fn mode_config_mutex(&self) -> &Mutex<()> {
-        // SAFETY: This lock is initialized for as long as `Device<T>` is exposed to users
+    unsafe fn mode_config_mutex(&self) -> &Mutex<()> {
+        // SAFETY: The caller guarantees initialization and excludes destruction/reinitialization.
         unsafe { Mutex::from_raw(addr_of_mut!((*self.as_raw()).mode_config.mutex)) }
     }
+}
 
-    /// Acquire the [`mode_config.mutex`] for this [`Device`].
+impl<T: KmsDriver> Device<T, Registered> {
+    /// Acquire the mode configuration mutex of a registered KMS device.
     #[inline]
     pub fn mode_config_lock(&self) -> ModeConfigGuard<'_, T> {
-        // INVARIANT: We're locking mode_config.mutex, fulfilling our invariant that this lock is
-        // held throughout ModeConfigGuard's lifetime.
-        ModeConfigGuard(self.mode_config_mutex().lock(), PhantomData)
+        // SAFETY: Registration completed KMS setup, and borrowing self keeps the device alive.
+        let mutex = unsafe { self.mode_config_mutex() };
+        // INVARIANT: The guard owns this device's mode configuration mutex for its lifetime.
+        ModeConfigGuard(mutex.lock(), PhantomData)
     }
+}
 
+impl<T: KmsDriver> UnregisteredKmsDevice<'_, T> {
+    /// Acquire the mode configuration mutex during KMS object setup.
+    #[inline]
+    pub fn mode_config_lock(&self) -> ModeConfigGuard<'_, T> {
+        // SAFETY: The setup view guarantees an initialized, live mode configuration.
+        let mutex = unsafe { self.drm.mode_config_mutex() };
+        // INVARIANT: The guard owns this device's mode configuration mutex for its lifetime.
+        ModeConfigGuard(mutex.lock(), PhantomData)
+    }
+}
+
+impl<T: KmsDriver> Device<T> {
     /// Return the number of registered [`Crtc`](crtc::Crtc) objects on this [`Device`].
     #[inline]
     pub fn num_crtcs(&self) -> u32 {
@@ -581,7 +615,8 @@ impl<'a, T: KmsDriver> ModeConfigGuard<'a, T> {
     ///
     /// [`drm_device.mode_config.mutex`]: (srctree/include/drm/drm_device.h)
     pub(crate) unsafe fn new(drm: &'a Device<T>) -> Self {
-        // SAFETY: Our safety contract fulfills the requirements of `MutexGuard::new()`
+        // SAFETY: An acquired mutex is necessarily initialized. The device borrow keeps its
+        // managed mode configuration alive, fulfilling the requirements of both helpers.
         // INVARIANT: And our safety contract ensures that this type proves that
         // `drm_device.mode_config.mutex` is acquired.
         Self(
