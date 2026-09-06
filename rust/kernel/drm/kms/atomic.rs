@@ -1050,6 +1050,7 @@ impl<'a, T: KmsDriver> AtomicCommitTail<'a, T> {
         CommittedAtomicState {
             state: self.0,
             _scope: self.1,
+            flip_done_waited: Cell::new(false),
         }
     }
 }
@@ -1092,11 +1093,18 @@ pub(crate) unsafe extern "C" fn commit_tail_callback<T: KmsDriver>(
 pub struct CommittedAtomicState<'a, T: KmsDriver> {
     state: &'a AtomicState<T>,
     _scope: CommitScope<'a, T>,
+    flip_done_waited: Cell<bool>,
 }
 
 impl<'a, T: KmsDriver> CommittedAtomicState<'a, T> {
-    /// Wait for page flips on this state to complete
+    /// Wait for page flips on this state to complete.
+    ///
+    /// Dropping the accessor performs this wait if it has not already been done. As with the
+    /// C helper, hardware failure may time out; completing the wait is not proof of pixel validity.
     pub fn wait_for_flip_done(&self) {
+        if self.flip_done_waited.get() {
+            return;
+        }
         // SAFETY: `drm_atomic_helper_commit_hw_done` has been called via our invariants
         unsafe {
             bindings::drm_atomic_helper_wait_for_flip_done(
@@ -1104,11 +1112,16 @@ impl<'a, T: KmsDriver> CommittedAtomicState<'a, T> {
                 self.state.as_raw(),
             )
         }
+        self.flip_done_waited.set(true);
     }
 }
 
 impl<'a, T: KmsDriver> Drop for CommittedAtomicState<'a, T> {
     fn drop(&mut self) {
+        // Hardware programming completion does not mean the old scanout buffer is no longer
+        // in use. Preserve the helper's flip-before-cleanup ordering even if the driver omits
+        // an explicit wait before returning its completed-state accessor.
+        self.wait_for_flip_done();
         // SAFETY:
         // * This interface represents the last atomic state accessor which could be affected as a
         //   result of resources from an atomic commit being cleaned up.
