@@ -328,7 +328,10 @@ impl<T: DriverObject> Object<T> {
         size: usize,
         config: ObjectConfig<'_, T>,
         args: T::Args,
-    ) -> Result<gem::ObjectRef<Self>> {
+    ) -> Result<gem::ObjectRef<Self>>
+    where
+        T::Driver: driver::Driver<Object = Self>,
+    {
         let new: Pin<KBox<Self>> = KBox::try_pin_init(
             try_pin_init!(Self {
                 obj <- Opaque::init_zeroed(),
