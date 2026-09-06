@@ -185,14 +185,14 @@ impl<T: DriverObject> Object<T> {
     extern "C" fn free_callback(obj: *mut bindings::drm_gem_object) {
         // SAFETY:
         // - DRM always passes a valid gem object here
-        // - We used drm_gem_shmem_create() in our create_gem_object callback, so we know that
-        //   `obj` is contained within a drm_gem_shmem_object
+        // - Our constructors embed the native object inside Object<T> and install this callback
+        //   only after allocating the complete Rust wrapper.
         let base = unsafe { container_of!(obj, bindings::drm_gem_shmem_object, base) };
 
         // SAFETY:
         // - We verified above that `obj` is valid, which makes `this` valid
-        // - This function is set in AllocOps, so we know that `this` is contained within an
-        //   `Object<T>`
+        // - This function is installed in Object<T>::VTABLE, so `this` is contained within
+        //   the initialized Object<T> allocation that installed it.
         let this = unsafe { container_of!(Opaque::cast_from(base), Self, obj) }.cast_mut();
 
         // We need to drop `sgt_res` first, since doing so requires that the GEM object is still
@@ -208,7 +208,7 @@ impl<T: DriverObject> Object<T> {
         // - We won't be using the gem resources on `this` after this call.
         unsafe { bindings::drm_gem_shmem_release(base) };
 
-        // SAFETY: We're recovering the Kbox<> we created in gem_create_object()
+        // SAFETY: Recover the complete KBox allocation transferred by our constructor.
         let _ = unsafe { KBox::from_raw(this) };
     }
 
@@ -420,12 +420,11 @@ impl<T: DriverObject> driver::AllocImpl for Object<T> {
         prime_handle_to_fd: None,
         prime_fd_to_handle: None,
         gem_prime_import: None,
-        gem_prime_import_sg_table: Some(bindings::drm_gem_shmem_prime_import_sg_table),
-        dumb_create: Some(bindings::drm_gem_shmem_dumb_create),
+        // The C allocation helpers allocate only drm_gem_shmem_object, not Object<T>.
+        // Keep allocation entry points disabled until they initialize the Rust payload too.
+        gem_prime_import_sg_table: None,
+        dumb_create: None,
         dumb_map_offset: None,
-        #[cfg(CONFIG_DRM_FBDEV_EMULATION)]
-        fbdev_probe: Some(bindings::drm_fbdev_shmem_driver_fbdev_probe),
-        #[cfg(not(CONFIG_DRM_FBDEV_EMULATION))]
         fbdev_probe: None,
     };
 }
