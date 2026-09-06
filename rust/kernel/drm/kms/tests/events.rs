@@ -589,6 +589,47 @@ mod cases {
     use super::*;
 
     #[test]
+    fn sibling_vblank_does_not_complete_source_flip() -> Result {
+        let mut sibling_tick = false;
+        let mut source_references = -1;
+        let mut retained = -1;
+        let result = delayed_flip_with_outputs(EventAction::Arm, true, |crtc| {
+            if let Some(sibling) = sibling_crtc(crtc.drm_dev()) {
+                sibling.vblank_on();
+                if let Ok(reference) = sibling.vblank_get() {
+                    sibling_tick = sibling.handle_vblank();
+                    drop(reference);
+                }
+                // SAFETY: No locks are held. Allow an incorrectly completed worker to
+                // release its old framebuffer before sampling the retained resources.
+                unsafe { bindings::msleep(20) };
+                source_references = vblank_references(crtc);
+                retained = framebuffer_count(crtc.drm_dev());
+                sibling.vblank_off();
+            }
+            // Always release the source event before any assertions, including on failure.
+            crtc.handle_vblank()
+        })?;
+        assert!(sibling_tick);
+        assert_eq!(source_references, 1);
+        assert_eq!(retained, 2);
+        assert!(result.pending);
+        assert!(result.delivered);
+        assert_eq!(result.before, 2);
+        assert_eq!(result.after, 1);
+        assert_eq!(result.disabled, 0);
+        assert_eq!(result.error, 0);
+        assert_eq!(result.observations.armed.load(Ordering::Relaxed), 1);
+        assert_eq!(result.observations.event_error.load(Ordering::Relaxed), 0);
+        assert_eq!(result.observations.detached.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            result.observations.counts.objects.load(Ordering::Relaxed),
+            0
+        );
+        Ok(())
+    }
+
+    #[test]
     fn sibling_crtc_arm_preserves_event_for_retry() -> Result {
         let mut distinct_sibling = false;
         let mut live_objects = 0;
