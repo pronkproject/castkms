@@ -271,6 +271,10 @@ Enable and disable callback counts show that the helper drove the CRTC's
 software callbacks. The test driver runs the
 Rust work that happens after the update is accepted, including a fake vblank.
 
+A constructed mode is checked for derived clock, total lines, and blanking
+interval. Kernel-created modes use the same timing initializer that userspace
+modes go through, so the two paths should agree.
+
 Replacing a framebuffer without changing the mode drops the client's first
 buffer after the output is enabled, then submits a second image. The selected
 image must change, plane-update must run, a full modeset must not, and the
