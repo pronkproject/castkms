@@ -164,6 +164,12 @@ which is an atomic check that must not change published state. The compiler
 rejects keeping its state handle after the callback, and rejects calling it
 through a merely allocated device.
 
+Display timing for vblank waits is read from the commit's CRTC state. The
+vblank lock does not protect the mode fields that native modesetting writes,
+so reading a cached mode or cached duration through that lock is rejected. A
+timer driver has to copy validated timings into storage it actually
+synchronizes.
+
 These checks are about function signatures and what the compiler will accept.
 They do not prove every rule that an `unsafe` block is still required to
 uphold. They do not test runtime device identity, allocator failure, reset,

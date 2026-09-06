@@ -906,6 +906,16 @@ pub trait RawCrtcState: AsRawCrtcState {
         unsafe { DisplayMode::as_ref(core::ptr::addr_of!((*self.as_raw()).mode)) }
     }
 
+    /// Return the hardware-adjusted mode belonging to this atomic state.
+    ///
+    /// The mode is finalized by atomic validation. Commit callbacks may copy the timing values
+    /// needed by their interrupt or timer path into separately synchronized driver storage.
+    fn adjusted_mode(&self) -> &DisplayMode {
+        // SAFETY: The mode belongs to the borrowed state. Mutable state access is exclusive
+        // before publication, and commit callbacks only expose the validated immutable state.
+        unsafe { DisplayMode::as_ref(core::ptr::addr_of!((*self.as_raw()).adjusted_mode)) }
+    }
+
     /// Returns the CRTC's gamma LUT for this state as an array of [`ColorLut`] entries, or
     /// [`None`] if no gamma LUT is programmed. Requires gamma to have been enabled on the CRTC
     /// (see [`UnregisteredCrtc::enable_gamma`]).
