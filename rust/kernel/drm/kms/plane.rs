@@ -134,9 +134,7 @@ pub trait DriverPlane: Send + Sync + Sized {
     /// specified, this function is a no-op.
     ///
     /// [`drm_plane_helper_funcs.atomic_update`]: srctree/include/drm/drm_modeset_helper_vtables.h
-    fn atomic_update(_commit: PlaneAtomicCommit<'_, Self>) {
-        build_error::build_error("This should not be reachable")
-    }
+    fn atomic_update(_commit: PlaneAtomicCommit<'_, Self>) {}
 
     /// The optional [`drm_plane_helper_funcs.atomic_check`] hook for this plane.
     ///
@@ -189,11 +187,9 @@ impl<T: DriverPlane> Plane<T> {
             } else {
                 None
             },
-            atomic_update: if T::HAS_ATOMIC_UPDATE {
-                Some(atomic_update_callback::<T>)
-            } else {
-                None
-            },
+            // The native plane helpers call this hook unconditionally. An omitted driver
+            // method must use the documented no-op default, not a NULL C function pointer.
+            atomic_update: Some(atomic_update_callback::<T>),
             atomic_enable: None,
             atomic_disable: None,
             atomic_async_check: None,
