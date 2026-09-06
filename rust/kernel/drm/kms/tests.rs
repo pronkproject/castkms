@@ -741,6 +741,38 @@ mod cases {
         Ok(())
     }
 
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
+    fn native_dumb_handle_rejection_unwinds_payload() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-dumb-reject", None)?;
+        let drm = create(parent.as_ref(), &counts, false)?;
+        let client = HandleClient::new(&drm)?;
+        let mut args = bindings::drm_mode_create_dumb {
+            width: 64,
+            height: 64,
+            bpp: 32,
+            ..Default::default()
+        };
+        counts.fail_gem_open.store(1, Ordering::Relaxed);
+        // SAFETY: The real internal client's file belongs to this initialized device. Its
+        // installed callback receives exclusive valid arguments, as in the success case.
+        let result = unsafe {
+            (*(*drm.as_raw()).driver).dumb_create.unwrap()(
+                client.file().as_raw(),
+                drm.as_raw(),
+                &mut args,
+            )
+        };
+        assert_eq!(result, EACCES.to_errno());
+        assert_eq!(args.handle, 0);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        drop(client);
+        drop(drm);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
     #[test]
     fn constructed_mode_has_crtc_timings() -> Result {
         let mode = mode()?;
