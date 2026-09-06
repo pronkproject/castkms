@@ -461,6 +461,10 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
         PrimaryData: DriverPlane<Driver = T::Driver>,
         CursorData: DriverPlane<Driver = T::Driver>,
     {
+        // SAFETY: The unregistered plane is initialized and its parent pointer is invariant.
+        if unsafe { (*primary.as_raw()).dev } != dev.as_raw() {
+            return Err(EINVAL);
+        }
         if Crtc::<T>::has_vblank() {
             dev.has_vblanks.set(true)
         }
