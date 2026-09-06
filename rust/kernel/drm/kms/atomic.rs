@@ -97,7 +97,11 @@ impl<T: KmsDriver> AtomicState<T> {
     where
         C: ModesettableConnector + ModeObject<Driver = T>,
     {
-        // SAFETY: This function either returns NULL or a valid pointer to a `drm_connector_state`.
+        if !core::ptr::eq(self.drm_dev(), connector.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The connector belongs to this device. This function either returns NULL or a
+        // valid pointer to a `drm_connector_state`.
         unsafe {
             bindings::drm_atomic_get_old_connector_state(self.as_raw(), connector.as_raw())
                 .as_ref()
@@ -453,7 +457,11 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
     where
         C: ModesettableConnector + ModeObject<Driver = T>,
     {
-        // SAFETY: DRM either returns NULL or a valid pointer to a `drm_connector_state`
+        if !core::ptr::eq(self.drm_dev(), connector.drm_dev()) {
+            return None;
+        }
+        // SAFETY: The connector belongs to this device. DRM either returns NULL or a valid
+        // pointer to a `drm_connector_state`.
         let state = unsafe {
             bindings::drm_atomic_get_new_connector_state(self.as_raw(), connector.as_raw())
         };
@@ -553,7 +561,10 @@ impl<T: KmsDriver> AtomicStateComposer<T> {
     where
         C: ModesettableConnector + ModeObject<Driver = T>,
     {
-        // SAFETY: DRM will only return a valid pointer to a `drm_plane_state` - or an error.
+        if !core::ptr::eq(self.drm_dev(), connector.drm_dev()) {
+            return Err(EINVAL);
+        }
+        // SAFETY: The connector belongs to this device. DRM returns a valid state or an error.
         let state = unsafe {
             from_err_ptr(bindings::drm_atomic_get_connector_state(
                 self.as_raw(),
