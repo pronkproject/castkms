@@ -7,6 +7,7 @@ release are deliberately separate decisions. No operation simulates kernel
 revocation of GPU imports or treats worker death as native completion.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from itertools import permutations
 import unittest
@@ -158,12 +159,15 @@ class Model:
         self.require(not self.lost and ticket.epoch == self.epoch)
         self.require(ticket.state in ("SEALING", "READY"))
         self.require(all(self.current[o] == s for o, s in ticket.scope.items()))
+        # TEST_ONLY validates the supplied scope, not runtime readiness. It
+        # neither waits for claims nor freezes the retirement fence set.
+        if test_only:
+            self.require(not failure)
+            return None
         self.require(self.ready(ticket_id))
-        # All pre-acceptance failures and TEST_ONLY preserve the ticket seal.
+        # All pre-acceptance failures preserve the ticket seal.
         if failure:
             raise Rejected()
-        if test_only:
-            return None
         commit = self.identity()
         self.commits[commit] = (tuple(ticket.scope.values()), ticket.fences)
         # Installation, seal transfer and ticket consumption are one decision.
@@ -296,6 +300,50 @@ class PreparationTests(unittest.TestCase):
         model.accept(second)
         self.assertEqual(model.tickets[first].state, "STALE")
         self.assertFalse(model.scenes[model.current[0]].seals)
+
+    def test_test_only_does_not_resolve_preparation(self):
+        model = Model()
+        claim = self.claimed(model)
+        fence = model.submit_source(claim)
+        ticket = model.prepare([0])
+        # Check both unresolved claims and a releasable but unpolled ticket,
+        # then an already-ready ticket whose reader is still running.
+        for phase in ("claimed", "released", "ready"):
+            with self.subTest(phase=phase):
+                if phase == "released":
+                    model.release(claim, [fence])
+                elif phase == "ready":
+                    self.assertTrue(model.ready(ticket))
+                before = deepcopy(model.__dict__)
+                self.assertIsNone(model.accept(ticket, test_only=True))
+                self.assertEqual(model.__dict__, before)
+                with self.assertRaises(Rejected):
+                    model.accept(ticket, test_only=True, failure=True)
+                self.assertEqual(model.__dict__, before)
+        commit = model.accept(ticket)
+        with self.assertRaises(Rejected):
+            model.complete_commit(commit)
+        model.signal(fence)
+        model.complete_commit(commit)
+
+    def test_test_only_rejects_invalid_ticket_without_mutation(self):
+        for state in ("CANCELED", "CONSUMED", "STALE", "LOST"):
+            with self.subTest(state=state):
+                model = Model()
+                ticket = model.prepare([0])
+                if state == "CANCELED":
+                    model.close(ticket)
+                elif state == "CONSUMED":
+                    model.accept(ticket)
+                elif state == "STALE":
+                    model.accept(model.prepare([0]))
+                else:
+                    model.worker_lost()
+                self.assertEqual(model.tickets[ticket].state, state)
+                before = deepcopy(model.__dict__)
+                with self.assertRaises(Rejected):
+                    model.accept(ticket, test_only=True)
+                self.assertEqual(model.__dict__, before)
 
     def test_last_close_reopens_without_forgetting_readers(self):
         model = Model()
