@@ -53,6 +53,7 @@ class Model:
         self.claims = {}
         self.tickets = {}
         self.commits = {}
+        self.pending = {}
         self.native = {}
         self.staging = {i: None for i in range(staging_depth)}
         self.demand = 0
@@ -164,17 +165,21 @@ class Model:
         if test_only:
             self.require(not failure)
             return None
+        # Conservative test-provider policy: an output accepts another update
+        # after its preceding commit completes. Readiness remains independent.
+        self.require(all(output not in self.pending for output in ticket.scope))
         self.require(self.ready(ticket_id))
         # All pre-acceptance failures preserve the ticket seal.
         if failure:
             raise Rejected()
         commit = self.identity()
-        self.commits[commit] = (tuple(ticket.scope.values()), ticket.fences)
+        self.commits[commit] = (dict(ticket.scope), ticket.fences)
         # Installation, seal transfer and ticket consumption are one decision.
         for output, old in ticket.scope.items():
             self.scenes[old].seals.add(("commit", commit))
             self.scenes[old].seals.discard(("ticket", ticket_id))
             self.current[output] = self.new_scene()
+            self.pending[output] = commit
         ticket.state = "CONSUMED"
         for other_id, other in self.tickets.items():
             if other.state in ("SEALING", "READY") and any(
@@ -184,13 +189,14 @@ class Model:
         return commit
 
     def complete_commit(self, commit_id):
-        scenes, fences = self.commits[commit_id]
+        scope, fences = self.commits[commit_id]
         self.require(all(self.native[f] is not None for f in fences))
-        for key in scenes:
+        for output, key in scope.items():
             scene = self.scenes[key]
             self.require(not scene.claims)
             scene.retired = True
             scene.seals.discard(("commit", commit_id))
+            del self.pending[output]
         del self.commits[commit_id]
 
     def recycle_staging(self, claim_id, downstream_done):
@@ -359,6 +365,94 @@ class PreparationTests(unittest.TestCase):
         model.close(second)
         model.claim_source(0)
         self.assertIn(fence, model.scenes[model.current[0]].fences)
+
+    def test_ready_ticket_waits_for_accepted_predecessor(self):
+        model = Model()
+        claim = self.claimed(model)
+        fence = model.submit_source(claim)
+        model.release(claim, [fence])
+        predecessor = model.accept(model.prepare([0]))
+        ticket = model.prepare([0])
+        self.assertTrue(model.ready(ticket))
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.accept(ticket)
+        self.assertEqual(model.__dict__, before)
+        model.accept(ticket, test_only=True)
+        self.assertEqual(model.__dict__, before)
+        # Cancellation of the next update cannot release the earlier commit.
+        model.close(ticket)
+        self.assertEqual(model.pending, {0: predecessor})
+        ticket = model.prepare([0])
+        model.signal(fence)
+        model.complete_commit(predecessor)
+        model.complete_commit(model.accept(ticket))
+        self.assertFalse(model.pending)
+
+    def test_predecessor_resolution_does_not_release_new_claim(self):
+        model = Model()
+        predecessor = model.accept(model.prepare([0]))
+        claim = self.claimed(model)
+        ticket = model.prepare([0])
+        model.complete_commit(predecessor)
+        self.assertFalse(model.ready(ticket))
+        with self.assertRaises(Rejected):
+            model.accept(ticket)
+        model.release(claim, [])
+        model.complete_commit(model.accept(ticket))
+
+    def test_busy_output_rejects_whole_cohort_without_blocking_others(self):
+        model = Model(outputs=3)
+        predecessor = model.accept(model.prepare([0]))
+        cohort = model.prepare([0, 1])
+        self.assertTrue(model.ready(cohort))
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.accept(cohort)
+        self.assertEqual(model.__dict__, before)
+        independent = model.accept(model.prepare([2]))
+        model.complete_commit(independent)
+        # An overlapping winner invalidates the waiting cohort; resolving its
+        # predecessor must not revive the old request or replace output 0.
+        winner = model.accept(model.prepare([1]))
+        self.assertEqual(model.tickets[cohort].state, "STALE")
+        model.complete_commit(predecessor)
+        with self.assertRaises(Rejected):
+            model.accept(cohort)
+        model.complete_commit(winner)
+        model.complete_commit(model.accept(model.prepare([0, 1])))
+        self.assertFalse(model.pending)
+
+    def test_predecessor_and_release_orders_allow_retry(self):
+        for schedule in permutations(("predecessor", "release", "ready", "accept")):
+            with self.subTest(schedule=schedule):
+                model = Model()
+                predecessor = model.accept(model.prepare([0]))
+                claim = self.claimed(model)
+                ticket = model.prepare([0])
+                commit = None
+                for event in schedule:
+                    try:
+                        if event == "predecessor":
+                            model.complete_commit(predecessor)
+                        elif event == "release":
+                            model.release(claim, [])
+                        elif event == "ready":
+                            model.ready(ticket)
+                        else:
+                            commit = model.accept(ticket)
+                    except Rejected:
+                        self.assertEqual(event, "accept")
+                    if commit is not None:
+                        self.assertNotIn(predecessor, model.commits)
+                        self.assertTrue(model.claims[claim].released)
+                    else:
+                        scene = model.scenes[model.current[0]]
+                        self.assertIn(("ticket", ticket), scene.seals)
+                if commit is None:
+                    commit = model.accept(ticket)
+                model.complete_commit(commit)
+                self.assertFalse(model.pending)
 
     def test_destination_stall_does_not_retain_sources(self):
         model = Model(staging_depth=1)
