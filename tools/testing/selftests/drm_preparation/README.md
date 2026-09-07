@@ -113,8 +113,12 @@ Accepting the ticket still cannot complete the commit until those fences
 signal. If the GPU work fails, access ends and the error status is kept. The
 model does not pretend the copy produced good pixels.
 
-The dry-run check and a rejected real check both leave the ticket's seal in
-place. They must not consume the ticket or install a new picture. When
+The dry-run check validates the supplied ticket's scope and identity without
+waiting for source claims or marking preparation ready. It leaves all model
+state unchanged, even when a real commit would still need to wait. A canceled,
+consumed, stale or lost ticket is still invalid; a dry run does not revive it.
+A rejected real check leaves the ticket's seal in place. Neither kind of
+check consumes the ticket or installs a new picture. When
 acceptance finally succeeds, the seal moves to the commit in that same
 decision. Closing the ticket afterwards must not drop the commit's copy of the
 seal.
