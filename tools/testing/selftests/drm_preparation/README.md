@@ -129,6 +129,26 @@ updates could deadlock waiting on each other. After every overlapping ticket
 is closed, a later claim may reopen the same live picture, but it must still
 remember GPU readers that were already submitted.
 
+An earlier accepted update is different from a competing ticket. The model's
+test display allows only one accepted, unfinished commit per output. A ticket
+for the next picture may become ready while that earlier commit is pending,
+but acceptance must wait. Completing the earlier commit does not release any
+claims on the next picture: those still belong to the renderer. Closing the
+next ticket does not cancel the earlier accepted commit either.
+
+That is a deliberately conservative test-display policy, not a proposed limit
+on how many commits real display drivers may queue. The model folds display
+completion and retirement into one operation; it does not reproduce DRM's
+separate hardware-programming, presentation and cleanup milestones.
+
+If one output in a proposed update is busy, none of that update's outputs
+change. Other outputs remain independent. A competing update may invalidate
+the waiting ticket in the meantime, so waking after the earlier commit ends
+is not permission to submit an obsolete request. The tests exercise those
+cases and all 24 orderings of predecessor completion, release of the next
+source claim, readiness polling and attempted acceptance. Retrying after both
+requirements are satisfied must succeed unless the request became invalid.
+
 Retiring the source does not wait for the destination pool. If the renderer's
 private storage is full, new source claims stay unbound: they have demand, but
 no permission to read the compositor's buffer yet. The old source can still
@@ -193,8 +213,9 @@ This is an early contract sketch, not the point at which the protocol can be
 frozen. The programs do not ask whether a producer's completion fence actually
 means the pixels are valid. They do not model an update that reuses the same
 framebuffer for new content without starting a new picture. They do not model
-credits for completed capture results, rebuilding a request after a wait, or
-the kernel resolving an earlier commit in the background. They do not explore
+credits for completed capture results or rebuilding a request after a wait.
+Earlier commits finish through explicit model decisions, not through a kernel
+worker or a blocking transaction entry point. They do not explore
 every possible interleaving, real DRM locking, hidden GPU dependencies, or
 what happens at the exact moment of a crash. They do not allocate production
 ioctl numbers or assume a particular GPU driver.
