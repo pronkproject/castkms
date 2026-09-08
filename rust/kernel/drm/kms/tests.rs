@@ -12,6 +12,7 @@ mod framebuffers;
 mod inspection;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod masters;
+mod plane_assignments;
 mod properties;
 
 use super::*;
