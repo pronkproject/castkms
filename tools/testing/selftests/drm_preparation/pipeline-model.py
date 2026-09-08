@@ -80,6 +80,27 @@ class Pipeline:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_output_failure_does_not_invalidate_the_private_source_image(self):
+        pipeline = Pipeline(staging_depth=1)
+        grant = pipeline.grant(0, "X")
+        allocation = pipeline.output.allocate(grant.destination)
+        claim = self.stage(pipeline, grant)
+        old = pipeline.source.claims[claim].scene
+        write = pipeline.claim_output(claim, grant, allocation)
+        pipeline.output.submit(write)
+        self.assertFalse(pipeline.output.complete(write, status=-5))
+        self.assertEqual(pipeline.output.results.query(write.result), -5)
+        self.assertEqual(pipeline.source.staging_status(claim), 0)
+        self.assertTrue(pipeline.source.scenes[old].retired)
+        self.assertEqual(allocation.pixels, "uncertain")
+        retry = pipeline.claim_output(claim, grant, allocation)
+        pipeline.output.submit(retry)
+        self.assertTrue(pipeline.output.complete(retry))
+        self.assertEqual(allocation.pixels, f"picture {old}")
+        pipeline.recycle_stage(claim)
+        # Cleanup did not require acknowledging either terminal result.
+        self.assertEqual(len(pipeline.output.results.results), 2)
+
     def test_pre_revoke_source_claim_can_finish_after_revocation(self):
         pipeline = Pipeline()
         grant = pipeline.grant(0, "X")
