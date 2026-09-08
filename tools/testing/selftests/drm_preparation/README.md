@@ -288,13 +288,21 @@ afterwards. A new write after revocation must not. The same live grant may
 reuse the same allocation for successive frames; that is not a requirement to
 allocate a fresh buffer every time.
 
+Each allocation allows only one unresolved output write claim. Claiming it
+reserves the storage even before submission; completion makes it available
+again. A second claim must wait or choose other storage. Repeating an old
+completion cannot free a newer use of the same allocation. That is bookkeeping
+for the model's admitted writes, not exclusive access enforced against every
+process holding a buffer descriptor.
+
 The strings that identify those grants are policy labels, not an algorithm
 that intersects rights, and not a kernel implementation of access control for
 DMA-BUFs, the shared buffers that processes and drivers pass around. This
 output model does not yet join up with the source model. It also does not
-represent two GPU writes overlapping on one buffer, who owns a pool of
-destination images, whether permission to read a source also authorizes a
-destination write, or enforcement of arbitrary buffer access.
+represent consumer read-completion fences, cancellation of an unsubmitted
+write, who owns a pool of destination images, whether permission to read a
+source also authorizes a destination write, or enforcement of arbitrary buffer
+access.
 
 ## What passing does not mean
 
