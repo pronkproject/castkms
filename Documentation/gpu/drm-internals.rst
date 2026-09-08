@@ -138,6 +138,38 @@ revocation operations; closing a mode-specific stream is not an authority
 operation. The KUnit ``drm_capture_authority`` suite exercises terminal cleanup,
 stream replacement and concurrent revocation without introducing a public ABI.
 
+Registering Streams for Revocation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After validating permission under the admission guard, a provider calls
+``drm_capture_authority_add_stream_locked()`` to register an already-created
+stream. The registry takes its own stream reference on success. Failure leaves
+the caller's reference unchanged. Registering the same stream twice in one
+authority returns ``-EEXIST``. Providers must enforce their stream limits and
+must not share storage across incompatible authorization scopes.
+
+The registry retains the stream, not the other way around. Consequently, the
+last authority reference still triggers revocation even when streams remain
+registered. At revocation, the core closes admission and detaches the entire
+registry under the authority mutex. Outside that mutex it revokes each stream
+and releases the registry's references before calling the provider's cleanup
+callback. The callback still handles resources other than registered streams;
+it must own any stream reference it intends to use itself.
+
+``drm_capture_authority_remove_stream()`` instead shuts down one registered
+stream and releases its registration reference. It does not revoke the grant
+or affect replacement streams. Call it without the admission guard and with
+live references to the authority and stream. A false return means that no
+registration was found; a concurrent revoker may already own its cleanup.
+Removal is therefore not a substitute for waiting for authority revocation.
+Neither removal nor revocation completes an already-claimed provider job.
+
+Registration is cleanup ownership, not pixel permission. Providers must still
+check current content authority when admitting source access. File adapters
+must use those provider operations rather than treating a registered stream
+as a way to bypass policy. The request core remains independent of authorities,
+file descriptors and DRM master selection.
+
 Anonymous Revocation File
 ------------------------
 
