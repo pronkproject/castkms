@@ -238,6 +238,72 @@ static void drm_capture_failed_image(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_capture_ack(capture, id), 0);
 }
 
+static void capture_complete_cancel(void *job)
+{
+	drm_capture_complete(job, -ECANCELED);
+}
+
+static void drm_capture_discard_unclaimed(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture_result result;
+	u8 pixels[16] = {};
+	u64 id, next;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_discard(capture, id), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_query(capture, id, &result), -ENOENT);
+	KUNIT_EXPECT_EQ(test, drm_capture_discard(capture, id), -ENOENT);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &next), 0);
+	KUNIT_EXPECT_NE(test, id, next);
+	KUNIT_ASSERT_EQ(test, drm_capture_publish_snapshot(capture, pixels, sizeof(pixels)), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_discard(capture, next), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result(capture, next, pixels, sizeof(pixels)),
+			-ENOENT);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(capture, &next), 0);
+}
+
+static void drm_capture_discard_claimed(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture_job *job;
+	struct drm_capture_result result;
+	u64 id, next;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	job = drm_capture_claim(capture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, capture_complete_cancel, job), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_discard(capture, id), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_query(capture, id, &result), -ENOENT);
+	KUNIT_EXPECT_EQ(test, drm_capture_cancel(capture, id), -ENOENT);
+	KUNIT_EXPECT_EQ(test, drm_capture_ack(capture, id), -ENOENT);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(capture, &next), -EAGAIN);
+	/* Discarded work still owns writable storage and its bounded credit. */
+	memset(drm_capture_job_data(job), 0x5a, drm_capture_job_size(job));
+	kunit_remove_action(test, capture_complete_cancel, job);
+	drm_capture_complete(job, 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_query(capture, id, &result), -ENOENT);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(capture, &next), 0);
+}
+
+static void drm_capture_discard_survives_close(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture_job *job;
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	job = drm_capture_claim(capture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_EXPECT_EQ(test, drm_capture_discard(capture, id), 0);
+	drm_capture_revoke(capture);
+	kunit_remove_action(test, capture_close, capture);
+	drm_capture_close(capture);
+	memset(drm_capture_job_data(job), 0x5a, drm_capture_job_size(job));
+	drm_capture_complete(job, -EIO);
+}
+
 static struct kunit_case drm_capture_cases[] = {
 	KUNIT_CASE(drm_capture_credits),
 	KUNIT_CASE(drm_capture_revoke_claimed),
@@ -249,6 +315,9 @@ static struct kunit_case drm_capture_cases[] = {
 	KUNIT_CASE(drm_capture_last_put_drains_requests),
 	KUNIT_CASE(drm_capture_snapshot_isolation),
 	KUNIT_CASE(drm_capture_failed_image),
+	KUNIT_CASE(drm_capture_discard_unclaimed),
+	KUNIT_CASE(drm_capture_discard_claimed),
+	KUNIT_CASE(drm_capture_discard_survives_close),
 	{}
 };
 
