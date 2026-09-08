@@ -243,8 +243,8 @@ allows a producer fence to report failure and the subsequent copy fence to
 report success. A successful copy might faithfully copy incomplete or invalid
 input pixels; the copy's own status does not answer that question.
 
-Source copies depend on the producer retained by the claimed picture. Later
-display updates do not change which producer belongs to that old claim. The
+Source copies depend on the producers retained by the claimed picture. Later
+display updates do not change which producers belong to that old claim. The
 ticket may become ready as soon as the renderer releases the claim with its
 submitted copy fences, even while producer and copy work remain unfinished.
 The old source still waits for native completion before retirement.
@@ -252,7 +252,7 @@ The old source still waits for native completion before retirement.
 The separate staging-status query decides whether the renderer's private copy
 is eligible for output. It requires a release report, at least one submitted
 copy, successful completion of every copy and successful completion of the
-retained producer. Pending work has no final status yet. A no-access release
+retained producers. Pending work has no final status yet. A no-access release
 has no image. Worker loss does not invent a successful report, and a staging
 slot already returned for reuse cannot be queried as the old image.
 
@@ -261,12 +261,27 @@ In both cases a successful copy still gives an invalid staging image, while
 the old source retires and the private storage remains reclaimable. Querying
 validity is read-only; it does not release sources or complete native fences.
 
-The example has one explicit producer per framebuffer. It does not recover
-errors from reservation histories after their fences have disappeared, model
-several planes' producers on one timeline, or reproduce a particular driver's
-reset behavior. The fake provider conservatively waits for all dependencies
-even for error completion. These are declared ordering assumptions, not
-results obtained from a GPU.
+The example retains one explicit producer and any required implicit producers
+supplied in a framebuffer snapshot. An implicit producer is a dependency found
+through shared-buffer synchronization rather than supplied as the request's
+explicit fence. The snapshot is collected once per framebuffer, including
+when that framebuffer appears on several outputs. Duplicated references do not
+require duplicated status records, but already completed errors remain relevant.
+
+Execution waits and validity evidence serve different purposes. If a later
+fence already waits for an earlier one, waiting only for the later fence is
+sufficient for ordering. It is not sufficient for deciding whether the earlier
+producer succeeded. The model reduces waits through its recorded native
+dependency graph while keeping every acquired producer for validity. A test
+uses a chain of three operations and an independent producer: the first fails,
+the later operations and copy succeed, and staging still reports failure.
+
+The model does not recover errors from reservation histories after their
+fences have disappeared or implement real multi-plane layout and attribution.
+Nor does it infer ordering from a driver's timeline names. The fake provider
+conservatively waits for dependencies even for error completion, rather than
+reproducing a particular driver's reset behavior. These are declared ordering
+assumptions, not results obtained from a GPU.
 
 ## A separate model for exported destinations
 
