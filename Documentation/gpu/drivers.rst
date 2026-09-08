@@ -6,6 +6,7 @@ GPU Driver Documentation
    :maxdepth: 3
 
    amdgpu/index
+   castkms
    i915
    imagination/index
    intel-display/index
