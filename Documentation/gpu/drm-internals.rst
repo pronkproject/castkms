@@ -70,6 +70,15 @@ Unlike source storage, the private result image remains allocated until
 acknowledgment or close. New streams allocate new storage rather than changing
 the authority of old storage in place.
 
+``drm_capture_discard()`` abandons one request when its consumer no longer
+wants the result. The identifier immediately stops being usable for query,
+copy, cancellation or acknowledgment. Unclaimed and completed requests release
+their storage and credit immediately. A claimed request remains allocated,
+including its credit, until the provider completes; completion then frees it
+instead of retaining a result. Abandoning a consumer is not evidence that its
+provider has stopped accessing memory. Other requests and the stream's
+permission are unaffected.
+
 The caller's stream reference must remain live for every ordinary API call.
 ``drm_capture_get()`` takes another reference from one already held;
 ``drm_capture_put()`` releases only that reference. Dropping an observer does
