@@ -34,6 +34,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_blend.h>
+#include <drm/drm_capture.h>
 #include <drm/clients/drm_client_setup.h>
 #include <drm/drm_client.h>
 #include <drm/drm_connector.h>
