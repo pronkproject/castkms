@@ -14,6 +14,46 @@ class Rejected(Exception):
     pass
 
 
+class ResultLedger:
+    def __init__(self, capacity):
+        if capacity <= 0:
+            raise Rejected()
+        self.capacity = capacity
+        self.serial = 0
+        self.results = {}
+        self.closed = False
+
+    def reserve(self):
+        if self.closed or len(self.results) >= self.capacity:
+            raise Rejected()
+        self.serial += 1
+        self.results[self.serial] = None
+        return self.serial
+
+    def complete(self, use, status):
+        # Endpoint close discards delivery, not already admitted native work.
+        if self.closed:
+            return False
+        if use not in self.results or self.results[use] is not None or status is None:
+            raise Rejected()
+        self.results[use] = status
+        return True
+
+    def query(self, use):
+        if use not in self.results:
+            raise Rejected()
+        return self.results[use]
+
+    def acknowledge(self, use):
+        if use not in self.results or self.results[use] is None:
+            raise Rejected()
+        del self.results[use]
+
+    def close(self):
+        self.closed = True
+        self.results.clear()
+
+
 @dataclass
 class Grant:
     scope: str
@@ -65,6 +105,56 @@ class OutputModel:
         claim.completed = True
         claim.allocation.busy = False
         return claim.grant.live  # Delivery eligibility, not write revocation.
+
+
+class ResultTests(unittest.TestCase):
+    def test_completed_result_holds_credit_until_acknowledged(self):
+        ledger = ResultLedger(1)
+        first = ledger.reserve()
+        self.assertIsNone(ledger.query(first))
+        with self.assertRaises(Rejected):
+            ledger.acknowledge(first)
+        ledger.complete(first, -5)
+        for _ in range(3):
+            self.assertEqual(ledger.query(first), -5)
+            with self.assertRaises(Rejected):
+                ledger.reserve()
+        with self.assertRaises(Rejected):
+            ledger.complete(first, 0)
+        ledger.acknowledge(first)
+        second = ledger.reserve()
+        self.assertNotEqual(first, second)
+        with self.assertRaises(Rejected):
+            ledger.acknowledge(first)
+        self.assertEqual(ledger.results, {second: None})
+
+    def test_result_capacity_is_independent_of_number_of_completions(self):
+        for capacity in (1, 2, 4, 8):
+            ledger = ResultLedger(capacity)
+            for _ in range(20):
+                uses = [ledger.reserve() for _ in range(capacity)]
+                for use in uses:
+                    ledger.complete(use, 0)
+                self.assertEqual(len(ledger.results), capacity)
+                with self.assertRaises(Rejected):
+                    ledger.reserve()
+                for use in uses:
+                    ledger.acknowledge(use)
+                self.assertFalse(ledger.results)
+
+    def test_close_discards_results_without_inventing_completion(self):
+        ledger = ResultLedger(2)
+        pending = ledger.reserve()
+        completed = ledger.reserve()
+        ledger.complete(completed, 0)
+        ledger.close()
+        ledger.close()
+        self.assertFalse(ledger.results)
+        self.assertFalse(ledger.complete(pending, 0))
+        with self.assertRaises(Rejected):
+            ledger.reserve()
+        with self.assertRaises(Rejected):
+            ledger.query(completed)
 
 
 class OutputTests(unittest.TestCase):
