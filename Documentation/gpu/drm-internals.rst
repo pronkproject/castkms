@@ -20,6 +20,72 @@ DMA services.
 
 .. contents::
 
+Kernel-controlled Final-image Capture
+====================================
+
+``drm_capture.h`` provides an initial, kernel-only request core for a provider
+that already knows which final image its recipient is allowed to receive.
+It is not a grant-creation ioctl, a DRM object authorization check, or a way
+to export arbitrary scanout planes. The creating caller must establish that
+policy before constructing the stream. One stream has one fixed image size
+and one unchanged authorization scope for its entire lifetime.
+
+The caller chooses the request capacity and image size. Queue admission
+reserves a credit and allocates zeroed private image storage before a provider
+claims a request. A full queue returns ``-EAGAIN`` without selecting a source.
+Completed results retain their credits until acknowledged, so both queued
+requests and unread results remain bounded. Memory use is bounded by the
+configured capacity times the image size, plus request metadata; a future
+userspace adapter must validate those limits against its own allocation quota.
+
+The synchronous reference provider, ``drm_capture_publish_snapshot()``, serves
+the oldest queued request from an already composed kernel image. Its input
+must be readable, coherent and authorized, including any padding bytes. The
+image size must match exactly. Publication copies the image into independent
+storage before returning. Subsequent source changes, display updates or a slow
+result reader therefore do not extend access to the original image.
+
+A provider with asynchronous kernel-controlled work instead uses
+``drm_capture_claim()``, fills the storage obtained from
+``drm_capture_job_data()``, and calls ``drm_capture_complete()`` exactly once
+after access ends. Completion consumes the provider's job ownership; the
+provider must not use the job or its data pointer afterward. No capture mutex
+is held while the provider accesses the image. A claimed job owns an additional
+stream reference until completion.
+
+Revocation and claim admission share the stream mutex. If revocation wins,
+no new job is claimed. If claim wins, the provider may still finish its earlier
+authorized write, but the retained request result becomes ``-EKEYREVOKED``.
+Canceling an active request likewise does not make its storage safe to free.
+The first recorded cancellation reason wins; an already completed result
+never changes. Closing the stream discards queued demand and completed results,
+but active jobs keep their storage until the provider acknowledges completion.
+Process exit or a timeout is not such an acknowledgment.
+
+``drm_capture_query()`` reports pending or terminal status without consuming
+the result. ``drm_capture_copy_result()`` copies only successfully completed
+images to a kernel buffer; pending or failed requests leave that buffer
+untouched. ``drm_capture_ack()`` releases a terminal result and its credit.
+Unlike source storage, the private result image remains allocated until
+acknowledgment or close. New streams allocate new storage rather than changing
+the authority of old storage in place.
+
+The caller's stream reference must remain live for every ordinary API call.
+``drm_capture_close()`` consumes that reference and must not race another
+ordinary call using it. A provider's already claimed job is different: its
+independent reference permits completion after close. A future file adapter
+must preserve that distinction when file references or provider registrations
+end. None of these operations needs a userspace ioctl context, so a file
+adapter will call the same core as an in-kernel consumer.
+
+The KUnit ``drm_capture`` suite exercises the core with real allocations and
+kernel-controlled snapshot publication. That is a reference-provider first
+cut, not a VKMS integration or a public capture interface. Anonymous capture
+and revocation files, DRM grant policy, destination DMA-BUF registration,
+format negotiation, provider notification and safe Rust ownership wrappers
+are subsequent integrations. In particular, the CPU snapshot helper does not
+claim the delegated GPU composition path or create a future-userspace fence.
+
 Driver Initialization
 =====================
 
