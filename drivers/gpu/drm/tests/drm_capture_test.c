@@ -137,6 +137,39 @@ static void drm_capture_cancel_queued(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_capture_ack(capture, id), 0);
 }
 
+static void drm_capture_snapshot_isolation(struct kunit *test)
+{
+	struct drm_capture *old = capture_create(test, 2);
+	struct drm_capture *fresh = capture_create(test, 1);
+	u8 image[16], retained[16], result[16];
+	u64 first, second, next;
+
+	memset(image, 0x11, sizeof(image));
+	KUNIT_EXPECT_EQ(test, drm_capture_publish_snapshot(old, image, sizeof(image)), -EAGAIN);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(old, &first), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(old, &second), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_publish_snapshot(old, image, 15), -EINVAL);
+	capture_expect_status(test, old, first, false, -EINPROGRESS);
+	KUNIT_ASSERT_EQ(test, drm_capture_publish_snapshot(old, image, sizeof(image)), 0);
+	memset(image, 0x22, sizeof(image));
+	KUNIT_ASSERT_EQ(test, drm_capture_publish_snapshot(old, image, sizeof(image)), 0);
+	memset(image, 0xff, sizeof(image));
+	KUNIT_ASSERT_EQ(test, drm_capture_copy_result(old, first, retained, sizeof(retained)), 16);
+	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(retained, 0x11, sizeof(retained)), NULL);
+	KUNIT_ASSERT_EQ(test, drm_capture_copy_result(old, second, result, sizeof(result)), 16);
+	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(result, 0x22, sizeof(result)), NULL);
+	drm_capture_revoke(old);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(fresh, &next), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_publish_snapshot(fresh, image, sizeof(image)), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_copy_result(fresh, next, result, sizeof(result)), 16);
+	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(result, 0xff, sizeof(result)), NULL);
+	/* Old completed results are immutable and never acquire new-scope bytes. */
+	KUNIT_ASSERT_EQ(test, drm_capture_copy_result(old, first, result, sizeof(result)), 16);
+	KUNIT_EXPECT_MEMEQ(test, retained, result, sizeof(result));
+	KUNIT_EXPECT_EQ(test, drm_capture_publish_snapshot(old, image, sizeof(image)),
+			-EKEYREVOKED);
+}
+
 static void drm_capture_failed_image(struct kunit *test)
 {
 	struct drm_capture *capture = capture_create(test, 1);
@@ -161,6 +194,7 @@ static struct kunit_case drm_capture_cases[] = {
 	KUNIT_CASE(drm_capture_cancel_claimed),
 	KUNIT_CASE(drm_capture_close_claimed),
 	KUNIT_CASE(drm_capture_cancel_queued),
+	KUNIT_CASE(drm_capture_snapshot_isolation),
 	KUNIT_CASE(drm_capture_failed_image),
 	{}
 };
