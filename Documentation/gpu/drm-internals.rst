@@ -94,6 +94,50 @@ format negotiation, provider notification and safe Rust ownership wrappers
 are subsequent integrations. In particular, the CPU snapshot helper does not
 claim the delegated GPU composition path or create a future-userspace fence.
 
+Capture Authority Lifetime
+--------------------------
+
+A capture permission can outlive the image size and request queue used for one
+mode. For example, changing a virtual monitor's resolution needs a new stream,
+but need not require the compositor to grant permission again. Conversely,
+revoking permission must prevent new streams even if an old stream has already
+been closed.
+
+``drm_capture_authority.h`` provides that independent lifetime. Its provider
+context holds the authorized scope, rights and any policy references. Creating
+the authority takes ownership of the context only on success. The constructor
+does not authorize a display or bypass DRM master and content-ownership checks;
+those remain explicit responsibilities of the provider.
+
+Before admitting a resource, the provider calls
+``drm_capture_authority_begin()``. Success holds an admission mutex until
+``drm_capture_authority_end()``. Policy validation and resource registration
+belong inside that interval. Another provider lock may also be needed to keep
+the policy being checked stable. A reference to the authority keeps its memory
+alive, not its permission valid.
+
+Revocation acquires the same mutex, permanently closes admission, and releases
+the mutex before calling the provider's cleanup callback. A concurrent revoker
+waits for that callback to finish rather than reporting completed cleanup
+early. The callback must not recursively revoke the authority or wait for an
+operation that needs revocation to finish. In particular, revocation cannot be
+called with the admission guard held.
+
+Cleanup completion means that the provider has stopped admission and initiated
+safe resource cleanup. It does not mean that GPU work has completed. Claimed
+jobs retain their own references until their actual completion; neither a
+revocation notification nor a cleanup callback replaces a native completion
+fence. The authority wait queue is awakened after the callback finishes. A
+waiter must register before testing the condition to avoid missing that wakeup.
+
+Ordinary references are acquired with ``drm_capture_authority_get()`` and
+released with ``drm_capture_authority_put()``. Final release also revokes if
+necessary, then releases the provider context. These operations may sleep. A
+future file adapter and an in-kernel consumer use the same admission and
+revocation operations; closing a mode-specific stream is not an authority
+operation. The KUnit ``drm_capture_authority`` suite exercises terminal cleanup,
+stream replacement and concurrent revocation without introducing a public ABI.
+
 Driver Initialization
 =====================
 
