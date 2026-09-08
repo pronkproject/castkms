@@ -20,6 +20,7 @@ class Rejected(Exception):
 @dataclass
 class Scene:
     generation: int
+    scanout: object = None
     claims: set = field(default_factory=set)
     fences: set = field(default_factory=set)
     seals: set = field(default_factory=set)
@@ -194,6 +195,28 @@ class Model:
         # ticket identities name objects retained by the model's oracle maps.
         return OwnedRequest(self, self.epoch, ticket, tuple(changes))
 
+    def rebuild_request(self, request):
+        self.require(request.owner is self and request.epoch == self.epoch)
+        ticket = self.tickets[request.ticket]
+        self.require({change.output for change in request.changes} == set(ticket.scope))
+        self.accept(request.ticket, test_only=True)
+        # Reconstruct from current state, not a checked state kept across a
+        # host wait. Unchanged outputs inherit their newly observed values.
+        state = {output: self.scenes[scene].scanout
+                 for output, scene in self.current.items()}
+        state.update((change.output, change) for change in request.changes)
+        return state
+
+    def accept_request(self, request, *, test_only=False, failure=False):
+        # Rebuild and acceptance are one serialized decision. No caller may
+        # hand in an earlier checked state as a substitute for reconstruction.
+        state = self.rebuild_request(request)
+        commit = self.accept(request.ticket, test_only=test_only, failure=failure)
+        if not test_only:
+            for change in request.changes:
+                self.scenes[self.current[change.output]].scanout = state[change.output]
+        return commit
+
     def accept(self, ticket_id, *, test_only=False, failure=False):
         ticket = self.tickets[ticket_id]
         self.require(not self.lost and ticket.epoch == self.epoch)
@@ -260,6 +283,95 @@ class PreparationTests(unittest.TestCase):
     def claimed(self, model, output=0):
         model.queue()
         return model.claim_source(output)
+
+    def request(self, model, outputs=(0,), framebuffer="frame", x=12):
+        # An independent, already submitted producer for the new framebuffer.
+        producer = model.identity()
+        model.native[producer] = None
+        ticket = model.prepare(outputs)
+        rows = [[output, 7, 8, x] for output in outputs]
+        return model.capture_request(rows, {7: framebuffer}, {8: producer},
+                                     {9: ticket}, 9)
+
+    def test_waiting_request_is_rebuilt_from_current_display_state(self):
+        model = Model(outputs=2)
+        predecessor = model.accept(model.prepare([0]))
+        request = self.request(model)
+        checked_before_wait = model.rebuild_request(request)
+        self.assertIsNone(checked_before_wait[1])
+        self.assertTrue(model.ready(request.ticket))
+        with self.assertRaises(Rejected):
+            model.accept_request(request)
+        independent = self.request(model, outputs=(1,), framebuffer="other")
+        model.complete_commit(model.accept_request(independent))
+        model.complete_commit(predecessor)
+        rebuilt = model.rebuild_request(request)
+        self.assertEqual(rebuilt[1], independent.changes[0])
+        self.assertIsNone(checked_before_wait[1])
+        model.complete_commit(model.accept_request(request))
+        self.assertEqual(model.scenes[model.current[0]].scanout, request.changes[0])
+        self.assertEqual(model.scenes[model.current[1]].scanout, independent.changes[0])
+
+    def test_request_retry_preserves_ticket_until_acceptance(self):
+        model = Model()
+        claim = self.claimed(model)
+        request = self.request(model)
+        before = deepcopy(model.__dict__)
+        model.accept_request(request, test_only=True)
+        self.assertEqual(model.__dict__, before)
+        with self.assertRaises(Rejected):
+            model.accept_request(request)
+        self.assertEqual(model.__dict__, before)
+        model.release(claim, [])
+        self.assertTrue(model.ready(request.ticket))
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.accept_request(request, failure=True)
+        self.assertEqual(model.__dict__, before)
+        commit = model.accept_request(request)
+        before = deepcopy(model.__dict__)
+        # Losing result delivery after acceptance does not authorize replay.
+        with self.assertRaises(Rejected):
+            model.accept_request(request)
+        self.assertEqual(model.__dict__, before)
+        model.complete_commit(commit)
+
+    def test_rebuild_rejects_obsolete_ticket_after_competing_update(self):
+        model = Model()
+        request = self.request(model)
+        model.rebuild_request(request)
+        winner = model.accept(model.prepare([0]))
+        model.complete_commit(winner)
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.accept_request(request)
+        self.assertEqual(model.__dict__, before)
+        replacement = self.request(model)
+        model.complete_commit(model.accept_request(replacement))
+
+    def test_rebuild_rejects_wrong_scope_or_device_without_consumption(self):
+        model = Model(outputs=2)
+        request = self.request(model)
+        # A caller's wider request must not retire an unprepared output.
+        wider = model.capture_request([[0, 7, 8, 12], [1, 7, 8, 12]],
+                                      {7: "frame"}, {8: request.changes[0].producer},
+                                      {9: request.ticket}, 9)
+        for candidate, target in ((wider, model), (request, Model(outputs=2))):
+            before = deepcopy(target.__dict__)
+            with self.assertRaises(Rejected):
+                target.accept_request(candidate)
+            self.assertEqual(target.__dict__, before)
+        self.assertEqual(model.tickets[request.ticket].state, "SEALING")
+
+    def test_worker_loss_invalidates_owned_request(self):
+        model = Model()
+        request = self.request(model)
+        model.rebuild_request(request)
+        model.worker_lost()
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.accept_request(request)
+        self.assertEqual(model.__dict__, before)
 
     def test_request_capture_owns_values_instead_of_lookup_keys(self):
         model = Model()
