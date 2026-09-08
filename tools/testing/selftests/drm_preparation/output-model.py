@@ -24,6 +24,7 @@ class Grant:
 class Allocation:
     scope: str
     pixels: str = "cleared"
+    busy: bool = False
 
 
 @dataclass
@@ -42,9 +43,10 @@ class OutputModel:
         return Allocation(grant.scope)
 
     def claim(self, grant, allocation, pixels):
-        if not grant.live or allocation.scope != grant.scope:
+        if not grant.live or allocation.scope != grant.scope or allocation.busy:
             raise Rejected()
         # Claim, not queuing or source-stage permission, authorizes this write.
+        allocation.busy = True
         return OutputClaim(grant, allocation, pixels)
 
     def revoke(self, grant):
@@ -61,10 +63,34 @@ class OutputModel:
             raise Rejected()
         claim.allocation.pixels = claim.pixels
         claim.completed = True
+        claim.allocation.busy = False
         return claim.grant.live  # Delivery eligibility, not write revocation.
 
 
 class OutputTests(unittest.TestCase):
+    def test_allocation_cannot_have_overlapping_write_claims(self):
+        model = OutputModel()
+        grant = Grant("session")
+        allocation = model.allocate(grant)
+        first = model.claim(grant, allocation, "first")
+        for submitted in (False, True):
+            if submitted:
+                model.submit(first)
+            with self.assertRaises(Rejected):
+                model.claim(grant, allocation, "overlap")
+            self.assertEqual(allocation.pixels, "cleared")
+            self.assertTrue(allocation.busy)
+        model.complete(first)
+        second = model.claim(grant, allocation, "second")
+        # A repeated old completion cannot free a later use of the allocation.
+        with self.assertRaises(Rejected):
+            model.complete(first)
+        self.assertTrue(allocation.busy)
+        model.submit(second)
+        model.complete(second)
+        self.assertFalse(allocation.busy)
+        self.assertEqual(allocation.pixels, "second")
+
     def test_old_descriptor_never_receives_new_scope_pixels(self):
         model = OutputModel()
         old = Grant("old authorization domain")
