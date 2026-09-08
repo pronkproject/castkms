@@ -650,6 +650,7 @@ drm_atomic_get_plane_state(struct drm_atomic_commit *state,
 	plane_state = plane->funcs->atomic_duplicate_state(plane);
 	if (!plane_state)
 		return ERR_PTR(-ENOMEM);
+	plane_state->fb_set = false;
 
 	state->planes[index].state_to_destroy = plane_state;
 	state->planes[index].ptr = plane;

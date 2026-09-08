@@ -237,6 +237,9 @@ EXPORT_SYMBOL(drm_atomic_set_crtc_for_plane);
  * to the new fb and drop the reference to the old fb, if there is one. This
  * function takes care of all these details besides updating the pointer in the
  * state object itself.
+ *
+ * The assignment sets &drm_plane_state.fb_set even when @fb is unchanged.
+ * Both kernel callers and the FB_ID property adapter use this function.
  */
 void
 drm_atomic_set_fb_for_plane(struct drm_plane_state *plane_state,
@@ -255,6 +258,7 @@ drm_atomic_set_fb_for_plane(struct drm_plane_state *plane_state,
 			       plane->base.id, plane->name, plane_state);
 
 	drm_framebuffer_assign(&plane_state->fb, fb);
+	plane_state->fb_set = true;
 }
 EXPORT_SYMBOL(drm_atomic_set_fb_for_plane);
 
