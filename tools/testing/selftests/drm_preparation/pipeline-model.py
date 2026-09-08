@@ -99,6 +99,99 @@ class Pipeline:
 
 
 class PipelineTests(unittest.TestCase):
+    def test_nominal_progress_with_bounded_worker_service(self):
+        # One service opportunity per output per period, before sealing.
+        # Release takes budget ticks, native completion one more tick.
+        for budget in (1, 2, 4):
+            for held_destination in (False, True):
+                with self.subTest(budget=budget, held=held_destination):
+                    pipeline = Pipeline(outputs=2, staging_depth=2)
+                    requests = [output.CaptureRequests(4) for _ in range(2)]
+                    grants = [pipeline.grant(i, "recipient") for i in range(2)]
+                    allocations = [pipeline.output.allocate(g.destination) for g in grants]
+                    stages = [None, None]
+                    delivered = [[], []]
+                    pending_since = [{}, {}]
+                    max_ready = max_retention = max_request = 0
+                    period = budget + 3
+                    for cycle in range(40):
+                        now = cycle * period
+                        for i in range(2):
+                            # Full result capacity is backpressure, not failure
+                            # of display updates or another recipient.
+                            if len(requests[i].results.results) < 4:
+                                use = requests[i].queue(grants[i].destination)
+                                pending_since[i][use] = now
+                            if stages[i] is None:
+                                use = next(u for u, r in requests[i].active.items()
+                                           if not r.claimed)
+                                pipeline.source.queue()
+                                claim = pipeline.claim_source(grants[i], i)
+                                requests[i].claim(use)
+                                native = pipeline.source.submit_source(claim)
+                                stages[i] = (use, claim, native)
+                        old = dict(pipeline.source.current)
+                        tickets = [pipeline.source.prepare([i]) for i in range(2)]
+                        # A second preparation must not cancel the first
+                        # worker's admitted access to make itself ready.
+                        competing = pipeline.source.prepare([1])
+                        for i in range(2):
+                            use, claim, native = stages[i]
+                            if not pipeline.source.claims[claim].released:
+                                self.assertFalse(pipeline.source.ready(tickets[i]))
+                                pipeline.source.release(claim, [native])
+                                max_ready = max(max_ready, budget)
+                            self.assertTrue(pipeline.source.ready(tickets[i]))
+                        commits = [pipeline.source.accept(t) for t in tickets]
+                        with self.assertRaises(Rejected):
+                            pipeline.source.accept(competing)
+                        for i in range(2):
+                            use, claim, native = stages[i]
+                            if pipeline.source.native[native] is None:
+                                with self.assertRaises(Rejected):
+                                    pipeline.source.complete_commit(commits[i])
+                                pipeline.source.signal(native)
+                                max_retention = max(max_retention, budget + 1)
+                            pipeline.source.complete_commit(commits[i])
+                            self.assertTrue(pipeline.source.scenes[old[i]].retired)
+                            if i == 0 and held_destination:
+                                # No D write is claimed. E remains private;
+                                # waiting requests have no source reference.
+                                continue
+                            write = pipeline.claim_output(claim, grants[i], allocations[i])
+                            pipeline.output.submit(write)
+                            pipeline.output.complete(write)
+                            requests[i].finish(use, write.status)
+                            self.assertEqual(requests[i].results.query(use), 0)
+                            requests[i].results.acknowledge(use)
+                            pipeline.output.results.acknowledge(write.result)
+                            pipeline.recycle_stage(claim)
+                            stages[i] = None
+                            finished = now + budget + 2
+                            max_request = max(max_request, finished - pending_since[i].pop(use))
+                            delivered[i].append(finished)
+                        for i in range(2):
+                            self.assertLessEqual(len(requests[i].results.results), 4)
+                        self.assertEqual(pipeline.source.demand, 0)
+                        self.assertLessEqual(sum(v is not None for v in pipeline.source.staging.values()), 2)
+                    self.assertEqual(len(delivered[1]), 40)
+                    self.assertEqual(len(delivered[0]), 0 if held_destination else 40)
+                    for times in delivered:
+                        if times:
+                            self.assertLessEqual(max(b - a for a, b in zip(times, times[1:])), period)
+                    self.assertLessEqual(max_ready, budget)
+                    self.assertLessEqual(max_retention, budget + 1)
+                    self.assertLessEqual(max_request, budget + 2)
+                    if held_destination:
+                        use, claim, native = stages[0]
+                        requests[0].revoke(grants[0].destination)
+                        self.assertIsNone(requests[0].results.query(use))
+                        # Provider acknowledges no output write was started.
+                        pipeline.recycle_stage(claim)
+                        requests[0].finish(use, -125)
+                        self.assertEqual(requests[0].results.query(use), -128)
+                        self.assertFalse(requests[0].active)
+
     def current_stage(self, pipeline, grant):
         pipeline.source.queue()
         claim = pipeline.claim_source(grant, grant.output)
