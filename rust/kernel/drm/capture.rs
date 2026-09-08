@@ -7,7 +7,7 @@
 //! including destructors, requires a context that may sleep.
 
 use crate::{
-    error::from_err_ptr,
+    error::{from_err_ptr, to_result},
     prelude::*,
     sync::aref::{ARef, AlwaysRefCounted},
     types::Opaque,
@@ -51,6 +51,17 @@ impl Stream {
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(ptr.cast())) })
     }
 
+    /// Queue a request whose identity and cleanup remain tied to this stream.
+    pub fn queue(&self) -> Result<Request> {
+        let mut id = 0;
+        // SAFETY: The stream is live and id is writable for the duration of the call.
+        to_result(unsafe { bindings::drm_capture_queue(self.0.get(), &mut id) })?;
+        Ok(Request {
+            stream: self.into(),
+            id,
+        })
+    }
+
     /// Stop admission and discard delivery, leaving active provider ownership intact.
     pub fn shutdown(&self) {
         // SAFETY: The stream is live; shutdown is serialized and idempotent.
@@ -61,5 +72,73 @@ impl Stream {
     pub fn revoke(&self) {
         // SAFETY: The stream is live and the C core serializes revocation.
         unsafe { bindings::drm_capture_revoke(self.0.get()) };
+    }
+}
+
+/// One request in its originating stream; dropping it abandons demand or the retained result.
+///
+/// If a provider has claimed the request, dropping it preserves the provider's storage and credit
+/// until completion. There is no transferable numeric identifier and no implicit stream shutdown.
+#[must_use = "dropping a request abandons its capture result"]
+pub struct Request {
+    stream: ARef<Stream>,
+    id: u64,
+}
+
+/// Completion state; a completed access may still have failed to produce a valid image.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Provider work is outstanding, or the request has not been claimed.
+    Pending,
+    /// Access ended; success permits copying the image, an error does not.
+    Complete(Result),
+}
+
+impl Request {
+    /// Inspect completion without consuming the result.
+    pub fn status(&self) -> Result<Status> {
+        let mut result = bindings::drm_capture_result::default();
+        // SAFETY: This request retains its stream and the output is writable until return.
+        to_result(unsafe {
+            bindings::drm_capture_query(self.stream.0.get(), self.id, &mut result)
+        })?;
+        Ok(if result.completed {
+            Status::Complete(to_result(result.status))
+        } else {
+            Status::Pending
+        })
+    }
+
+    /// Copy a successful result; pending or failed requests leave the buffer unchanged.
+    pub fn copy_result(&self, output: &mut [u8]) -> Result<usize> {
+        // SAFETY: The stream is retained and the slice describes all writable output storage.
+        let ret = unsafe {
+            bindings::drm_capture_copy_result(
+                self.stream.0.get(),
+                self.id,
+                output.as_mut_ptr().cast(),
+                output.len(),
+            )
+        };
+        if ret < 0 {
+            // C returns a negative errno, which fits i32.
+            Err(Error::from_errno(ret as i32))
+        } else {
+            Ok(ret as usize)
+        }
+    }
+
+    /// Cancel delivery but retain the eventual terminal status for inspection.
+    pub fn cancel(&self) -> Result {
+        // SAFETY: The retained stream and stream-local identifier are valid for the call.
+        to_result(unsafe { bindings::drm_capture_cancel(self.stream.0.get(), self.id) })
+    }
+}
+
+impl Drop for Request {
+    fn drop(&mut self) {
+        // SAFETY: The stream remains live through this destructor. A prior shutdown may already
+        // have discarded the request; ignoring ENOENT is intentional. Active job storage survives.
+        unsafe { bindings::drm_capture_discard(self.stream.0.get(), self.id) };
     }
 }
