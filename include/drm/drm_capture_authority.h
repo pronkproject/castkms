@@ -5,6 +5,7 @@
 #include <linux/types.h>
 
 struct drm_capture_authority;
+struct drm_capture;
 struct module;
 struct wait_queue_head;
 
@@ -49,5 +50,15 @@ void drm_capture_authority_end(struct drm_capture_authority *authority);
 bool drm_capture_authority_revoked(struct drm_capture_authority *authority);
 bool drm_capture_authority_cleanup_done(struct drm_capture_authority *authority);
 struct wait_queue_head *drm_capture_authority_waitqueue(struct drm_capture_authority *authority);
+
+/*
+ * Register an already-authorized stream while holding a successful begin guard.
+ * Success retains a stream reference until removal or authority revocation.
+ * Duplicate registration within the authority fails with -EEXIST. Providers
+ * must not share one stream between incompatible authorization scopes.
+ * This does not authorize pixels or replace policy checks at provider claim.
+ */
+int drm_capture_authority_add_stream_locked(struct drm_capture_authority *authority,
+					    struct drm_capture *stream);
 
 #endif

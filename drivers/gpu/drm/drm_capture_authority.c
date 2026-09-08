@@ -4,12 +4,19 @@
 #include <linux/completion.h>
 #include <linux/err.h>
 #include <linux/kref.h>
+#include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/wait.h>
 
 #include <drm/drm_capture_authority.h>
+#include <drm/drm_capture.h>
+
+struct capture_stream_registration {
+	struct list_head link;
+	struct drm_capture *stream;
+};
 
 struct drm_capture_authority {
 	struct kref ref;
@@ -20,6 +27,7 @@ struct drm_capture_authority {
 	const struct drm_capture_authority_ops *ops;
 	void *data;
 	bool revoked;
+	struct list_head streams;
 };
 
 struct drm_capture_authority *
@@ -40,6 +48,7 @@ drm_capture_authority_create(const struct drm_capture_authority_ops *ops, void *
 	mutex_init(&authority->lock);
 	init_completion(&authority->cleanup_done);
 	init_waitqueue_head(&authority->wait);
+	INIT_LIST_HEAD(&authority->streams);
 	authority->ops = ops;
 	authority->data = data;
 	return authority;
@@ -55,6 +64,9 @@ EXPORT_SYMBOL_GPL(drm_capture_authority_get);
 
 void drm_capture_authority_revoke(struct drm_capture_authority *authority)
 {
+	struct capture_stream_registration *registration, *next;
+	LIST_HEAD(streams);
+
 	mutex_lock(&authority->lock);
 	if (authority->revoked) {
 		mutex_unlock(&authority->lock);
@@ -62,8 +74,15 @@ void drm_capture_authority_revoke(struct drm_capture_authority *authority)
 		return;
 	}
 	WRITE_ONCE(authority->revoked, true);
+	list_splice_init(&authority->streams, &streams);
 	mutex_unlock(&authority->lock);
 
+	list_for_each_entry_safe(registration, next, &streams, link) {
+		list_del(&registration->link);
+		drm_capture_revoke(registration->stream);
+		drm_capture_put(registration->stream);
+		kfree(registration);
+	}
 	authority->ops->revoke(authority->data);
 	complete_all(&authority->cleanup_done);
 	wake_up_all(&authority->wait);
@@ -124,3 +143,24 @@ struct wait_queue_head *drm_capture_authority_waitqueue(struct drm_capture_autho
 	return &authority->wait;
 }
 EXPORT_SYMBOL_GPL(drm_capture_authority_waitqueue);
+
+int drm_capture_authority_add_stream_locked(struct drm_capture_authority *authority,
+					    struct drm_capture *stream)
+{
+	struct capture_stream_registration *registration;
+
+	lockdep_assert_held(&authority->lock);
+	if (authority->revoked)
+		return -EKEYREVOKED;
+	list_for_each_entry(registration, &authority->streams, link) {
+		if (registration->stream == stream)
+			return -EEXIST;
+	}
+	registration = kzalloc_obj(*registration);
+	if (!registration)
+		return -ENOMEM;
+	registration->stream = drm_capture_get(stream);
+	list_add_tail(&registration->link, &authority->streams);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(drm_capture_authority_add_stream_locked);
