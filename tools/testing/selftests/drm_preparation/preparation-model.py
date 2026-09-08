@@ -170,7 +170,17 @@ class Model:
         # Never replace that evidence with a later reservation snapshot.
         fences = frozenset(fences)
         self.require(all(fence in self.native for fence in fences))
-        return ProducerSet(fences, fences)
+        covered = set()
+        for fence in fences:
+            pending = list(self.native_waits.get(fence, ()))
+            while pending:
+                predecessor = pending.pop()
+                if predecessor not in covered:
+                    covered.add(predecessor)
+                    pending.extend(self.native_waits.get(predecessor, ()))
+        # Only ordering is coalesced. A later successful fence does not
+        # supersede the status of an earlier, separately acquired producer.
+        return ProducerSet(fences, fences - covered)
 
     def prepare(self, outputs):
         self.require(not self.lost and bool(outputs))
@@ -354,6 +364,39 @@ class Model:
 
 
 class PreparationTests(unittest.TestCase):
+    def test_coalesced_waits_do_not_discard_earlier_producer_failure(self):
+        model = Model()
+        first = model.submit_native()
+        middle = model.submit_native([first])
+        last = model.submit_native([middle])
+        independent = model.submit_native()
+        ticket = model.prepare([0])
+        request = model.capture_request([[0, 7, 8, 0]], {7: "frame"}, {8: last},
+                                        {9: ticket}, 9,
+                                        implicit={7: [first, independent, first]})
+        producers = request.changes[0].producers
+        self.assertEqual(producers.waits, frozenset([last, independent]))
+        self.assertEqual(producers.validity, frozenset([first, last, independent]))
+        predecessor = model.accept_request(request)
+        claim = self.claimed(model)
+        copy = model.submit_source(claim)
+        self.assertEqual(model.native_waits[copy], producers.waits)
+        model.release(claim, [copy])
+        next_ticket = model.prepare([0])
+        self.assertTrue(model.ready(next_ticket))
+        model.signal(first, -5)
+        model.signal(middle)
+        model.signal(last)
+        with self.assertRaises(Rejected):
+            model.signal(copy)
+        model.signal(independent)
+        model.complete_commit(predecessor)
+        replacement = model.accept(next_ticket)
+        model.signal(copy)
+        model.complete_commit(replacement)
+        self.assertEqual(model.native[copy], 0)
+        self.assertEqual(model.staging_status(claim), -5)
+
     def test_multiple_acquired_producers_govern_copy_validity(self):
         for failed_before_capture in (False, True):
             for status in (0, -5):
