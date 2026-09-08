@@ -44,6 +44,27 @@ ioctl handling. Future capture policy must not turn buffer allocation or the
 ordinary commit path into an implicit grant of access to another client's
 pixels.
 
+``scene.rs`` retains the primary plane's framebuffer allocation and copied
+source and destination geometry independently of the atomic callback. The
+source coordinates keep their original fixed-point representation. Atomic
+validation prepares geometry in the candidate plane state; the plane update
+callback replaces the output's description before flip completion. Test-only
+and rejected transactions do not publish a replacement. An inactive or
+disabled plane clears the description. Recommitting the same framebuffer
+still replaces the description; framebuffer identity is not a content cache.
+
+The output holds at most one description. Replacement releases the previous
+reference outside the output lock. Module teardown permanently closes the
+output before releasing DRM registration, so an outstanding commit cannot
+restore its framebuffer reference after shutdown begins. That ordering breaks
+the reference cycle between the output, framebuffer and DRM device.
+
+An owned allocation does not preserve its pixels against later writes. The
+description is not an authorized capture scene: it does not yet carry source
+ownership, retained producer status, or a read lease. There is no interface for
+reading or exporting its pixels. Capture publication must add those checks
+before using these descriptions for deferred work.
+
 Testing in a disposable virtual machine
 --------------------------------------
 
@@ -63,6 +84,14 @@ commit leaves the display inactive, enables the output, and submits 48 flips
 including same-framebuffer updates. Each submitted flip must produce exactly
 one event. A scaling request must be rejected. Finally the test disables the
 output and releases its framebuffers, buffer handles and mode description.
+
+The test also submits a test-only framebuffer replacement while the output is
+active and verifies that the selected framebuffer remains unchanged. It turns
+the output off and on without removing its plane configuration before testing
+further flips. Optional ``CONFIG_DRM_CASTKMS_KUNIT_TEST`` tests exercise the
+output's resource replacement, blanking and terminal shutdown rules, including
+resource destruction that reenters output shutdown. Those tests do not read
+framebuffer pixels or establish capture authorization.
 
 Those checks establish ordinary DRM submission behavior, not presentation
 timing, GPU interoperability, capture authorization, or casting performance.
