@@ -74,6 +74,7 @@ class Model:
         self.commits = {}
         self.pending = {}
         self.native = {}
+        self.native_waits = {}
         self.staging = {i: None for i in range(staging_depth)}
         self.demand = 0
         for output in range(outputs):
@@ -142,7 +143,19 @@ class Model:
 
     def signal(self, fence, status=0):
         self.require(fence in self.native and self.native[fence] is None)
+        self.require(all(self.native[dependency] is not None
+                         for dependency in self.native_waits.get(fence, ())))
         self.native[fence] = status
+
+    def submit_native(self, dependencies=()):
+        # Only previously submitted work may be a dependency. A new fence
+        # cannot wait on itself or a future submission in this fake provider.
+        dependencies = frozenset(dependencies)
+        self.require(all(fence in self.native for fence in dependencies))
+        fence = self.identity()
+        self.native[fence] = None
+        self.native_waits[fence] = dependencies
+        return fence
 
     def prepare(self, outputs):
         self.require(not self.lost and bool(outputs))
@@ -304,6 +317,36 @@ class PreparationTests(unittest.TestCase):
         rows = [[output, 7, 8, x] for output in outputs]
         return model.capture_request(rows, {7: framebuffer}, {8: producer},
                                      {9: ticket}, 9)
+
+    def test_native_dependencies_finish_before_dependent_work(self):
+        model = Model()
+        producer = model.submit_native()
+        other = model.submit_native()
+        copy = model.submit_native(iter([producer, other, producer]))
+        self.assertEqual(model.native_waits[copy], frozenset([producer, other]))
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.signal(copy)
+        self.assertEqual(model.__dict__, before)
+        model.signal(producer, status=-5)
+        with self.assertRaises(Rejected):
+            model.signal(copy)
+        model.signal(other)
+        # A dependency ending access does not promise its pixels are valid.
+        # The provider deliberately permits a successful dependent fence.
+        model.signal(copy)
+        self.assertEqual(model.native[copy], 0)
+        self.assertEqual(model.native[producer], -5)
+        with self.assertRaises(Rejected):
+            model.signal(producer)
+
+    def test_native_submission_rejects_unknown_dependencies_atomically(self):
+        model = Model()
+        producer = model.submit_native()
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.submit_native([producer, -1])
+        self.assertEqual(model.__dict__, before)
 
     def test_waiting_request_is_rebuilt_from_current_display_state(self):
         model = Model(outputs=2)
