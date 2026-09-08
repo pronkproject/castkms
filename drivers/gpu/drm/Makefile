@@ -41,6 +41,7 @@ drm-y := \
 	drm_cache.o \
 	drm_capture.o \
 	drm_capture_authority.o \
+	drm_capture_file.o \
 	drm_color_mgmt.o \
 	drm_colorop.o \
 	drm_connector.o \
