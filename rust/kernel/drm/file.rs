@@ -68,6 +68,26 @@ impl<T: DriverFile> File<T> {
         Some(unsafe { drm::auth::MasterRef::from_owned_raw(raw, dev) })
     }
 
+    /// Sample the associated master and the file's current-master status together.
+    ///
+    /// The result owns its identity and device lifetime, but not ongoing authority. It is
+    /// `None` when the file has no associated master. This operation may sleep and must not
+    /// run with DRM's master mutex held, including from master-set/drop callbacks.
+    pub fn master_snapshot(&self) -> Option<drm::auth::MasterSnapshot<T::Driver>> {
+        let mut was_current = false;
+        // SAFETY: The open file is live and the output is writable. The helper serializes
+        // both observations with master transitions and returns an owned reference or NULL.
+        let raw = core::ptr::NonNull::new(unsafe {
+            bindings::drm_file_get_master_snapshot(self.as_raw(), &mut was_current)
+        })?;
+        // SAFETY: The typed file keeps its device alive for this borrow.
+        let dev = unsafe { drm::Device::<T::Driver>::from_raw(self.device_raw()) };
+        // SAFETY: The helper returned one reference to this file's associated master, which
+        // belongs to the same device. Transfer the reference to a device-retaining handle.
+        let master = unsafe { drm::auth::MasterRef::from_owned_raw(raw, dev) };
+        Some(drm::auth::MasterSnapshot::new(master, was_current))
+    }
+
     fn driver_priv(&self) -> *mut T {
         // SAFETY: By the type invariants of `Self`, `self.as_raw()` is always valid.
         unsafe { (*self.as_raw()).driver_priv }.cast()
