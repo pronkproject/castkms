@@ -72,11 +72,16 @@ class OutputClaim:
     grant: Grant
     allocation: Allocation
     pixels: str
+    owner: object
+    result: int
     submitted: bool = False
     completed: bool = False
 
 
 class OutputModel:
+    def __init__(self, result_capacity=4):
+        self.results = ResultLedger(result_capacity)
+
     def allocate(self, grant):
         if not grant.live:
             raise Rejected()
@@ -85,26 +90,31 @@ class OutputModel:
     def claim(self, grant, allocation, pixels):
         if not grant.live or allocation.scope != grant.scope or allocation.busy:
             raise Rejected()
+        # Reserve delivery capacity before admitting work or owning storage.
+        result = self.results.reserve()
         # Claim, not queuing or source-stage permission, authorizes this write.
         allocation.busy = True
-        return OutputClaim(grant, allocation, pixels)
+        return OutputClaim(grant, allocation, pixels, self, result)
 
     def revoke(self, grant):
         grant.live = False
 
     def submit(self, claim):
-        if claim.submitted or claim.completed:
+        if claim.owner is not self or claim.submitted or claim.completed:
             raise Rejected()
         # Pre-revoke authorization survives until the bounded claim resolves.
         claim.submitted = True
 
-    def complete(self, claim):
-        if not claim.submitted or claim.completed:
+    def complete(self, claim, notify=True):
+        if claim.owner is not self or not claim.submitted or claim.completed:
             raise Rejected()
         claim.allocation.pixels = claim.pixels
         claim.completed = True
         claim.allocation.busy = False
-        return claim.grant.live  # Delivery eligibility, not write revocation.
+        recorded = self.results.complete(claim.result, 0)
+        # Lost notification is recoverable through query. Neither query nor
+        # acknowledgment is needed to end the allocation's native write use.
+        return recorded and claim.grant.live and notify
 
 
 class ResultTests(unittest.TestCase):
@@ -158,6 +168,56 @@ class ResultTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
+    def test_lost_notification_retains_result_without_owning_allocation(self):
+        model = OutputModel(result_capacity=1)
+        grant = Grant("session")
+        allocation = model.allocate(grant)
+        first = model.claim(grant, allocation, "first")
+        model.submit(first)
+        self.assertFalse(model.complete(first, notify=False))
+        self.assertFalse(allocation.busy)
+        self.assertEqual(allocation.pixels, "first")
+        for _ in range(3):
+            self.assertEqual(model.results.query(first.result), 0)
+            with self.assertRaises(Rejected):
+                model.claim(grant, allocation, "second")
+            self.assertFalse(allocation.busy)
+        model.results.acknowledge(first.result)
+        second = model.claim(grant, allocation, "second")
+        with self.assertRaises(Rejected):
+            model.results.acknowledge(first.result)
+        self.assertEqual(model.results.results, {second.result: None})
+
+    def test_result_endpoint_close_does_not_cancel_an_admitted_write(self):
+        model = OutputModel(result_capacity=1)
+        grant = Grant("session")
+        allocation = model.allocate(grant)
+        claim = model.claim(grant, allocation, "authorized")
+        model.results.close()
+        self.assertTrue(allocation.busy)
+        model.submit(claim)
+        self.assertFalse(model.complete(claim))
+        self.assertFalse(allocation.busy)
+        self.assertEqual(allocation.pixels, "authorized")
+        self.assertFalse(model.results.results)
+        with self.assertRaises(Rejected):
+            model.claim(grant, allocation, "new")
+
+    def test_foreign_output_model_cannot_consume_claim(self):
+        model = OutputModel()
+        other = OutputModel()
+        grant = Grant("session")
+        allocation = model.allocate(grant)
+        claim = model.claim(grant, allocation, "owned")
+        with self.assertRaises(Rejected):
+            other.submit(claim)
+        model.submit(claim)
+        with self.assertRaises(Rejected):
+            other.complete(claim)
+        self.assertTrue(allocation.busy)
+        self.assertIsNone(model.results.query(claim.result))
+        model.complete(claim)
+
     def test_allocation_cannot_have_overlapping_write_claims(self):
         model = OutputModel()
         grant = Grant("session")
