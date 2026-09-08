@@ -36,6 +36,8 @@ void drm_capture_close(struct drm_capture *capture);
 void drm_capture_revoke(struct drm_capture *capture);
 int drm_capture_queue(struct drm_capture *capture, u64 *id);
 int drm_capture_cancel(struct drm_capture *capture, u64 id);
+/* Forget demand/result now; active provider storage and credit retire on completion. */
+int drm_capture_discard(struct drm_capture *capture, u64 id);
 int drm_capture_query(struct drm_capture *capture, u64 id,
 		      struct drm_capture_result *result);
 int drm_capture_ack(struct drm_capture *capture, u64 id);
