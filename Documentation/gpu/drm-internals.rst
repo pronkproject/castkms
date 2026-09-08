@@ -170,6 +170,38 @@ must use those provider operations rather than treating a registered stream
 as a way to bypass policy. The request core remains independent of authorities,
 file descriptors and DRM master selection.
 
+Authorizing a Provider Claim
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``drm_capture_authority_claim_stream()`` combines authority lifetime, registered
+stream membership and the provider's ``authorize_capture`` callback before
+claiming a request. The admission mutex remains held across those steps, so
+authority revocation and stream removal cannot intervene between the check and
+claim. An unregistered stream is rejected without calling provider policy.
+Without a policy callback the operation returns ``-EOPNOTSUPP``; registration
+alone never enables capture through this entry point.
+
+The callback returns zero to permit capture or a negative error to deny it.
+A positive result is invalid and also denies access. Denial does not consume
+a queued request, allowing temporary policy conditions to clear without
+recreating the queue. The callback must not submit work or assume a job exists:
+an approved claim may still return ``-EAGAIN`` when no request is queued.
+
+The mutex orders authority operations, not every source of display changes.
+A provider whose current source or policy is protected by another lock must
+hold that lock across the whole claim call and use a consistent lock order
+for registration and teardown. The callback must not reenter authority
+operations. After success the provider retains the approved source through
+its own ownership mechanism; holding a job neither freezes framebuffer pixels
+nor retains a modesetting transaction. The provider completes the job exactly
+once when its actual access ends, even if permission is revoked meanwhile.
+
+The same claim operation is available to kernel consumers and future capture
+adapters. It does not implement DRM master selection, scene attribution or a
+GPU source-use protocol. Providers still supply those policies and lifetimes;
+the shared operation prevents separating their approval from request admission
+with respect to authority revocation.
+
 Anonymous Revocation File
 ------------------------
 
