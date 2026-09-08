@@ -164,3 +164,24 @@ int drm_capture_authority_add_stream_locked(struct drm_capture_authority *author
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_capture_authority_add_stream_locked);
+
+bool drm_capture_authority_remove_stream(struct drm_capture_authority *authority,
+					 struct drm_capture *stream)
+{
+	struct capture_stream_registration *registration;
+
+	mutex_lock(&authority->lock);
+	list_for_each_entry(registration, &authority->streams, link) {
+		if (registration->stream != stream)
+			continue;
+		list_del(&registration->link);
+		drm_capture_shutdown(stream);
+		mutex_unlock(&authority->lock);
+		drm_capture_put(stream);
+		kfree(registration);
+		return true;
+	}
+	mutex_unlock(&authority->lock);
+	return false;
+}
+EXPORT_SYMBOL_GPL(drm_capture_authority_remove_stream);
