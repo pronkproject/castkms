@@ -40,6 +40,7 @@ class Claim:
 class Ticket:
     scope: dict
     epoch: int
+    authority: int
     state: str = "SEALING"
     fences: frozenset = frozenset()
 
@@ -64,6 +65,7 @@ class Model:
     def __init__(self, outputs=1, staging_depth=2):
         self.serial = 0
         self.epoch = 1
+        self.authority = 1
         self.lost = False
         self.scenes = {}
         self.current = {}
@@ -146,7 +148,7 @@ class Model:
         self.require(not self.lost and bool(outputs))
         scope = {output: self.current[output] for output in outputs}
         key = self.identity()
-        self.tickets[key] = Ticket(scope, self.epoch)
+        self.tickets[key] = Ticket(scope, self.epoch, self.authority)
         for scene in scope.values():
             self.scenes[scene].seals.add(("ticket", key))
         return key
@@ -220,6 +222,7 @@ class Model:
     def accept(self, ticket_id, *, test_only=False, failure=False):
         ticket = self.tickets[ticket_id]
         self.require(not self.lost and ticket.epoch == self.epoch)
+        self.require(ticket.authority == self.authority)
         self.require(ticket.state in ("SEALING", "READY"))
         self.require(all(self.current[o] == s for o, s in ticket.scope.items()))
         # TEST_ONLY validates the supplied scope, not runtime readiness. It
@@ -277,6 +280,15 @@ class Model:
                 ticket.state = "LOST"
         # Known fences and unresolved claims remain. Death proves neither
         # completion nor complete knowledge of unreported native work.
+
+    def change_authority(self):
+        # A replacement modesetting authority may issue fresh tickets. Old
+        # references must not extend the previous authority's right to commit.
+        self.authority += 1
+        for ticket_id, ticket in self.tickets.items():
+            if ticket.state in ("SEALING", "READY"):
+                self.close(ticket_id)
+                ticket.state = "REVOKED"
 
 
 class PreparationTests(unittest.TestCase):
@@ -372,6 +384,46 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaises(Rejected):
             model.accept_request(request)
         self.assertEqual(model.__dict__, before)
+
+    def test_authority_change_rejects_waiting_request_without_revival(self):
+        for ready in (False, True):
+            with self.subTest(ready=ready):
+                model = Model()
+                request = self.request(model)
+                old = model.current[0]
+                if ready:
+                    self.assertTrue(model.ready(request.ticket))
+                model.rebuild_request(request)
+                model.change_authority()
+                self.assertEqual(model.tickets[request.ticket].state, "REVOKED")
+                self.assertFalse(model.scenes[old].seals)
+                before = deepcopy(model.__dict__)
+                for test_only in (False, True):
+                    with self.assertRaises(Rejected):
+                        model.accept_request(request, test_only=test_only)
+                    self.assertEqual(model.__dict__, before)
+                # A new authority can prepare the unchanged picture, but may
+                # not substitute its ticket through the old request's fd.
+                fresh = self.request(model)
+                model.complete_commit(model.accept_request(fresh))
+                with self.assertRaises(Rejected):
+                    model.accept_request(request)
+
+    def test_authority_change_preserves_accepted_reader_dependencies(self):
+        model = Model()
+        claim = self.claimed(model)
+        fence = model.submit_source(claim)
+        model.release(claim, [fence])
+        request = self.request(model)
+        commit = model.accept_request(request)
+        old = model.claims[claim].scene
+        model.change_authority()
+        model.close(request.ticket)
+        self.assertEqual(model.scenes[old].seals, {("commit", commit)})
+        with self.assertRaises(Rejected):
+            model.complete_commit(commit)
+        model.signal(fence)
+        model.complete_commit(commit)
 
     def test_request_capture_owns_values_instead_of_lookup_keys(self):
         model = Model()
