@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config DRM_CASTKMS
+	tristate "CastKMS virtual display (Rust, experimental)"
+	depends on DRM=y
+	depends on RUST
+	depends on MMU
+	select RUST_DRM_GEM_SHMEM_HELPER
+	select DRM_KMS_HELPER
+	help
+	  Development version of the CastKMS virtual display driver. It provides
+	  one always-connected output and atomic modesetting with immediate flip
+	  completion. It does not yet provide a display clock, capture, delegated
+	  composition, audio, or CEC. Do not use it as a replacement for the C
+	  CastKMS driver in a casting session.
+
+	  The module is called castkms.
