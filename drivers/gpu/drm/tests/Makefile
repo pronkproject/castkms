@@ -9,6 +9,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_bridge_test.o \
 	drm_capture_test.o \
 	drm_capture_authority_test.o \
+	drm_capture_file_test.o \
 	drm_cmdline_parser_test.o \
 	drm_connector_test.o \
 	drm_crtc_test.o \
