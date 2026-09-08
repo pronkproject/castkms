@@ -400,6 +400,40 @@ unlock:
 }
 EXPORT_SYMBOL(drm_file_get_master);
 
+/**
+ * drm_file_get_master_snapshot - retain a file's master with its current status
+ * @file_priv: DRM file private
+ * @was_current: whether the file was current master at the snapshot
+ *
+ * Samples the association and current-master status together under
+ * &drm_device.master_mutex. Returns an owned master reference, or NULL with
+ * @was_current set to false when the file has no associated master. Release
+ * the returned reference with drm_master_put().
+ *
+ * The status uses the same lease-aware predicate as drm_is_current_master().
+ * The retained identity remains the file's own master, not its lessor.
+ * Neither the association nor current status is guaranteed to remain unchanged
+ * after return; the snapshot does not authorize a later operation.
+ *
+ * Context: May sleep. The caller must not hold &drm_device.master_mutex.
+ */
+struct drm_master *drm_file_get_master_snapshot(struct drm_file *file_priv,
+					      bool *was_current)
+{
+	struct drm_device *dev = file_priv->minor->dev;
+	struct drm_master *master = NULL;
+
+	guard(mutex)(&dev->master_mutex);
+	*was_current = false;
+	if (file_priv->master) {
+		master = drm_master_get(file_priv->master);
+		*was_current = drm_is_current_master_locked(file_priv);
+	}
+
+	return master;
+}
+EXPORT_SYMBOL(drm_file_get_master_snapshot);
+
 static void drm_master_destroy(struct kref *kref)
 {
 	struct drm_master *master = container_of(kref, struct drm_master, refcount);
