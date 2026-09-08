@@ -52,6 +52,22 @@ impl<T: DriverFile> File<T> {
         unsafe { (*(*self.as_raw()).minor).dev }
     }
 
+    /// Retain the master identity associated with this file, if any.
+    ///
+    /// This snapshots the association under DRM's lookup lock. It does not establish that the
+    /// file is the current master, and the association may change after the call. In particular,
+    /// an identity retained across master handoff is not authority over the new display state.
+    pub fn associated_master(&self) -> Option<drm::auth::MasterRef<T::Driver>> {
+        // SAFETY: The file is live. The helper locks master lookup and returns an owned
+        // reference, or NULL when no master is associated with the file.
+        let raw = core::ptr::NonNull::new(unsafe { bindings::drm_file_get_master(self.as_raw()) })?;
+        // SAFETY: The open typed file keeps its device alive for the borrow.
+        let dev = unsafe { drm::Device::<T::Driver>::from_raw(self.device_raw()) };
+        // SAFETY: The helper returned one reference to a master associated with this file,
+        // hence belonging to the same device. Transfer that reference to the handle.
+        Some(unsafe { drm::auth::MasterRef::from_owned_raw(raw, dev) })
+    }
+
     fn driver_priv(&self) -> *mut T {
         // SAFETY: By the type invariants of `Self`, `self.as_raw()` is always valid.
         unsafe { (*self.as_raw()).driver_priv }.cast()
