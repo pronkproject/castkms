@@ -185,3 +185,31 @@ bool drm_capture_authority_remove_stream(struct drm_capture_authority *authority
 	return false;
 }
 EXPORT_SYMBOL_GPL(drm_capture_authority_remove_stream);
+
+struct drm_capture_job *
+drm_capture_authority_claim_stream(struct drm_capture_authority *authority,
+				   struct drm_capture *stream)
+{
+	struct capture_stream_registration *registration;
+	struct drm_capture_job *job = ERR_PTR(-ENOENT);
+	int ret;
+
+	ret = drm_capture_authority_begin(authority);
+	if (ret)
+		return ERR_PTR(ret);
+	list_for_each_entry(registration, &authority->streams, link) {
+		if (registration->stream != stream)
+			continue;
+		if (!authority->ops->authorize_capture) {
+			job = ERR_PTR(-EOPNOTSUPP);
+			break;
+		}
+		ret = authority->ops->authorize_capture(authority->data, stream);
+		/* A malformed positive callback result must never grant access. */
+		job = ret ? ERR_PTR(ret < 0 ? ret : -EINVAL) : drm_capture_claim(stream);
+		break;
+	}
+	drm_capture_authority_end(authority);
+	return job;
+}
+EXPORT_SYMBOL_GPL(drm_capture_authority_claim_stream);

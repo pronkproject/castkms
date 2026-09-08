@@ -6,6 +6,7 @@
 
 struct drm_capture_authority;
 struct drm_capture;
+struct drm_capture_job;
 struct module;
 struct wait_queue_head;
 
@@ -14,17 +15,25 @@ struct wait_queue_head;
  * @owner: module containing callbacks, or NULL for built-in code
  * @revoke: synchronously stop new resource admission and initiate safe cleanup
  * @release: release provider context after the final authority reference
+ * @authorize_capture: approve current source access for a registered stream;
+ *                     zero allows, negative errno denies, NULL disables claims
  *
  * The provider context owns immutable scope, rights and policy references.
  * Revoke runs once, outside the admission mutex. It must not reenter revoke
  * or wait for a client holding the admission guard. Active GPU work may drain
  * afterward, retaining its own references; revoke is not native completion.
  * Release runs after revoke. The ops and context remain valid until release.
+ * Authorize runs under the admission mutex before request claim. It must not
+ * reenter authority operations or acquire locks in the opposite order. The
+ * caller must stabilize source/policy state across authorization and claim,
+ * and retain the approved source independently until actual access completes.
+ * Authorization must have no submission side effects: the queue may be empty.
  */
 struct drm_capture_authority_ops {
 	struct module *owner;
 	void (*revoke)(void *data);
 	void (*release)(void *data);
+	int (*authorize_capture)(void *data, struct drm_capture *stream);
 };
 
 /*
@@ -69,5 +78,16 @@ int drm_capture_authority_add_stream_locked(struct drm_capture_authority *author
  */
 bool drm_capture_authority_remove_stream(struct drm_capture_authority *authority,
 					 struct drm_capture *stream);
+
+/*
+ * Claim through live authority, stream membership and provider policy checks.
+ * Requires live references; do not hold the admission guard. The provider must
+ * hold any additional source/policy locks needed across this entire call.
+ * Denial leaves queued requests unchanged. Success transfers one job, completed
+ * exactly once with drm_capture_complete(), independently of authority lifetime.
+ */
+struct drm_capture_job *
+drm_capture_authority_claim_stream(struct drm_capture_authority *authority,
+				   struct drm_capture *stream);
 
 #endif
