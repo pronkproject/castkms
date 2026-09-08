@@ -415,13 +415,41 @@ For example, native success during revocation is not permission to publish a
 new successful capture result; the model suppresses frame delivery but does
 not yet implement that complete request-status mapping in the ledger.
 
+## Reusing an image without mistaking identity for content
+
+A valid private image can supply several output writes without another read
+of the compositor's storage. The joined model remembers one image per output
+and compatible recipient scope. Looking it up requires a live grant and the
+same current scene generation. Recycling its private storage removes the
+entry. An old image cannot replace a newer cache entry after the display has
+advanced, even if the old image remains valid for work already admitted.
+
+Every accepted display replacement starts a new scene generation in the
+model. That deliberately includes explicitly selecting the same framebuffer
+with unchanged geometry and no damage hint. Tests exercise both an unchanged
+producer fence and a replacement producer fence. Neither framebuffer nor
+fence identity proves that the pixels stayed unchanged.
+
+Repeated output writes from a cached image leave the source reader set alone.
+They remain possible while preparation seals the current scene. Once a new
+scene is accepted, the lookup misses; a later capture must supply a fresh
+image. Failed, unfinished or incompatibly authorized images cannot enter the
+cache. Old entries can keep private storage occupied until recycled, but
+cannot acquire new scanout readers.
+
+The example represents content with scene labels, not actual pixels. It
+conservatively invalidates on every accepted replacement and does not attempt
+damage-based reuse or detect unannounced writes into a current framebuffer.
+Nor does it derive ownership adoption from a content update: recipient scopes
+remain a separate policy oracle, not an implementation of DRM attribution.
+
 ## What passing does not mean
 
 This is an early contract sketch, not the point at which the protocol can be
 frozen. The producer example checks explicit retained status, not arbitrary
-buffer history or hidden dependencies. The programs do not model an update
-that reuses the same framebuffer for new content without starting a new
-picture. Result credits cover admitted output writes, not the entire lifetime
+buffer history or hidden dependencies. Content updates must start a new
+picture; unannounced front-buffer writes are not detected. Result credits
+cover admitted output writes, not the entire lifetime
 of a queued capture request. Request reconstruction covers retained
 input identities and current pictures, not the full blocking ioctl lifecycle.
 Earlier commits finish through explicit model decisions, not through a kernel
