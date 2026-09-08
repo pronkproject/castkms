@@ -38,14 +38,20 @@ pub(super) struct Scene {
     _framebuffer: FramebufferRef<Driver>,
     _source: [u32; 4],
     _destination: [u32; 2],
+    _content: ContentSerial,
 }
 
 impl Scene {
-    pub(super) fn new(framebuffer: FramebufferRef<Driver>, geometry: Geometry) -> Self {
+    pub(super) fn new(
+        framebuffer: FramebufferRef<Driver>,
+        geometry: Geometry,
+        content: ContentSerial,
+    ) -> Self {
         Self {
             _framebuffer: framebuffer,
             _source: geometry.source,
             _destination: geometry.destination,
+            _content: content,
         }
     }
 }
