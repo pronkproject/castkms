@@ -234,6 +234,7 @@ obj-$(CONFIG_DRM_MCDE) += mcde/
 obj-$(CONFIG_DRM_TIDSS) += tidss/
 obj-y			+= xlnx/
 obj-y			+= gud/
+obj-$(CONFIG_DRM_CASTKMS) += castkms/
 obj-$(CONFIG_DRM_HYPERV) += hyperv/
 obj-y			+= sitronix/
 obj-y			+= solomon/
