@@ -269,6 +269,12 @@ class Model:
     def complete_commit(self, commit_id):
         scope, fences = self.commits[commit_id]
         self.require(all(self.native[f] is not None for f in fences))
+        # The fake provider has one pending commit per output, so current
+        # still names each accepted replacement. Normal display completion
+        # must also wait for that replacement's producer, not for a daemon.
+        scanouts = [self.scenes[self.current[output]].scanout for output in scope]
+        self.require(all(scanout is None or self.native[scanout.producer] is not None
+                         for scanout in scanouts))
         for output, key in scope.items():
             scene = self.scenes[key]
             self.require(not scene.claims)
@@ -309,10 +315,12 @@ class PreparationTests(unittest.TestCase):
         model.queue()
         return model.claim_source(output)
 
-    def request(self, model, outputs=(0,), framebuffer="frame", x=12):
+    def request(self, model, outputs=(0,), framebuffer="frame", x=12,
+                producer_status=0):
         # An independent, already submitted producer for the new framebuffer.
-        producer = model.identity()
-        model.native[producer] = None
+        producer = model.submit_native()
+        if producer_status is not None:
+            model.signal(producer, producer_status)
         ticket = model.prepare(outputs)
         rows = [[output, 7, 8, x] for output in outputs]
         return model.capture_request(rows, {7: framebuffer}, {8: producer},
@@ -347,6 +355,29 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaises(Rejected):
             model.submit_native([producer, -1])
         self.assertEqual(model.__dict__, before)
+
+    def test_display_completion_waits_for_replacement_producer(self):
+        for producer_first in (False, True):
+            for status in (0, -5):
+                with self.subTest(producer_first=producer_first, status=status):
+                    model = Model()
+                    old = model.current[0]
+                    request = self.request(model, producer_status=None)
+                    producer = request.changes[0].producer
+                    if producer_first:
+                        model.signal(producer, status)
+                    self.assertTrue(model.ready(request.ticket))
+                    commit = model.accept_request(request)
+                    if not producer_first:
+                        before = deepcopy(model.__dict__)
+                        with self.assertRaises(Rejected):
+                            model.complete_commit(commit)
+                        self.assertEqual(model.__dict__, before)
+                        self.assertFalse(model.scenes[old].retired)
+                        model.signal(producer, status)
+                    model.complete_commit(commit)
+                    self.assertTrue(model.scenes[old].retired)
+                    self.assertEqual(model.native[producer], status)
 
     def test_waiting_request_is_rebuilt_from_current_display_state(self):
         model = Model(outputs=2)
