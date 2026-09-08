@@ -311,6 +311,20 @@ completion cannot free a newer use of the same allocation. That is bookkeeping
 for the model's admitted writes, not exclusive access enforced against every
 process holding a buffer descriptor.
 
+A destination write may finish with error. Its native access still ends and
+the allocation becomes available again, but the model marks its pixels
+uncertain and does not deliver it as a valid frame. Failure is not a promise
+that an exported allocation was left untouched: a real job may have written
+some pixels before failing. The error remains queryable even if notification
+was lost. Here the completion method's boolean means valid-frame delivery,
+not whether a terminal error record exists.
+
+The joined test retries destination output from the same valid private image
+after a failed write. That error does not invalidate the private source copy,
+undo scanout retirement, or require a new read of the compositor's buffer.
+Both native uses may finish and release private storage before either result
+is acknowledged.
+
 The strings that identify those grants are policy labels, not an algorithm
 that intersects rights, and not a kernel implementation of access control for
 DMA-BUFs, the shared buffers that processes and drivers pass around. The
@@ -394,6 +408,12 @@ example uses four records by default, not a proposed kernel-wide queue limit.
 It does not yet account for capture requests queued before source admission,
 per-client quotas, notification file-descriptor installation failures, or
 deadlines for requests that never become executable.
+
+The output ledger records native write status. A full capture-request result
+will also need to account for revocation and other request-level failures.
+For example, native success during revocation is not permission to publish a
+new successful capture result; the model suppresses frame delivery but does
+not yet implement that complete request-status mapping in the ledger.
 
 ## What passing does not mean
 
