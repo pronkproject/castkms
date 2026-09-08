@@ -405,15 +405,71 @@ completion, regardless of whether a result will be delivered.
 The ledger stores status only, not pixel storage. Its capacity is independent
 of private-image depth and is tested at 1, 2, 4 and 8 records. The output
 example uses four records by default, not a proposed kernel-wide queue limit.
-It does not yet account for capture requests queued before source admission,
-per-client quotas, notification file-descriptor installation failures, or
-deadlines for requests that never become executable.
+It is separate from the capture-request ledger described below. Neither
+ledger implements per-client quotas or notification file-descriptor
+installation failures.
 
-The output ledger records native write status. A full capture-request result
-will also need to account for revocation and other request-level failures.
-For example, native success during revocation is not permission to publish a
-new successful capture result; the model suppresses frame delivery but does
-not yet implement that complete request-status mapping in the ledger.
+The output ledger records native write status. The capture-request ledger
+additionally accounts for revocation and other request-level failures.
+
+## Accounting for a request before it owns an image
+
+`CaptureRequests` reserves a credit at queue admission, before selecting a
+source or reserving private storage. The credit remains occupied by the
+terminal result until acknowledgment. Repeated queries do not consume it.
+A full queue therefore bounds waiting demand as well as unread completions.
+The capacity is tested at one, two, four and eight; none is a universal limit.
+
+Claiming a request gives the provider responsibility for ending its access.
+Canceling a queued request completes it immediately. Canceling a claimed
+request records an error but leaves its result pending until the provider
+reports completion or acknowledges that no access began. The same rule
+applies when a caller supplies a deadline-expired error; a deadline does not
+prove that an active GPU has stopped. Closing the endpoint discards results
+and queued demand but retains active cleanup obligations.
+
+| Decision | Queued request | Claimed request |
+| --- | --- | --- |
+| Cancel | Terminal `-ECANCELED` | Pending until provider finishes |
+| Deadline expired | Terminal `-ETIMEDOUT` | Pending until provider finishes |
+| Revoke | Terminal `-EKEYREVOKED` | Pending until provider finishes |
+| Provider finishes | Rejected without a claim | First recorded request error, otherwise native status |
+| Query terminal result | Retained until acknowledgment | Retained until acknowledgment |
+| Close | Discarded | Cleanup remains, delivery discarded |
+
+The first cancellation reason wins. An already terminal result is immutable.
+Native success after revocation does not become a successful capture result,
+although previously authorized writes may finish in exported storage. The
+model assumes provider completion really ends access; it does not infer that
+from a notification, process exit or elapsed timeout.
+
+## Declaring a schedule that actually captures frames
+
+The joined progress test grants each output one admission opportunity before
+preparation seals its current scene. A claimed worker releases within a
+declared budget of one, two or four logical ticks, native work completes one
+tick later, and a ready destination receives its image another tick later.
+The period is the release budget plus three ticks. These are explicit model
+assumptions, not measurements of Linux scheduling or a GPU performance claim.
+
+Across forty periods, both outputs produce forty frames with ready
+destinations. Preparation takes at most the release budget, source retention
+at most one tick longer, and request completion at most two ticks longer.
+The maximum interval between frames is one period. Competing preparation
+tickets do not cancel admitted work to manufacture readiness.
+
+Holding one output's destination leaves that output with a private image and
+at most four request records. Its old source still retires; both outputs keep
+replacing their scenes, and the independent output still delivers forty
+frames. Ending the stalled grant completes its queued requests immediately
+and its claimed request only after provider cleanup. Storage budgets remain
+independent of request credits and downstream transport depth.
+
+The policy intentionally gives admitted capture a bounded service opportunity
+instead of canceling it on every update. Production scheduling must preserve
+that opportunity or declare overload. An unfair scheduler or unbounded GPU
+stall lies outside the normal progress proof; neither is permission to free
+storage still in use.
 
 ## Reusing an image without mistaking identity for content
 
@@ -448,9 +504,9 @@ remain a separate policy oracle, not an implementation of DRM attribution.
 This is an early contract sketch, not the point at which the protocol can be
 frozen. The producer example checks explicit retained status, not arbitrary
 buffer history or hidden dependencies. Content updates must start a new
-picture; unannounced front-buffer writes are not detected. Result credits
-cover admitted output writes, not the entire lifetime
-of a queued capture request. Request reconstruction covers retained
+picture; unannounced front-buffer writes are not detected. Request credits
+cover queued through acknowledged work, but not per-client memory quotas.
+Request reconstruction covers retained
 input identities and current pictures, not the full blocking ioctl lifecycle.
 Earlier commits finish through explicit model decisions, not through a kernel
 worker or a blocking transaction entry point. They do not explore
