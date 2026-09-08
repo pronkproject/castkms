@@ -171,6 +171,24 @@ int main(int argc, char **argv)
 	crtc = drmModeGetCrtc(fd, crtc_id);
 	CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
 	drmModeFreeCrtc(crtc);
+	req = drmModeAtomicAlloc();
+	CHECK(req);
+	property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", b.fb);
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_TEST_ONLY, NULL) == 0);
+	drmModeAtomicFree(req);
+	crtc = drmModeGetCrtc(fd, crtc_id);
+	CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
+	drmModeFreeCrtc(crtc);
+	req = drmModeAtomicAlloc();
+	CHECK(req);
+	property(fd, req, crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", 0);
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
+	drmModeAtomicFree(req);
+	req = drmModeAtomicAlloc();
+	CHECK(req);
+	property(fd, req, crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", 1);
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
+	drmModeAtomicFree(req);
 	for (unsigned int i = 0; i < 16; i++) {
 		flip(fd, plane_id, b.fb);
 		flip(fd, plane_id, b.fb);
