@@ -19,4 +19,8 @@ impl drm::gem::DriverObject for Object {
     fn new(_: &drm::Device<Driver>, _: usize, _: ()) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {})
     }
+
+    fn dumb_create_args(_: &drm::Device<Driver>, _: usize) -> Result<()> {
+        Ok(())
+    }
 }
