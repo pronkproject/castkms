@@ -35,15 +35,22 @@ pub(super) struct State;
 
 pub(super) struct PlaneState {
     geometry: Option<scene::Geometry>,
+    content: Option<scene::ContentSerial>,
 }
 
 impl plane::DriverPlaneState for PlaneState {
     type Plane = Plane;
     fn new(_: &plane::Plane<Plane>) -> Result<Self> {
-        Ok(Self { geometry: None })
+        Ok(Self {
+            geometry: None,
+            content: None,
+        })
     }
     fn duplicate(&self) -> Result<Self> {
-        Ok(Self { geometry: None })
+        Ok(Self {
+            geometry: None,
+            content: self.content,
+        })
     }
 }
 
@@ -101,18 +108,22 @@ impl plane::DriverPlane for Plane {
     }
 
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
-        let (transaction, mut state) = check.take_state_new_state();
+        let (transaction, old, mut state) = check.take_all();
         check_geometry(transaction, &mut state)?;
+        state.content = scene::ContentSerial::for_update(old.content, state.geometry.is_some())?;
         Ok(())
     }
 
     fn atomic_update(commit: plane::PlaneAtomicCommit<'_, Self>) {
         let (transaction, _, state) = commit.take_all();
-        let scene = state.geometry.and_then(|geometry| {
-            state
-                .framebuffer()
-                .map(|framebuffer| scene::Scene::new(framebuffer.to_owned_ref(), geometry))
-        });
+        let scene = state
+            .geometry
+            .zip(state.content)
+            .and_then(|(geometry, content)| {
+                state.framebuffer().map(|framebuffer| {
+                    scene::Scene::new(framebuffer.to_owned_ref(), geometry, content)
+                })
+            });
         transaction.drm_dev().publish(scene);
     }
 }
