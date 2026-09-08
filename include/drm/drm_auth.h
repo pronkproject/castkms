@@ -131,6 +131,8 @@ struct drm_master {
 
 struct drm_master *drm_master_get(struct drm_master *master);
 struct drm_master *drm_file_get_master(struct drm_file *file_priv);
+struct drm_master *drm_file_get_master_snapshot(struct drm_file *file_priv,
+					      bool *was_current);
 void drm_master_put(struct drm_master **master);
 bool drm_is_current_master(struct drm_file *fpriv);
 
