@@ -349,14 +349,45 @@ cropping, DRM leases or permission intersections. The destination model still
 uses an explicitly controlled completion operation, not native GPU submission
 or consumer read fences. Those distinctions remain part of later qualification.
 
+## Keeping unread results bounded without delaying cleanup
+
+A completion notification may be lost, or its recipient may stop reading. The
+output model therefore reserves a result credit before admitting each write.
+That credit pays for one record, from pending work through its terminal result.
+Finishing the write does not free the credit. Querying its status is
+nondestructive, so a caller may retry a query after losing a reply. Only an
+acknowledgment of a terminal result frees that credit for another admission.
+An early or repeated acknowledgment is rejected, and use identifiers are not
+recycled within the result endpoint.
+
+When credits run out, new output claims are rejected before reserving
+destination storage. Existing native work still completes and releases its
+allocation. A closed result endpoint rejects new writes and discards its
+records, but an earlier admitted write may still finish. Dropping delivery
+accounting is not evidence that the GPU has stopped accessing the image.
+
+The joined tests deliberately leave every result unacknowledged. They still
+retire the old source, recycle the private image and complete more display
+updates. A later output attempt fails for lack of result capacity, then
+succeeds after one acknowledgment. Another test closes the endpoint while an
+output write is unfinished; the private image remains reserved until native
+completion, regardless of whether a result will be delivered.
+
+The ledger stores status only, not pixel storage. Its capacity is independent
+of private-image depth and is tested at 1, 2, 4 and 8 records. The output
+example uses four records by default, not a proposed kernel-wide queue limit.
+It does not yet account for capture requests queued before source admission,
+per-client quotas, notification file-descriptor installation failures, or
+deadlines for requests that never become executable.
+
 ## What passing does not mean
 
 This is an early contract sketch, not the point at which the protocol can be
 frozen. The producer example checks explicit retained status, not arbitrary
 buffer history or hidden dependencies. The programs do not model an update
 that reuses the same framebuffer for new content without starting a new
-picture. They do not model
-credits for completed capture results. Request reconstruction covers retained
+picture. Result credits cover admitted output writes, not the entire lifetime
+of a queued capture request. Request reconstruction covers retained
 input identities and current pictures, not the full blocking ioctl lifecycle.
 Earlier commits finish through explicit model decisions, not through a kernel
 worker or a blocking transaction entry point. They do not explore
