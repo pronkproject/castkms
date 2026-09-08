@@ -44,6 +44,7 @@ no extra Python packages.
 ```sh
 ./preparation-model.py
 ./output-model.py
+./pipeline-model.py
 ```
 
 ## What the source model is trying to protect
@@ -297,12 +298,56 @@ process holding a buffer descriptor.
 
 The strings that identify those grants are policy labels, not an algorithm
 that intersects rights, and not a kernel implementation of access control for
-DMA-BUFs, the shared buffers that processes and drivers pass around. This
-output model does not yet join up with the source model. It also does not
+DMA-BUFs, the shared buffers that processes and drivers pass around. The
+standalone output model does not
 represent consumer read-completion fences, cancellation of an unsubmitted
 write, who owns a pool of destination images, whether permission to read a
 source also authorizes a destination write, or enforcement of arbitrary buffer
 access.
+
+## Following one private image through both authorization decisions
+
+The third program, `pipeline-model.py`, joins the other two models. It imports
+their decisions instead of duplicating them. The source and output models
+remain independent of that integration, and all three run as selftests.
+
+The joined example starts with a grant for one output and recipient domain.
+Its grant factory stands in for an already authorized policy decision, not
+for DRM's rules about who may create a grant. Source admission checks that
+the grant belongs to the model device, names the requested output and remains
+live. Rejecting a claim does not consume queued demand or reserve private
+storage. A source claim admitted before revocation may still submit work and
+release its native dependencies afterward.
+
+Once the private copy is valid, writing an exported destination is a separate
+decision. The grant must still authorize that write, and its scope must match
+both the private image and the destination allocation. A source claim that
+survived revocation cannot create new output permission. Likewise, a fresh
+grant for an incompatible recipient cannot reuse an old private image or
+write new pixels into an allocation the old recipient still holds.
+
+An output write claimed before revocation may still finish afterward. Its
+private image remains reserved until that write completes, even though the
+old scanout source has already retired. Suppressing delivery after revocation
+does not undo an authorized write to an already exported buffer.
+
+The destination-stall test keeps a preceding write unfinished. Capture makes
+its private copy and retires the source without waiting for that destination.
+The private pool eventually fills, leaving further demand without a source
+claim, while ordinary display updates keep completing. When the destination
+becomes available, the waiting private image is written without rereading a
+newer scanout picture. No output operation extends the old reader fence set.
+
+Other tests prevent failed producer content from reaching a destination even
+when the copy succeeds, and enumerate all 24 orders of output claim,
+revocation, submission and completion. The enumeration requires actual writes
+as well as rejected operations, rather than passing by denying everything.
+
+These are serialized admission and lifetime tests. Scope strings stand in for
+compatible authorization domains; they do not implement layer attribution,
+cropping, DRM leases or permission intersections. The destination model still
+uses an explicitly controlled completion operation, not native GPU submission
+or consumer read fences. Those distinctions remain part of later qualification.
 
 ## What passing does not mean
 
