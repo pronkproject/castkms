@@ -140,11 +140,31 @@ static void drm_capture_authority_revokes_registered_streams(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, drm_capture_query(second, queued, &result), 0);
 	KUNIT_EXPECT_TRUE(test, result.completed);
 	KUNIT_EXPECT_EQ(test, result.status, -EKEYREVOKED);
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_remove_stream(authority, first));
 	kunit_remove_action(test, capture_job_cancel, job);
 	drm_capture_complete(job, 0);
 	KUNIT_ASSERT_EQ(test, drm_capture_query(first, active, &result), 0);
 	KUNIT_EXPECT_TRUE(test, result.completed);
 	KUNIT_EXPECT_EQ(test, result.status, -EKEYREVOKED);
+}
+
+static void drm_capture_authority_removes_one_stream(struct kunit *test)
+{
+	struct authority_context *context;
+	struct drm_capture_authority *authority = authority_create(test, &context);
+	struct drm_capture *old = registered_stream(test, authority);
+	struct drm_capture *replacement = registered_stream(test, authority);
+	u64 id;
+
+	KUNIT_EXPECT_TRUE(test, drm_capture_authority_remove_stream(authority, old));
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_remove_stream(authority, old));
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_revoked(authority));
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(old, &id), -EKEYREVOKED);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(replacement, &id), 0);
+	/* The registry must not hold a reference back to its owning authority. */
+	kunit_release_action(test, authority_put, authority);
+	KUNIT_EXPECT_EQ(test, context->releases, 1);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(replacement, &id), -EKEYREVOKED);
 }
 
 static void drm_capture_authority_survives_stream_replacement(struct kunit *test)
@@ -234,6 +254,7 @@ static void drm_capture_authority_concurrent_revoke(struct kunit *test)
 	}
 	KUNIT_EXPECT_FALSE(test, drm_capture_authority_cleanup_done(authority));
 	KUNIT_EXPECT_EQ(test, drm_capture_queue(stream, &id), -EKEYREVOKED);
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_remove_stream(authority, stream));
 	waiter = kthread_run(revoke_thread_run, &second, "capture-revoke-wait");
 	if (!IS_ERR(waiter)) {
 		finished = wait_for_completion_timeout(&second.done, msecs_to_jiffies(20));
@@ -254,6 +275,7 @@ static void drm_capture_authority_concurrent_revoke(struct kunit *test)
 static struct kunit_case drm_capture_authority_cases[] = {
 	KUNIT_CASE(drm_capture_authority_terminal_cleanup),
 	KUNIT_CASE(drm_capture_authority_revokes_registered_streams),
+	KUNIT_CASE(drm_capture_authority_removes_one_stream),
 	KUNIT_CASE(drm_capture_authority_survives_stream_replacement),
 	KUNIT_CASE(drm_capture_authority_concurrent_revoke),
 	{}
