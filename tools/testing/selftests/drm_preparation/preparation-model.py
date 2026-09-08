@@ -46,6 +46,12 @@ class Ticket:
 
 
 @dataclass(frozen=True)
+class ProducerSet:
+    validity: frozenset
+    waits: frozenset
+
+
+@dataclass(frozen=True)
 class RequestedScanout:
     output: int
     framebuffer: object
@@ -157,6 +163,13 @@ class Model:
         self.native[fence] = None
         self.native_waits[fence] = dependencies
         return fence
+
+    def retain_producers(self, fences):
+        # The oracle retains acquired references, including completed errors.
+        # Never replace that evidence with a later reservation snapshot.
+        fences = frozenset(fences)
+        self.require(all(fence in self.native for fence in fences))
+        return ProducerSet(fences, fences)
 
     def prepare(self, outputs):
         self.require(not self.lost and bool(outputs))
@@ -332,6 +345,26 @@ class Model:
 
 
 class PreparationTests(unittest.TestCase):
+    def test_retained_producers_keep_completed_and_pending_evidence(self):
+        model = Model()
+        failed = model.submit_native()
+        pending = model.submit_native()
+        model.signal(failed, -5)
+        inputs = [failed, pending, failed]
+        before = deepcopy(model.__dict__)
+        producers = model.retain_producers(iter(inputs))
+        inputs.clear()
+        self.assertEqual(producers.validity, frozenset([failed, pending]))
+        self.assertEqual(producers.waits, producers.validity)
+        self.assertEqual(model.__dict__, before)
+        with self.assertRaises(Rejected):
+            model.retain_producers([failed, -1])
+        self.assertEqual(model.__dict__, before)
+        model.signal(pending)
+        self.assertEqual(model.native[failed], -5)
+        with self.assertRaises(AttributeError):
+            producers.validity = frozenset()
+
     def claimed(self, model, output=0):
         model.queue()
         return model.claim_source(output)
