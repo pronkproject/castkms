@@ -142,6 +142,37 @@ during a source read. It does not establish live display scheduling or a DRM
 grant policy. The reference entry point has no userspace dispatcher and is not
 automatically invoked by VKMS's display worker.
 
+Rust Capture Ownership
+----------------------
+
+``kernel::drm::capture`` wraps the private CPU capture core for Rust consumers.
+An ``ARef<Stream>`` owns a native stream reference. Dropping one reference does
+not stop other owners; ``shutdown()`` is the separate decision to stop admission
+and delivery. Creating a stream still requires the provider to establish its
+source and recipient policy. The wrappers do not implement a DRM grant policy.
+
+Queueing returns a ``Request`` that retains its originating stream and keeps
+its numeric identifier private. Its status and copy operations therefore
+cannot accidentally address the same number in a different stream. Dropping
+the request discards demand or a retained result. If a provider is active,
+storage and credit remain charged until that provider completes. Explicit
+cancellation instead preserves terminal status until the request is dropped.
+
+A claimed ``Job`` exposes its initialized image only through an exclusive
+borrowed byte slice. Completion consumes the job, so Rust rejects a second
+completion or completion followed by access through an outstanding slice.
+Dropping an unfinished job reports cancellation after all synchronous borrows
+have ended. The wrappers expose no raw job pointer or submission interface:
+these guarantees apply to kernel-controlled CPU access, not outstanding GPU
+work. A future native-execution wrapper must retain ownership until real
+completion rather than using the CPU job's destructor as a GPU fence.
+
+All operations, including destructors, need a context that may sleep. The
+``rust_drm_capture`` tests exercise the ownership transitions against the C
+core, and the Rust type-check fixtures reject duplicate completion and use of
+image storage after completion. Neither test family validates live source
+permission or asynchronous native execution.
+
 Capture Authority Lifetime
 --------------------------
 
