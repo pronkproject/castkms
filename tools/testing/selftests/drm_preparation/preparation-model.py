@@ -115,8 +115,9 @@ class Model:
         claim = self.claims[claim_id]
         self.require(not self.lost and not claim.released)
         # A-to-E only: the available private slot has no downstream dependency.
-        fence = self.identity()
-        self.native[fence] = None
+        scanout = self.scenes[claim.scene].scanout
+        dependencies = () if scanout is None else (scanout.producer,)
+        fence = self.submit_native(dependencies)
         claim.submitted.add(fence)
         return fence
 
@@ -378,6 +379,32 @@ class PreparationTests(unittest.TestCase):
                     model.complete_commit(commit)
                     self.assertTrue(model.scenes[old].retired)
                     self.assertEqual(model.native[producer], status)
+
+    def test_source_copy_waits_for_its_retained_producer(self):
+        for status in (0, -5):
+            with self.subTest(status=status):
+                model = Model()
+                request = self.request(model, producer_status=None)
+                producer = request.changes[0].producer
+                predecessor = model.accept_request(request)
+                claim = self.claimed(model)
+                copy = model.submit_source(claim)
+                ticket = model.prepare([0])
+                model.release(claim, [copy])
+                self.assertTrue(model.ready(ticket))
+                self.assertEqual(model.tickets[ticket].fences, frozenset([copy]))
+                self.assertEqual(model.native_waits[copy], frozenset([producer]))
+                with self.assertRaises(Rejected):
+                    model.signal(copy)
+                model.signal(producer, status)
+                model.complete_commit(predecessor)
+                commit = model.accept(ticket)
+                with self.assertRaises(Rejected):
+                    model.complete_commit(commit)
+                model.signal(copy)
+                model.complete_commit(commit)
+                self.assertEqual(model.native[producer], status)
+                self.assertEqual(model.native[copy], 0)
 
     def test_waiting_request_is_rebuilt_from_current_display_state(self):
         model = Model(outputs=2)
