@@ -3,7 +3,10 @@
 //! Allocation and native callback ownership for typed framebuffer metadata.
 
 use super::*;
-use crate::error::to_result;
+use crate::{
+    drm::file::File,
+    error::to_result, //
+};
 
 // The native framebuffer is first so its destructor recovers the enclosing allocation.
 // Metadata is fully initialized before DRM publishes the native framebuffer.
@@ -98,4 +101,38 @@ pub(super) unsafe fn from_objects<T: KmsDriver>(
         )
     })?;
     Ok(KBox::into_raw(storage).cast())
+}
+
+pub(crate) unsafe extern "C" fn create_callback<T: KmsDriver>(
+    dev: *mut bindings::drm_device,
+    file: *mut bindings::drm_file,
+    info: *const bindings::drm_format_info,
+    command: *const bindings::drm_mode_fb_cmd2,
+) -> *mut bindings::drm_framebuffer {
+    let create = || -> Result<*mut bindings::drm_framebuffer> {
+        // SAFETY: DRM invokes this device's mode-config callback with a live typed file and
+        // device, validated layout, and stable mode configuration.
+        let dev = unsafe { Device::<T>::from_raw(dev) };
+        let file = if file.is_null() {
+            None
+        } else {
+            // SAFETY: The callback file belongs to this driver and remains open for the call.
+            Some(unsafe { File::<T::File>::from_raw(file) })
+        };
+        let storage = Storage::<T>::new(T::framebuffer_data(dev, file)?)?;
+        // SAFETY: DRM validated the input layout. GEM initialization acquires the handle
+        // references and publishes the fully allocated framebuffer only on success.
+        to_result(unsafe {
+            bindings::drm_gem_fb_init_with_funcs(
+                dev.as_raw(),
+                storage.base.get(),
+                file.ok_or(EINVAL)?.as_raw(),
+                info,
+                command,
+                device_vtable(dev),
+            )
+        })?;
+        Ok(KBox::into_raw(storage).cast())
+    };
+    create().unwrap_or_else(Error::to_ptr)
 }

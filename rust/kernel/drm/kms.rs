@@ -306,7 +306,7 @@ impl<T: KmsDriver> private::KmsImpl for T {
     const MODE_CONFIG_OPS: Option<&'static ModeConfigOps> = Some(&ModeConfigOps {
         kms_vtable: bindings::drm_mode_config_funcs {
             atomic_check: Some(bindings::drm_atomic_helper_check),
-            fb_create: Some(bindings::drm_gem_fb_create),
+            fb_create: Some(framebuffer::create_callback::<Self>),
             mode_valid: None,
             atomic_commit: Some(bindings::drm_atomic_helper_commit),
             get_format_info: None,
