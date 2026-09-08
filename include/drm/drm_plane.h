@@ -72,6 +72,17 @@ struct drm_plane_state {
 	struct drm_framebuffer *fb;
 
 	/**
+	 * @fb_set:
+	 *
+	 * drm_atomic_set_fb_for_plane() was called for this state, including
+	 * assignments of the same framebuffer or NULL. Cleared when the state
+	 * is duplicated for a new transaction. This records an assignment, not
+	 * a change in framebuffer identity or an authorization decision. Kernel
+	 * helpers may also assign framebuffers during transaction construction.
+	 */
+	bool fb_set;
+
+	/**
 	 * @fence:
 	 *
 	 * Optional fence to wait for before scanning out @fb. The core atomic
