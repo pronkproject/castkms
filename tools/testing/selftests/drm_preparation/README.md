@@ -178,6 +178,45 @@ experiment, not every possible kernel race.
 The model keeps old objects around so those assertions can be written simply.
 Those maps are not a proposal for how production should store in-flight work.
 
+## Remembering a request without keeping an obsolete display state
+
+A display request and the state checked for that request are different things.
+The request says what the caller wants to change. Checking it asks whether
+those changes are valid against the display configuration now. If preparation
+needs to wait, that checked configuration may no longer be current on waking.
+
+The model captures a small request before the wait. It copies the requested
+output assignments and an integer position property. It also resolves each
+framebuffer identifier, producer-fence file number and preparation file number
+to the object they name. The resulting request retains those objects, not the
+numbers used to find them. Removing a lookup entry and reusing its number for
+another object must not silently change a waiting request. Nor may editing the
+caller's input array change the copied values. Retaining a framebuffer object
+does not make its pixels immutable.
+
+On each attempt to accept the request, the model starts with the current
+display state and applies the retained assignments. An independent output may
+have changed during the wait; its new state must be inherited, not replaced by
+an old checked copy. A competing update to a requested output instead makes
+the old preparation ticket stale. That request is rejected. It needs fresh
+preparation, not a retry that ignores the stale ticket.
+
+For the test display, the ticket must name exactly the outputs being changed.
+The tests deliberately reject a request that adds an unprepared output. They
+also reject requests belonging to another model device or an old worker
+epoch. A dry run still changes no preparation state, and rejection before
+acceptance leaves the ticket available when it remains valid. Once acceptance
+consumes the ticket, trying the request again is rejected even if the caller
+never received the first result.
+
+Those are tests of retained inputs and fresh reconstruction, not a complete
+blocking ioctl. Python object references and the model's retained fence and
+ticket tables stand in for owned kernel references. The sample rows are not a
+parser for untrusted bytes. The model does not yet exercise permission or
+topology changes during the wait, blob ownership, interrupted waits, or output
+event and file-descriptor publication failures. In particular, merely holding
+the inputs must not grant permission that has since been revoked.
+
 ## A separate model for exported destinations
 
 The companion program `output-model.py` asks a narrower question: once a
@@ -213,7 +252,8 @@ This is an early contract sketch, not the point at which the protocol can be
 frozen. The programs do not ask whether a producer's completion fence actually
 means the pixels are valid. They do not model an update that reuses the same
 framebuffer for new content without starting a new picture. They do not model
-credits for completed capture results or rebuilding a request after a wait.
+credits for completed capture results. Request reconstruction covers retained
+input identities and current pictures, not the full blocking ioctl lifecycle.
 Earlier commits finish through explicit model decisions, not through a kernel
 worker or a blocking transaction entry point. They do not explore
 every possible interleaving, real DRM locking, hidden GPU dependencies, or
