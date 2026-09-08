@@ -61,4 +61,13 @@ struct wait_queue_head *drm_capture_authority_waitqueue(struct drm_capture_autho
 int drm_capture_authority_add_stream_locked(struct drm_capture_authority *authority,
 					    struct drm_capture *stream);
 
+/*
+ * Remove a stream and shut it down without revoking the authority. Requires
+ * live references to authority and stream; do not hold the admission guard.
+ * A false return means no registration was found (possibly owned by an
+ * in-progress revoke). Only revoke guarantees completion of all revoke cleanup.
+ */
+bool drm_capture_authority_remove_stream(struct drm_capture_authority *authority,
+					 struct drm_capture *stream);
+
 #endif
