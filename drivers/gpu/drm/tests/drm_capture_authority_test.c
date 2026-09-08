@@ -98,6 +98,55 @@ static void drm_capture_authority_terminal_cleanup(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, context->releases, 1);
 }
 
+static struct drm_capture *registered_stream(struct kunit *test,
+					     struct drm_capture_authority *authority)
+{
+	struct drm_capture *stream = drm_capture_create(2, 16);
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, stream);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, capture_put, stream), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_authority_begin(authority), 0);
+	/* This synthetic provider owns the final image and its recipient scope. */
+	ret = drm_capture_authority_add_stream_locked(authority, stream);
+	drm_capture_authority_end(authority);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	return stream;
+}
+
+static void drm_capture_authority_revokes_registered_streams(struct kunit *test)
+{
+	struct authority_context *context;
+	struct drm_capture_authority *authority = authority_create(test, &context);
+	struct drm_capture *first = registered_stream(test, authority);
+	struct drm_capture *second = registered_stream(test, authority);
+	struct drm_capture_job *job;
+	struct drm_capture_result result;
+	u64 active, queued;
+	int duplicate;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_authority_begin(authority), 0);
+	duplicate = drm_capture_authority_add_stream_locked(authority, first);
+	drm_capture_authority_end(authority);
+	KUNIT_EXPECT_EQ(test, duplicate, -EEXIST);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(first, &active), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(second, &queued), 0);
+	job = drm_capture_claim(first);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, capture_job_cancel, job), 0);
+	drm_capture_authority_revoke(authority);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(first, active, &result), 0);
+	KUNIT_EXPECT_FALSE(test, result.completed);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(second, queued, &result), 0);
+	KUNIT_EXPECT_TRUE(test, result.completed);
+	KUNIT_EXPECT_EQ(test, result.status, -EKEYREVOKED);
+	kunit_remove_action(test, capture_job_cancel, job);
+	drm_capture_complete(job, 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(first, active, &result), 0);
+	KUNIT_EXPECT_TRUE(test, result.completed);
+	KUNIT_EXPECT_EQ(test, result.status, -EKEYREVOKED);
+}
+
 static void drm_capture_authority_survives_stream_replacement(struct kunit *test)
 {
 	struct authority_context *context;
@@ -160,6 +209,8 @@ static void drm_capture_authority_concurrent_revoke(struct kunit *test)
 	struct revoke_thread second = { .authority = authority };
 	struct task_struct *worker, *waiter;
 	unsigned long entered, finished;
+	struct drm_capture *stream = registered_stream(test, authority);
+	u64 id;
 
 	init_completion(&first.done);
 	init_completion(&second.done);
@@ -182,6 +233,7 @@ static void drm_capture_authority_concurrent_revoke(struct kunit *test)
 		KUNIT_FAIL(test, "revoking authority admitted work");
 	}
 	KUNIT_EXPECT_FALSE(test, drm_capture_authority_cleanup_done(authority));
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(stream, &id), -EKEYREVOKED);
 	waiter = kthread_run(revoke_thread_run, &second, "capture-revoke-wait");
 	if (!IS_ERR(waiter)) {
 		finished = wait_for_completion_timeout(&second.done, msecs_to_jiffies(20));
@@ -201,6 +253,7 @@ static void drm_capture_authority_concurrent_revoke(struct kunit *test)
 
 static struct kunit_case drm_capture_authority_cases[] = {
 	KUNIT_CASE(drm_capture_authority_terminal_cleanup),
+	KUNIT_CASE(drm_capture_authority_revokes_registered_streams),
 	KUNIT_CASE(drm_capture_authority_survives_stream_replacement),
 	KUNIT_CASE(drm_capture_authority_concurrent_revoke),
 	{}
