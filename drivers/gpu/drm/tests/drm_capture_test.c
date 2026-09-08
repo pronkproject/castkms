@@ -137,12 +137,31 @@ static void drm_capture_cancel_queued(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_capture_ack(capture, id), 0);
 }
 
+static void drm_capture_failed_image(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture_job *job;
+	u8 result[16] = {};
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	job = drm_capture_claim(capture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	memset(drm_capture_job_data(job), 0xff, 16);
+	drm_capture_complete(job, -EIO);
+	capture_expect_status(test, capture, id, true, -EIO);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result(capture, id, result, sizeof(result)), -EIO);
+	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(result, 0, sizeof(result)), NULL);
+	KUNIT_EXPECT_EQ(test, drm_capture_ack(capture, id), 0);
+}
+
 static struct kunit_case drm_capture_cases[] = {
 	KUNIT_CASE(drm_capture_credits),
 	KUNIT_CASE(drm_capture_revoke_claimed),
 	KUNIT_CASE(drm_capture_cancel_claimed),
 	KUNIT_CASE(drm_capture_close_claimed),
 	KUNIT_CASE(drm_capture_cancel_queued),
+	KUNIT_CASE(drm_capture_failed_image),
 	{}
 };
 
