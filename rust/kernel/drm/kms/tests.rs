@@ -8,6 +8,7 @@
 #[cfg(CONFIG_FAILSLAB)]
 mod allocation;
 mod events;
+mod framebuffers;
 mod inspection;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod masters;
@@ -25,6 +26,8 @@ use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 struct Counts {
     gem_objects: AtomicU32,
     gem_creations: AtomicU32,
+    framebuffer_data_drops: AtomicU32,
+    fail_framebuffer_data: AtomicU32,
     fail_gem_open: AtomicU32,
     fail_prime_import: AtomicU32,
     objects: AtomicU32,
@@ -383,9 +386,15 @@ impl connector::DriverConnector for TestConnector {
 
 #[vtable]
 impl KmsDriver for TestDriver {
-    type FramebufferData = ();
-    fn framebuffer_data(_: &Device<Self>, _: Option<&crate::drm::file::File<Self::File>>) -> Result<()> {
-        Ok(())
+    type FramebufferData = framebuffers::Metadata;
+    fn framebuffer_data(
+        dev: &Device<Self>,
+        file: Option<&crate::drm::file::File<Self::File>>,
+    ) -> Result<Self::FramebufferData> {
+        if dev.counts.fail_framebuffer_data.load(Ordering::Relaxed) != 0 {
+            return Err(ENOMEM);
+        }
+        Ok(framebuffers::Metadata::new(&dev.counts, file.is_some()))
     }
     type Connector = TestConnector;
     type Plane = TestPlane;
