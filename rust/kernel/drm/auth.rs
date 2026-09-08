@@ -8,6 +8,35 @@ use super::{Device, Driver};
 use crate::{bindings, sync::aref::ARef};
 use core::ptr::NonNull;
 
+/// A file's associated master and current-master status sampled together.
+///
+/// This is a historical observation, not an authorization token. Master handoff or lease
+/// revocation may occur after sampling. Policy for a later operation must account for those
+/// transitions independently. A file with no associated master has no snapshot value.
+pub struct MasterSnapshot<D: Driver> {
+    master: MasterRef<D>,
+    was_current: bool,
+}
+
+impl<D: Driver> MasterSnapshot<D> {
+    pub(super) fn new(master: MasterRef<D>, was_current: bool) -> Self {
+        Self {
+            master,
+            was_current,
+        }
+    }
+
+    /// The retained identity sampled from the file, not its lessor's identity.
+    pub fn master(&self) -> &MasterRef<D> {
+        &self.master
+    }
+
+    /// Whether the file satisfied DRM's lease-aware current-master predicate when sampled.
+    pub fn was_current(&self) -> bool {
+        self.was_current
+    }
+}
+
 /// A retained DRM master identity associated with a file on a primary node.
 ///
 /// A non-master client may share that identity with other clients. Retaining it does not keep
