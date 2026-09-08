@@ -43,6 +43,22 @@ class Ticket:
     fences: frozenset = frozenset()
 
 
+@dataclass(frozen=True)
+class RequestedScanout:
+    output: int
+    framebuffer: object
+    producer: int
+    x: int
+
+
+@dataclass(frozen=True)
+class OwnedRequest:
+    owner: object
+    epoch: int
+    ticket: int
+    changes: tuple
+
+
 class Model:
     def __init__(self, outputs=1, staging_depth=2):
         self.serial = 0
@@ -155,6 +171,29 @@ class Model:
         for key in ticket.scope.values():
             self.scenes[key].seals.discard(("ticket", ticket_id))
 
+    def capture_request(self, rows, framebuffers, fence_fds, ticket_fds, ticket_fd):
+        # Fake caller namespaces: framebuffer IDs and fd numbers are reusable.
+        # The request retains their referents, never their lookup keys. Rows
+        # contain output, framebuffer ID, producer fd and a scalar property.
+        self.require(0 < len(rows) <= len(self.current))
+        changes = []
+        outputs = set()
+        for output, framebuffer_id, producer_fd, x in rows:
+            self.require(output in self.current and output not in outputs)
+            self.require(isinstance(x, int))
+            self.require(framebuffer_id in framebuffers and producer_fd in fence_fds)
+            producer = fence_fds[producer_fd]
+            self.require(producer in self.native)
+            changes.append(RequestedScanout(output, framebuffers[framebuffer_id],
+                                            producer, x))
+            outputs.add(output)
+        self.require(ticket_fd in ticket_fds)
+        ticket = ticket_fds[ticket_fd]
+        self.require(ticket in self.tickets)
+        # The immutable tuple owns framebuffer references. Native fence and
+        # ticket identities name objects retained by the model's oracle maps.
+        return OwnedRequest(self, self.epoch, ticket, tuple(changes))
+
     def accept(self, ticket_id, *, test_only=False, failure=False):
         ticket = self.tickets[ticket_id]
         self.require(not self.lost and ticket.epoch == self.epoch)
@@ -221,6 +260,53 @@ class PreparationTests(unittest.TestCase):
     def claimed(self, model, output=0):
         model.queue()
         return model.claim_source(output)
+
+    def test_request_capture_owns_values_instead_of_lookup_keys(self):
+        model = Model()
+        claim = self.claimed(model)
+        fence = model.submit_source(claim)
+        ticket = model.prepare([0])
+        framebuffer = object()
+        rows = [[0, 7, 8, 12]]
+        framebuffers, fence_fds, ticket_fds = {7: framebuffer}, {8: fence}, {9: ticket}
+        before = deepcopy(model.__dict__)
+        request = model.capture_request(rows, framebuffers, fence_fds, ticket_fds, 9)
+        self.assertEqual(model.__dict__, before)
+        rows[0][:] = [99, 99, 99, 99]
+        rows.clear()
+        framebuffers.clear()
+        fence_fds.clear()
+        ticket_fds.clear()
+        framebuffers[7], fence_fds[8], ticket_fds[9] = object(), -1, -1
+        self.assertIs(request.owner, model)
+        self.assertEqual(request.ticket, ticket)
+        change, = request.changes
+        self.assertEqual((change.output, change.producer, change.x), (0, fence, 12))
+        self.assertIs(change.framebuffer, framebuffer)
+        with self.assertRaises(AttributeError):
+            change.x = 99
+        with self.assertRaises(AttributeError):
+            request.ticket = -1
+
+    def test_request_capture_rejects_unresolved_or_unbounded_inputs(self):
+        model = Model(outputs=2)
+        claim = self.claimed(model)
+        fence = model.submit_source(claim)
+        ticket = model.prepare([0])
+        valid = [0, 7, 8, 12]
+        invalid = ([], [valid] * 3, [valid, valid], [[2, 7, 8, 12]],
+                   [valid, [1, 99, 8, 12]], [valid, [1, 7, 99, 12]],
+                   [[0, 7, 8, []]])
+        for rows in invalid:
+            with self.subTest(rows=rows):
+                before = deepcopy(model.__dict__)
+                with self.assertRaises(Rejected):
+                    model.capture_request(rows, {7: object()}, {8: fence}, {9: ticket}, 9)
+                self.assertEqual(model.__dict__, before)
+        with self.assertRaises(Rejected):
+            model.capture_request([valid], {7: object()}, {8: fence}, {}, 9)
+        with self.assertRaises(Rejected):
+            model.capture_request([valid], {7: object()}, {8: -1}, {9: ticket}, 9)
 
     def test_ready_is_not_native_completion(self):
         model = Model()
