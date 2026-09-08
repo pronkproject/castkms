@@ -463,6 +463,7 @@ static void blend_line(struct vkms_plane_state *current_plane, int y,
  * @output_buffer: A buffer of a row that will receive the result of the blend(s)
  * @stage_buffer: The line with the pixels from plane being blend to the output
  * @row_size: The size, in bytes, of a single row
+ * @snapshot: Optional storage for the complete composed image
  *
  * This function blends the pixels (Using the `pre_mul_alpha_blend`)
  * from all planes, calculates the crc32 of the output from the former step,
@@ -471,7 +472,8 @@ static void blend_line(struct vkms_plane_state *current_plane, int y,
 static void blend(struct vkms_writeback_job *wb,
 		  struct vkms_crtc_state *crtc_state,
 		  u32 *crc32, struct line_buffer *stage_buffer,
-		  struct line_buffer *output_buffer, size_t row_size)
+		  struct line_buffer *output_buffer, size_t row_size,
+		  struct pixel_argb_u16 *snapshot)
 {
 	struct vkms_plane_state **plane = crtc_state->active_planes;
 	u32 n_active_planes = crtc_state->num_active_planes;
@@ -503,6 +505,10 @@ static void blend(struct vkms_writeback_job *wb,
 		}
 
 		apply_lut(crtc_state, output_buffer);
+
+		if (snapshot)
+			memcpy(snapshot + (size_t)y * output_buffer->n_pixels,
+			       output_buffer->pixels, row_size);
 
 		*crc32 = crc32_le(*crc32, (void *)output_buffer->pixels, row_size);
 
@@ -541,7 +547,7 @@ static int check_iosys_map(struct vkms_crtc_state *crtc_state)
 
 static int compose_active_planes(struct vkms_writeback_job *active_wb,
 				 struct vkms_crtc_state *crtc_state,
-				 u32 *crc32)
+				 u32 *crc32, struct pixel_argb_u16 *snapshot)
 {
 	size_t line_width, pixel_size = sizeof(struct pixel_argb_u16);
 	struct line_buffer output_buffer, stage_buffer;
@@ -579,7 +585,7 @@ static int compose_active_planes(struct vkms_writeback_job *active_wb,
 	}
 
 	blend(active_wb, crtc_state, crc32, &stage_buffer,
-	      &output_buffer, line_width * pixel_size);
+	      &output_buffer, line_width * pixel_size, snapshot);
 
 	kvfree(output_buffer.pixels);
 free_stage_buffer:
@@ -644,9 +650,9 @@ void vkms_composer_worker(struct work_struct *work)
 		return;
 
 	if (wb_pending)
-		ret = compose_active_planes(active_wb, crtc_state, &crc32);
+		ret = compose_active_planes(active_wb, crtc_state, &crc32, NULL);
 	else
-		ret = compose_active_planes(NULL, crtc_state, &crc32);
+		ret = compose_active_planes(NULL, crtc_state, &crc32, NULL);
 
 	if (ret)
 		return;
