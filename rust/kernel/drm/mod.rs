@@ -2,6 +2,7 @@
 
 //! DRM subsystem abstractions.
 
+pub mod capture;
 pub mod device;
 pub mod display;
 pub mod driver;
