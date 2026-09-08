@@ -14,6 +14,9 @@ use crate::{
 };
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
+#[cfg(CONFIG_KUNIT)]
+mod tests;
+
 /// A fixed-size stream of already-authorized final images.
 ///
 /// Dropping a reference does not shut down other owners. Call [`Self::shutdown`] to stop delivery.
