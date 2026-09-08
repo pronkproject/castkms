@@ -6,6 +6,13 @@
 #include <kunit/visibility.h>
 #include "vkms_drv.h"
 
+struct drm_capture;
+struct drm_capture_authority;
+
+int vkms_composer_capture(struct vkms_crtc_state *crtc_state,
+			  struct drm_capture_authority *authority,
+			  struct drm_capture *stream);
+
 /*
  * This enum is related to the positions of the variables inside
  * `struct drm_color_lut`, so the order of both needs to be the same.
