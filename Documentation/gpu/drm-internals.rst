@@ -87,12 +87,51 @@ a userspace ioctl context, so an adapter will call the same core as an
 in-kernel consumer.
 
 The KUnit ``drm_capture`` suite exercises the core with real allocations and
-kernel-controlled snapshot publication. That is a reference-provider first
-cut, not a VKMS integration or a public capture interface. Capture-holder
-files, DRM grant policy, destination DMA-BUF registration,
+kernel-controlled snapshot publication. It does not create a public capture
+interface. Capture-holder files, DRM grant policy, destination DMA-BUF registration,
 format negotiation, provider notification and safe Rust ownership wrappers
 are subsequent integrations. In particular, the CPU snapshot helper does not
 claim the delegated GPU composition path or create a future-userspace fence.
+
+VKMS Reference Composition
+--------------------------
+
+VKMS supplies a software compositor for testing display behavior without a
+physical monitor. Its internal ``vkms_composer_capture()`` entry point exercises
+the capture request core with the same plane blending and output gamma
+correction used for its display checksums and writeback. The caller supplies
+a prepared display state, an authority and a registered stream. The provider
+asks the authority to approve a claim before accessing source pixels. An empty
+queue or denied claim performs no composition.
+
+Each accepted request receives the completed image directly in its own private
+storage. Rows contain VKMS's internal ``pixel_argb_u16`` representation, with
+four native-endian, 16-bit components per pixel and no row padding. This is a
+kernel test representation, not a public image format or a restriction on
+future GPU destinations. Once the synchronous call returns, consuming or
+retaining the result needs no further access to the display sources. Capture
+does not submit a writeback job or deliver a display checksum.
+
+The caller remains responsible for the relationship between permission and
+the selected display state. It must keep source selection stable across the
+authority check and composition, and ensure the policy approves that exact
+output, content and layout. Matching a byte count alone does not establish
+matching dimensions or permission. All source mappings, pixels, plane state,
+color operations and the prepared gamma table must remain valid and coherent
+until return. Producer work must have finished successfully before entering;
+framebuffer references alone neither establish completion nor prevent pixel
+reuse. The entry point does not acquire display locks or wait on producers.
+
+Composition success describes the provider's work, not unconditional delivery.
+Revoking authority or canceling the request during composition suppresses the
+result through the shared request core, without freeing storage that the
+compositor is still writing. Consumers inspect the request's terminal status.
+
+The ``vkms-capture`` KUnit suite uses prepared states to exercise retained
+pixels, gamma correction, denied admission, size rejection and revocation
+during a source read. It does not establish live display scheduling or a DRM
+grant policy. The reference entry point has no userspace dispatcher and is not
+automatically invoked by VKMS's display worker.
 
 Capture Authority Lifetime
 --------------------------
