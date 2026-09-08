@@ -209,13 +209,27 @@ acceptance leaves the ticket available when it remains valid. Once acceptance
 consumes the ticket, trying the request again is rejected even if the caller
 never received the first result.
 
+The right to change the display may also move to another authority during the
+wait. The model gives each such authority a new generation. A takeover cancels
+the old authority's outstanding tickets and removes their seals. Retaining a
+request or a ticket reference does not preserve permission to submit it. A new
+authority may prepare the same picture afresh. Work accepted before takeover
+is different: its retirement guards and GPU dependencies remain until normal
+completion. Changing who controls the display cannot make readers finish.
+
+That is a deliberately small authority model. New calls after takeover are
+assumed to come from the replacement authority. It does not model DRM files,
+leases, simultaneous clients, a period with no master, or the separate capture
+grant policies. It tests the boundary between unaccepted and accepted display
+work, not a complete implementation of those policies.
+
 Those are tests of retained inputs and fresh reconstruction, not a complete
 blocking ioctl. Python object references and the model's retained fence and
 ticket tables stand in for owned kernel references. The sample rows are not a
-parser for untrusted bytes. The model does not yet exercise permission or
-topology changes during the wait, blob ownership, interrupted waits, or output
-event and file-descriptor publication failures. In particular, merely holding
-the inputs must not grant permission that has since been revoked.
+parser for untrusted bytes. The model does not yet exercise detailed permission
+checks or topology changes during the wait, blob ownership, interrupted waits,
+or output event and file-descriptor publication failures. In particular, merely
+holding the inputs must not grant permission that has since been revoked.
 
 ## A separate model for exported destinations
 
