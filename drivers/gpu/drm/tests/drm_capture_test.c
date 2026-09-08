@@ -137,6 +137,56 @@ static void drm_capture_cancel_queued(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_capture_ack(capture, id), 0);
 }
 
+static void drm_capture_independent_owners(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture *provider = drm_capture_get(capture);
+	struct drm_capture_job *job;
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	job = drm_capture_claim(provider);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	kunit_release_action(test, capture_close, capture);
+	/* The provider's reference permits ordinary calls after endpoint close. */
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(provider, &id), -EKEYREVOKED);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim(provider)), -EKEYREVOKED);
+	drm_capture_shutdown(provider);
+	drm_capture_shutdown(provider);
+	memset(drm_capture_job_data(job), 0x33, drm_capture_job_size(job));
+	drm_capture_complete(job, 0);
+	drm_capture_put(provider);
+}
+
+static void drm_capture_put_preserves_other_owners(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture *observer = drm_capture_get(capture);
+	u8 image[16] = {};
+	u64 id;
+
+	drm_capture_put(observer);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_publish_snapshot(capture, image, sizeof(image)), 0);
+	capture_expect_status(test, capture, id, true, 0);
+}
+
+static void drm_capture_last_put_drains_requests(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 2);
+	struct drm_capture_job *job;
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	job = drm_capture_claim(capture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(capture, &id), 0);
+	kunit_remove_action(test, capture_close, capture);
+	drm_capture_put(capture);
+	/* Completion drops the last reference, including the unclaimed request. */
+	drm_capture_complete(job, -EIO);
+}
+
 static void drm_capture_snapshot_isolation(struct kunit *test)
 {
 	struct drm_capture *old = capture_create(test, 2);
@@ -194,6 +244,9 @@ static struct kunit_case drm_capture_cases[] = {
 	KUNIT_CASE(drm_capture_cancel_claimed),
 	KUNIT_CASE(drm_capture_close_claimed),
 	KUNIT_CASE(drm_capture_cancel_queued),
+	KUNIT_CASE(drm_capture_independent_owners),
+	KUNIT_CASE(drm_capture_put_preserves_other_owners),
+	KUNIT_CASE(drm_capture_last_put_drains_requests),
 	KUNIT_CASE(drm_capture_snapshot_isolation),
 	KUNIT_CASE(drm_capture_failed_image),
 	{}
