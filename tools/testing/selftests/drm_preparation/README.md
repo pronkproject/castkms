@@ -110,8 +110,11 @@ until the worker reports.
 
 Readiness can be true while the GPU fences are known but not yet signaled.
 Accepting the ticket still cannot complete the commit until those fences
-signal. If the GPU work fails, access ends and the error status is kept. The
-model does not pretend the copy produced good pixels.
+signal. Completion also waits for the replacement picture's producer, the
+operation that fills its framebuffer. Preparation readiness and that producer
+may finish in either order. Neither requires waiting for another userspace
+response after acceptance. If GPU work fails, access ends and the error status
+is kept; that does not mean the work produced good pixels.
 
 The dry-run check validates the supplied ticket's scope and identity without
 waiting for source claims or marking preparation ready. It leaves all model
@@ -231,6 +234,39 @@ checks or topology changes during the wait, blob ownership, interrupted waits,
 or output event and file-descriptor publication failures. In particular, merely
 holding the inputs must not grant permission that has since been revoked.
 
+## Finishing a copy is not the same as producing a valid picture
+
+The fake GPU accepts dependencies only on work already submitted. A dependent
+operation cannot finish before those dependencies finish. It deliberately
+allows a producer fence to report failure and the subsequent copy fence to
+report success. A successful copy might faithfully copy incomplete or invalid
+input pixels; the copy's own status does not answer that question.
+
+Source copies depend on the producer retained by the claimed picture. Later
+display updates do not change which producer belongs to that old claim. The
+ticket may become ready as soon as the renderer releases the claim with its
+submitted copy fences, even while producer and copy work remain unfinished.
+The old source still waits for native completion before retirement.
+
+The separate staging-status query decides whether the renderer's private copy
+is eligible for output. It requires a release report, at least one submitted
+copy, successful completion of every copy and successful completion of the
+retained producer. Pending work has no final status yet. A no-access release
+has no image. Worker loss does not invent a successful report, and a staging
+slot already returned for reuse cannot be queried as the old image.
+
+Tests fail the producer before the source claim and while capture is pending.
+In both cases a successful copy still gives an invalid staging image, while
+the old source retires and the private storage remains reclaimable. Querying
+validity is read-only; it does not release sources or complete native fences.
+
+The example has one explicit producer per framebuffer. It does not recover
+errors from reservation histories after their fences have disappeared, model
+several planes' producers on one timeline, or reproduce a particular driver's
+reset behavior. The fake provider conservatively waits for all dependencies
+even for error completion. These are declared ordering assumptions, not
+results obtained from a GPU.
+
 ## A separate model for exported destinations
 
 The companion program `output-model.py` asks a narrower question: once a
@@ -263,9 +299,10 @@ destination write, or enforcement of arbitrary buffer access.
 ## What passing does not mean
 
 This is an early contract sketch, not the point at which the protocol can be
-frozen. The programs do not ask whether a producer's completion fence actually
-means the pixels are valid. They do not model an update that reuses the same
-framebuffer for new content without starting a new picture. They do not model
+frozen. The producer example checks explicit retained status, not arbitrary
+buffer history or hidden dependencies. The programs do not model an update
+that reuses the same framebuffer for new content without starting a new
+picture. They do not model
 credits for completed capture results. Request reconstruction covers retained
 input identities and current pictures, not the full blocking ioctl lifecycle.
 Earlier commits finish through explicit model decisions, not through a kernel
