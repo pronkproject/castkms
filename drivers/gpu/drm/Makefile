@@ -39,6 +39,7 @@ drm-y := \
 	drm_blend.o \
 	drm_bridge.o \
 	drm_cache.o \
+	drm_capture.o \
 	drm_color_mgmt.o \
 	drm_colorop.o \
 	drm_connector.o \
