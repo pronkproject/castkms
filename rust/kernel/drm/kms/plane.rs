@@ -995,6 +995,17 @@ pub trait RawPlaneState: AsRawPlaneState {
         }
     }
 
+    /// Whether a framebuffer assignment occurred while constructing this state.
+    ///
+    /// Assigning the same framebuffer or disabling the plane also counts. Duplicating
+    /// a state starts without an assignment. Kernel helpers as well as userspace property
+    /// processing may assign framebuffers, so this does not identify a requester or prove
+    /// authority. Compare old and new framebuffers separately to detect identity changes.
+    #[inline]
+    fn framebuffer_was_set(&self) -> bool {
+        self.as_raw().fb_set
+    }
+
     /// Return the framebuffer currently set for this plane state
     #[inline]
     fn framebuffer<D>(&self) -> Option<&Framebuffer<D>>
