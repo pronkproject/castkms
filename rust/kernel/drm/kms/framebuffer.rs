@@ -20,6 +20,9 @@ use bindings;
 use core::ops::Deref;
 use core::{marker::*, ptr};
 
+mod storage;
+pub(super) use storage::vtable;
+
 /// The main interface for [`struct drm_framebuffer`].
 ///
 /// # Invariants
@@ -271,6 +274,13 @@ where
 }
 
 impl<T: KmsDriver> Framebuffer<T> {
+    /// Borrow metadata owned by the Rust framebuffer constructor.
+    ///
+    /// Native framebuffers constructed outside that interface have no typed metadata.
+    pub fn data(&self) -> Option<&T::FramebufferData> {
+        storage::data(self)
+    }
+
     /// Create a generic GEM framebuffer from borrowed objects without installing handles.
     ///
     /// Uses the same metadata and storage checks as the native generic GEM framebuffer path.
@@ -286,6 +296,19 @@ impl<T: KmsDriver> Framebuffer<T> {
         unsafe { Self::from_objects_unchecked(dev, layout) }
     }
 
+    /// Create a framebuffer with driver metadata supplied by a kernel caller.
+    ///
+    /// The driver defines how metadata is constructed and what it means. Supplying it does
+    /// not bypass the shared layout, storage or device checks, nor authorize pixel access.
+    pub fn from_objects_with_data(
+        dev: &Device<T, crate::drm::device::Registered>,
+        layout: &FramebufferLayout<'_, T>,
+        data: T::FramebufferData,
+    ) -> Result<FramebufferRef<T>> {
+        // SAFETY: The registration guard protects initialized mode configuration.
+        unsafe { Self::from_objects_with_data_unchecked(dev, layout, data) }
+    }
+
     /// Create a framebuffer while an internal caller independently protects KMS setup.
     ///
     /// # Safety
@@ -296,6 +319,19 @@ impl<T: KmsDriver> Framebuffer<T> {
     pub(crate) unsafe fn from_objects_unchecked(
         dev: &Device<T>,
         layout: &FramebufferLayout<'_, T>,
+    ) -> Result<FramebufferRef<T>> {
+        let data = T::framebuffer_data(dev, None)?;
+        // SAFETY: The caller provides the same setup and lifetime guarantees.
+        unsafe { Self::from_objects_with_data_unchecked(dev, layout, data) }
+    }
+
+    /// # Safety
+    ///
+    /// The setup and lifetime requirements of `from_objects_unchecked` apply.
+    pub(crate) unsafe fn from_objects_with_data_unchecked(
+        dev: &Device<T>,
+        layout: &FramebufferLayout<'_, T>,
+        data: T::FramebufferData,
     ) -> Result<FramebufferRef<T>> {
         if layout.planes.is_empty() || layout.planes.len() > 4 {
             return Err(EINVAL);
@@ -325,14 +361,8 @@ impl<T: KmsDriver> Framebuffer<T> {
         // checks device identity, layout, plane count and backing size before publication,
         // acquiring its own object references only on successful creation. The caller
         // independently protects initialized mode configuration.
-        let raw = crate::error::from_err_ptr(unsafe {
-            bindings::drm_gem_fb_create_from_objects(
-                dev.as_raw(),
-                &command,
-                objects.as_ptr(),
-                layout.planes.len() as u32,
-            )
-        })?;
+        let raw =
+            unsafe { storage::from_objects(dev, &command, &objects[..layout.planes.len()], data) }?;
         // SAFETY: The native constructor returned an initialized framebuffer reference.
         let owned = unsafe { Self::from_raw(raw) }.to_owned_ref();
         // SAFETY: Replace the constructor's reference with the paired Rust/device owner.

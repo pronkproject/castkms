@@ -383,6 +383,10 @@ impl connector::DriverConnector for TestConnector {
 
 #[vtable]
 impl KmsDriver for TestDriver {
+    type FramebufferData = ();
+    fn framebuffer_data(_: &Device<Self>, _: Option<&crate::drm::file::File<Self::File>>) -> Result<()> {
+        Ok(())
+    }
     type Connector = TestConnector;
     type Plane = TestPlane;
     type Crtc = TestCrtc;

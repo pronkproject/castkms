@@ -43,6 +43,7 @@ use core::{
 pub struct ModeConfigOps {
     pub(crate) kms_vtable: bindings::drm_mode_config_funcs,
     pub(crate) kms_helper_vtable: bindings::drm_mode_config_helper_funcs,
+    pub(crate) framebuffer_vtable: bindings::drm_framebuffer_funcs,
 }
 
 /// A trait representing a type that can be used for setting up KMS, or a stub.
@@ -224,6 +225,18 @@ impl<'a, T: Driver> UnregisteredKmsDevice<'a, T> {
 /// [`PhantomData<Self>`]: PhantomData
 #[vtable]
 pub trait KmsDriver: Driver<Kms = Self> + Sized {
+    /// Driver metadata owned by each framebuffer. Use `()` if unused.
+    type FramebufferData: Send + Sync;
+
+    /// Construct metadata before framebuffer publication.
+    ///
+    /// `None` denotes kernel object-based construction, not a privileged file.
+    /// The result records creation context; it must not imply continuing authority.
+    fn framebuffer_data(
+        dev: &Device<Self>,
+        file: Option<&super::file::File<Self::File>>,
+    ) -> Result<Self::FramebufferData>;
+
     /// The driver's [`DriverConnector`] implementation.
     ///
     /// TODO: This will be unneeded in the future once we support multiple [`DriverConnector`]
@@ -310,6 +323,7 @@ impl<T: KmsDriver> private::KmsImpl for T {
                 None
             },
         },
+        framebuffer_vtable: framebuffer::vtable::<Self>(),
     });
 
     unsafe fn setup_kms(drm: &Device<Self::Driver>) -> Result<ModeConfigInfo> {
