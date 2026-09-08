@@ -5,6 +5,7 @@
 mod display;
 mod gem;
 mod output;
+mod provenance;
 mod scene;
 
 use kernel::{
