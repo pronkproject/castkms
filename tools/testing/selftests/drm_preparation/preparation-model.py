@@ -57,6 +57,7 @@ class RequestedScanout:
     framebuffer: object
     producer: int
     x: int
+    producers: ProducerSet
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ class Model:
         self.require(not self.lost and not claim.released)
         # A-to-E only: the available private slot has no downstream dependency.
         scanout = self.scenes[claim.scene].scanout
-        dependencies = () if scanout is None else (scanout.producer,)
+        dependencies = () if scanout is None else scanout.producers.waits
         fence = self.submit_native(dependencies)
         claim.submitted.add(fence)
         return fence
@@ -201,21 +202,28 @@ class Model:
         for key in ticket.scope.values():
             self.scenes[key].seals.discard(("ticket", ticket_id))
 
-    def capture_request(self, rows, framebuffers, fence_fds, ticket_fds, ticket_fd):
+    def capture_request(self, rows, framebuffers, fence_fds, ticket_fds, ticket_fd,
+                        *, implicit=None):
         # Fake caller namespaces: framebuffer IDs and fd numbers are reusable.
         # The request retains their referents, never their lookup keys. Rows
         # contain output, framebuffer ID, producer fd and a scalar property.
         self.require(0 < len(rows) <= len(self.current))
         changes = []
         outputs = set()
+        implicit = {} if implicit is None else implicit
+        acquired = {}
         for output, framebuffer_id, producer_fd, x in rows:
             self.require(output in self.current and output not in outputs)
             self.require(isinstance(x, int))
             self.require(framebuffer_id in framebuffers and producer_fd in fence_fds)
             producer = fence_fds[producer_fd]
-            self.require(producer in self.native)
+            # Resolve the required implicit snapshot once per framebuffer,
+            # including when its collection is a one-shot iterator.
+            if framebuffer_id not in acquired:
+                acquired[framebuffer_id] = tuple(implicit.get(framebuffer_id, ()))
+            producers = self.retain_producers((producer, *acquired[framebuffer_id]))
             changes.append(RequestedScanout(output, framebuffers[framebuffer_id],
-                                            producer, x))
+                                            producer, x, producers))
             outputs.add(output)
         self.require(ticket_fd in ticket_fds)
         ticket = ticket_fds[ticket_fd]
@@ -287,8 +295,9 @@ class Model:
         # still names each accepted replacement. Normal display completion
         # must also wait for that replacement's producer, not for a daemon.
         scanouts = [self.scenes[self.current[output]].scanout for output in scope]
-        self.require(all(scanout is None or self.native[scanout.producer] is not None
-                         for scanout in scanouts))
+        self.require(all(self.native[producer] is not None
+                         for scanout in scanouts if scanout is not None
+                         for producer in scanout.producers.waits))
         for output, key in scope.items():
             scene = self.scenes[key]
             self.require(not scene.claims)
@@ -318,7 +327,7 @@ class Model:
         fences = set(claim.submitted)
         scanout = self.scenes[claim.scene].scanout
         if scanout is not None:
-            fences.add(scanout.producer)
+            fences.update(scanout.producers.validity)
         statuses = [self.native[fence] for fence in sorted(fences)]
         if any(status is None for status in statuses):
             return None
@@ -345,6 +354,54 @@ class Model:
 
 
 class PreparationTests(unittest.TestCase):
+    def test_multiple_acquired_producers_govern_copy_validity(self):
+        for failed_before_capture in (False, True):
+            for status in (0, -5):
+                with self.subTest(early=failed_before_capture, status=status):
+                    model = Model(outputs=2)
+                    explicit, first, last = [model.submit_native() for _ in range(3)]
+                    if failed_before_capture:
+                        model.signal(first, status)
+                    ticket = model.prepare([0, 1])
+                    implicit = {7: iter([first, last, first])}
+                    request = model.capture_request([[0, 7, 8, 0], [1, 7, 8, 0]],
+                                                    {7: "frame"}, {8: explicit},
+                                                    {9: ticket}, 9, implicit=implicit)
+                    implicit.clear()
+                    expected = frozenset([explicit, first, last])
+                    for change in request.changes:
+                        self.assertEqual(change.producers.validity, expected)
+                    predecessor = model.accept_request(request)
+                    claim = self.claimed(model)
+                    copy = model.submit_source(claim)
+                    model.release(claim, [copy])
+                    model.signal(explicit)
+                    before = deepcopy(model.__dict__)
+                    with self.assertRaises(Rejected):
+                        model.complete_commit(predecessor)
+                    self.assertEqual(model.__dict__, before)
+                    with self.assertRaises(Rejected):
+                        model.signal(copy)
+                    if not failed_before_capture:
+                        model.signal(first, status)
+                    model.signal(last)
+                    model.complete_commit(predecessor)
+                    replacement = model.accept(model.prepare([0]))
+                    model.signal(copy)
+                    model.complete_commit(replacement)
+                    self.assertEqual(model.native[copy], 0)
+                    self.assertEqual(model.staging_status(claim), status)
+
+    def test_unknown_implicit_producer_rejects_request_without_mutation(self):
+        model = Model()
+        producer = model.submit_native()
+        ticket = model.prepare([0])
+        before = deepcopy(model.__dict__)
+        with self.assertRaises(Rejected):
+            model.capture_request([[0, 7, 8, 0]], {7: "frame"}, {8: producer},
+                                  {9: ticket}, 9, implicit={7: [producer, -1]})
+        self.assertEqual(model.__dict__, before)
+
     def test_retained_producers_keep_completed_and_pending_evidence(self):
         model = Model()
         failed = model.submit_native()
