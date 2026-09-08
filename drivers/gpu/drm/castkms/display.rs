@@ -172,6 +172,10 @@ impl connector::DriverConnector for Connector {
 
 #[vtable]
 impl KmsDriver for Driver {
+    type FramebufferData = ();
+    fn framebuffer_data(_: &Device<Self>, _: Option<&kernel::drm::file::File<Self::File>>) -> Result<()> {
+        Ok(())
+    }
     type Connector = Connector;
     type Plane = Plane;
     type Crtc = Crtc;
