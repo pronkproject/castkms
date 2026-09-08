@@ -172,9 +172,14 @@ impl connector::DriverConnector for Connector {
 
 #[vtable]
 impl KmsDriver for Driver {
-    type FramebufferData = ();
-    fn framebuffer_data(_: &Device<Self>, _: Option<&kernel::drm::file::File<Self::File>>) -> Result<()> {
-        Ok(())
+    type FramebufferData = super::provenance::Provenance;
+    fn framebuffer_data(
+        _: &Device<Self>,
+        file: Option<&kernel::drm::file::File<Self::File>>,
+    ) -> Result<Self::FramebufferData> {
+        Ok(super::provenance::Provenance::from_snapshot(
+            file.and_then(|file| file.master_snapshot()),
+        ))
     }
     type Connector = Connector;
     type Plane = Plane;
