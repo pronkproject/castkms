@@ -45,6 +45,7 @@ class Pipeline:
         self.source = source.Model(outputs, staging_depth)
         self.output = output.OutputModel()
         self.stages = {}
+        self.cache = {}
 
     def grant(self, output_id, recipient_domain):
         self.source.require(output_id in self.source.current)
@@ -77,9 +78,123 @@ class Pipeline:
         # not retain E, and no destination operation adds an A reader fence.
         self.source.require(all(write.completed for write in self.stages[claim].writes))
         self.source.recycle_staging(claim, downstream_done=True)
+        self.cache = {scope: cached for scope, cached in self.cache.items()
+                      if cached != claim}
+
+    def remember_stage(self, claim, grant):
+        self.source.require(grant.owner is self and grant.destination.live)
+        self.source.require(self.stages[claim].scope == grant.destination.scope)
+        self.source.require(self.source.claims[claim].scene == self.source.current[grant.output])
+        self.source.require(self.source.staging_status(claim) == 0)
+        self.cache[grant.destination.scope] = claim
+
+    def cached_stage(self, grant):
+        self.source.require(grant.owner is self and grant.destination.live)
+        claim = self.cache.get(grant.destination.scope)
+        if claim is None:
+            return None
+        if self.source.claims[claim].scene != self.source.current[grant.output]:
+            return None
+        return claim if self.source.staging_status(claim) == 0 else None
 
 
 class PipelineTests(unittest.TestCase):
+    def current_stage(self, pipeline, grant):
+        pipeline.source.queue()
+        claim = pipeline.claim_source(grant, grant.output)
+        copy = pipeline.source.submit_source(claim)
+        pipeline.source.release(claim, [copy])
+        pipeline.source.signal(copy)
+        return claim
+
+    def test_cache_reuse_does_not_add_a_source_reader(self):
+        pipeline = Pipeline()
+        grant = pipeline.grant(0, "X")
+        allocation = pipeline.output.allocate(grant.destination)
+        claim = self.current_stage(pipeline, grant)
+        pipeline.remember_stage(claim, grant)
+        old = pipeline.source.current[0]
+        readers = frozenset(pipeline.source.scenes[old].fences)
+        ticket = pipeline.source.prepare([0])
+        self.assertTrue(pipeline.source.ready(ticket))
+        for _ in range(3):
+            cached = pipeline.cached_stage(grant)
+            self.assertEqual(cached, claim)
+            write = pipeline.claim_output(cached, grant, allocation)
+            pipeline.output.submit(write)
+            pipeline.output.complete(write)
+        self.assertEqual(len(pipeline.source.claims), 1)
+        self.assertFalse(pipeline.source.scenes[old].claims)
+        self.assertEqual(pipeline.source.scenes[old].fences, readers)
+        pipeline.source.complete_commit(pipeline.source.accept(ticket))
+        self.assertIsNone(pipeline.cached_stage(grant))
+        pipeline.recycle_stage(claim)
+        self.assertFalse(pipeline.cache)
+
+    def test_same_framebuffer_recommit_invalidates_cached_content(self):
+        for replace_producer in (False, True):
+            with self.subTest(replace_producer=replace_producer):
+                pipeline = Pipeline()
+                grant = pipeline.grant(0, "X")
+                allocation = pipeline.output.allocate(grant.destination)
+                framebuffer = object()
+                producer = pipeline.source.submit_native()
+                pipeline.source.signal(producer)
+                pictures = []
+                old_claim = None
+                for update in range(2):
+                    if update and replace_producer:
+                        producer = pipeline.source.submit_native()
+                        pipeline.source.signal(producer)
+                    ticket = pipeline.source.prepare([0])
+                    # Each row explicitly selects the same framebuffer and
+                    # geometry, with no damage hint claiming unchanged pixels.
+                    request = pipeline.source.capture_request([[0, 7, 8, 0]],
+                                                              {7: framebuffer}, {8: producer},
+                                                              {9: ticket}, 9)
+                    pipeline.source.complete_commit(pipeline.source.accept_request(request))
+                    self.assertIs(request.changes[0].framebuffer, framebuffer)
+                    self.assertIsNone(pipeline.cached_stage(grant))
+                    claim = self.current_stage(pipeline, grant)
+                    pipeline.remember_stage(claim, grant)
+                    if old_claim is not None:
+                        with self.assertRaises(Rejected):
+                            pipeline.remember_stage(old_claim, grant)
+                        with self.assertRaises(Rejected):
+                            pipeline.source.submit_source(old_claim)
+                        self.assertEqual(pipeline.cached_stage(grant), claim)
+                    write = pipeline.claim_output(pipeline.cached_stage(grant), grant, allocation)
+                    pipeline.output.submit(write)
+                    pipeline.output.complete(write)
+                    pictures.append(allocation.pixels)
+                    old_claim = claim
+                self.assertNotEqual(*pictures)
+
+    def test_cache_rejects_invalid_or_incompatible_images(self):
+        pipeline = Pipeline()
+        grant = pipeline.grant(0, "X")
+        other = pipeline.grant(0, "Y")
+        pipeline.source.queue()
+        claim = pipeline.claim_source(grant, 0)
+        copy = pipeline.source.submit_source(claim)
+        with self.assertRaises(Rejected):
+            pipeline.remember_stage(claim, grant)
+        pipeline.source.release(claim, [copy])
+        pipeline.source.signal(copy, -5)
+        with self.assertRaises(Rejected):
+            pipeline.remember_stage(claim, grant)
+        pipeline.recycle_stage(claim)
+        valid = self.current_stage(pipeline, grant)
+        with self.assertRaises(Rejected):
+            pipeline.remember_stage(valid, other)
+        pipeline.remember_stage(valid, grant)
+        self.assertIsNone(pipeline.cached_stage(other))
+        pipeline.output.revoke(grant.destination)
+        with self.assertRaises(Rejected):
+            pipeline.cached_stage(grant)
+        pipeline.recycle_stage(valid)
+        self.assertFalse(pipeline.cache)
+
     def test_output_failure_does_not_invalidate_the_private_source_image(self):
         pipeline = Pipeline(staging_depth=1)
         grant = pipeline.grant(0, "X")
