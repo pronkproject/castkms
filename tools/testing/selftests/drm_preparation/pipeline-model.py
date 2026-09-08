@@ -270,6 +270,47 @@ class PipelineTests(unittest.TestCase):
         self.assertGreater(completed, 0)
         self.assertGreater(denied, 0)
 
+    def test_unacknowledged_results_do_not_retain_source_or_private_image(self):
+        pipeline = Pipeline(staging_depth=1)
+        grant = pipeline.grant(0, "X")
+        allocation = pipeline.output.allocate(grant.destination)
+        claim = self.stage(pipeline, grant)
+        writes = []
+        for _ in range(pipeline.output.results.capacity):
+            write = pipeline.claim_output(claim, grant, allocation)
+            pipeline.output.submit(write)
+            pipeline.output.complete(write, notify=False)
+            writes.append(write)
+        pipeline.recycle_stage(claim)
+        self.assertTrue(pipeline.source.scenes[pipeline.source.claims[claim].scene].retired)
+        next_claim = self.stage(pipeline, grant)
+        with self.assertRaises(Rejected):
+            pipeline.claim_output(next_claim, grant, allocation)
+        self.assertFalse(allocation.busy)
+        self.assertFalse(pipeline.stages[next_claim].writes)
+        self.assertEqual(len(pipeline.output.results.results), pipeline.output.results.capacity)
+        for _ in range(10):
+            pipeline.source.complete_commit(pipeline.source.accept(pipeline.source.prepare([0])))
+        pipeline.output.results.acknowledge(writes[0].result)
+        write = pipeline.claim_output(next_claim, grant, allocation)
+        pipeline.output.submit(write)
+        pipeline.output.complete(write)
+        pipeline.recycle_stage(next_claim)
+
+    def test_closed_results_do_not_release_private_image_before_native_end(self):
+        pipeline = Pipeline(staging_depth=1)
+        grant = pipeline.grant(0, "X")
+        allocation = pipeline.output.allocate(grant.destination)
+        claim = self.stage(pipeline, grant)
+        write = pipeline.claim_output(claim, grant, allocation)
+        pipeline.output.submit(write)
+        pipeline.output.results.close()
+        with self.assertRaises(Rejected):
+            pipeline.recycle_stage(claim)
+        self.assertFalse(pipeline.output.complete(write))
+        pipeline.recycle_stage(claim)
+        self.assertFalse(pipeline.output.results.results)
+
 
 if __name__ == "__main__":
     unittest.main()
