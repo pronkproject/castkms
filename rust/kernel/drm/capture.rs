@@ -12,7 +12,7 @@ use crate::{
     sync::aref::{ARef, AlwaysRefCounted},
     types::Opaque,
 };
-use core::ptr::NonNull;
+use core::{mem::ManuallyDrop, ptr::NonNull};
 
 /// A fixed-size stream of already-authorized final images.
 ///
@@ -59,6 +59,20 @@ impl Stream {
         Ok(Request {
             stream: self.into(),
             id,
+        })
+    }
+
+    /// Claim the oldest request for synchronous, kernel-controlled pixel production.
+    ///
+    /// The provider must validate current source permission before claiming. This operation does
+    /// not perform authority registration checks; authority-managed providers must claim through
+    /// their authority instead. No source or asynchronous device access is represented by [`Job`].
+    pub fn claim(&self) -> Result<Job> {
+        // SAFETY: A live stream is sufficient for claiming; the returned job is exclusively owned.
+        let ptr = from_err_ptr(unsafe { bindings::drm_capture_claim(self.0.get()) })?;
+        // SAFETY: A successful claim returns a non-null job with independent storage ownership.
+        Ok(Job {
+            ptr: unsafe { NonNull::new_unchecked(ptr) },
         })
     }
 
@@ -140,5 +154,53 @@ impl Drop for Request {
         // SAFETY: The stream remains live through this destructor. A prior shutdown may already
         // have discarded the request; ignoring ENOENT is intentional. Active job storage survives.
         unsafe { bindings::drm_capture_discard(self.stream.0.get(), self.id) };
+    }
+}
+
+/// Exclusive access to private CPU result storage, completed exactly once or canceled on drop.
+///
+/// Only synchronous borrows of the image are exposed. This type must not be used to represent
+/// outstanding GPU or other asynchronous access. Forgetting it leaks ownership, never frees early.
+///
+/// # Invariants
+///
+/// `ptr` owns one claimed C job and its completion obligation, until consumed or dropped.
+#[must_use = "dropping a job completes it with ECANCELED"]
+pub struct Job {
+    ptr: NonNull<bindings::drm_capture_job>,
+}
+
+// SAFETY: Exclusive job ownership and its independently retained storage may move between threads.
+unsafe impl Send for Job {}
+
+impl Job {
+    /// Borrow the initialized image bytes exclusively until the borrow ends.
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        // SAFETY: A claimed job retains its allocation despite cancellation, discard or shutdown.
+        let data = unsafe { bindings::drm_capture_job_data(self.ptr.as_ptr()) };
+        // SAFETY: The job retains the stream containing its immutable, nonzero image size.
+        let size = unsafe { bindings::drm_capture_job_size(self.ptr.as_ptr()) };
+        // SAFETY: The C core allocated and zeroed `size` bytes, bounded by SSIZE_MAX. Exclusive job
+        // ownership and &mut self prevent other borrows; consumers cannot copy a pending result.
+        unsafe { core::slice::from_raw_parts_mut(data.cast(), size) }
+    }
+
+    /// End CPU access and consume the completion obligation; revocation may still deny delivery.
+    pub fn complete(self, status: Result) {
+        let job = ManuallyDrop::new(self);
+        // SAFETY: Consuming self ends every image borrow and transfers its sole job ownership.
+        unsafe {
+            bindings::drm_capture_complete(
+                job.ptr.as_ptr(),
+                status.err().map_or(0, Error::to_errno),
+            )
+        };
+    }
+}
+
+impl Drop for Job {
+    fn drop(&mut self) {
+        // SAFETY: All synchronous borrows ended before drop and this owns the completion obligation.
+        unsafe { bindings::drm_capture_complete(self.ptr.as_ptr(), ECANCELED.to_errno()) };
     }
 }
