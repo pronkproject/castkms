@@ -31,3 +31,6 @@ impl Scene {
         }
     }
 }
+
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+mod tests;
