@@ -38,6 +38,12 @@ drm_gem_fb_create_from_objects(struct drm_device *dev,
 			       const struct drm_mode_fb_cmd2 *mode_cmd,
 			       struct drm_gem_object * const *objects,
 			       unsigned int num_objects);
+int drm_gem_fb_init_from_objects(struct drm_device *dev,
+			       struct drm_framebuffer *fb,
+			       const struct drm_mode_fb_cmd2 *mode_cmd,
+			       struct drm_gem_object * const *objects,
+			       unsigned int num_objects,
+			       const struct drm_framebuffer_funcs *funcs);
 struct drm_framebuffer *
 drm_gem_fb_create(struct drm_device *dev, struct drm_file *file,
 		  const struct drm_format_info *info,
