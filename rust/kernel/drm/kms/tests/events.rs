@@ -309,6 +309,13 @@ impl connector::DriverConnector for EventConnector {
 
 #[vtable]
 impl KmsDriver for EventDriver {
+    type FramebufferData = ();
+    fn framebuffer_data(
+        _: &Device<Self>,
+        _: Option<&crate::drm::file::File<Self::File>>,
+    ) -> Result<()> {
+        Ok(())
+    }
     type Connector = EventConnector;
     type Plane = EventPlane;
     type Crtc = EventCrtc;
