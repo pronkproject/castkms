@@ -49,4 +49,7 @@ void *drm_capture_job_data(struct drm_capture_job *job);
 size_t drm_capture_job_size(struct drm_capture_job *job);
 void drm_capture_complete(struct drm_capture_job *job, int status);
 
+int drm_capture_publish_snapshot(struct drm_capture *capture,
+				 const void *pixels, size_t size);
+
 #endif

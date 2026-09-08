@@ -221,6 +221,38 @@ void drm_capture_complete(struct drm_capture_job *job, int status)
 }
 EXPORT_SYMBOL_GPL(drm_capture_complete);
 
+/**
+ * drm_capture_publish_snapshot - serve one request from a kernel final image
+ * @capture: authorized fixed-size stream
+ * @pixels: coherent final image, readable for the duration of the call
+ * @size: exact image size, including initialized padding
+ *
+ * The caller must supply only pixels authorized for the stream's recipient.
+ * Neither raw planes nor a framebuffer identity establish that permission.
+ * The image is copied into independently owned storage before returning, so
+ * result delivery never retains the supplied image. The copy occurs outside
+ * the admission lock; a racing revocation still changes the request outcome.
+ *
+ * Return: zero if a claimed copy completed, -EAGAIN without a waiting request,
+ * -EKEYREVOKED if admission is closed, or -EINVAL for a mismatched image size.
+ * A zero return describes provider completion, not the retained request status.
+ */
+int drm_capture_publish_snapshot(struct drm_capture *capture,
+				 const void *pixels, size_t size)
+{
+	struct drm_capture_job *job;
+
+	if (size != capture->frame_size)
+		return -EINVAL;
+	job = drm_capture_claim(capture);
+	if (IS_ERR(job))
+		return PTR_ERR(job);
+	memcpy(drm_capture_job_data(job), pixels, size);
+	drm_capture_complete(job, 0);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(drm_capture_publish_snapshot);
+
 int drm_capture_query(struct drm_capture *capture, u64 id,
 		      struct drm_capture_result *result)
 {
