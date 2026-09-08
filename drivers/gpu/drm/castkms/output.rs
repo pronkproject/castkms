@@ -49,3 +49,6 @@ impl<S: Unpin> Output<S> {
         drop(retired);
     }
 }
+
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+mod tests;

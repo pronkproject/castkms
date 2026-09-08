@@ -15,3 +15,11 @@ config DRM_CASTKMS
 	  CastKMS driver in a casting session.
 
 	  The module is called castkms.
+
+config DRM_CASTKMS_KUNIT_TEST
+	bool "CastKMS scene lifetime tests" if !KUNIT_ALL_TESTS
+	depends on DRM_CASTKMS && KUNIT=y
+	default KUNIT_ALL_TESTS
+	help
+	  Test scene replacement, blanking and terminal output shutdown without
+	  accessing display pixels. These tests run when CastKMS is loaded.
