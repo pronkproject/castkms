@@ -9,6 +9,8 @@
 mod allocation;
 mod events;
 mod inspection;
+#[cfg(CONFIG_DRM_CLIENT)]
+mod masters;
 mod properties;
 
 use super::*;
