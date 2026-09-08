@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0+
 
 #include <linux/crc32.h>
+#include <linux/overflow.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_blend.h>
+#include <drm/drm_capture.h>
+#include <drm/drm_capture_authority.h>
 #include <drm/drm_colorop.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_fixed.h>
@@ -593,6 +596,57 @@ free_stage_buffer:
 
 	return ret;
 }
+
+/**
+ * vkms_composer_capture - compose one authorized kernel capture request
+ * @crtc_state: stable, prepared source state approved by the authority policy
+ * @authority: live authority whose policy validates the selected source
+ * @stream: live registered stream for the selected output and image size
+ *
+ * The caller must serialize source selection with policy changes across the
+ * entire call, without holding the authority admission guard. All source maps,
+ * pixels, plane state, color operations and the prepared gamma_lut must remain
+ * valid and coherent until return. Producer work must already have completed
+ * successfully. Holding framebuffer references alone does not satisfy those
+ * requirements. Policy must approve the exact output, content and layout;
+ * matching the request's byte count does not establish matching dimensions.
+ *
+ * The oldest queued request receives tightly packed pixel_argb_u16 rows after
+ * composition and output gamma correction. That representation is kernel-only,
+ * not a negotiated userspace format. Neither writeback nor CRC delivery is
+ * triggered. No source reference or pointer is retained after return.
+ *
+ * Return: zero on composition success or negative errno. A concurrent revoke
+ * or cancellation may still deny delivery; query the request for its outcome.
+ */
+int vkms_composer_capture(struct vkms_crtc_state *crtc_state,
+			  struct drm_capture_authority *authority,
+			  struct drm_capture *stream)
+{
+	struct drm_capture_job *job;
+	size_t size;
+	u32 crc32 = 0;
+	int ret = -EINVAL;
+
+	job = drm_capture_authority_claim_stream(authority, stream);
+	if (IS_ERR(job))
+		return PTR_ERR(job);
+
+	if (!crtc_state->base.mode.hdisplay || !crtc_state->base.mode.vdisplay)
+		goto complete;
+
+	size = size_mul(size_mul(crtc_state->base.mode.hdisplay,
+				 crtc_state->base.mode.vdisplay),
+			sizeof(struct pixel_argb_u16));
+	if (size == SIZE_MAX || size != drm_capture_job_size(job))
+		goto complete;
+
+	ret = compose_active_planes(NULL, crtc_state, &crc32, drm_capture_job_data(job));
+complete:
+	drm_capture_complete(job, ret);
+	return ret;
+}
+EXPORT_SYMBOL_IF_KUNIT(vkms_composer_capture);
 
 /**
  * vkms_composer_worker - ordered work_struct to compute CRC
