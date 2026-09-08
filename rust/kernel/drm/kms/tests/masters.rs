@@ -21,6 +21,93 @@ mod tests {
     use super::*;
 
     #[test]
+    fn absent_snapshot_retains_no_device_reference() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-snapshot-empty", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let client = HandleClient::new(&dev)?;
+        let before = device_references(&dev);
+        assert!(client.file().master_snapshot().is_none());
+        assert_eq!(device_references(&dev), before);
+        Ok(())
+    }
+
+    #[test]
+    fn associated_snapshot_is_not_current() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-snapshot-client", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let client = HandleClient::new(&dev)?;
+        associate(&client)?;
+        let identity = client.file().associated_master().ok_or(EINVAL)?;
+        let snapshot = client.file().master_snapshot().ok_or(EINVAL)?;
+        assert!(!snapshot.was_current());
+        assert!(snapshot.master() == &identity);
+        drop(client);
+        drop(dev);
+        drop(identity);
+        assert!(counts.objects.load(Ordering::Relaxed) > 0);
+        drop(snapshot);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn current_snapshot_remains_historical_after_drop() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-snapshot-drop", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let client = HandleClient::new(&dev)?;
+        associate(&client)?;
+        let file = client.file();
+        // SAFETY: The unregistered device remains private to this task.
+        assert!(unsafe { (*dev.as_raw()).master.is_null() });
+        // SAFETY: Give the private device a reference to the file's initialized master.
+        unsafe {
+            (*file.as_raw()).is_master = true;
+            (*dev.as_raw()).master = bindings::drm_master_get((*file.as_raw()).master);
+        }
+        let current = file.master_snapshot().ok_or(EINVAL)?;
+        assert!(current.was_current());
+        // SAFETY: The private fixture still excludes concurrent access. Release the device's
+        // active-master reference without changing the file's retained association.
+        unsafe { bindings::drm_master_put(&raw mut (*dev.as_raw()).master) };
+        let inactive = file.master_snapshot().ok_or(EINVAL)?;
+        assert!(!inactive.was_current());
+        assert!(current.master() == inactive.master());
+        assert!(current.was_current());
+        Ok(())
+    }
+
+    #[test]
+    fn sharing_active_identity_does_not_make_a_client_current() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-snapshot-peer", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let owner = HandleClient::new(&dev)?;
+        let peer = HandleClient::new(&dev)?;
+        associate(&owner)?;
+        // SAFETY: The device and peer client are private and remain live throughout setup.
+        let (device_master, peer_master) =
+            unsafe { ((*dev.as_raw()).master, (*peer.file().as_raw()).master) };
+        assert!(device_master.is_null());
+        assert!(peer_master.is_null());
+        // SAFETY: Each native owner receives its own reference; native close releases it.
+        unsafe {
+            let master = (*owner.file().as_raw()).master;
+            (*owner.file().as_raw()).is_master = true;
+            (*dev.as_raw()).master = bindings::drm_master_get(master);
+            (*peer.file().as_raw()).master = bindings::drm_master_get(master);
+        }
+        let owner_snapshot = owner.file().master_snapshot().ok_or(EINVAL)?;
+        let peer_snapshot = peer.file().master_snapshot().ok_or(EINVAL)?;
+        assert!(owner_snapshot.was_current());
+        assert!(!peer_snapshot.was_current());
+        assert!(owner_snapshot.master() == peer_snapshot.master());
+        Ok(())
+    }
+
+    #[test]
     fn unassociated_file_retains_no_device_reference() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-master-empty", None)?;
