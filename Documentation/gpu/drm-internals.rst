@@ -71,12 +71,20 @@ acknowledgment or close. New streams allocate new storage rather than changing
 the authority of old storage in place.
 
 The caller's stream reference must remain live for every ordinary API call.
-``drm_capture_close()`` consumes that reference and must not race another
-ordinary call using it. A provider's already claimed job is different: its
-independent reference permits completion after close. A future file adapter
-must preserve that distinction when file references or provider registrations
-end. None of these operations needs a userspace ioctl context, so a file
-adapter will call the same core as an in-kernel consumer.
+``drm_capture_get()`` takes another reference from one already held;
+``drm_capture_put()`` releases only that reference. Dropping an observer does
+not close the stream for its other owners. Final release drains queued and
+completed requests; a claimed provider job prevents final release until its
+completion.
+
+``drm_capture_shutdown()`` is the separate, idempotent decision to end
+admission and discard delivery. It may race calls using independently held
+references. ``drm_capture_close()`` combines shutdown with release of the
+caller's reference. Neither shutdown nor close ends access by an already
+claimed provider job. A file adapter must preserve those distinctions when
+file references or provider registrations end. None of these operations needs
+a userspace ioctl context, so an adapter will call the same core as an
+in-kernel consumer.
 
 The KUnit ``drm_capture`` suite exercises the core with real allocations and
 kernel-controlled snapshot publication. That is a reference-provider first
