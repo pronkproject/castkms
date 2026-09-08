@@ -60,3 +60,7 @@ pub(super) enum Selection {
     RetainedFramebuffer,
     DifferentFramebuffer,
 }
+
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+#[path = "provenance/tests.rs"]
+mod tests;
