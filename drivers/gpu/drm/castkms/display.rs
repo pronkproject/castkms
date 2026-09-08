@@ -2,9 +2,15 @@
 
 //! One development output, without a presentation clock or pixel consumer.
 
-use super::Driver;
+use super::{
+    scene,
+    Driver, //
+};
 use core::marker::PhantomData;
-use crtc::RawCrtc;
+use crtc::{
+    RawCrtc,
+    RawCrtcState, //
+};
 use kernel::{
     device,
     drm::{
@@ -27,13 +33,17 @@ pub(super) struct Connector {}
 
 pub(super) struct State;
 
-impl plane::DriverPlaneState for State {
+pub(super) struct PlaneState {
+    geometry: Option<scene::Geometry>,
+}
+
+impl plane::DriverPlaneState for PlaneState {
     type Plane = Plane;
     fn new(_: &plane::Plane<Plane>) -> Result<Self> {
-        Ok(Self)
+        Ok(Self { geometry: None })
     }
     fn duplicate(&self) -> Result<Self> {
-        Ok(Self)
+        Ok(Self { geometry: None })
     }
 }
 
@@ -57,11 +67,34 @@ impl connector::DriverConnectorState for State {
     }
 }
 
+fn check_geometry(
+    transaction: &atomic::AtomicStateComposer<Driver>,
+    state: &mut plane::PlaneStateMutator<'_, plane::PlaneState<PlaneState>>,
+) -> Result {
+    state.geometry = None;
+    if let Some(crtc) = state.crtc() {
+        let crtc_state = transaction.add_crtc_state(crtc)?;
+        state.atomic_helper_check(&crtc_state, false, false)?;
+        if crtc_state.active() && state.visible() {
+            state.geometry = Some(scene::Geometry {
+                source: [
+                    state.source_x_16_16(),
+                    state.source_y_16_16(),
+                    state.source_width_16_16(),
+                    state.source_height_16_16(),
+                ],
+                destination: [state.crtc_w(), state.crtc_h()],
+            });
+        }
+    }
+    Ok(())
+}
+
 #[vtable]
 impl plane::DriverPlane for Plane {
     type Args = ();
     type Driver = Driver;
-    type State = State;
+    type State = PlaneState;
 
     fn new(_: &Device<Driver>, _: ()) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {})
@@ -69,11 +102,18 @@ impl plane::DriverPlane for Plane {
 
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
         let (transaction, mut state) = check.take_state_new_state();
-        if let Some(crtc) = state.crtc() {
-            let crtc_state = transaction.add_crtc_state(crtc)?;
-            state.atomic_helper_check(&crtc_state, false, false)?;
-        }
+        check_geometry(transaction, &mut state)?;
         Ok(())
+    }
+
+    fn atomic_update(commit: plane::PlaneAtomicCommit<'_, Self>) {
+        let (transaction, _, state) = commit.take_all();
+        let scene = state.geometry.and_then(|geometry| {
+            state
+                .framebuffer()
+                .map(|framebuffer| scene::Scene::new(framebuffer.to_owned_ref(), geometry))
+        });
+        transaction.drm_dev().publish(scene);
     }
 }
 
