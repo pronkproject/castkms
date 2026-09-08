@@ -291,6 +291,26 @@ class Model:
         self.require(self.staging[claim.staging] == claim_id)
         self.staging[claim.staging] = None
 
+    def staging_status(self, claim_id):
+        # None means unresolved, zero means output-eligible, and a negative
+        # status means no valid image. This query never retires native work.
+        claim = self.claims[claim_id]
+        if self.lost:
+            return -5
+        if not claim.released:
+            return None
+        if not claim.submitted:
+            return -125  # A no-access release did not produce an image.
+        self.require(self.staging[claim.staging] == claim_id)
+        fences = set(claim.submitted)
+        scanout = self.scenes[claim.scene].scanout
+        if scanout is not None:
+            fences.add(scanout.producer)
+        statuses = [self.native[fence] for fence in sorted(fences)]
+        if any(status is None for status in statuses):
+            return None
+        return next((status for status in statuses if status != 0), 0)
+
     def worker_lost(self):
         self.lost = True
         self.epoch += 1
@@ -405,6 +425,64 @@ class PreparationTests(unittest.TestCase):
                 model.complete_commit(commit)
                 self.assertEqual(model.native[producer], status)
                 self.assertEqual(model.native[copy], 0)
+
+    def test_failed_producer_never_becomes_valid_staging(self):
+        for failed_before_claim in (False, True):
+            with self.subTest(failed_before_claim=failed_before_claim):
+                model = Model()
+                request = self.request(model, producer_status=None)
+                producer = request.changes[0].producer
+                predecessor = model.accept_request(request)
+                if failed_before_claim:
+                    model.signal(producer, -5)
+                claim = self.claimed(model)
+                copy = model.submit_source(claim)
+                model.release(claim, [copy])
+                self.assertIsNone(model.staging_status(claim))
+                if not failed_before_claim:
+                    model.signal(producer, -5)
+                model.complete_commit(predecessor)
+                commit = model.accept(model.prepare([0]))
+                model.signal(copy)
+                model.complete_commit(commit)
+                self.assertTrue(model.scenes[model.claims[claim].scene].retired)
+                self.assertEqual(model.native[copy], 0)
+                before = deepcopy(model.__dict__)
+                self.assertEqual(model.staging_status(claim), -5)
+                self.assertEqual(model.__dict__, before)
+                model.recycle_staging(claim, downstream_done=True)
+
+    def test_staging_validity_requires_release_and_all_copy_statuses(self):
+        for last_status in (0, -5):
+            with self.subTest(last_status=last_status):
+                model = Model()
+                request = self.request(model)
+                model.complete_commit(model.accept_request(request))
+                claim = self.claimed(model)
+                first = model.submit_source(claim)
+                second = model.submit_source(claim)
+                model.signal(first)
+                self.assertIsNone(model.staging_status(claim))
+                model.signal(second, last_status)
+                self.assertIsNone(model.staging_status(claim))
+                model.release(claim, [first, second])
+                self.assertEqual(model.staging_status(claim), last_status)
+                model.recycle_staging(claim, downstream_done=True)
+                with self.assertRaises(Rejected):
+                    model.staging_status(claim)
+
+    def test_no_access_or_lost_worker_cannot_produce_valid_staging(self):
+        model = Model()
+        canceled = self.claimed(model)
+        model.release(canceled, [])
+        self.assertEqual(model.staging_status(canceled), -125)
+        claim = self.claimed(model)
+        copy = model.submit_source(claim)
+        model.signal(copy)
+        # No release report survives. Native success alone is insufficient.
+        model.worker_lost()
+        self.assertEqual(model.staging_status(claim), -5)
+        self.assertFalse(model.claims[claim].released)
 
     def test_waiting_request_is_rebuilt_from_current_display_state(self):
         model = Model(outputs=2)
