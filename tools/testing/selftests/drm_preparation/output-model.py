@@ -76,6 +76,7 @@ class OutputClaim:
     result: int
     submitted: bool = False
     completed: bool = False
+    status: object = None
 
 
 class OutputModel:
@@ -105,16 +106,20 @@ class OutputModel:
         # Pre-revoke authorization survives until the bounded claim resolves.
         claim.submitted = True
 
-    def complete(self, claim, notify=True):
+    def complete(self, claim, notify=True, *, status=0):
         if claim.owner is not self or not claim.submitted or claim.completed:
             raise Rejected()
-        claim.allocation.pixels = claim.pixels
+        if not isinstance(status, int) or status > 0:
+            raise Rejected()
+        # Failure does not promise that an exported allocation was untouched.
+        claim.allocation.pixels = claim.pixels if status == 0 else "uncertain"
+        claim.status = status
         claim.completed = True
         claim.allocation.busy = False
-        recorded = self.results.complete(claim.result, 0)
+        recorded = self.results.complete(claim.result, status)
         # Lost notification is recoverable through query. Neither query nor
         # acknowledgment is needed to end the allocation's native write use.
-        return recorded and claim.grant.live and notify
+        return recorded and claim.grant.live and notify and status == 0
 
 
 class ResultTests(unittest.TestCase):
@@ -168,6 +173,27 @@ class ResultTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
+    def test_failed_write_ends_access_without_delivering_valid_pixels(self):
+        for notify in (False, True):
+            model = OutputModel(result_capacity=1)
+            grant = Grant("session")
+            allocation = model.allocate(grant)
+            claim = model.claim(grant, allocation, "requested")
+            model.submit(claim)
+            self.assertFalse(model.complete(claim, notify, status=-5))
+            self.assertTrue(claim.completed)
+            self.assertEqual(claim.status, -5)
+            self.assertFalse(allocation.busy)
+            self.assertEqual(allocation.pixels, "uncertain")
+            self.assertEqual(model.results.query(claim.result), -5)
+            model.results.acknowledge(claim.result)
+            retry = model.claim(grant, allocation, "replacement")
+            with self.assertRaises(Rejected):
+                model.complete(claim)
+            self.assertTrue(allocation.busy)
+            model.submit(retry)
+            self.assertTrue(model.complete(retry))
+
     def test_lost_notification_retains_result_without_owning_allocation(self):
         model = OutputModel(result_capacity=1)
         grant = Grant("session")
