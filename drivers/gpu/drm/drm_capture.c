@@ -40,15 +40,6 @@ struct drm_capture {
 	bool closed;
 };
 
-static void drm_capture_release(struct kref *ref)
-{
-	struct drm_capture *capture = container_of(ref, struct drm_capture, ref);
-
-	WARN_ON(!list_empty(&capture->jobs));
-	mutex_destroy(&capture->lock);
-	kfree(capture);
-}
-
 static void drm_capture_free_job(struct drm_capture_job *job)
 {
 	list_del(&job->link);
@@ -56,6 +47,31 @@ static void drm_capture_free_job(struct drm_capture_job *job)
 	kvfree(job->data);
 	kfree(job);
 }
+
+static void drm_capture_release(struct kref *ref)
+{
+	struct drm_capture *capture = container_of(ref, struct drm_capture, ref);
+	struct drm_capture_job *job, *next;
+
+	/* Claimed jobs hold a reference, so none can remain at the final put. */
+	list_for_each_entry_safe(job, next, &capture->jobs, link)
+		drm_capture_free_job(job);
+	mutex_destroy(&capture->lock);
+	kfree(capture);
+}
+
+struct drm_capture *drm_capture_get(struct drm_capture *capture)
+{
+	kref_get(&capture->ref);
+	return capture;
+}
+EXPORT_SYMBOL_GPL(drm_capture_get);
+
+void drm_capture_put(struct drm_capture *capture)
+{
+	kref_put(&capture->ref, drm_capture_release);
+}
+EXPORT_SYMBOL_GPL(drm_capture_put);
 
 struct drm_capture *drm_capture_create(unsigned int capacity, size_t frame_size)
 {
@@ -315,7 +331,7 @@ int drm_capture_ack(struct drm_capture *capture, u64 id)
 }
 EXPORT_SYMBOL_GPL(drm_capture_ack);
 
-void drm_capture_close(struct drm_capture *capture)
+void drm_capture_shutdown(struct drm_capture *capture)
 {
 	struct drm_capture_job *job, *next;
 
@@ -327,6 +343,12 @@ void drm_capture_close(struct drm_capture *capture)
 			drm_capture_free_job(job);
 	}
 	mutex_unlock(&capture->lock);
-	kref_put(&capture->ref, drm_capture_release);
+}
+EXPORT_SYMBOL_GPL(drm_capture_shutdown);
+
+void drm_capture_close(struct drm_capture *capture)
+{
+	drm_capture_shutdown(capture);
+	drm_capture_put(capture);
 }
 EXPORT_SYMBOL_GPL(drm_capture_close);

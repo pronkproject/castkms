@@ -22,11 +22,16 @@ struct drm_capture_result {
  * Kernel-only first cut: one fixed-size final-image stream per authority.
  * The creating provider must already have authorized the source and recipient.
  * The core does not authorize DRM objects or export raw scanout storage.
- * All entry points may sleep. Calls need a live capture owner; close consumes
- * that owner and must not race its other calls. Provider jobs independently
- * keep the stream alive and may finish after close.
+ * All entry points may sleep. Calls need a live reference; get requires one
+ * already held. Shutdown is idempotent and may race calls holding independent
+ * references. Put releases only a reference, without shutting down other
+ * owners. Close combines shutdown and put, consuming the caller's reference.
+ * Provider jobs independently keep the stream alive and may finish after close.
  */
 struct drm_capture *drm_capture_create(unsigned int capacity, size_t frame_size);
+struct drm_capture *drm_capture_get(struct drm_capture *capture);
+void drm_capture_put(struct drm_capture *capture);
+void drm_capture_shutdown(struct drm_capture *capture);
 void drm_capture_close(struct drm_capture *capture);
 void drm_capture_revoke(struct drm_capture *capture);
 int drm_capture_queue(struct drm_capture *capture, u64 *id);
