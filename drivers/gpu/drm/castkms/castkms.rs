@@ -4,12 +4,15 @@
 
 mod display;
 mod gem;
+mod output;
+mod scene;
 
 use kernel::{
     device,
     drm,
     faux,
-    prelude::*, //
+    prelude::*,
+    sync::Arc, //
 };
 
 module! {
@@ -25,12 +28,24 @@ module! {
 struct CastKms {
     _display: drm::Registration<'static, Driver>,
     _parent: faux::Registration,
+    output: Arc<output::Output<scene::Scene>>,
+}
+
+impl Drop for CastKms {
+    fn drop(&mut self) {
+        // Close before atomic shutdown; an already accepted tail must not repopulate the output.
+        self.output.close();
+    }
 }
 
 impl kernel::Module for CastKms {
     fn init(_: &'static ThisModule) -> Result<Self> {
         let parent = faux::Registration::new(c"castkms", None)?;
-        let drm = drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<(), Error>(()))?;
+        let output = Arc::pin_init(output::Output::new(), GFP_KERNEL)?;
+        let drm = drm::UnregisteredDevice::<Driver>::new(
+            parent.as_ref(),
+            Ok::<_, Error>(output.clone()),
+        )?;
         // SAFETY: After successful construction, field drop order unplugs DRM before parent
         // unbind. On failure the registration constructor unwinds before the local parent drops.
         let display = unsafe {
@@ -39,6 +54,7 @@ impl kernel::Module for CastKms {
         Ok(Self {
             _display: display,
             _parent: parent,
+            output,
         })
     }
 }
@@ -56,7 +72,7 @@ impl drm::file::DriverFile for File {
 
 #[vtable]
 impl drm::Driver for Driver {
-    type Data = ();
+    type Data = Arc<output::Output<scene::Scene>>;
     type RegistrationData<'a> = ();
     type File = File;
     type Object = drm::gem::shmem::Object<gem::Object>;

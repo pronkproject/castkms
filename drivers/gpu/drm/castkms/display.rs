@@ -126,7 +126,10 @@ impl KmsDriver for Driver {
     type Crtc = Crtc;
     type Encoder = Encoder;
 
-    fn mode_config_info(_: &device::Device, _: &()) -> Result<ModeConfigInfo> {
+    fn mode_config_info(
+        _: &device::Device,
+        _: &<Self as kernel::drm::Driver>::Data,
+    ) -> Result<ModeConfigInfo> {
         Ok(ModeConfigInfo {
             min_resolution: (1, 1),
             max_resolution: (1920, 1080),
