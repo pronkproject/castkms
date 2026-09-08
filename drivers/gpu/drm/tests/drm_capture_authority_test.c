@@ -12,6 +12,8 @@ struct authority_context {
 	struct drm_capture *stream;
 	unsigned int revokes;
 	unsigned int releases;
+	unsigned int policy_calls;
+	int policy_status;
 	bool block;
 	struct completion entered;
 	struct completion unblock;
@@ -45,6 +47,21 @@ static const struct drm_capture_authority_ops authority_ops = {
 	.release = authority_release,
 };
 
+static int authority_authorize_capture(void *data, struct drm_capture *stream)
+{
+	struct authority_context *context = data;
+
+	context->policy_calls++;
+	return context->policy_status;
+}
+
+static const struct drm_capture_authority_ops policy_ops = {
+	.owner = THIS_MODULE,
+	.revoke = authority_revoke,
+	.release = authority_release,
+	.authorize_capture = authority_authorize_capture,
+};
+
 static void authority_put(void *authority)
 {
 	drm_capture_authority_put(authority);
@@ -61,7 +78,8 @@ static void capture_job_cancel(void *job)
 }
 
 static struct drm_capture_authority *
-authority_create(struct kunit *test, struct authority_context **context)
+authority_create_ops(struct kunit *test, struct authority_context **context,
+		     const struct drm_capture_authority_ops *ops)
 {
 	struct drm_capture_authority *authority;
 
@@ -69,10 +87,16 @@ authority_create(struct kunit *test, struct authority_context **context)
 	KUNIT_ASSERT_NOT_NULL(test, *context);
 	init_completion(&(*context)->entered);
 	init_completion(&(*context)->unblock);
-	authority = drm_capture_authority_create(&authority_ops, *context);
+	authority = drm_capture_authority_create(ops, *context);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, authority);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, authority_put, authority), 0);
 	return authority;
+}
+
+static struct drm_capture_authority *
+authority_create(struct kunit *test, struct authority_context **context)
+{
+	return authority_create_ops(test, context, &authority_ops);
 }
 
 static void drm_capture_authority_terminal_cleanup(struct kunit *test)
@@ -167,6 +191,77 @@ static void drm_capture_authority_removes_one_stream(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_capture_queue(replacement, &id), -EKEYREVOKED);
 }
 
+static void expect_claim_error(struct kunit *test, struct drm_capture_authority *authority,
+			       struct drm_capture *stream, int error)
+{
+	struct drm_capture_job *job = drm_capture_authority_claim_stream(authority, stream);
+
+	if (!IS_ERR(job)) {
+		drm_capture_complete(job, -ECANCELED);
+		KUNIT_FAIL(test, "denied claim unexpectedly returned a job");
+		return;
+	}
+	KUNIT_EXPECT_EQ(test, PTR_ERR(job), error);
+}
+
+static void drm_capture_authority_claim_requires_policy(struct kunit *test)
+{
+	struct authority_context *context;
+	struct drm_capture_authority *authority = authority_create(test, &context);
+	struct drm_capture *stream = registered_stream(test, authority);
+	struct drm_capture_result result;
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(stream, &id), 0);
+	expect_claim_error(test, authority, stream, -EOPNOTSUPP);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(stream, id, &result), 0);
+	KUNIT_EXPECT_FALSE(test, result.completed);
+	KUNIT_EXPECT_EQ(test, drm_capture_cancel(stream, id), 0);
+}
+
+static void drm_capture_authority_claim_checks_current_policy(struct kunit *test)
+{
+	struct authority_context *context, *other_context;
+	struct drm_capture_authority *authority =
+		authority_create_ops(test, &context, &policy_ops);
+	struct drm_capture_authority *other =
+		authority_create_ops(test, &other_context, &policy_ops);
+	struct drm_capture *stream = registered_stream(test, authority);
+	struct drm_capture_job *job;
+	struct drm_capture_result result;
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(stream, &id), 0);
+	expect_claim_error(test, other, stream, -ENOENT);
+	KUNIT_EXPECT_EQ(test, other_context->policy_calls, 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_authority_begin(authority), 0);
+	context->policy_status = -EACCES;
+	drm_capture_authority_end(authority);
+	expect_claim_error(test, authority, stream, -EACCES);
+	KUNIT_ASSERT_EQ(test, drm_capture_authority_begin(authority), 0);
+	context->policy_status = 1;
+	drm_capture_authority_end(authority);
+	expect_claim_error(test, authority, stream, -EINVAL);
+	KUNIT_ASSERT_EQ(test, drm_capture_authority_begin(authority), 0);
+	context->policy_status = 0;
+	drm_capture_authority_end(authority);
+	job = drm_capture_authority_claim_stream(authority, stream);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, capture_job_cancel, job), 0);
+	KUNIT_EXPECT_EQ(test, context->policy_calls, 3);
+	/* Permission is checked again, but no second job exists to hand out. */
+	expect_claim_error(test, authority, stream, -EAGAIN);
+	drm_capture_authority_revoke(authority);
+	expect_claim_error(test, authority, stream, -EKEYREVOKED);
+	KUNIT_EXPECT_EQ(test, context->policy_calls, 4);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(stream, id, &result), 0);
+	KUNIT_EXPECT_FALSE(test, result.completed);
+	kunit_remove_action(test, capture_job_cancel, job);
+	drm_capture_complete(job, 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(stream, id, &result), 0);
+	KUNIT_EXPECT_EQ(test, result.status, -EKEYREVOKED);
+}
+
 static void drm_capture_authority_survives_stream_replacement(struct kunit *test)
 {
 	struct authority_context *context;
@@ -255,6 +350,7 @@ static void drm_capture_authority_concurrent_revoke(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, drm_capture_authority_cleanup_done(authority));
 	KUNIT_EXPECT_EQ(test, drm_capture_queue(stream, &id), -EKEYREVOKED);
 	KUNIT_EXPECT_FALSE(test, drm_capture_authority_remove_stream(authority, stream));
+	expect_claim_error(test, authority, stream, -EKEYREVOKED);
 	waiter = kthread_run(revoke_thread_run, &second, "capture-revoke-wait");
 	if (!IS_ERR(waiter)) {
 		finished = wait_for_completion_timeout(&second.done, msecs_to_jiffies(20));
@@ -276,6 +372,8 @@ static struct kunit_case drm_capture_authority_cases[] = {
 	KUNIT_CASE(drm_capture_authority_terminal_cleanup),
 	KUNIT_CASE(drm_capture_authority_revokes_registered_streams),
 	KUNIT_CASE(drm_capture_authority_removes_one_stream),
+	KUNIT_CASE(drm_capture_authority_claim_requires_policy),
+	KUNIT_CASE(drm_capture_authority_claim_checks_current_policy),
 	KUNIT_CASE(drm_capture_authority_survives_stream_replacement),
 	KUNIT_CASE(drm_capture_authority_concurrent_revoke),
 	{}
