@@ -25,6 +25,7 @@ struct drm_capture_job {
 	int error;
 	int status;
 	void *data;
+	bool discarded;
 };
 
 struct drm_capture {
@@ -139,7 +140,7 @@ static struct drm_capture_job *drm_capture_find(struct drm_capture *capture, u64
 	struct drm_capture_job *job;
 
 	list_for_each_entry(job, &capture->jobs, link)
-		if (job->id == id)
+		if (job->id == id && !job->discarded)
 			return job;
 	return NULL;
 }
@@ -173,6 +174,36 @@ int drm_capture_cancel(struct drm_capture *capture, u64 id)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(drm_capture_cancel);
+
+/**
+ * drm_capture_discard - abandon a request without waiting for its provider
+ * @capture: live stream
+ * @id: request to forget
+ *
+ * The request becomes inaccessible to query, cancel, copy and acknowledge.
+ * Queued or completed storage is freed immediately. A claimed job retains
+ * storage, its stream reference and queue credit until provider completion.
+ * Discard does not end source access or permit early buffer reuse.
+ *
+ * Return: zero, or -ENOENT if the request is no longer visible.
+ */
+int drm_capture_discard(struct drm_capture *capture, u64 id)
+{
+	struct drm_capture_job *job;
+	int ret = 0;
+
+	mutex_lock(&capture->lock);
+	job = drm_capture_find(capture, id);
+	if (!job)
+		ret = -ENOENT;
+	else if (job->state == DRM_CAPTURE_CLAIMED)
+		job->discarded = true;
+	else
+		drm_capture_free_job(job);
+	mutex_unlock(&capture->lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_discard);
 
 void drm_capture_revoke(struct drm_capture *capture)
 {
@@ -230,7 +261,7 @@ void drm_capture_complete(struct drm_capture_job *job, int status)
 	mutex_lock(&capture->lock);
 	job->status = job->error ?: status;
 	job->state = DRM_CAPTURE_DONE;
-	if (capture->closed)
+	if (capture->closed || job->discarded)
 		drm_capture_free_job(job);
 	mutex_unlock(&capture->lock);
 	kref_put(&capture->ref, drm_capture_release);
