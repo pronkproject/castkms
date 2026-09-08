@@ -88,8 +88,8 @@ in-kernel consumer.
 
 The KUnit ``drm_capture`` suite exercises the core with real allocations and
 kernel-controlled snapshot publication. That is a reference-provider first
-cut, not a VKMS integration or a public capture interface. Anonymous capture
-and revocation files, DRM grant policy, destination DMA-BUF registration,
+cut, not a VKMS integration or a public capture interface. Capture-holder
+files, DRM grant policy, destination DMA-BUF registration,
 format negotiation, provider notification and safe Rust ownership wrappers
 are subsequent integrations. In particular, the CPU snapshot helper does not
 claim the delegated GPU composition path or create a future-userspace fence.
@@ -137,6 +137,37 @@ future file adapter and an in-kernel consumer use the same admission and
 revocation operations; closing a mode-specific stream is not an authority
 operation. The KUnit ``drm_capture_authority`` suite exercises terminal cleanup,
 stream replacement and concurrent revocation without introducing a public ABI.
+
+Anonymous Revocation File
+------------------------
+
+``drm_capture_control_file_create()`` wraps an existing authority in an
+anonymous file for the component responsible for revocation. It does not open
+a DRM primary node or grant any additional rights. There is no image, memory
+mapping or ioctl dispatcher on that file. A capture-holder file is a separate
+interface and is not implemented by this helper.
+
+The file owns an authority reference. Duplicating the file reference does not
+create another authority, and releasing one duplicate does not revoke while
+another remains. Final file release invokes the same revoke operation used by
+kernel consumers, even when other ordinary authority references still exist.
+The file therefore represents a decision to revoke, not merely a reference
+keeping an allocation alive. Creating two independent control files for one
+authority gives either file's final release the power to revoke it.
+
+Poll reports no readiness before the provider's revoke callback finishes and
+reports persistent ``POLLHUP`` afterward. Kernel-triggered revocation wakes an
+existing poll waiter. The notification says that admission has ended and safe
+cleanup has been initiated; pending GPU work may still be draining. An
+authority that is already terminal produces the same terminal poll result.
+
+The constructor returns an owned file reference, not an installed descriptor.
+Failure leaves the caller's authority unchanged. Once creation succeeds,
+discarding even an unpublished file revokes on final release. A future grant
+creation operation must reserve descriptors with ``O_CLOEXEC`` and finish
+fallible setup before installing files. It must treat rollback of a created
+control file as terminal rather than trying to reuse the same grant. There is
+no public grant-creation ABI in this helper alone.
 
 Driver Initialization
 =====================
