@@ -61,6 +61,166 @@ class Grant:
 
 
 @dataclass
+class CaptureRequest:
+    grant: Grant
+    claimed: bool = False
+    error: object = None
+
+
+class CaptureRequests:
+    """Request credits start before source admission; results outlive access.
+
+    Each operation is serialized. A claimed request stays active until the
+    provider acknowledges that access ended, even after cancel or close.
+    """
+
+    def __init__(self, capacity):
+        self.results = ResultLedger(capacity)
+        self.active = {}
+
+    def lookup(self, use):
+        if use not in self.active:
+            raise Rejected()
+        return self.active[use]
+
+    def queue(self, grant):
+        if not grant.live:
+            raise Rejected()
+        use = self.results.reserve()
+        self.active[use] = CaptureRequest(grant)
+        return use
+
+    def claim(self, use):
+        request = self.lookup(use)
+        if request.claimed or request.error is not None or not request.grant.live:
+            raise Rejected()
+        request.claimed = True
+
+    def finish(self, use, status):
+        request = self.lookup(use)
+        if not request.claimed or not isinstance(status, int) or status > 0:
+            raise Rejected()
+        if request.error is not None:
+            status = request.error
+        elif not request.grant.live:
+            status = -128  # EKEYREVOKED
+        recorded = self.results.complete(use, status)
+        del self.active[use]
+        return recorded
+
+    def cancel(self, use, error=-125):
+        if not isinstance(error, int) or error >= 0:
+            raise Rejected()
+        request = self.lookup(use)
+        if request.error is None:
+            request.error = error
+        if not request.claimed:
+            self.results.complete(use, request.error)
+            del self.active[use]
+
+    def revoke(self, grant):
+        grant.live = False
+        for use, request in list(self.active.items()):
+            if request.grant is grant:
+                self.cancel(use, -128)
+
+    def close(self):
+        self.results.close()
+        for use in list(self.active):
+            self.cancel(use)
+
+
+class CaptureRequestTests(unittest.TestCase):
+    def test_invalid_or_repeated_transitions_preserve_the_request(self):
+        requests = CaptureRequests(1)
+        use = requests.queue(Grant("scope"))
+        for operation in (lambda: requests.finish(use, 0),
+                          lambda: requests.cancel(use, 0),
+                          lambda: requests.claim(use + 1)):
+            with self.assertRaises(Rejected):
+                operation()
+            self.assertFalse(requests.active[use].claimed)
+            self.assertIsNone(requests.active[use].error)
+        requests.claim(use)
+        for operation in (lambda: requests.claim(use),
+                          lambda: requests.finish(use, 1)):
+            with self.assertRaises(Rejected):
+                operation()
+            self.assertIsNone(requests.results.query(use))
+        requests.finish(use, -5)
+        for operation in (lambda: requests.finish(use, 0),
+                          lambda: requests.cancel(use),
+                          lambda: requests.claim(use)):
+            with self.assertRaises(Rejected):
+                operation()
+            self.assertEqual(requests.results.query(use), -5)
+
+    def test_queue_credit_survives_completion_until_ack(self):
+        for capacity in (1, 2, 4, 8):
+            requests = CaptureRequests(capacity)
+            grant = Grant("scope")
+            uses = [requests.queue(grant) for _ in range(capacity)]
+            with self.assertRaises(Rejected):
+                requests.queue(grant)
+            for use in uses:
+                self.assertFalse(requests.active[use].claimed)
+                requests.claim(use)
+                requests.finish(use, 0)
+                with self.assertRaises(Rejected):
+                    requests.queue(grant)
+                self.assertEqual(requests.results.query(use), 0)
+            for use in uses:
+                requests.results.acknowledge(use)
+            self.assertGreater(requests.queue(grant), max(uses))
+
+    def test_cancel_waits_for_claimed_access_only(self):
+        for claimed in (False, True):
+            for error in (-125, -110, -128):
+                requests = CaptureRequests(1)
+                use = requests.queue(Grant("scope"))
+                if claimed:
+                    requests.claim(use)
+                requests.cancel(use, error)
+                if claimed:
+                    self.assertIsNone(requests.results.query(use))
+                    with self.assertRaises(Rejected):
+                        requests.results.acknowledge(use)
+                    requests.cancel(use, -5)
+                    requests.finish(use, 0)
+                self.assertNotIn(use, requests.active)
+                self.assertEqual(requests.results.query(use), error)
+
+    def test_revocation_maps_success_without_canceling_native_access(self):
+        requests = CaptureRequests(3)
+        grant = Grant("old")
+        other = Grant("other")
+        active, queued, independent = (requests.queue(g) for g in (grant, grant, other))
+        requests.claim(active)
+        requests.revoke(grant)
+        self.assertEqual(requests.results.query(queued), -128)
+        self.assertIsNone(requests.results.query(active))
+        requests.finish(active, 0)
+        self.assertEqual(requests.results.query(active), -128)
+        requests.claim(independent)
+        requests.finish(independent, -5)
+        self.assertEqual(requests.results.query(independent), -5)
+
+    def test_close_discards_delivery_but_retains_active_cleanup(self):
+        requests = CaptureRequests(2)
+        grant = Grant("scope")
+        active, queued = requests.queue(grant), requests.queue(grant)
+        requests.claim(active)
+        requests.close()
+        requests.close()
+        self.assertNotIn(queued, requests.active)
+        self.assertIn(active, requests.active)
+        self.assertFalse(requests.finish(active, 0))
+        self.assertFalse(requests.active)
+        with self.assertRaises(Rejected):
+            requests.queue(grant)
+
+
+@dataclass
 class Allocation:
     scope: str
     pixels: str = "cleared"
