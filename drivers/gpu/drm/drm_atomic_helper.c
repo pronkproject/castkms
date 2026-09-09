@@ -2281,17 +2281,13 @@ int drm_atomic_helper_commit(struct drm_device *dev,
 			goto err;
 	}
 
-	/*
-	 * This is the point of no return - everything below never fails except
-	 * when the hw goes bonghits. Which means we can commit the new state on
-	 * the software side now.
-	 */
-
 	ret = drm_atomic_helper_swap_state(state, true);
 	if (ret)
 		goto err;
 
 	/*
+	 * Software state is installed. No fallible preparation remains.
+	 *
 	 * Everything below can be run asynchronously without the need to grab
 	 * any modeset locks at all under one condition: It must be guaranteed
 	 * that the asynchronous work has either been cancelled (if the driver
@@ -3221,6 +3217,51 @@ void drm_atomic_helper_cleanup_planes(struct drm_device *dev,
 }
 EXPORT_SYMBOL(drm_atomic_helper_cleanup_planes);
 
+static int wait_for_previous_hw_done(struct drm_atomic_commit *state)
+{
+	struct drm_connector *connector;
+	struct drm_connector_state *old_conn_state;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old_crtc_state;
+	struct drm_plane *plane;
+	struct drm_plane_state *old_plane_state;
+	struct drm_crtc_commit *commit;
+	int i, ret;
+
+	/*
+	 * Workers may still dereference object->state until hw_done. Wait before
+	 * replacing those pointers; later dependency waits run after installation.
+	 */
+	for_each_old_crtc_in_state(state, crtc, old_crtc_state, i) {
+		commit = old_crtc_state->commit;
+		if (!commit)
+			continue;
+		ret = wait_for_completion_interruptible(&commit->hw_done);
+		if (ret)
+			return ret;
+	}
+
+	for_each_old_connector_in_state(state, connector, old_conn_state, i) {
+		commit = old_conn_state->commit;
+		if (!commit)
+			continue;
+		ret = wait_for_completion_interruptible(&commit->hw_done);
+		if (ret)
+			return ret;
+	}
+
+	for_each_old_plane_in_state(state, plane, old_plane_state, i) {
+		commit = old_plane_state->commit;
+		if (!commit)
+			continue;
+		ret = wait_for_completion_interruptible(&commit->hw_done);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 /**
  * drm_atomic_helper_swap_state - store atomic state into current sw state
  * @state: atomic state
@@ -3268,54 +3309,16 @@ int drm_atomic_helper_swap_state(struct drm_atomic_commit *state,
 	struct drm_plane_state *old_plane_state, *new_plane_state;
 	struct drm_colorop *colorop;
 	struct drm_colorop_state *old_colorop_state, *new_colorop_state;
-	struct drm_crtc_commit *commit;
 	struct drm_private_obj *obj;
 	struct drm_private_state *old_obj_state, *new_obj_state;
 
 	if (stall) {
-		/*
-		 * We have to stall for hw_done here before
-		 * drm_atomic_helper_wait_for_dependencies() because flip
-		 * depth > 1 is not yet supported by all drivers. As long as
-		 * obj->state is directly dereferenced anywhere in the drivers
-		 * atomic_commit_tail function, then it's unsafe to swap state
-		 * before drm_atomic_helper_commit_hw_done() is called.
-		 */
-
-		for_each_old_crtc_in_state(state, crtc, old_crtc_state, i) {
-			commit = old_crtc_state->commit;
-
-			if (!commit)
-				continue;
-
-			ret = wait_for_completion_interruptible(&commit->hw_done);
-			if (ret)
-				return ret;
-		}
-
-		for_each_old_connector_in_state(state, connector, old_conn_state, i) {
-			commit = old_conn_state->commit;
-
-			if (!commit)
-				continue;
-
-			ret = wait_for_completion_interruptible(&commit->hw_done);
-			if (ret)
-				return ret;
-		}
-
-		for_each_old_plane_in_state(state, plane, old_plane_state, i) {
-			commit = old_plane_state->commit;
-
-			if (!commit)
-				continue;
-
-			ret = wait_for_completion_interruptible(&commit->hw_done);
-			if (ret)
-				return ret;
-		}
+		ret = wait_for_previous_hw_done(state);
+		if (ret)
+			return ret;
 	}
 
+	/* All interruptible waits precede the first installed object state. */
 	for_each_oldnew_connector_in_state(state, connector, old_conn_state, new_conn_state, i) {
 		WARN_ON(connector->state != old_conn_state);
 
@@ -4187,4 +4190,3 @@ drm_atomic_helper_bridge_get_hdmi_output_bus_fmts(struct drm_bridge *bridge,
 	return out_fmts;
 }
 EXPORT_SYMBOL(drm_atomic_helper_bridge_get_hdmi_output_bus_fmts);
-
