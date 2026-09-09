@@ -173,6 +173,38 @@ core, and the Rust type-check fixtures reject duplicate completion and use of
 image storage after completion. Neither test family validates live source
 permission or asynchronous native execution.
 
+Waiting for a Capture Result
+----------------------------
+
+``drm_capture_wait_result()`` waits interruptibly until the selected request
+has completed or its identifier disappears. Waiting does not copy, acknowledge
+or discard the image. A zero return supplies a completed result, but that
+result's status may describe a failed producer. An interrupted wait or missing
+request returns an error without changing the supplied result storage.
+
+An active provider still owns its writable storage after cancellation or
+revocation. Waiting for that request therefore continues until the provider
+actually completes. Discarding the request instead makes its identifier
+unavailable and wakes the waiter with ``-ENOENT``, while the provider retains
+storage and queue credit. A wakeup is not a source-release signal.
+
+The stream retains one stable result wait queue. Kernel observers can obtain
+it with ``drm_capture_result_waitqueue()``, register before querying and recheck
+after each notification. Notifications may concern another request or an
+operation that left the observed request unchanged. The caller must retain the
+stream for the entire registration and must not hold locks needed by the
+provider. The wait helper supplies that register-and-check ordering without
+requiring a file, descriptor or userspace dispatcher.
+
+Rust's ``Request::wait()`` retains the originating stream through the request
+owner. Its outer ``Result`` describes waiting, and its inner ``Result``
+describes the completed image. ``Ok(Err(EIO))`` therefore means capture failed,
+while an outer error means the wait was interrupted or the request disappeared.
+Successful observation is a snapshot, not a reservation against a later stream
+shutdown. Native tests exercise sleeping waiters, cancellation, revocation,
+discard and interruption; Rust tests check retained results and the distinction
+between wait failure and image failure.
+
 Capture Authority Lifetime
 --------------------------
 
