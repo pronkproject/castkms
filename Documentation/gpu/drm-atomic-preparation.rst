@@ -22,11 +22,16 @@ and have independent storage available for the result. Waiting for an encoder
 or exported destination to become reusable must remain source-unbound.
 The primitive cannot inspect or enforce a native GPU dependency graph.
 
-Sealing serializes with admission and rejects subsequent claims. A sealed
-generation becomes ready only after every admitted claim has been released.
-Release consumes a claim and promises no more access under it. It either
-reports ended synchronous access or supplies an already-materialized native
-fence covering all submitted reads. Future userspace submission is not a fence.
+Sealing permanently closes admission and cannot be undone. An admission hold
+instead blocks new claims until its final reference is released, provided no
+other hold or permanent seal remains. Releasing one of several overlapping
+holds never reopens admission. Neither operation pauses GPU execution or
+freezes pixel contents; both serialize with admission of new read claims.
+A generation with admission closed becomes ready only after every admitted
+claim has been released. Release consumes a claim and promises no more access
+under it. It either reports ended synchronous access or supplies an
+already-materialized native fence covering all submitted reads. Future
+userspace submission is not a fence.
 
 Readiness does not wait for those native fences to signal. It establishes a
 fixed completion set with no unresolved userspace handoff. The provider can
@@ -48,14 +53,25 @@ the source itself, without retaining a reference back to it. Native fence
 destruction and completion merging occur outside the accounting mutex.
 Dropping the last external source reference does not fabricate claim release.
 
-The Rust wrapper makes a claim non-cloneable and release consuming. Dropping an
-unreleased claim marks terminal service failure. Such a generation never yields
-a prepared source, even after other claims are released. That failure does not
-assert that unknown GPU work stopped; executor loss still requires best-effort
-supervision and resource cleanup by the provider.
+The Rust wrapper's ``ReadClaim`` is non-cloneable and release consumes it.
+The name describes admission ownership, not proof that a read has occurred.
+A ``PreparedSource`` retains either permanent closure or its own
+``AdmissionHold`` reference; dropping the original hold cannot invalidate
+that proof. Source-level readiness requires permanent closure, so an unrelated
+hold owner cannot give another caller a preparation proof that disappears
+when the hold is released.
+Dropping an unreleased claim marks terminal service failure. Such a generation
+never yields a prepared source, even after other claims are released. That
+failure does not assert that unknown GPU work stopped; executor loss still
+requires best-effort supervision and resource cleanup by the provider.
 
-Sealing is irreversible in the initial primitive. It must not be installed as
-a complete atomic preparation ticket: reversible ticket seals, overlapping
-cohorts, gap-free transfer to accepted commits, blocking internal callers and
-teardown integration remain separate work. Kernel and Rust tests exercise the
-primitive without publishing source buffers or touching a physical display.
+Reopening admission preserves unresolved claims and submitted native readers.
+Releasing an admission hold does not cancel access already admitted. Later
+preparation must still account for those readers before establishing readiness
+and native completion.
+
+The primitive must not be installed as a complete atomic preparation ticket:
+multi-output cohorts, gap-free transfer to accepted commits, blocking internal
+callers and teardown integration remain separate work. Kernel and Rust tests
+exercise the primitive without publishing source buffers or touching a physical
+display.
