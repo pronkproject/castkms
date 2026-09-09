@@ -34,4 +34,5 @@ expect_usage --size -1x2160
 expect_usage --size 999999999999999999999x2160
 expect_usage --size 256x256 --size 256x256
 expect_usage --size 1920x1080 --size 3840x2160
+expect_usage --timing --timing
 echo "1..$count"
