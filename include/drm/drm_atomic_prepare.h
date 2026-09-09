@@ -10,6 +10,7 @@ struct drm_prepare_read_claim;
 struct drm_prepare_admission_hold;
 struct drm_prepare_domain;
 struct drm_prepare_retirement_set;
+struct drm_prepare_retirement_guard;
 
 /* Related sources share a provider-owned admission domain, not a global lock.
  * Domain operations may sleep. Each source independently retains its domain.
@@ -42,6 +43,20 @@ int drm_prepare_retirement_set_ready(struct drm_prepare_retirement_set *set);
 /* On success, *fence owns native completion or is NULL; errors leave it untouched. */
 int drm_prepare_retirement_set_completion(struct drm_prepare_retirement_set *set,
 					struct dma_fence **fence);
+
+/*
+ * Preassemble owned admission and native completion before a commit decision.
+ * Creation borrows a live set and requires readiness. Failure does not consume
+ * the caller's set. The unique guard owns its set and completion independently;
+ * destroy consumes it without waiting for or canceling native readers.
+ * Completion is borrowed for the guard's lifetime and needs no allocation.
+ * All operations may sleep. No display scope or acceptance is established here.
+ */
+struct drm_prepare_retirement_guard *
+drm_prepare_retirement_guard_create(struct drm_prepare_retirement_set *set);
+void drm_prepare_retirement_guard_destroy(struct drm_prepare_retirement_guard *guard);
+struct dma_fence *
+drm_prepare_retirement_guard_completion(struct drm_prepare_retirement_guard *guard);
 
 /*
  * Kernel-only source-generation accounting, not an atomic ticket or pixel grant.
