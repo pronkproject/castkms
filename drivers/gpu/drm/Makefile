@@ -37,6 +37,7 @@ drm-y := \
 	drm_atomic_prepare.o \
 	drm_atomic_prepare_set.o \
 	drm_atomic_prepare_guard.o \
+	drm_atomic_prepare_ticket.o \
 	drm_atomic_uapi.o \
 	drm_auth.o \
 	drm_blend.o \
