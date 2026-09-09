@@ -159,10 +159,41 @@ caller can explicitly retain the fence, but that separate reference does not
 keep admission closed. Abandoning a prospective commit's guard leaves the
 original preparation owner available for another attempt.
 
-The guard deliberately does not provide an ``accept()`` operation. Acceptance
-must serialize display-state installation with scope validation and ticket
-consumption. The guard supplies the ownership that can cross that boundary;
-moving it alone does not establish that the boundary has been crossed.
+The guard deliberately does not provide an ``accept()`` operation. Moving it
+alone does not establish display acceptance. A separate ticket and attempt
+interface serializes that decision with cancellation.
+
+Reserving a cancelable request
+-----------------------------
+
+An internal ``drm_prepare_ticket`` retains a source set independently of any
+file. It represents a cancelable request, not a grant of pixel access or proof
+that the set matches a display update. ``drm_prepare_ticket_reserve()`` first
+collects a retirement guard, then reserves the ticket for one attempt. Pending
+source claims reject reservation without consuming the request. A competing
+attempt receives ``-EBUSY``. Allocation and completion collection happen outside
+the ticket mutex, with availability checked again before publication.
+
+An attempt retains both its ticket and its own guard. Destroying an unsuccessful
+attempt allows another reservation if the ticket remains live. Canceling the
+ticket prevents installation and drops the ticket's source-set reference, but
+does not destroy an active attempt's guard. That distinction prevents
+cancellation from reopening admission while an operation still owns the old
+sources. Reference release is not cancellation; a future file or authority
+adapter must call cancellation explicitly at its specified lifetime boundary.
+
+``drm_prepare_attempt_commit()`` runs a kernel installation callback under the
+same mutex used by cancellation. The callback must reject invalid scope or
+authority before changing anything, or install the complete transaction without
+another fallible step. It must not allocate, wait or reenter preparation. On
+success the call transfers the preassembled guard to the caller and consumes
+the ticket once. Cancellation after that point cannot revoke the accepted
+guard. The attempt still needs destruction, separately from its returned guard.
+
+Display and provider locks that stabilize the selected generations precede the
+ticket mutex. No source lock is nested inside it: fence collection and source
+ownership destruction occur outside that mutex. The ticket does not acquire
+display locks for its caller, track generations or authenticate a requester.
 
 Where the helper installs display state
 --------------------------------------
@@ -174,11 +205,25 @@ interruptible waits in their existing order. A failed wait leaves every object
 state pointer unchanged. Only after success does the swap routine start
 installing the new pointers, under the caller's modeset locks.
 
-A future preparation acceptance hook belongs after those waits and before
-the first installation. It must serialize ticket cancellation and scope
-validation with the complete installation, rather than consuming a ticket
-before calling the swap helper. The current code only separates the wait
-phase; it does not add that hook or attach retirement guards to transactions.
+``drm_atomic_helper_swap_state_prepared()`` runs those same waits before entering
+the ticket's serialized decision. Its installation callback uses the same
+private installer as ordinary swaps. Cancellation rejects the prepared swap
+before the first pointer changes; successful installation transfers the guard
+and consumes the ticket without an interval of reopened admission.
+
+The caller must validate the complete retirement scope and keep it stable under
+its display and provider locks throughout the call. Authority invalidation must
+either cancel the ticket or participate in that same caller-owned locking. The
+caller must not hold a lock needed for predecessor completion across the waits.
+The helper does not infer source generations from framebuffer pointers. Its returned
+guard also does not itself delay old framebuffer cleanup: the caller must join
+the retained native completion to its normal retirement path before releasing
+old source use.
+
+Ordinary helper callers remain unchanged. No file adapter, automatic commit-tail
+wait, scope-validation implementation or pixel-export interface is supplied by
+the prepared swap entry point. Those pieces are required before enabling
+delegated capture.
 
 Native tests call the real swap helper with isolated state records. They
 interrupt each predecessor class and check controllers, connectors, planes,
@@ -194,3 +239,9 @@ installation of the same group. These tests do not run driver callbacks,
 validate a display configuration or establish locking for a future ticket
 interface. They also do not qualify commit-list or event ownership: the new
 controller state has no commit record in these fixtures.
+
+Prepared-swap tests use those same object records to exercise interruption
+followed by retry, cancellation before installation, and accepted ownership
+surviving ticket release. The ticket tests separately race cancellation against
+a synthetic installation callback. Neither test fixture supplies real display
+locks or proves the caller's generation and authority checks.
