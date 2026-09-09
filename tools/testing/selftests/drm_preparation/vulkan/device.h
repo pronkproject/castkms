@@ -17,6 +17,8 @@ struct gpu_device {
 };
 
 int gpu_device_open(struct gpu_device *device, struct gpu_context *context);
+/* Enable ownership transfers to non-Vulkan APIs or another graphics driver. */
+int gpu_device_open_foreign(struct gpu_device *device, struct gpu_context *context);
 /* Wait for submitted work before releasing the device, including on test failure. */
 int gpu_device_close(struct gpu_device *device);
 int gpu_memory_type(struct gpu_device *device, uint32_t bits,
