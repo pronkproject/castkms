@@ -95,3 +95,20 @@ void drm_prepare_retirement_set_put(struct drm_prepare_retirement_set *set)
 	kref_put(&set->ref, retirement_set_free);
 }
 EXPORT_SYMBOL_GPL(drm_prepare_retirement_set_put);
+
+int drm_prepare_retirement_set_ready(struct drm_prepare_retirement_set *set)
+{
+	unsigned int i;
+	int pending = 0, error;
+
+	for (i = 0; i < set->count; i++) {
+		error = drm_prepare_admission_hold_ready(set->holds[i]);
+		if (error == -EAGAIN)
+			pending = error;
+		else if (error)
+			return error;
+	}
+	/* A ready member cannot acquire new claims while the set retains its hold. */
+	return pending;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_retirement_set_ready);
