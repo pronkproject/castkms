@@ -7,6 +7,9 @@ use kernel::drm::auth::{
     MasterSnapshot, //
 };
 
+mod selection;
+pub(super) use selection::Selection;
+
 enum Origin<I> {
     Unknown,
     Creator(I),
@@ -53,12 +56,6 @@ impl<I: Eq> Provenance<I> {
             _ => self.owner(current),
         }
     }
-}
-
-/// The caller must distinguish explicit framebuffer selection from inherited atomic state.
-pub(super) enum Selection {
-    RetainedFramebuffer,
-    DifferentFramebuffer,
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
