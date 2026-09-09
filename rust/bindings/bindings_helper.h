@@ -34,6 +34,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_blend.h>
