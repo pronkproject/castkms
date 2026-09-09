@@ -136,3 +136,30 @@ fields prevent construction without the readiness check. The owner must remain
 alive until a later operation takes responsibility for keeping admission closed.
 Neither successful preparation nor fence completion proves pixel validity,
 capture authority or acceptance of a display transaction.
+
+Assembling ownership before acceptance
+-------------------------------------
+
+An acceptance path must not install new display state and then discover that
+collecting completion needs an allocation that can fail. A retirement guard
+assembles that ownership in advance. ``drm_prepare_retirement_guard_create()``
+borrows a ready set, collects its native completion and takes its own set
+reference. Failure leaves the caller's preparation intact for a retry.
+
+The guard is a unique owner. Its completion getter borrows the same retained
+fence without allocating or visiting source records again, even after the
+native reads finish. Moving the guard into another owner does not release any
+admission holds in between. Destroying it releases its references without
+waiting for native work or claiming that such work was cancelled. A caller
+that needs pixel storage must retain that storage separately.
+
+Rust provides ``RetirementGuard::new(&prepared)``. The result cannot be copied
+or cloned, and a borrowed completion reference cannot outlive the guard. A
+caller can explicitly retain the fence, but that separate reference does not
+keep admission closed. Abandoning a prospective commit's guard leaves the
+original preparation owner available for another attempt.
+
+The guard deliberately does not provide an ``accept()`` operation. Acceptance
+must serialize display-state installation with scope validation and ticket
+consumption. The guard supplies the ownership that can cross that boundary;
+moving it alone does not establish that the boundary has been crossed.
