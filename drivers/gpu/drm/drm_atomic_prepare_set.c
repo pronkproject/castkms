@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 /* Fixed ownership of admission holds, independent of ticket transport. */
 
+#include <linux/dma-fence.h>
+#include <linux/dma-fence-unwrap.h>
 #include <linux/err.h>
 #include <linux/export.h>
 #include <linux/kref.h>
@@ -112,3 +114,50 @@ int drm_prepare_retirement_set_ready(struct drm_prepare_retirement_set *set)
 	return pending;
 }
 EXPORT_SYMBOL_GPL(drm_prepare_retirement_set_ready);
+
+int drm_prepare_retirement_set_completion(struct drm_prepare_retirement_set *set,
+					struct dma_fence **fence)
+{
+	struct dma_fence_unwrap *cursors;
+	struct dma_fence **inputs, *member, *merged = NULL;
+	unsigned int i, count = 0;
+	int error;
+
+	error = drm_prepare_retirement_set_ready(set);
+	if (error)
+		return error;
+	if (!set->count) {
+		*fence = NULL;
+		return 0;
+	}
+	inputs = kmalloc_array(set->count, sizeof(*inputs), GFP_KERNEL);
+	if (!inputs)
+		return -ENOMEM;
+	cursors = kmalloc_array(set->count, sizeof(*cursors), GFP_KERNEL);
+	if (!cursors) {
+		error = -ENOMEM;
+		goto free_inputs;
+	}
+	for (i = 0; i < set->count; i++) {
+		error = drm_prepare_admission_hold_completion(set->holds[i], &member);
+		if (error)
+			goto free_cursors;
+		if (member)
+			inputs[count++] = member;
+	}
+	if (count) {
+		merged = __dma_fence_unwrap_merge(count, inputs, cursors);
+		if (!merged)
+			error = -ENOMEM;
+	}
+	if (!error)
+		*fence = merged;
+free_cursors:
+	kfree(cursors);
+free_inputs:
+	while (count)
+		dma_fence_put(inputs[--count]);
+	kfree(inputs);
+	return error;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_retirement_set_completion);
