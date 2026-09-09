@@ -243,6 +243,7 @@ static int handoff(struct gpu_context *context, unsigned int frame, uint64_t mod
 	struct readback readback = { 0 };
 	VkSemaphore produced = VK_NULL_HANDLE, source_acquired = VK_NULL_HANDLE;
 	VkSemaphore source_completed = VK_NULL_HANDLE, output_acquired = VK_NULL_HANDLE;
+	VkSemaphore output_completed = VK_NULL_HANDLE;
 	VkCommandBuffer commands;
 	int sync_fd = -1, output_fd = -1, result = 1;
 
@@ -259,6 +260,7 @@ static int handoff(struct gpu_context *context, unsigned int frame, uint64_t mod
 	    gpu_semaphore_create(&source_worker, &source_acquired) ||
 	    gpu_semaphore_create(&source_worker, &source_completed) ||
 	    gpu_semaphore_create(&output_worker, &output_acquired) ||
+	    gpu_semaphore_create(&output_worker, &output_completed) ||
 	    readback_create(&output_worker, &readback))
 		goto out;
 	if (produce(&producer, &source, produced, &sync_fd, frame) ||
@@ -293,7 +295,18 @@ static int handoff(struct gpu_context *context, unsigned int frame, uint64_t mod
 	if (begin_blit(&output_worker, &staging_import, &output, &commands))
 		goto out;
 	copy_to_readback(commands, &output, &readback);
-	if (submit_blit(&output_worker, commands, output_acquired, VK_NULL_HANDLE) ||
+	whole_image_barrier(commands, (VkImageMemoryBarrier) {
+		.image = output.handle,
+		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = 0,
+		.srcQueueFamilyIndex = context->queue_family,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
+	});
+	if (submit_blit(&output_worker, commands, output_acquired, output_completed) ||
+	    gpu_semaphore_export(&output_worker, output_completed, &sync_fd) ||
+	    gpu_sync_file_check(sync_fd, 5000) ||
 	    vkQueueWaitIdle(output_worker.queue) != VK_SUCCESS || check_pixels(&output_worker, &readback, frame))
 		goto out;
 	result = 0;
@@ -313,6 +326,7 @@ out:
 		vkDestroyBuffer(output_worker.handle, readback.buffer, NULL);
 		vkFreeMemory(output_worker.handle, readback.memory, NULL);
 		vkDestroySemaphore(output_worker.handle, output_acquired, NULL);
+		vkDestroySemaphore(output_worker.handle, output_completed, NULL);
 	}
 	if (source_worker.handle) {
 		vkDestroySemaphore(source_worker.handle, source_acquired, NULL);
