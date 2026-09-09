@@ -10,9 +10,6 @@
 #include "image.h"
 #include "sync_file.h"
 
-#define WIDTH 256
-#define HEIGHT 256
-
 static const VkImageSubresourceRange color_range = {
 	.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 	.levelCount = 1,
@@ -31,19 +28,22 @@ static void whole_image_barrier(VkCommandBuffer commands, VkImageMemoryBarrier b
 struct readback {
 	VkBuffer buffer;
 	VkDeviceMemory memory;
+	VkExtent2D extent;
 };
 
-static int readback_create(struct gpu_device *device, struct readback *readback)
+static int readback_create(struct gpu_device *device, struct readback *readback,
+			   VkExtent2D extent)
 {
 	VkBufferCreateInfo info = {
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size = WIDTH * HEIGHT * 4,
+		.size = (VkDeviceSize)extent.width * extent.height * 4,
 		.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
 	};
 	VkMemoryAllocateInfo allocation = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
 	VkMemoryRequirements requirements;
 
+	readback->extent = extent;
 	if (vkCreateBuffer(device->handle, &info, NULL, &readback->buffer) != VK_SUCCESS)
 		return -1;
 	vkGetBufferMemoryRequirements(device->handle, readback->buffer, &requirements);
@@ -66,15 +66,15 @@ static int check_pixels(struct gpu_device *device, struct readback *readback, un
 		255,
 	};
 	unsigned char *pixels;
-	unsigned int i;
+	size_t i, count = (size_t)readback->extent.width * readback->extent.height;
 	int result = 0;
 
 	if (vkMapMemory(device->handle, readback->memory, 0, VK_WHOLE_SIZE, 0, (void **)&pixels) != VK_SUCCESS)
 		return -1;
-	for (i = 0; i < WIDTH * HEIGHT; i++) {
+	for (i = 0; i < count; i++) {
 		/* The pixel oracle reads B8G8R8A8 bytes, not Vulkan's RGBA clear order. */
 		if (memcmp(&pixels[4 * i], expected, sizeof(expected))) {
-			fprintf(stderr, "Frame %u pixel %u mismatch: %u %u %u %u\n", frame, i,
+			fprintf(stderr, "Frame %u pixel %zu mismatch: %u %u %u %u\n", frame, i,
 				pixels[4 * i], pixels[4 * i + 1], pixels[4 * i + 2], pixels[4 * i + 3]);
 			result = -1;
 			break;
@@ -133,9 +133,9 @@ static int begin_blit(struct gpu_device *device, const struct gpu_image *input,
 {
 	VkImageBlit region = {
 		.srcSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
-		.srcOffsets = { { 0, 0, 0 }, { WIDTH, HEIGHT, 1 } },
+		.srcOffsets = { { 0, 0, 0 }, { input->width, input->height, 1 } },
 		.dstSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
-		.dstOffsets = { { 0, 0, 0 }, { WIDTH, HEIGHT, 1 } },
+		.dstOffsets = { { 0, 0, 0 }, { output->width, output->height, 1 } },
 	};
 
 	if (gpu_commands_begin(device, commands))
@@ -197,7 +197,7 @@ static void copy_to_readback(VkCommandBuffer commands, const struct gpu_image *i
 {
 	VkBufferImageCopy copy = {
 		.imageSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
-		.imageExtent = { WIDTH, HEIGHT, 1 },
+		.imageExtent = { image->width, image->height, 1 },
 	};
 	VkMemoryBarrier host = {
 		.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
@@ -259,22 +259,23 @@ struct frame {
 	int output_memory_fd;
 };
 
-static int frame_create(struct workers *workers, struct frame *frame, uint64_t modifier)
+static int frame_create(struct workers *workers, struct frame *frame, uint64_t modifier,
+			VkExtent2D extent)
 {
 	struct gpu_image_description description;
 
-	if (gpu_image_create(&workers->producer, &frame->source, WIDTH, HEIGHT, modifier) ||
+	if (gpu_image_create(&workers->producer, &frame->source, extent.width, extent.height, modifier) ||
 	    share_image(&workers->producer, &frame->source, &workers->source, &frame->source_import) ||
-	    gpu_image_create(&workers->source, &frame->staging, WIDTH, HEIGHT, modifier) ||
+	    gpu_image_create(&workers->source, &frame->staging, extent.width, extent.height, modifier) ||
 	    share_image(&workers->source, &frame->staging, &workers->output, &frame->staging_import) ||
-	    gpu_image_create(&workers->output, &frame->output, WIDTH, HEIGHT, modifier) ||
+	    gpu_image_create(&workers->output, &frame->output, extent.width, extent.height, modifier) ||
 	    gpu_image_export(&workers->output, &frame->output, &description, &frame->output_memory_fd) ||
 	    gpu_semaphore_create(&workers->producer, &frame->produced) ||
 	    gpu_semaphore_create(&workers->source, &frame->source_acquired) ||
 	    gpu_semaphore_create(&workers->source, &frame->source_completed) ||
 	    gpu_semaphore_create(&workers->output, &frame->output_acquired) ||
 	    gpu_semaphore_create(&workers->output, &frame->output_completed) ||
-	    readback_create(&workers->output, &frame->readback))
+	    readback_create(&workers->output, &frame->readback, extent))
 		return -1;
 	return 0;
 }
@@ -361,7 +362,8 @@ static void frame_destroy(struct workers *workers, struct frame *frame)
 	gpu_image_destroy(&workers->producer, &frame->source);
 }
 
-static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_output)
+static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_output,
+		   VkExtent2D extent)
 {
 	struct workers workers = { 0 };
 	struct frame frames[FRAME_COUNT] = { 0 };
@@ -380,7 +382,7 @@ static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_o
 	    gpu_device_open(&workers.output, context))
 		goto out;
 	for (i = 0; i < FRAME_COUNT; i++)
-		if (frame_create(&workers, &frames[i], modifier))
+		if (frame_create(&workers, &frames[i], modifier, extent))
 			goto out;
 	for (i = 0; i < FRAME_COUNT; i++)
 		if (submit_source(&workers, &frames[i], i))
@@ -431,6 +433,7 @@ out:
 int main(int argc, char **argv)
 {
 	struct gpu_context context;
+	VkExtent2D extent = { 256, 256 };
 	uint64_t modifier = 0;
 	int result, i, validation = 0, modifier_set = 0, foreign_output = 0;
 
@@ -463,7 +466,7 @@ int main(int argc, char **argv)
 		return result == -ENODEV ? 4 : 1;
 	printf("requested_modifier=0x%016" PRIx64 "\n", modifier);
 	printf("output_ownership=%s\n", foreign_output ? "foreign driver" : "same Vulkan driver");
-	result = handoff(&context, modifier, foreign_output);
+	result = handoff(&context, modifier, foreign_output, extent);
 	gpu_context_close(&context);
 	if (atomic_load(&context.validation_errors))
 		result = 1;
