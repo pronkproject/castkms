@@ -90,6 +90,14 @@ permission and those remaining lifetime checks before using descriptions for
 deferred work. A later reservation scan cannot recover producer error history
 that was discarded before collection.
 
+The shared Rust reservation interface provides read-only, usage-filtered
+snapshots through GEM objects without mapping pixels. It retains individual
+acquired fence records independently of the reservation owner, but neither
+captures already-signaled error history nor closes admission of later work.
+CastKMS does not yet use those snapshots to retain the implicit dependencies
+selected by framebuffer preparation; the native GEM helper still supplies
+ordinary implicit waiting.
+
 Testing in a disposable virtual machine
 --------------------------------------
 
