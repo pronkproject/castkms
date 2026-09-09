@@ -3,7 +3,11 @@
 //! One development output, without a presentation clock or pixel consumer.
 
 use super::{
-    provenance::Selection,
+    provenance::{
+        PreviousOwner,
+        Provenance,
+        Selection, //
+    },
     scene,
     Driver, //
 };
@@ -38,6 +42,7 @@ pub(super) struct PlaneState {
     geometry: Option<scene::Geometry>,
     content: Option<scene::ContentSerial>,
     selection: Selection,
+    owner: Option<kernel::drm::auth::MasterRef<Driver>>,
 }
 
 impl plane::DriverPlaneState for PlaneState {
@@ -47,6 +52,7 @@ impl plane::DriverPlaneState for PlaneState {
             geometry: None,
             content: None,
             selection: Selection::RetainedFramebuffer,
+            owner: None,
         })
     }
     fn duplicate(&self) -> Result<Self> {
@@ -54,6 +60,7 @@ impl plane::DriverPlaneState for PlaneState {
             geometry: None,
             content: self.content,
             selection: Selection::RetainedFramebuffer,
+            owner: self.owner.clone(),
         })
     }
 }
@@ -101,6 +108,23 @@ fn check_geometry(
     Ok(())
 }
 
+fn resolve_owner(
+    old: &plane::PlaneState<PlaneState>,
+    state: &plane::PlaneStateMutator<'_, plane::PlaneState<PlaneState>>,
+    current: Option<&kernel::drm::auth::MasterRef<Driver>>,
+) -> Option<kernel::drm::auth::MasterRef<Driver>> {
+    let framebuffer = state.framebuffer()?;
+    let previous = if old
+        .framebuffer()
+        .is_some_and(|old| core::ptr::eq(old, framebuffer))
+    {
+        PreviousOwner::SameFramebuffer(old.owner.as_ref())
+    } else {
+        PreviousOwner::DifferentFramebuffer
+    };
+    Provenance::for_update(framebuffer.data(), previous, current, state.selection).cloned()
+}
+
 #[vtable]
 impl plane::DriverPlane for Plane {
     type Args = ();
@@ -120,6 +144,8 @@ impl plane::DriverPlane for Plane {
             old.framebuffer(),
             state.framebuffer(),
         );
+        let current = transaction.drm_dev().authority.snapshot();
+        state.owner = resolve_owner(old, &state, current.as_ref());
         Ok(())
     }
 
@@ -130,7 +156,11 @@ impl plane::DriverPlane for Plane {
             .zip(state.content)
             .and_then(|(geometry, content)| {
                 state.framebuffer().map(|framebuffer| {
-                    scene::Scene::new(framebuffer.to_owned_ref(), geometry, content)
+                    scene::Scene::new(
+                        framebuffer.to_owned_ref(),
+                        geometry,
+                        content,
+                    )
                 })
             });
         transaction.drm_dev().output.publish(scene);
