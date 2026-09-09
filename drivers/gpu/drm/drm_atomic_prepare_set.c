@@ -115,6 +115,20 @@ int drm_prepare_retirement_set_ready(struct drm_prepare_retirement_set *set)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_retirement_set_ready);
 
+static int set_ready(void *data)
+{
+	return drm_prepare_retirement_set_ready(data);
+}
+
+int drm_prepare_retirement_set_wait(struct drm_prepare_retirement_set *set)
+{
+	wait_queue_head_t *queue = set->count ?
+		drm_prepare_admission_hold_waitqueue(set->holds[0]) : NULL;
+
+	return drm_prepare_wait_until_ready(queue, set_ready, set);
+}
+EXPORT_SYMBOL_GPL(drm_prepare_retirement_set_wait);
+
 int drm_prepare_retirement_set_completion(struct drm_prepare_retirement_set *set,
 					struct dma_fence **fence)
 {

@@ -10,6 +10,7 @@
 #include <linux/limits.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
+#include <linux/wait.h>
 
 #include <drm/drm_atomic_prepare.h>
 
@@ -18,6 +19,7 @@
 struct drm_prepare_domain {
 	struct kref ref;
 	struct mutex lock;
+	wait_queue_head_t readiness;
 };
 
 struct drm_prepare_read_claim {
@@ -71,6 +73,7 @@ struct drm_prepare_domain *drm_prepare_domain_create(void)
 		return ERR_PTR(-ENOMEM);
 	kref_init(&domain->ref);
 	mutex_init(&domain->lock);
+	init_waitqueue_head(&domain->readiness);
 	return domain;
 }
 EXPORT_SYMBOL_GPL(drm_prepare_domain_create);
@@ -330,6 +333,12 @@ int drm_prepare_admission_hold_ready(struct drm_prepare_admission_hold *hold)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_admission_hold_ready);
 
+wait_queue_head_t *
+drm_prepare_admission_hold_waitqueue(struct drm_prepare_admission_hold *hold)
+{
+	return &hold->source->domain->readiness;
+}
+
 static void finish_read(struct drm_prepare_read_claim *read, struct dma_fence *fence, bool abandoned)
 {
 	struct drm_prepare_source *source = read->source;
@@ -346,6 +355,7 @@ static void finish_read(struct drm_prepare_read_claim *read, struct dma_fence *f
 		source->count--;
 	}
 	mutex_unlock(&source->domain->lock);
+	wake_up_all(&source->domain->readiness);
 	free_reads(&retired);
 	/* Released entries belong to the source, not to an independent claim. */
 	drm_prepare_source_put(source);
