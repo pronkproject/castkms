@@ -207,7 +207,6 @@ fn packed_layout(raw: &bindings::drm_framebuffer, object_size: usize) -> Result<
     Ok(PackedLayout { offset, len, pitch })
 }
 
-#[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 fn validate_object(
     raw: &bindings::drm_framebuffer,
     object: *mut bindings::drm_gem_object,
@@ -465,6 +464,28 @@ impl<T: KmsDriver> Framebuffer<T> {
         })
     }
 
+    /// Return the number of memory planes described by the framebuffer format.
+    pub fn plane_count(&self) -> usize {
+        // SAFETY: Initialized framebuffers retain their immutable native format descriptor.
+        unsafe { (*(*self.0.get()).format).num_planes as usize }
+    }
+
+    /// Borrow a memory plane's nominated GEM object without mapping its storage.
+    ///
+    /// Object lifetime does not grant pixel-read permission or preserve pixel contents.
+    pub fn object_at(&self, plane: usize) -> Result<&T::Object> {
+        // SAFETY: The framebuffer retains its immutable layout and all backing references.
+        let raw = unsafe { &*self.0.get() };
+        if plane >= self.plane_count() || plane >= raw.obj.len() {
+            return Err(EINVAL);
+        }
+        let object = raw.obj[plane];
+        validate_object(raw, object)?;
+        // SAFETY: Framebuffer construction accepts only the device's nominated GEM type.
+        // Validation establishes a live same-device object retained for the borrow.
+        Ok(unsafe { T::Object::from_raw(object) })
+    }
+
     /// Returns the GEM object backing plane 0 of this framebuffer.
     ///
     /// Both local and imported storage belong to the importing device's nominated Rust object
@@ -476,15 +497,7 @@ impl<T: KmsDriver> Framebuffer<T> {
         O: gem::DriverObject<Driver = T>,
         T: crate::drm::Driver<Object = shmem::Object<O>>,
     {
-        // SAFETY: The framebuffer is initialized via its type invariant.
-        let raw = unsafe { &*self.0.get() };
-        let object_raw = raw.obj[0];
-        validate_object(raw, object_raw)?;
-
-        // SAFETY: The framebuffer owns a live object on this device. The associated-type bound
-        // identifies its nominated wrapper; both local and foreign allocation construct that
-        // complete Rust type before publication. The framebuffer retains it for this borrow.
-        Ok(unsafe { <shmem::Object<O> as gem::IntoGEMObject>::from_raw(object_raw) })
+        self.object_at(0)
     }
 
     /// Map a packed, single-plane, linear Rust shmem framebuffer and retain its backing object.
