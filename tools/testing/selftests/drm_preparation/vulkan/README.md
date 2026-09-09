@@ -69,9 +69,10 @@ Those checks have limits, including memory-alias tracking; passing them does
 not prove all ordering across imported allocations. See the layer's
 [synchronization validation guide](https://vulkan.lunarg.com/doc/view/latest/linux/synchronization_usage.html).
 
-One Vulkan device allocates a 256-by-256 linear image and fills it with opaque
-red using a GPU command. Another Vulkan device imports the same allocation
-through a DMA-BUF descriptor. The producer releases external image ownership,
+One Vulkan device allocates a 256-by-256 linear image and fills it using a GPU
+command. The fixture repeats the sequence for eight opaque RGB colors, with
+fresh devices and allocations each time. Another Vulkan device imports the
+same allocation through a DMA-BUF descriptor. The producer releases external image ownership,
 submits its work, and exports a sync-file semaphore. The consumer imports that
 semaphore and waits on it before accessing the image. There is no host-created
 promise standing in for work that has not been submitted.
@@ -90,6 +91,8 @@ PipeWire or an encoder, or integrated with a CastKMS preparation transaction.
 It is a correctness test, not a throughput measurement. Waiting for source
 completion on the host deliberately makes the destruction-before-output
 ordering visible; it is not a proposed production scheduling policy.
+Changing colors exercises actual output contents across repeated handoffs,
+but does not qualify reuse of a persistent image pool.
 
 Before releasing A, the fixture also polls its exported completion and queries
 Linux's sync-file status, including the underlying native fences. A signaled
