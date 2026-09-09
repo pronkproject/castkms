@@ -3,6 +3,7 @@
 //! One development output, without a presentation clock or pixel consumer.
 
 use super::{
+    provenance::Selection,
     scene,
     Driver, //
 };
@@ -36,6 +37,7 @@ pub(super) struct State;
 pub(super) struct PlaneState {
     geometry: Option<scene::Geometry>,
     content: Option<scene::ContentSerial>,
+    selection: Selection,
 }
 
 impl plane::DriverPlaneState for PlaneState {
@@ -44,12 +46,14 @@ impl plane::DriverPlaneState for PlaneState {
         Ok(Self {
             geometry: None,
             content: None,
+            selection: Selection::RetainedFramebuffer,
         })
     }
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
             geometry: None,
             content: self.content,
+            selection: Selection::RetainedFramebuffer,
         })
     }
 }
@@ -111,6 +115,11 @@ impl plane::DriverPlane for Plane {
         let (transaction, old, mut state) = check.take_all();
         check_geometry(transaction, &mut state)?;
         state.content = scene::ContentSerial::for_update(old.content, state.geometry.is_some())?;
+        state.selection = Selection::for_update(
+            transaction.plane_input(state.plane())?,
+            old.framebuffer(),
+            state.framebuffer(),
+        );
         Ok(())
     }
 
