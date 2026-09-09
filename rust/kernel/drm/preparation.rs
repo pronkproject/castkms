@@ -15,9 +15,11 @@ use crate::{
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod domain;
+mod set;
 
 pub use self::{
-    domain::Domain, //
+    domain::Domain,
+    set::RetirementSet, //
 };
 
 /// Bounded admission for one source generation.
