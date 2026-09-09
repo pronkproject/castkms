@@ -69,12 +69,11 @@ Those checks have limits, including memory-alias tracking; passing them does
 not prove all ordering across imported allocations. See the layer's
 [synchronization validation guide](https://vulkan.lunarg.com/doc/view/latest/linux/synchronization_usage.html).
 
-One Vulkan device allocates a 256-by-256 linear image and fills it using a GPU
-command. The fixture repeats the sequence for eight opaque RGB colors, with
-fresh devices and allocations each time. Another Vulkan device imports the
-same allocation through a DMA-BUF descriptor. The producer releases external
-image ownership,
-submits its work, and exports a sync-file semaphore. The consumer imports that
+One Vulkan device allocates eight 256-by-256 linear images and fills them using
+GPU commands, with a different opaque RGB color for each image. Another Vulkan
+device imports those allocations through DMA-BUF descriptors. The producer
+releases external image ownership, submits its work, and exports a sync-file
+semaphore for each image. The consumer imports that
 semaphore and waits on it before accessing the image. There is no host-created
 promise standing in for work that has not been submitted.
 
@@ -94,6 +93,16 @@ completion on the host deliberately makes the destruction-before-output
 ordering visible; it is not a proposed production scheduling policy.
 Changing colors exercises actual output contents across repeated handoffs,
 but does not qualify reuse of a persistent image pool.
+
+The three devices live for the whole batch. All eight source-reading jobs are
+submitted before the first host completion wait; all eight sources are then
+released before any output submission. Similarly, every output job is
+submitted before waiting for output completion. There is no explicit host wait
+between successive jobs within a stage. The fixture reports those boundaries
+and checks every individual native completion and every frame's pixels.
+Eight is the size of this test batch, not a kernel queue limit or media policy.
+The small jobs may finish quickly, so the test does not establish a measured
+number of simultaneously executing GPU jobs.
 
 Before releasing A, the fixture also polls its exported completion and queries
 Linux's sync-file status, including the underlying native fences. A signaled
