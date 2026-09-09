@@ -63,6 +63,7 @@
 #include <linux/auxiliary_bus.h>
 #ifdef CONFIG_DMA_SHARED_BUFFER
 #include <linux/dma-buf.h>
+#include <linux/dma-fence-unwrap.h>
 #endif
 #include <linux/bitmap.h>
 #include <linux/blk-mq.h>
