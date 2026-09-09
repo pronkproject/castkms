@@ -11,9 +11,11 @@ use super::{
 use crate::{
     alloc::KBox,
     bindings,
+    dma_fence::Fence,
     drm::{device::Device, fourcc::*},
     error::{from_result, to_result, Error},
     prelude::*,
+    sync::aref::ARef,
     types::{NotThreadSafe, Opaque},
 };
 use core::{
@@ -1224,6 +1226,34 @@ pub struct PlaneStateMutator<'a, T: FromRawPlaneState> {
 }
 
 impl<'a, T: FromRawPlaneState> PlaneStateMutator<'a, T> {
+    /// Retain the producer fence currently attached to this exclusively borrowed candidate.
+    ///
+    /// Capture it during validation if its error status is needed after commit: native wait
+    /// helpers clear the plane's fence before calling the driver's update callback. An absent
+    /// fence does not prove that pixels are valid or that implicit dependencies were acquired.
+    pub fn producer_fence(&self) -> Option<ARef<Fence>> {
+        let raw = self.state.as_raw().fence;
+        if raw.is_null() {
+            None
+        } else {
+            // SAFETY: The exclusive state guard excludes helper cleanup. Its native field
+            // owns a fence reference until the independent reference is acquired here.
+            Some(unsafe { Fence::from_raw(raw) }.to_owned_ref())
+        }
+    }
+
+    /// Replace the candidate's producer dependency from a kernel caller.
+    ///
+    /// Only native submitted-work fences belong here. This does not grant source-read access
+    /// or carry userspace preparation readiness. Native atomic helpers own waiting and cleanup.
+    pub fn set_producer_fence(&mut self, fence: Option<ARef<Fence>>) {
+        let raw = fence.map_or(null_mut(), |fence| ARef::into_raw(fence).as_ptr().cast());
+        // SAFETY: The guard uniquely owns mutable candidate state; transfer the new owned
+        // reference to its native field and release the previous reference exactly once.
+        let previous = unsafe { mem::replace(&mut self.state.as_raw_mut().fence, raw) };
+        unsafe { bindings::dma_fence_put(previous) };
+    }
+
     pub(super) fn new<D: KmsDriver>(
         mutator: &'a AtomicStateMutator<D>,
         state: NonNull<bindings::drm_plane_state>,
