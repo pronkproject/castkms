@@ -92,6 +92,10 @@ pub struct PreparedRetirement {
 }
 
 impl PreparedRetirement {
+    pub(super) fn as_raw_set(&self) -> *mut bindings::drm_prepare_retirement_set {
+        self.set.0.get()
+    }
+
     /// Retain native completion of every submitted reader without waiting for future submission.
     ///
     /// The returned fence remains valid after the prepared owner is dropped, but retaining the

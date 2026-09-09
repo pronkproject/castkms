@@ -15,10 +15,12 @@ use crate::{
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod domain;
+mod guard;
 mod set;
 
 pub use self::{
     domain::Domain,
+    guard::RetirementGuard,
     set::{
         PreparedRetirement,
         RetirementSet, //
