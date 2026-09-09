@@ -40,6 +40,14 @@ void drm_prepare_retirement_set_put(struct drm_prepare_retirement_set *set);
  * Terminal member failure takes precedence over other pending claims.
  */
 int drm_prepare_retirement_set_ready(struct drm_prepare_retirement_set *set);
+/*
+ * Interruptibly wait for every admitted claim to be relinquished, not for native
+ * reader completion. A failed member ends the wait with -EIO; signals return
+ * -ERESTARTSYS. The borrowed set retains admission throughout. Do not hold locks
+ * needed by claim owners, including display/provider locks, across the wait.
+ * Ticket cancellation is separate and does not cancel a wait on an owned set.
+ */
+int drm_prepare_retirement_set_wait(struct drm_prepare_retirement_set *set);
 /* On success, *fence owns native completion or is NULL; errors leave it untouched. */
 int drm_prepare_retirement_set_completion(struct drm_prepare_retirement_set *set,
 					struct dma_fence **fence);
