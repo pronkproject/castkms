@@ -21,6 +21,7 @@ use core::ops::Deref;
 use core::{marker::*, ptr};
 
 mod storage;
+pub mod dependencies;
 pub(super) use storage::{create_callback, vtable};
 
 /// The main interface for [`struct drm_framebuffer`].
