@@ -2,4 +2,5 @@
 TEST_PROGS := preparation-model.py
 TEST_PROGS += output-model.py
 TEST_PROGS += pipeline-model.py
+TEST_PROGS += reservation-model.py
 include ../lib.mk
