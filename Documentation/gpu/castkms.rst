@@ -76,15 +76,21 @@ the reference cycle between the output, framebuffer and DRM device.
 
 An owned allocation does not preserve its pixels against later writes. The
 description retains historical ownership resolved during atomic validation,
-but that attribution is not current permission to capture. Each update retains
-its explicit plane producer fence before DRM's commit helper waits and drops
-that fence. A producer error remains observable after an otherwise accepted
-display commit; completion alone does not establish valid pixels. A new update
-does not inherit the previous update's fence, including on a same-framebuffer
-recommit. An absent fence is missing synchronization evidence, not a success
-result.
+but that attribution is not current permission to capture. Framebuffer
+preparation retains the explicit producer fence and the selected reservation
+dependencies before DRM's commit helper waits and drops its fence. Explicit
+sync selects mandatory kernel dependencies; implicit sync also selects writers.
+Every framebuffer memory plane participates, without requiring a CPU mapping.
+The native wait fence is merged from those same records, not from a second
+snapshot. Merging may omit completed errors and redundant timeline records,
+so the description independently retains the original acquired records.
+A producer error remains observable after an otherwise accepted display
+commit; completion alone does not establish valid pixels. A new update does
+not inherit the previous update's records, including on a same-framebuffer
+recommit. An empty collection is missing synchronization evidence, not a
+success result. Test-only validation does not run framebuffer preparation.
 
-Required implicit dependencies and a read lease are still absent. There is no
+An authorized source read lease is still absent. There is no
 interface for reading or exporting pixels. Capture publication must establish
 permission and those remaining lifetime checks before using descriptions for
 deferred work. A later reservation scan cannot recover producer error history
@@ -94,9 +100,9 @@ The shared Rust reservation interface provides read-only, usage-filtered
 snapshots through GEM objects without mapping pixels. It retains individual
 acquired fence records independently of the reservation owner, but neither
 captures already-signaled error history nor closes admission of later work.
-CastKMS does not yet use those snapshots to retain the implicit dependencies
-selected by framebuffer preparation; the native GEM helper still supplies
-ordinary implicit waiting.
+CastKMS uses those snapshots during framebuffer preparation. Drivers that do
+not supply the optional Rust preparation callback retain the native GEM
+helper's ordinary implicit waiting.
 
 Testing in a disposable virtual machine
 --------------------------------------
