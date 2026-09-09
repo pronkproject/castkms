@@ -13,6 +13,7 @@ mod inspection;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod masters;
 mod plane_assignments;
+mod plane_inputs;
 mod properties;
 
 use super::*;
