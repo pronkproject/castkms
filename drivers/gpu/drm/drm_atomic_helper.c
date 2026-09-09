@@ -3262,44 +3262,9 @@ static int wait_for_previous_hw_done(struct drm_atomic_commit *state)
 	return 0;
 }
 
-/**
- * drm_atomic_helper_swap_state - store atomic state into current sw state
- * @state: atomic state
- * @stall: stall for preceding commits
- *
- * This function stores the atomic state into the current state pointers in all
- * driver objects. It should be called after all failing steps have been done
- * and succeeded, but before the actual hardware state is committed.
- *
- * For cleanup and error recovery the current state for all changed objects will
- * be swapped into @state.
- *
- * With that sequence it fits perfectly into the plane prepare/cleanup sequence:
- *
- * 1. Call drm_atomic_helper_prepare_planes() with the staged atomic state.
- *
- * 2. Do any other steps that might fail.
- *
- * 3. Put the staged state into the current state pointers with this function.
- *
- * 4. Actually commit the hardware state.
- *
- * 5. Call drm_atomic_helper_cleanup_planes() with @state, which since step 3
- * contains the old state. Also do any other cleanup required with that state.
- *
- * @stall must be set when nonblocking commits for this driver directly access
- * the &drm_plane.state, &drm_crtc.state or &drm_connector.state pointer. With
- * the current atomic helpers this is almost always the case, since the helpers
- * don't pass the right state structures to the callbacks.
- *
- * Returns:
- * Returns 0 on success. Can return -ERESTARTSYS when @stall is true and the
- * waiting for the previous commits has been interrupted.
- */
-int drm_atomic_helper_swap_state(struct drm_atomic_commit *state,
-				  bool stall)
+static void install_state(struct drm_atomic_commit *state)
 {
-	int i, ret;
+	int i;
 	unsigned long flags = 0;
 	struct drm_connector *connector;
 	struct drm_connector_state *old_conn_state, *new_conn_state;
@@ -3311,12 +3276,6 @@ int drm_atomic_helper_swap_state(struct drm_atomic_commit *state,
 	struct drm_colorop_state *old_colorop_state, *new_colorop_state;
 	struct drm_private_obj *obj;
 	struct drm_private_state *old_obj_state, *new_obj_state;
-
-	if (stall) {
-		ret = wait_for_previous_hw_done(state);
-		if (ret)
-			return ret;
-	}
 
 	/* All interruptible waits precede the first installed object state. */
 	for_each_oldnew_connector_in_state(state, connector, old_conn_state, new_conn_state, i) {
@@ -3379,7 +3338,52 @@ int drm_atomic_helper_swap_state(struct drm_atomic_commit *state,
 		state->private_objs[i].state_to_destroy = old_obj_state;
 		obj->state = new_obj_state;
 	}
+}
 
+/**
+ * drm_atomic_helper_swap_state - store atomic state into current sw state
+ * @state: atomic state
+ * @stall: stall for preceding commits
+ *
+ * This function stores the atomic state into the current state pointers in all
+ * driver objects. It should be called after all failing steps have been done
+ * and succeeded, but before the actual hardware state is committed.
+ *
+ * For cleanup and error recovery the current state for all changed objects will
+ * be swapped into @state.
+ *
+ * With that sequence it fits perfectly into the plane prepare/cleanup sequence:
+ *
+ * 1. Call drm_atomic_helper_prepare_planes() with the staged atomic state.
+ *
+ * 2. Do any other steps that might fail.
+ *
+ * 3. Put the staged state into the current state pointers with this function.
+ *
+ * 4. Actually commit the hardware state.
+ *
+ * 5. Call drm_atomic_helper_cleanup_planes() with @state, which since step 3
+ * contains the old state. Also do any other cleanup required with that state.
+ *
+ * @stall must be set when nonblocking commits for this driver directly access
+ * the &drm_plane.state, &drm_crtc.state or &drm_connector.state pointer. With
+ * the current atomic helpers this is almost always the case, since the helpers
+ * don't pass the right state structures to the callbacks.
+ *
+ * Returns:
+ * Returns 0 on success. Can return -ERESTARTSYS when @stall is true and the
+ * waiting for the previous commits has been interrupted.
+ */
+int drm_atomic_helper_swap_state(struct drm_atomic_commit *state, bool stall)
+{
+	int ret;
+
+	if (stall) {
+		ret = wait_for_previous_hw_done(state);
+		if (ret)
+			return ret;
+	}
+	install_state(state);
 	return 0;
 }
 EXPORT_SYMBOL(drm_atomic_helper_swap_state);
