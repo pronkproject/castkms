@@ -162,8 +162,26 @@ struct __drm_colorops_state {
 	struct drm_colorop_state *state, *old_state, *new_state;
 };
 
+/**
+ * struct drm_atomic_plane_input - plane input before atomic validation
+ * @included: The plane had new state at the first validation entry.
+ * @fb_assigned: The framebuffer setter had been called for that state.
+ * @fb: Retained framebuffer at validation entry, possibly NULL.
+ *
+ * Kernel construction and userspace property processing use the same record.
+ * It does not identify the submitting file or establish current authority.
+ * The record stays fixed until drm_atomic_commit_clear(), including across
+ * failed or repeated validation and helper changes to the new state.
+ */
+struct drm_atomic_plane_input {
+	bool included;
+	bool fb_assigned;
+	struct drm_framebuffer *fb;
+};
+
 struct __drm_planes_state {
 	struct drm_plane *ptr;
+	struct drm_atomic_plane_input input;
 
 	/**
 	 * @state_to_destroy:
@@ -556,6 +574,13 @@ struct drm_atomic_commit {
 	 * be mutated. For internal use only, do not consult from drivers.
 	 */
 	bool checked : 1;
+	/**
+	 * @plane_inputs_captured:
+	 *
+	 * Plane inputs were frozen before the first atomic validation. Rebuilding
+	 * a request after validation requires clearing its atomic commit first.
+	 */
+	bool plane_inputs_captured : 1;
 
 	/**
 	 * @plane_color_pipeline:
@@ -926,6 +951,9 @@ drm_atomic_add_affected_colorops(struct drm_atomic_commit *state,
 				 struct drm_plane *plane);
 
 int __must_check drm_atomic_check_only(struct drm_atomic_commit *state);
+const struct drm_atomic_plane_input *
+drm_atomic_get_plane_input(const struct drm_atomic_commit *state,
+			   const struct drm_plane *plane);
 int __must_check drm_atomic_commit(struct drm_atomic_commit *state);
 int __must_check drm_atomic_nonblocking_commit(struct drm_atomic_commit *state);
 

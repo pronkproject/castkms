@@ -212,6 +212,7 @@ drm_atomic_commit_init(struct drm_device *dev, struct drm_atomic_commit *state)
 	 * setting this appropriately?
 	 */
 	state->allow_modeset = true;
+	state->plane_inputs_captured = false;
 
 	state->crtcs = kzalloc_objs(*state->crtcs, dev->mode_config.num_crtc);
 	if (!state->crtcs)
@@ -287,6 +288,7 @@ void drm_atomic_commit_default_clear(struct drm_atomic_commit *state)
 	drm_dbg_atomic(dev, "Clearing atomic state %p\n", state);
 
 	state->checked = false;
+	state->plane_inputs_captured = false;
 
 	for (i = 0; i < state->num_connector; i++) {
 		struct drm_connector *connector = state->connectors[i].ptr;
@@ -335,6 +337,9 @@ void drm_atomic_commit_default_clear(struct drm_atomic_commit *state)
 		state->planes[i].state_to_destroy = NULL;
 		state->planes[i].old_state = NULL;
 		state->planes[i].new_state = NULL;
+		drm_framebuffer_assign(&state->planes[i].input.fb, NULL);
+		state->planes[i].input.included = false;
+		state->planes[i].input.fb_assigned = false;
 	}
 
 	for (i = 0; i < config->num_colorop; i++) {
@@ -1758,6 +1763,17 @@ int drm_atomic_check_only(struct drm_atomic_commit *state)
 
 	drm_dbg_atomic(dev, "checking %p\n", state);
 
+	if (!state->plane_inputs_captured) {
+		for_each_new_plane_in_state(state, plane, new_plane_state, i) {
+			struct drm_atomic_plane_input *input = &state->planes[i].input;
+
+			input->included = true;
+			input->fb_assigned = new_plane_state->fb_set;
+			drm_framebuffer_assign(&input->fb, new_plane_state->fb);
+		}
+		state->plane_inputs_captured = true;
+	}
+
 	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
 		if (new_crtc_state->enable)
 			requested_crtc |= drm_crtc_mask(crtc);
@@ -1838,6 +1854,27 @@ int drm_atomic_check_only(struct drm_atomic_commit *state)
 	return 0;
 }
 EXPORT_SYMBOL(drm_atomic_check_only);
+
+/**
+ * drm_atomic_get_plane_input - inspect input frozen before validation
+ * @state: atomic commit containing the input snapshot
+ * @plane: plane on the same device
+ *
+ * Return: A borrowed record, including for a plane not in the original input.
+ * NULL means validation has not begun or the plane belongs to another device.
+ * The record remains alive until the commit is cleared. A framebuffer reference
+ * protects object identity, not pixel contents or permission to read them.
+ */
+const struct drm_atomic_plane_input *
+drm_atomic_get_plane_input(const struct drm_atomic_commit *state,
+			   const struct drm_plane *plane)
+{
+	if (plane->dev != state->dev || !state->plane_inputs_captured)
+		return NULL;
+
+	return &state->planes[drm_plane_index(plane)].input;
+}
+EXPORT_SYMBOL(drm_atomic_get_plane_input);
 
 /**
  * drm_atomic_commit - commit configuration atomically
