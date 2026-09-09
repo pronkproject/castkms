@@ -69,8 +69,8 @@ Those checks have limits, including memory-alias tracking; passing them does
 not prove all ordering across imported allocations. See the layer's
 [synchronization validation guide](https://vulkan.lunarg.com/doc/view/latest/linux/synchronization_usage.html).
 
-One Vulkan device allocates eight 256-by-256 linear images and fills them using
-GPU commands, with a different opaque RGB color for each image. Another Vulkan
+One Vulkan device allocates eight images (256-by-256 and linear by default)
+and fills them using GPU commands, with a different opaque RGB color for each image. Another Vulkan
 device imports those allocations through DMA-BUF descriptors. The producer
 releases external image ownership, submits its work, and exports a sync-file
 semaphore for each image. The consumer imports that
@@ -122,6 +122,24 @@ it never silently substitutes another layout. Unsupported profiles fail
 before image creation. Each import uses the allocation's queried plane layout,
 not a pitch inferred from its width. Qualification of one modifier does not
 establish that a later encoder or PipeWire consumer can import it.
+
+Pass `--size 1920x1080` or `--size 3840x2160` to run the same allocation,
+native-completion and whole-image checks at display sizes. `--size 256x256`
+selects the default explicitly. These fixed profiles bound the fixture's
+allocation demand; other sizes, incomplete values and duplicate options are
+rejected before opening the GPU. They are test inputs, not supported display
+modes or kernel limits.
+
+The batch allocates eight independent A, E, D and readback images before
+submission. At 4K their unpadded pixel storage alone is about 1 GiB; modifier
+padding and driver bookkeeping add to that. A successful large-image run
+checks import layout and pixels, not sustained throughput, staging bandwidth
+or a frame-rate target. There is still a host wait between the source and
+output stages, and the output stage includes the test-only readback copy.
+
+Run `sh handoff-args.sh "$build_dir/handoff"` from this directory to check
+rejection of malformed and repeated size options without a GPU. Those checks
+verify the usage error, not merely a failure to open the supplied device.
 
 The output submission exports its own native sync file, separate from the
 A-to-E completion. The fixture checks that result too. D is released in the
