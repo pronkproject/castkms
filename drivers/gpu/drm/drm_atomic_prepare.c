@@ -13,6 +13,8 @@
 
 #include <drm/drm_atomic_prepare.h>
 
+#include "drm_atomic_prepare_internal.h"
+
 struct drm_prepare_domain {
 	struct kref ref;
 	struct mutex lock;
@@ -238,6 +240,58 @@ struct drm_prepare_admission_hold *drm_prepare_source_hold_admission(struct drm_
 	return hold;
 }
 EXPORT_SYMBOL_GPL(drm_prepare_source_hold_admission);
+
+int drm_prepare_hold_sources(struct drm_prepare_source * const *sources,
+			     struct drm_prepare_admission_hold **holds,
+			     unsigned int count)
+{
+	struct drm_prepare_domain *domain;
+	unsigned int i, allocated = 0;
+	int error = 0;
+
+	if (!count)
+		return 0;
+	domain = sources[0]->domain;
+	for (i = 0; i < count; i++) {
+		if (sources[i]->domain != domain)
+			return -EXDEV;
+	}
+	for (i = 0; i < count; i++) {
+		holds[i] = kzalloc_obj(*holds[i]);
+		if (!holds[i]) {
+			error = -ENOMEM;
+			goto free_holds;
+		}
+		allocated++;
+	}
+
+	/* No source changes until every member passes under the shared domain lock. */
+	mutex_lock(&domain->lock);
+	for (i = 0; i < count; i++) {
+		if (sources[i]->claim_abandoned) {
+			error = -EIO;
+			break;
+		}
+		if (sources[i]->admission_holds == UINT_MAX) {
+			error = -EOVERFLOW;
+			break;
+		}
+	}
+	if (!error) {
+		for (i = 0; i < count; i++) {
+			sources[i]->admission_holds++;
+			kref_init(&holds[i]->ref);
+			holds[i]->source = drm_prepare_source_get(sources[i]);
+		}
+	}
+	mutex_unlock(&domain->lock);
+	if (!error)
+		return 0;
+free_holds:
+	while (allocated)
+		kfree(holds[--allocated]);
+	return error;
+}
 
 struct drm_prepare_admission_hold *drm_prepare_admission_hold_get(struct drm_prepare_admission_hold *hold)
 {
