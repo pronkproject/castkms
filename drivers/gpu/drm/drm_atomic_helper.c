@@ -32,6 +32,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_bridge.h>
@@ -3387,6 +3388,58 @@ int drm_atomic_helper_swap_state(struct drm_atomic_commit *state, bool stall)
 	return 0;
 }
 EXPORT_SYMBOL(drm_atomic_helper_swap_state);
+
+static int install_prepared_state(void *data)
+{
+	install_state(data);
+	return 0;
+}
+
+/**
+ * drm_atomic_helper_swap_state_prepared - install state with reserved preparation
+ * @state: validated atomic state
+ * @stall: stall for preceding commits, as in drm_atomic_helper_swap_state()
+ * @attempt: exclusively owned reservation for the complete retiring scope
+ * @guard: output for transferred retirement ownership; untouched on error
+ *
+ * The caller has validated the attempt's source generations and authority and
+ * holds all modeset and provider locks needed to keep that scope stable through
+ * installation. No caller-held lock may be needed by predecessor completion.
+ * Those locks must precede the ticket mutex. Authority invalidation
+ * must cancel the ticket or use the same caller-held serialization. The helper
+ * does not infer scope from framebuffer identity or authenticate the caller.
+ *
+ * Predecessor waits happen before acquiring the ticket mutex. Cancellation then
+ * rejects the update before any object state is installed. Success installs all
+ * state and consumes the ticket in one decision, returning its preassembled
+ * retirement guard without further allocation. The caller still destroys the
+ * attempt and owns the returned guard independently of ticket lifetime.
+ *
+ * The caller must wait for the guard's native completion before releasing old
+ * source use, in addition to ordinary display retirement. Owning the guard alone
+ * is not that wait. No commit-tail integration or userspace interface is implied.
+ *
+ * Returns:
+ * Zero on installation, -ERESTARTSYS on interrupted predecessor waits,
+ * -ECANCELED on ticket cancellation, or -EALREADY on consumed preparation.
+ * Async plane updates are unsupported and return -EOPNOTSUPP.
+ */
+int drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool stall,
+					struct drm_prepare_attempt *attempt,
+					struct drm_prepare_retirement_guard **guard)
+{
+	int ret;
+
+	if (state->async_update)
+		return -EOPNOTSUPP;
+	if (stall) {
+		ret = wait_for_previous_hw_done(state);
+		if (ret)
+			return ret;
+	}
+	return drm_prepare_attempt_commit(attempt, install_prepared_state, state, guard);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_helper_swap_state_prepared);
 
 /**
  * drm_atomic_helper_update_plane - Helper for primary plane update using atomic
