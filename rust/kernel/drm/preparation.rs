@@ -152,3 +152,6 @@ impl PreparedSource {
         Ok(NonNull::new(fence.cast::<Fence>()).map(|raw| unsafe { ARef::from_raw(raw) }))
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
