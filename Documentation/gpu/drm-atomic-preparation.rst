@@ -71,7 +71,37 @@ preparation must still account for those readers before establishing readiness
 and native completion.
 
 The primitive must not be installed as a complete atomic preparation ticket:
-multi-output cohorts, gap-free transfer to accepted commits, blocking internal
-callers and teardown integration remain separate work. Kernel and Rust tests
+validated multi-output scope, gap-free transfer to accepted commits, blocking
+internal callers and teardown integration remain separate work. Kernel and Rust tests
 exercise the primitive without publishing source buffers or touching a physical
 display.
+
+Holding several sources together
+-------------------------------
+
+A display update may replace several images. Closing admission one image at a
+time would let another caller observe only part of that update's sources held.
+A provider can instead create an admission domain and place related sources in
+it with ``drm_prepare_source_create_in()``. The domain supplies one lock for
+their accounting decisions. Independent providers use independent domains;
+there is no global preparation lock. The convenience source constructor still
+creates a private domain for a single independent source.
+
+``drm_prepare_retirement_set_create()`` accepts a borrowed array of retained
+sources in one domain. It copies the array, coalesces repeated source identities
+and allocates its hold storage before changing admission. Under the domain lock
+it checks every member before installing any hold. A failed member therefore
+leaves no partially held set. Sources in different domains are rejected rather
+than acquired one domain at a time. An empty collection is valid.
+
+The returned set owns every hold until its last reference is released.
+Overlapping sets retain independent holds, so releasing one set cannot reopen
+a source still held by another. Releasing a set does not resolve existing read
+claims, cancel GPU access or undo a permanent seal. Each hold retains its source,
+and each source retains its domain, independently of the provider's original
+references. Source storage and pixel authorization still belong to the provider.
+
+The set is an internal ownership container, not a validated display transaction.
+Its caller must determine which generations the update actually retires and
+keep that selection stable. Set-wide readiness, prepared Rust ownership and
+transfer into an accepted commit are not provided by the container yet.
