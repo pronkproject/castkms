@@ -85,6 +85,19 @@ impl RetirementSet {
             Ok(()) => Ok(Some(PreparedRetirement { set: self.into() })),
         }
     }
+
+    /// Wait interruptibly for admitted claims to be relinquished and retain the ready set.
+    ///
+    /// Native readers may still be executing. Signals return ERESTARTSYS and an abandoned
+    /// claim returns EIO without releasing this owner's admission holds. Do not hold display,
+    /// provider or other locks needed by claim owners. Canceling a separate ticket does not
+    /// cancel a wait on this independently owned set.
+    pub fn wait_prepared(&self) -> Result<PreparedRetirement> {
+        // SAFETY: The shared reference retains every hold and its native wait queue. Readiness
+        // remains established under those holds after the interruptible wait succeeds.
+        to_result(unsafe { bindings::drm_prepare_retirement_set_wait(self.0.get()) })?;
+        Ok(PreparedRetirement { set: self.into() })
+    }
 }
 
 /// A retained, fixed set of submitted readers, not GPU completion or an accepted display update.
