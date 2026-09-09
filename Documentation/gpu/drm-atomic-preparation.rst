@@ -223,6 +223,18 @@ Callers must not hold display or provider locks needed by the claim owners
 while waiting. Waiting on a separately owned set is not a ticket cancellation
 operation; canceling a ticket does not withdraw that independent set ownership.
 
+For a request whose lifetime follows a ticket, use ``drm_prepare_ticket_wait()``
+or Rust's ``Ticket::wait_ready()`` instead. Cancellation wakes a pending caller
+with a cancellation error even if an admitted claim remains unresolved.
+Consumption reports that the ticket has already been used. A successful wait
+only observes readiness: another caller may reserve or consume the ticket, so
+reservation and installation must still recheck its state.
+
+Ticket waits retain a temporary set reference until they return. Cancellation
+does not release that caller's holds underneath it. Notifications are shared by
+the source domain, but cancellation belongs to one ticket; a peer ticket must
+recheck its own state rather than interpreting any wakeup as cancellation.
+
 Where the helper installs display state
 --------------------------------------
 
