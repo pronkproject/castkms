@@ -32,6 +32,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_prepare_commit.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
@@ -2256,6 +2257,8 @@ int drm_atomic_helper_commit(struct drm_device *dev,
 	int ret;
 
 	if (state->async_update) {
+		if (state->preparation)
+			return -EOPNOTSUPP;
 		ret = drm_atomic_helper_prepare_planes(dev, state);
 		if (ret)
 			return ret;
@@ -2632,6 +2635,8 @@ EXPORT_SYMBOL(drm_atomic_helper_setup_commit);
  * @state to both be committed to the hardware (as signalled by
  * drm_atomic_helper_commit_hw_done()) and executed by the hardware (as signalled
  * by calling drm_crtc_send_vblank_event() on the &drm_crtc_state.event).
+ * An attached preparation also waits for its submitted source readers before
+ * hardware programming or notification of old framebuffer retirement.
  *
  * This is part of the atomic helper support for nonblocking commits, see
  * drm_atomic_helper_setup_commit() for an overview.
@@ -2646,6 +2651,8 @@ void drm_atomic_helper_wait_for_dependencies(struct drm_atomic_commit *state)
 	struct drm_connector_state *old_conn_state;
 	int i;
 	long ret;
+
+	drm_atomic_commit_wait_for_readers(state);
 
 	for_each_old_crtc_in_state(state, crtc, old_crtc_state, i) {
 		ret = drm_crtc_commit_wait(old_crtc_state->commit);
@@ -3341,6 +3348,12 @@ static void install_state(struct drm_atomic_commit *state)
 	}
 }
 
+static int install_prepared_state(void *data)
+{
+	install_state(data);
+	return 0;
+}
+
 /**
  * drm_atomic_helper_swap_state - store atomic state into current sw state
  * @state: atomic state
@@ -3371,9 +3384,15 @@ static void install_state(struct drm_atomic_commit *state)
  * the current atomic helpers this is almost always the case, since the helpers
  * don't pass the right state structures to the callbacks.
  *
+ * Attached preparation is consumed at installation under its cancellation lock.
+ * The caller must stabilize the complete source scope and authority according to
+ * drm_atomic_commit_prepare(). The transaction retains the accepted guard.
+ *
  * Returns:
  * Returns 0 on success. Can return -ERESTARTSYS when @stall is true and the
  * waiting for the previous commits has been interrupted.
+ * Attached preparation may also return -ECANCELED, -EALREADY or -EOPNOTSUPP
+ * without installing any object state.
  */
 int drm_atomic_helper_swap_state(struct drm_atomic_commit *state, bool stall)
 {
@@ -3384,16 +3403,9 @@ int drm_atomic_helper_swap_state(struct drm_atomic_commit *state, bool stall)
 		if (ret)
 			return ret;
 	}
-	install_state(state);
-	return 0;
+	return drm_atomic_commit_preparation_install(state, install_prepared_state);
 }
 EXPORT_SYMBOL(drm_atomic_helper_swap_state);
-
-static int install_prepared_state(void *data)
-{
-	install_state(data);
-	return 0;
-}
 
 /**
  * drm_atomic_helper_swap_state_prepared - install state with reserved preparation
@@ -3422,6 +3434,7 @@ static int install_prepared_state(void *data)
  * Returns:
  * Zero on installation, -ERESTARTSYS on interrupted predecessor waits,
  * -ECANCELED on ticket cancellation, or -EALREADY on consumed preparation.
+ * Returns -EBUSY if @state owns a separate preparation reservation.
  * Async plane updates are unsupported and return -EOPNOTSUPP.
  */
 int drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool stall,
@@ -3430,6 +3443,8 @@ int drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool 
 {
 	int ret;
 
+	if (state->preparation)
+		return -EBUSY;
 	if (state->async_update)
 		return -EOPNOTSUPP;
 	if (stall) {
