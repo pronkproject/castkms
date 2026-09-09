@@ -76,17 +76,115 @@ static int check_pixels(struct gpu_device *device, struct readback *readback)
 	return result;
 }
 
-static int handoff(struct gpu_context *context)
+static int produce(struct gpu_device *producer, const struct gpu_image *source,
+		   VkSemaphore produced, int *sync_fd)
 {
-	struct gpu_device producer = { 0 }, consumer = { 0 };
-	struct gpu_image source = { 0 }, imported = { 0 };
-	struct gpu_image_description description;
-	struct readback readback = { 0 };
-	VkSemaphore produced = VK_NULL_HANDLE, acquired = VK_NULL_HANDLE;
 	VkCommandBuffer commands;
 	VkClearColorValue red = { .float32 = { 1.0f, 0.0f, 0.0f, 1.0f } };
+	VkSubmitInfo submit = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &commands,
+		.signalSemaphoreCount = 1,
+		.pSignalSemaphores = &produced,
+	};
+
+	if (gpu_commands_begin(producer, &commands))
+		return -1;
+	whole_image_barrier(commands, (VkImageMemoryBarrier) {
+		.image = source->handle,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	});
+	vkCmdClearColorImage(commands, source->handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			     &red, 1, &color_range);
+	whole_image_barrier(commands, (VkImageMemoryBarrier) {
+		.image = source->handle,
+		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = 0,
+		.srcQueueFamilyIndex = producer->context->queue_family,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
+	});
+	if (vkEndCommandBuffer(commands) != VK_SUCCESS ||
+	    atomic_load(&producer->context->validation_errors) ||
+	    vkQueueSubmit(producer->queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS)
+		return -1;
+	return gpu_semaphore_export(producer, produced, sync_fd);
+}
+
+static int begin_blit(struct gpu_device *device, const struct gpu_image *input,
+		      const struct gpu_image *output, VkCommandBuffer *commands)
+{
+	VkImageBlit region = {
+		.srcSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
+		.srcOffsets = { { 0, 0, 0 }, { WIDTH, HEIGHT, 1 } },
+		.dstSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
+		.dstOffsets = { { 0, 0, 0 }, { WIDTH, HEIGHT, 1 } },
+	};
+
+	if (gpu_commands_begin(device, commands))
+		return -1;
+	whole_image_barrier(*commands, (VkImageMemoryBarrier) {
+		.image = input->handle,
+		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
+		.dstQueueFamilyIndex = device->context->queue_family,
+	});
+	whole_image_barrier(*commands, (VkImageMemoryBarrier) {
+		.image = input->handle,
+		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+		.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	});
+	whole_image_barrier(*commands, (VkImageMemoryBarrier) {
+		.image = output->handle,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcAccessMask = 0,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+	});
+	vkCmdBlitImage(*commands, input->handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		       output->handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
+	return 0;
+}
+
+static int submit_blit(struct gpu_device *device, VkCommandBuffer commands,
+		       VkSemaphore acquired, VkSemaphore completed)
+{
 	VkPipelineStageFlags stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-	VkSubmitInfo submit = { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	VkSubmitInfo submit = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &commands,
+		.waitSemaphoreCount = 1,
+		.pWaitSemaphores = &acquired,
+		.pWaitDstStageMask = &stage,
+		.signalSemaphoreCount = completed ? 1 : 0,
+		.pSignalSemaphores = completed ? &completed : NULL,
+	};
+
+	if (vkEndCommandBuffer(commands) != VK_SUCCESS || atomic_load(&device->context->validation_errors))
+		return -1;
+	return vkQueueSubmit(device->queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS ? 0 : -1;
+}
+
+static void copy_to_readback(VkCommandBuffer commands, const struct gpu_image *image,
+			     const struct readback *readback)
+{
 	VkBufferImageCopy copy = {
 		.imageSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
 		.imageExtent = { WIDTH, HEIGHT, 1 },
@@ -96,31 +194,71 @@ static int handoff(struct gpu_context *context)
 		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
 		.dstAccessMask = VK_ACCESS_HOST_READ_BIT,
 	};
-	int memory_fd = -1, sync_fd = -1, result = 1;
 
-	if (gpu_device_open(&producer, context) || gpu_device_open(&consumer, context))
-		goto out;
-	if (gpu_image_create(&producer, &source, WIDTH, HEIGHT, 0) ||
-	    gpu_image_export(&producer, &source, &description, &memory_fd) ||
-	    gpu_image_import(&consumer, &imported, &description, &memory_fd) ||
-	    gpu_semaphore_create(&producer, &produced) ||
-	    gpu_semaphore_create(&consumer, &acquired) || readback_create(&consumer, &readback))
-		goto out;
-	if (gpu_commands_begin(&producer, &commands))
-		goto out;
 	whole_image_barrier(commands, (VkImageMemoryBarrier) {
-		.image = source.handle,
-		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-		.srcAccessMask = 0,
-		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.image = image->handle,
+		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
 		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 	});
-	vkCmdClearColorImage(commands, source.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			     &red, 1, &color_range);
+	vkCmdCopyImageToBuffer(commands, image->handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			       readback->buffer, 1, &copy);
+	vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+			     0, 1, &host, 0, NULL, 0, NULL);
+}
+
+static int share_image(struct gpu_device *owner, const struct gpu_image *image,
+		       struct gpu_device *reader, struct gpu_image *imported)
+{
+	struct gpu_image_description description;
+	int fd = -1, result;
+
+	result = gpu_image_export(owner, image, &description, &fd);
+	if (!result)
+		result = gpu_image_import(reader, imported, &description, &fd);
+	if (fd >= 0)
+		close(fd);
+	return result;
+}
+
+static int handoff(struct gpu_context *context)
+{
+	struct gpu_device producer = { 0 }, source_worker = { 0 }, output_worker = { 0 };
+	struct gpu_image source = { 0 }, source_import = { 0 };
+	struct gpu_image staging = { 0 }, staging_import = { 0 }, output = { 0 };
+	struct gpu_image_description output_description;
+	struct readback readback = { 0 };
+	VkSemaphore produced = VK_NULL_HANDLE, source_acquired = VK_NULL_HANDLE;
+	VkSemaphore source_completed = VK_NULL_HANDLE, output_acquired = VK_NULL_HANDLE;
+	VkCommandBuffer commands;
+	int sync_fd = -1, output_fd = -1, result = 1;
+
+	if (gpu_device_open(&producer, context) || gpu_device_open(&source_worker, context) ||
+	    gpu_device_open(&output_worker, context))
+		goto out;
+	if (gpu_image_create(&producer, &source, WIDTH, HEIGHT, 0) ||
+	    share_image(&producer, &source, &source_worker, &source_import) ||
+	    gpu_image_create(&source_worker, &staging, WIDTH, HEIGHT, 0) ||
+	    share_image(&source_worker, &staging, &output_worker, &staging_import) ||
+	    gpu_image_create(&output_worker, &output, WIDTH, HEIGHT, 0) ||
+	    gpu_image_export(&output_worker, &output, &output_description, &output_fd) ||
+	    gpu_semaphore_create(&producer, &produced) ||
+	    gpu_semaphore_create(&source_worker, &source_acquired) ||
+	    gpu_semaphore_create(&source_worker, &source_completed) ||
+	    gpu_semaphore_create(&output_worker, &output_acquired) ||
+	    readback_create(&output_worker, &readback))
+		goto out;
+	if (produce(&producer, &source, produced, &sync_fd) ||
+	    gpu_semaphore_import(&source_worker, source_acquired, sync_fd))
+		goto out;
+	sync_fd = -1;
+	if (begin_blit(&source_worker, &source_import, &staging, &commands))
+		goto out;
 	whole_image_barrier(commands, (VkImageMemoryBarrier) {
-		.image = source.handle,
+		.image = staging.handle,
 		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -128,74 +266,57 @@ static int handoff(struct gpu_context *context)
 		.srcQueueFamilyIndex = context->queue_family,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
 	});
-	if (vkEndCommandBuffer(commands) != VK_SUCCESS || atomic_load(&context->validation_errors))
+	if (submit_blit(&source_worker, commands, source_acquired, source_completed) ||
+	    gpu_semaphore_export(&source_worker, source_completed, &sync_fd))
 		goto out;
-	submit.commandBufferCount = 1;
-	submit.pCommandBuffers = &commands;
-	submit.signalSemaphoreCount = 1;
-	submit.pSignalSemaphores = &produced;
-	if (vkQueueSubmit(producer.queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
-	    gpu_semaphore_export(&producer, produced, &sync_fd))
+	printf("submitted A-to-E: sync_fd=%s\n", sync_fd == -1 ? "already complete" : "exported");
+	if (vkDeviceWaitIdle(source_worker.handle) != VK_SUCCESS ||
+	    vkDeviceWaitIdle(producer.handle) != VK_SUCCESS)
 		goto out;
-	printf("submitted producer: sync_fd=%s\n", sync_fd == -1 ? "already complete" : "exported");
-	if (gpu_semaphore_import(&consumer, acquired, sync_fd))
+	gpu_image_destroy(&source_worker, &source_import);
+	gpu_image_destroy(&producer, &source);
+	puts("source A destroyed before E-to-D submission");
+	if (gpu_semaphore_import(&output_worker, output_acquired, sync_fd))
 		goto out;
 	sync_fd = -1;
-	if (gpu_commands_begin(&consumer, &commands))
+	if (begin_blit(&output_worker, &staging_import, &output, &commands))
 		goto out;
-	whole_image_barrier(commands, (VkImageMemoryBarrier) {
-		.image = imported.handle,
-		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.srcAccessMask = 0,
-		.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
-		.dstQueueFamilyIndex = context->queue_family,
-	});
-	whole_image_barrier(commands, (VkImageMemoryBarrier) {
-		.image = imported.handle,
-		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-		.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-	});
-	vkCmdCopyImageToBuffer(commands, imported.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			       readback.buffer, 1, &copy);
-	vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-			     0, 1, &host, 0, NULL, 0, NULL);
-	if (vkEndCommandBuffer(commands) != VK_SUCCESS || atomic_load(&context->validation_errors))
-		goto out;
-	submit.waitSemaphoreCount = 1;
-	submit.pWaitSemaphores = &acquired;
-	submit.pWaitDstStageMask = &stage;
-	submit.signalSemaphoreCount = 0;
-	submit.pSignalSemaphores = NULL;
-	if (vkQueueSubmit(consumer.queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
-	    vkQueueWaitIdle(consumer.queue) != VK_SUCCESS || check_pixels(&consumer, &readback))
+	copy_to_readback(commands, &output, &readback);
+	if (submit_blit(&output_worker, commands, output_acquired, VK_NULL_HANDLE) ||
+	    vkQueueWaitIdle(output_worker.queue) != VK_SUCCESS || check_pixels(&output_worker, &readback))
 		goto out;
 	result = 0;
 out:
 	/* A failed test still owns resources referenced by any accepted GPU submissions. */
-	if (consumer.handle && vkDeviceWaitIdle(consumer.handle) != VK_SUCCESS)
+	if (output_worker.handle && vkDeviceWaitIdle(output_worker.handle) != VK_SUCCESS)
+		result = 1;
+	if (source_worker.handle && vkDeviceWaitIdle(source_worker.handle) != VK_SUCCESS)
 		result = 1;
 	if (producer.handle && vkDeviceWaitIdle(producer.handle) != VK_SUCCESS)
 		result = 1;
-	if (memory_fd >= 0)
-		close(memory_fd);
+	if (output_fd >= 0)
+		close(output_fd);
 	if (sync_fd >= 0)
 		close(sync_fd);
-	if (consumer.handle) {
-		vkDestroyBuffer(consumer.handle, readback.buffer, NULL);
-		vkFreeMemory(consumer.handle, readback.memory, NULL);
-		vkDestroySemaphore(consumer.handle, acquired, NULL);
+	if (output_worker.handle) {
+		vkDestroyBuffer(output_worker.handle, readback.buffer, NULL);
+		vkFreeMemory(output_worker.handle, readback.memory, NULL);
+		vkDestroySemaphore(output_worker.handle, output_acquired, NULL);
+	}
+	if (source_worker.handle) {
+		vkDestroySemaphore(source_worker.handle, source_acquired, NULL);
+		vkDestroySemaphore(source_worker.handle, source_completed, NULL);
 	}
 	if (producer.handle)
 		vkDestroySemaphore(producer.handle, produced, NULL);
-	gpu_image_destroy(&consumer, &imported);
+	gpu_image_destroy(&output_worker, &output);
+	gpu_image_destroy(&output_worker, &staging_import);
+	gpu_image_destroy(&source_worker, &staging);
+	gpu_image_destroy(&source_worker, &source_import);
 	gpu_image_destroy(&producer, &source);
-	if (gpu_device_close(&consumer))
+	if (gpu_device_close(&output_worker))
+		result = 1;
+	if (gpu_device_close(&source_worker))
 		result = 1;
 	if (gpu_device_close(&producer))
 		result = 1;
@@ -219,6 +340,6 @@ int main(int argc, char **argv)
 	if (atomic_load(&context.validation_errors))
 		result = 1;
 	if (!result)
-		puts("PASS: generated GPU image imported on a separate Vulkan device; all pixels match");
+		puts("PASS: staged A-to-E-to-D GPU blits preserve every pixel after source destruction");
 	return result;
 }
