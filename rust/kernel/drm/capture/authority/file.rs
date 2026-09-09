@@ -37,3 +37,6 @@ impl<P: Policy> Authority<P> {
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(file.cast())) })
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
