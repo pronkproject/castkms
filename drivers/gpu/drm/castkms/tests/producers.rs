@@ -11,6 +11,105 @@ mod cases {
     use super::*;
 
     #[test]
+    fn implicit_failure_during_wait_survives_cleanup() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        let producer = kernel::dma_fence::testing::fail_when_waited()?;
+        fixture
+            .drm
+            .add_framebuffer_fence(&fb, 0, &producer, kernel::dma_resv::Usage::Write)?;
+        fixture.select(&fb, false, 0)?;
+        check(producer.status() == Status::Complete(Err(EIO)))?;
+        check(fixture.drm.device().output.inspect(|scene| {
+            scene.and_then(|scene| scene.producer_status()) == Some(Status::Complete(Err(EIO)))
+        }))?;
+        fixture.select(&fb, false, 0)?;
+        check(
+            fixture
+                .drm
+                .device()
+                .output
+                .inspect(|scene| scene.is_some_and(|scene| scene.producer_status().is_none())),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_sync_excludes_implicit_writers_but_keeps_kernel_work() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        let writer = ManualFence::new()?;
+        let kernel = kernel::dma_fence::testing::fail_when_waited()?;
+        fixture.drm.add_framebuffer_fence(
+            &fb,
+            0,
+            &writer.fence(),
+            kernel::dma_resv::Usage::Write,
+        )?;
+        fixture
+            .drm
+            .add_framebuffer_fence(&fb, 0, &kernel, kernel::dma_resv::Usage::Kernel)?;
+        let mut explicit = ManualFence::new()?;
+        explicit.complete(Ok(()))?;
+        fixture.select_with_producer(&fb, false, 0, Some(&explicit.fence()))?;
+        check(writer.fence().status() == Status::Pending)?;
+        check(kernel.status() == Status::Complete(Err(EIO)))?;
+        check(
+            fixture
+                .drm
+                .device()
+                .output
+                .inspect(|scene| scene.is_some_and(|scene| scene.producer_failed())),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn implicit_sync_does_not_wait_for_readers_or_bookkeeping() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        let reader = ManualFence::new()?;
+        let bookkeeping = ManualFence::new()?;
+        fixture.drm.add_framebuffer_fence(
+            &fb,
+            0,
+            &reader.fence(),
+            kernel::dma_resv::Usage::Read,
+        )?;
+        fixture.drm.add_framebuffer_fence(
+            &fb,
+            0,
+            &bookkeeping.fence(),
+            kernel::dma_resv::Usage::Bookkeep,
+        )?;
+        fixture.select(&fb, false, 0)?;
+        check(reader.fence().status() == Status::Pending)?;
+        check(bookkeeping.fence().status() == Status::Pending)?;
+        check(
+            fixture
+                .drm
+                .device()
+                .output
+                .inspect(|scene| scene.is_some_and(|scene| scene.producer_status().is_none())),
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_only_does_not_acquire_or_wait_for_implicit_work() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        let producer = kernel::dma_fence::testing::fail_when_waited()?;
+        fixture
+            .drm
+            .add_framebuffer_fence(&fb, 0, &producer, kernel::dma_resv::Usage::Write)?;
+        fixture.select(&fb, true, 0)?;
+        check(producer.status() == Status::Pending)?;
+        check(fixture.drm.device().output.inspect(|scene| scene.is_none()))?;
+        Ok(())
+    }
+
+    #[test]
     fn local_framebuffer_reservation_needs_no_pixel_mapping() -> Result {
         use kernel::drm::gem::BaseObject;
 
