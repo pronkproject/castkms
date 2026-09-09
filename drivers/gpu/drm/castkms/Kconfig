@@ -22,4 +22,6 @@ config DRM_CASTKMS_KUNIT_TEST
 	default KUNIT_ALL_TESTS
 	help
 	  Test scene replacement, blanking and terminal output shutdown without
-	  accessing display pixels. These tests run when CastKMS is loaded.
+	  accessing display pixels. Atomic callback tests use private unregistered
+	  devices with synthetic master observations to inspect scene ownership.
+	  These tests run when CastKMS is loaded.
