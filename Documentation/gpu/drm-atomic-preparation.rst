@@ -101,7 +101,14 @@ claims, cancel GPU access or undo a permanent seal. Each hold retains its source
 and each source retains its domain, independently of the provider's original
 references. Source storage and pixel authorization still belong to the provider.
 
+Rust callers use ``Domain`` and ``Source::new_in()`` to construct related sources.
+``RetirementSet::new()`` borrows a slice of retained sources and returns its own
+reference-counted set. The input array and the original domain owner may then
+be dropped without releasing the set's holds. No raw pointer or manual native
+reference transfer is part of the Rust interface. These wrappers live in the
+domain and set submodules of ``drm::preparation``.
+
 The set is an internal ownership container, not a validated display transaction.
 Its caller must determine which generations the update actually retires and
-keep that selection stable. Set-wide readiness, prepared Rust ownership and
+keep that selection stable. Set-wide readiness, prepared-set ownership and
 transfer into an accepted commit are not provided by the container yet.
