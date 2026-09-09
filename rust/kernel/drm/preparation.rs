@@ -17,6 +17,7 @@ use core::{mem::ManuallyDrop, ptr::NonNull};
 mod domain;
 mod guard;
 mod set;
+mod ticket;
 
 pub use self::{
     domain::Domain,
@@ -24,7 +25,8 @@ pub use self::{
     set::{
         PreparedRetirement,
         RetirementSet, //
-    }, //
+    },
+    ticket::Ticket, //
 };
 
 /// Bounded admission for one source generation.

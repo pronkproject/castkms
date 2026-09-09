@@ -50,6 +50,10 @@ unsafe impl AlwaysRefCounted for RetirementSet {
 }
 
 impl RetirementSet {
+    pub(super) fn as_raw(&self) -> *mut bindings::drm_prepare_retirement_set {
+        self.0.get()
+    }
+
     /// Hold admission for all sources atomically, or leave no holds on failure.
     ///
     /// Empty sets are valid. Mixed domains report EXDEV. Admission ownership neither resolves
