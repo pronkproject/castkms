@@ -163,3 +163,25 @@ The guard deliberately does not provide an ``accept()`` operation. Acceptance
 must serialize display-state installation with scope validation and ticket
 consumption. The guard supplies the ownership that can cross that boundary;
 moving it alone does not establish that the boundary has been crossed.
+
+Where the helper installs display state
+--------------------------------------
+
+``drm_atomic_helper_swap_state()`` has two phases. When requested, it first
+waits for preceding CRTC, connector and plane commits to finish programming
+hardware. The private ``wait_for_previous_hw_done()`` helper performs those
+interruptible waits in their existing order. A failed wait leaves every object
+state pointer unchanged. Only after success does the swap routine start
+installing the new pointers, under the caller's modeset locks.
+
+A future preparation acceptance hook belongs after those waits and before
+the first installation. It must serialize ticket cancellation and scope
+validation with the complete installation, rather than consuming a ticket
+before calling the swap helper. The current code only separates the wait
+phase; it does not add that hook or attach retirement guards to transactions.
+
+Native tests call the real swap helper with isolated state records. They
+interrupt each predecessor class, check that all pointers remain unchanged,
+then retry successfully. Completed and absent predecessors and the no-stall
+path are covered too. These tests do not run driver callbacks, validate a
+display configuration or establish locking for a future ticket interface.
