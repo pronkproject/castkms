@@ -14,6 +14,7 @@ mod inspection;
 mod masters;
 mod plane_assignments;
 mod plane_inputs;
+mod preparation;
 mod properties;
 
 use super::*;
@@ -37,6 +38,8 @@ struct Counts {
     objects: AtomicU32,
     setup_failures: AtomicU32,
     plane_updates: AtomicU32,
+    framebuffer_preparations: AtomicU32,
+    fail_framebuffer_preparation: AtomicU32,
     enables: AtomicU32,
     disables: AtomicU32,
     crtc_states: AtomicU32,
@@ -337,6 +340,32 @@ impl plane::DriverPlane for TestPlane {
             .0
             .plane_updates
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn prepare_framebuffer(
+        mut state: plane::PlaneStateMutator<'_, plane::PlaneState<PlanePayload>>,
+    ) -> Result {
+        use plane::RawPlaneState;
+        state
+            .counts
+            .framebuffer_preparations
+            .fetch_add(1, Ordering::Relaxed);
+        if state
+            .counts
+            .fail_framebuffer_preparation
+            .load(Ordering::Relaxed)
+            != 0
+        {
+            return Err(ENOMEM);
+        }
+        if let Some(framebuffer) = state.framebuffer() {
+            let records = framebuffer::dependencies::Dependencies::acquire(
+                framebuffer,
+                state.producer_fence(),
+            )?;
+            state.set_producer_fence(records.completion()?);
+        }
+        Ok(())
     }
 }
 
@@ -1072,7 +1101,10 @@ mod cases {
         assert_eq!(reservation, source_reservation);
         // Reading an imported table must not transfer its destruction to local shmem cleanup.
         let table = imported.sg_table(parent.as_ref().as_ref())? as *const _;
-        assert_eq!(imported.sg_table(parent.as_ref().as_ref())? as *const _, table);
+        assert_eq!(
+            imported.sg_table(parent.as_ref().as_ref())? as *const _,
+            table
+        );
         let fb = framebuffer_with_object(registration.device(), imported.clone(), 64, 64)?;
         assert_eq!(fb.object::<TestObject>()?.as_raw(), imported.as_raw());
         assert!(fb.vmap::<TestObject>().is_err());
