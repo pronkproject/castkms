@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -232,7 +234,7 @@ static int share_image(struct gpu_device *owner, const struct gpu_image *image,
 	return result;
 }
 
-static int handoff(struct gpu_context *context, unsigned int frame)
+static int handoff(struct gpu_context *context, unsigned int frame, uint64_t modifier)
 {
 	struct gpu_device producer = { 0 }, source_worker = { 0 }, output_worker = { 0 };
 	struct gpu_image source = { 0 }, source_import = { 0 };
@@ -247,11 +249,11 @@ static int handoff(struct gpu_context *context, unsigned int frame)
 	if (gpu_device_open(&producer, context) || gpu_device_open(&source_worker, context) ||
 	    gpu_device_open(&output_worker, context))
 		goto out;
-	if (gpu_image_create(&producer, &source, WIDTH, HEIGHT, 0) ||
+	if (gpu_image_create(&producer, &source, WIDTH, HEIGHT, modifier) ||
 	    share_image(&producer, &source, &source_worker, &source_import) ||
-	    gpu_image_create(&source_worker, &staging, WIDTH, HEIGHT, 0) ||
+	    gpu_image_create(&source_worker, &staging, WIDTH, HEIGHT, modifier) ||
 	    share_image(&source_worker, &staging, &output_worker, &staging_import) ||
-	    gpu_image_create(&output_worker, &output, WIDTH, HEIGHT, 0) ||
+	    gpu_image_create(&output_worker, &output, WIDTH, HEIGHT, modifier) ||
 	    gpu_image_export(&output_worker, &output, &output_description, &output_fd) ||
 	    gpu_semaphore_create(&producer, &produced) ||
 	    gpu_semaphore_create(&source_worker, &source_acquired) ||
@@ -336,18 +338,38 @@ int main(int argc, char **argv)
 {
 	struct gpu_context context;
 	unsigned int frame;
-	int result;
+	uint64_t modifier = 0;
+	int result, i, validation = 0, modifier_set = 0;
 
-	if ((argc != 2 && argc != 3) || (argc == 3 && strcmp(argv[2], "--validation"))) {
-		fprintf(stderr, "Usage: %s RENDER_NODE [--validation]\n", argv[0]);
-		return 1;
+	if (argc < 2)
+		goto usage;
+	for (i = 2; i < argc; i++) {
+		if (!strcmp(argv[i], "--validation") && !validation) {
+			validation = 1;
+		} else if (!strcmp(argv[i], "--modifier") && !modifier_set && i + 1 < argc) {
+			unsigned long long value;
+			char *end;
+
+			i++;
+			if (argv[i][0] < '0' || argv[i][0] > '9')
+				goto usage;
+			errno = 0;
+			value = strtoull(argv[i], &end, 0);
+			if (errno || end == argv[i] || *end || value > UINT64_MAX)
+				goto usage;
+			modifier = value;
+			modifier_set = 1;
+		} else {
+			goto usage;
+		}
 	}
-	result = gpu_context_open(&context, argv[1], argc == 3);
+	result = gpu_context_open(&context, argv[1], validation);
 	if (result)
 		return result == -ENODEV ? 4 : 1;
+	printf("requested_modifier=0x%016" PRIx64 "\n", modifier);
 	for (frame = 0; frame < 8; frame++) {
 		printf("frame=%u\n", frame);
-		result = handoff(&context, frame);
+		result = handoff(&context, frame, modifier);
 		if (result || atomic_load(&context.validation_errors))
 			break;
 	}
@@ -357,4 +379,7 @@ int main(int argc, char **argv)
 	if (!result)
 		puts("PASS: eight changing A-to-E-to-D images match after source destruction");
 	return result;
+usage:
+	fprintf(stderr, "Usage: %s RENDER_NODE [--validation] [--modifier INTEGER]\n", argv[0]);
+	return 1;
 }
