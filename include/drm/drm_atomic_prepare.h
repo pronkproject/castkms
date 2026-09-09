@@ -39,6 +39,9 @@ void drm_prepare_retirement_set_put(struct drm_prepare_retirement_set *set);
  * Terminal member failure takes precedence over other pending claims.
  */
 int drm_prepare_retirement_set_ready(struct drm_prepare_retirement_set *set);
+/* On success, *fence owns native completion or is NULL; errors leave it untouched. */
+int drm_prepare_retirement_set_completion(struct drm_prepare_retirement_set *set,
+					struct dma_fence **fence);
 
 /*
  * Kernel-only source-generation accounting, not an atomic ticket or pixel grant.
