@@ -19,7 +19,10 @@ mod set;
 
 pub use self::{
     domain::Domain,
-    set::RetirementSet, //
+    set::{
+        PreparedRetirement,
+        RetirementSet, //
+    }, //
 };
 
 /// Bounded admission for one source generation.
