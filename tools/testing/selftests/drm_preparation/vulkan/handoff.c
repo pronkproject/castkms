@@ -435,7 +435,7 @@ int main(int argc, char **argv)
 	struct gpu_context context;
 	VkExtent2D extent = { 256, 256 };
 	uint64_t modifier = 0;
-	int result, i, validation = 0, modifier_set = 0, foreign_output = 0;
+	int result, i, validation = 0, modifier_set = 0, foreign_output = 0, size_set = 0;
 
 	if (argc < 2)
 		goto usage;
@@ -444,6 +444,18 @@ int main(int argc, char **argv)
 			validation = 1;
 		} else if (!strcmp(argv[i], "--foreign-output") && !foreign_output) {
 			foreign_output = 1;
+		} else if (!strcmp(argv[i], "--size") && !size_set && i + 1 < argc) {
+			i++;
+			/* Fixed profiles bound allocations, arithmetic and native signed blit offsets. */
+			if (!strcmp(argv[i], "256x256"))
+				extent = (VkExtent2D) { 256, 256 };
+			else if (!strcmp(argv[i], "1920x1080"))
+				extent = (VkExtent2D) { 1920, 1080 };
+			else if (!strcmp(argv[i], "3840x2160"))
+				extent = (VkExtent2D) { 3840, 2160 };
+			else
+				goto usage;
+			size_set = 1;
 		} else if (!strcmp(argv[i], "--modifier") && !modifier_set && i + 1 < argc) {
 			unsigned long long value;
 			char *end;
@@ -465,6 +477,7 @@ int main(int argc, char **argv)
 	if (result)
 		return result == -ENODEV ? 4 : 1;
 	printf("requested_modifier=0x%016" PRIx64 "\n", modifier);
+	printf("image_size=%ux%u\n", extent.width, extent.height);
 	printf("output_ownership=%s\n", foreign_output ? "foreign driver" : "same Vulkan driver");
 	result = handoff(&context, modifier, foreign_output, extent);
 	gpu_context_close(&context);
@@ -474,6 +487,7 @@ int main(int argc, char **argv)
 		puts("PASS: eight changing A-to-E-to-D images match after source destruction");
 	return result;
 usage:
-	fprintf(stderr, "Usage: %s RENDER_NODE [--validation] [--modifier INTEGER] [--foreign-output]\n", argv[0]);
+	fprintf(stderr, "Usage: %s RENDER_NODE [--validation] [--modifier INTEGER] [--foreign-output]\n"
+		"       [--size 256x256|1920x1080|3840x2160]\n", argv[0]);
 	return 1;
 }
