@@ -15,6 +15,7 @@ use crate::{
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod domain;
+mod file;
 mod guard;
 mod set;
 mod ticket;
