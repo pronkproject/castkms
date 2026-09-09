@@ -2,6 +2,7 @@
 
 //! CastKMS virtual display device.
 
+mod authority;
 mod display;
 mod gem;
 mod output;
