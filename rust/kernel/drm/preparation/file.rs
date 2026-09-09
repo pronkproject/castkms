@@ -46,3 +46,6 @@ impl Ticket {
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(ticket.cast())) })
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
