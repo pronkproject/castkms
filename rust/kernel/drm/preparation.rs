@@ -14,6 +14,12 @@ use crate::{
 };
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
+mod domain;
+
+pub use self::{
+    domain::Domain, //
+};
+
 /// Bounded admission for one source generation.
 ///
 /// [`Self::seal`] closes admission permanently; [`Self::hold_admission`] owns an admission hold.
