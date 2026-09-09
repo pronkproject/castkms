@@ -65,3 +65,6 @@ impl RetirementSet {
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(set.cast())) })
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
