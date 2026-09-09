@@ -3,6 +3,7 @@
 //! Provider policy and revocation ownership, independent of capture file transport.
 
 use super::{
+    Job,
     Stream, //
 };
 use crate::{
@@ -47,6 +48,16 @@ pub unsafe trait Policy: Send + Sync + 'static {
     /// Called exactly once, after registered streams have been revoked. Submitted work may
     /// remain active with its own ownership; returning does not certify native completion.
     fn revoke(&self);
+
+    /// Approve current source access for a registered stream, under the admission mutex.
+    ///
+    /// The caller of [`Authority::claim`] must stabilize source/policy state across both this
+    /// callback and the claim, and retain approved storage until access actually ends. Approval
+    /// must have no submission side effects: the queue may be empty. Omitting the callback
+    /// disables claims through the authority.
+    fn authorize_capture(&self, _stream: &Stream) -> Result {
+        Err(EOPNOTSUPP)
+    }
 }
 
 /// Shared authority lifetime retaining its provider and callback module.
@@ -87,7 +98,11 @@ impl<P: Policy> Authority<P> {
         owner: crate::module::this_module::<P::OwnerModule>().as_ptr(),
         revoke: Some(Self::revoke_callback),
         release: Some(Self::release_callback),
-        authorize_capture: None,
+        authorize_capture: if P::HAS_AUTHORIZE_CAPTURE {
+            Some(Self::authorize_callback)
+        } else {
+            None
+        },
     };
 
     unsafe extern "C" fn revoke_callback(data: *mut c_void) {
@@ -99,6 +114,20 @@ impl<P: Policy> Authority<P> {
     unsafe extern "C" fn release_callback(data: *mut c_void) {
         // SAFETY: Final native release transfers its foreign Arc exactly once, after revocation.
         drop(unsafe { Arc::<P>::from_foreign(data) });
+    }
+
+    unsafe extern "C" fn authorize_callback(
+        data: *mut c_void,
+        stream: *mut bindings::drm_capture,
+    ) -> i32 {
+        // SAFETY: Native claim retains the authority and registered stream throughout the callback.
+        let policy = unsafe { Arc::<P>::borrow(data) };
+        // SAFETY: Stream transparently represents the initialized, borrowed native stream.
+        let stream = unsafe { &*stream.cast::<Stream>() };
+        match policy.authorize_capture(stream) {
+            Ok(()) => 0,
+            Err(error) => error.to_errno(),
+        }
     }
 
     /// Retain a provider's already-established scope and policy without granting source access.
@@ -160,6 +189,22 @@ impl<P: Policy> Authority<P> {
     pub fn remove_stream(&self, stream: &Stream) -> bool {
         // SAFETY: Both shared references remain live throughout synchronized removal.
         unsafe { bindings::drm_capture_authority_remove_stream(self.raw.get(), stream.0.get()) }
+    }
+
+    /// Claim through live authority, membership and provider policy checks.
+    ///
+    /// Hold any source/policy locks needed across authorization and claim, in the provider's
+    /// defined order. Do not hold an admission guard. Denial leaves queued requests unchanged.
+    /// The returned job owns its private CPU result storage, not asynchronous source access.
+    pub fn claim(&self, stream: &Stream) -> Result<Job> {
+        // SAFETY: Native claim borrows live authority and stream references and takes its lock.
+        let raw = from_err_ptr(unsafe {
+            bindings::drm_capture_authority_claim_stream(self.raw.get(), stream.0.get())
+        })?;
+        Ok(Job {
+            // SAFETY: Successful claim transfers an initialized job with unique storage ownership.
+            ptr: unsafe { NonNull::new_unchecked(raw) },
+        })
     }
 }
 
