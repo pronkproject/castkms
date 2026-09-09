@@ -110,5 +110,29 @@ domain and set submodules of ``drm::preparation``.
 
 The set is an internal ownership container, not a validated display transaction.
 Its caller must determine which generations the update actually retires and
-keep that selection stable. Set-wide readiness, prepared-set ownership and
-transfer into an accepted commit are not provided by the container yet.
+keep that selection stable. Transfer into an accepted commit is not provided
+by the container yet.
+
+Preparing the complete set
+-------------------------
+
+Set readiness means every admitted claim has either finished reading on the
+CPU or supplied completion for an already submitted native read. An abandoned
+claim reports a terminal error, even if another member still has a pending
+claim. Readiness does not wait for submitted GPU work to finish. Once a member
+is ready, the set's retained hold prevents new claims from changing that result.
+
+``drm_prepare_retirement_set_completion()`` collects and merges the members'
+native fences only after readiness. Failure leaves the caller's output
+unchanged. Empty sets and synchronous reads need no fence. A returned fence
+owns its dependencies independently of the sources and the set, but does not
+own admission holds. Keeping only the fence would therefore allow new readers
+after the last set owner releases its holds.
+
+Rust exposes that distinction through ``RetirementSet::prepared()``. Pending
+claims produce no prepared owner; success returns ``PreparedRetirement``, which
+retains the complete set and provides access to native completion. Its private
+fields prevent construction without the readiness check. The owner must remain
+alive until a later operation takes responsibility for keeping admission closed.
+Neither successful preparation nor fence completion proves pixel validity,
+capture authority or acceptance of a display transaction.
