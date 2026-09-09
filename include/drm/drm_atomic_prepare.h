@@ -8,6 +8,16 @@ struct dma_fence;
 struct drm_prepare_source;
 struct drm_prepare_read_claim;
 struct drm_prepare_admission_hold;
+struct drm_prepare_domain;
+
+/* Related sources share a provider-owned admission domain, not a global lock.
+ * Domain operations may sleep. Each source independently retains its domain.
+ */
+struct drm_prepare_domain *drm_prepare_domain_create(void);
+struct drm_prepare_domain *drm_prepare_domain_get(struct drm_prepare_domain *domain);
+void drm_prepare_domain_put(struct drm_prepare_domain *domain);
+struct drm_prepare_source *
+drm_prepare_source_create_in(struct drm_prepare_domain *domain, unsigned int capacity);
 
 /*
  * Kernel-only source-generation accounting, not an atomic ticket or pixel grant.
@@ -18,6 +28,7 @@ struct drm_prepare_admission_hold;
  * Atomic ticket/cohort ownership is not implemented by this primitive.
  * Capacity counts unresolved claims plus submitted reads still pending.
  */
+/* Convenience constructor with a private domain for an independent source. */
 struct drm_prepare_source *drm_prepare_source_create(unsigned int capacity);
 struct drm_prepare_source *drm_prepare_source_get(struct drm_prepare_source *source);
 void drm_prepare_source_put(struct drm_prepare_source *source);
