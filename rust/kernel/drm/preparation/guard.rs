@@ -63,3 +63,6 @@ impl Drop for RetirementGuard {
         unsafe { bindings::drm_prepare_retirement_guard_destroy(self.raw.as_ptr()) };
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
