@@ -112,6 +112,30 @@ framebuffer pixels or establish capture authorization.
 Those checks establish ordinary DRM submission behavior, not presentation
 timing, GPU interoperability, capture authorization, or casting performance.
 
+The separate master-lifetime test exercises multiple real DRM files::
+
+    tools/testing/selftests/drm_castkms/master-lifetime /dev/dri/cardN
+
+It requires permission to transfer DRM master between files, normally supplied
+by root in the disposable VM, and a libdrm library providing ``drmModeCloseFB``.
+It checks non-master rejection, master handoff in both directions, and
+same-framebuffer updates after handoff. Test-only and invalid replacements
+must leave the accepted framebuffer selected.
+
+The test distinguishes two ways to release a framebuffer. ``CLOSEFB`` drops a
+file's reference without disabling the plane. Closing that file then releases
+its buffer handles, while the accepted display state keeps the allocation
+alive. Replacement must release that remaining framebuffer. ``RMFB`` instead
+removes an active framebuffer from display state. The test also closes the
+current master while an image remains displayed, acquires master through a
+successor file, and finally disables the output and checks framebuffer release.
+
+These cases exercise the real paths that supply attribution evidence. They
+observe ordinary DRM state, not the driver's private scene owner, so passing
+them does not establish that historical ownership was resolved correctly.
+In-kernel assertions are needed for that separate property. Neither test adds
+a private ioctl or exports pixels.
+
 Building without another display driver
 --------------------------------------
 
