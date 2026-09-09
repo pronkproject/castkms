@@ -10,6 +10,12 @@ use kernel::drm::auth::{
 mod selection;
 pub(super) use selection::Selection;
 
+/// Attribution of the image retained from the previous accepted plane state.
+pub(super) enum PreviousOwner<'a, I> {
+    SameFramebuffer(Option<&'a I>),
+    DifferentFramebuffer,
+}
+
 enum Origin<I> {
     Unknown,
     Creator(I),
@@ -34,6 +40,25 @@ impl Provenance {
 }
 
 impl<I: Eq> Provenance<I> {
+    /// Preserve accepted attribution for the same image, including unknown attribution.
+    /// For a replacement, resolve its creation evidence or an explicit selection.
+    /// `current` is the driver's top-level master observation, not the ioctl submitter.
+    pub(super) fn for_update<'a>(
+        provenance: Option<&'a Self>,
+        previous: PreviousOwner<'a, I>,
+        current: Option<&'a I>,
+        selection: Selection,
+    ) -> Option<&'a I> {
+        match previous {
+            PreviousOwner::SameFramebuffer(owner) => owner,
+            PreviousOwner::DifferentFramebuffer => match provenance {
+                Some(provenance) => provenance.committed_owner(current, selection),
+                None if selection == Selection::DifferentFramebuffer => current,
+                None => None,
+            },
+        }
+    }
+
     /// Resolve creation evidence without changing it. Unknown provenance never becomes an
     /// owner merely because a master is now active.
     pub(super) fn owner<'a>(&'a self, current: Option<&I>) -> Option<&'a I> {
@@ -44,8 +69,8 @@ impl<I: Eq> Provenance<I> {
         }
     }
 
-    /// An explicit selection of a different framebuffer permits adoption by the committing
-    /// master. Geometry-only changes and same-framebuffer content updates do not.
+    /// An explicit selection of a different framebuffer permits adoption by the observed
+    /// current master. Geometry-only changes and same-framebuffer content updates do not.
     pub(super) fn committed_owner<'a>(
         &'a self,
         current: Option<&'a I>,
