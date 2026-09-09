@@ -53,3 +53,30 @@ The queries follow Khronos's
 Any later image import must also satisfy the
 [explicit modifier layout contract](https://docs.vulkan.org/refpages/latest/refpages/source/VkImageDrmFormatModifierExplicitCreateInfoEXT.html),
 not merely reuse a modifier number reported by the probe.
+
+## Generated-image handoff
+
+The `handoff` executable tests a small, real transfer on the selected device:
+
+```sh
+"$build_dir/handoff" /dev/dri/renderD128 --validation
+```
+
+One Vulkan device allocates a 256-by-256 linear image and fills it with opaque
+red using a GPU command. Another Vulkan device imports the same allocation
+through a DMA-BUF descriptor. The producer releases external image ownership,
+submits its work, and exports a sync-file semaphore. The consumer imports that
+semaphore and waits on it before accessing the image. There is no host-created
+promise standing in for work that has not been submitted.
+
+The consumer copies the image to a host-visible buffer solely to check every
+pixel. That final test readback is not a proposed capture transport. The
+fixture has not yet composed into independent storage, exercised downstream
+backpressure, or passed a frame through PipeWire or an encoder. It is a
+correctness test, not a throughput measurement.
+
+All submitted uses finish before their resources are destroyed, including on
+test failure. Successful Vulkan imports consume their descriptors; failed
+imports leave the descriptors for cleanup. Image allocation, import and device
+setup live separately from the test's submission sequence. The fixture uses
+only its own generated content, not compositor or CastKMS source buffers.
