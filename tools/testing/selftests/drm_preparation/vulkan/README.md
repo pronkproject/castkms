@@ -62,6 +62,13 @@ The `handoff` executable tests a small, real transfer on the selected device:
 "$build_dir/handoff" /dev/dri/renderD128 --validation
 ```
 
+For an additional synchronization-validation pass, use
+`VK_VALIDATION_VALIDATE_SYNC=1` with the same command. That enables the
+Khronos layer's checks for missing dependencies between graphics operations.
+Those checks have limits, including memory-alias tracking; passing them does
+not prove all ordering across imported allocations. See the layer's
+[synchronization validation guide](https://vulkan.lunarg.com/doc/view/latest/linux/synchronization_usage.html).
+
 One Vulkan device allocates a 256-by-256 linear image and fills it with opaque
 red using a GPU command. Another Vulkan device imports the same allocation
 through a DMA-BUF descriptor. The producer releases external image ownership,
@@ -83,6 +90,17 @@ PipeWire or an encoder, or integrated with a CastKMS preparation transaction.
 It is a correctness test, not a throughput measurement. Waiting for source
 completion on the host deliberately makes the destruction-before-output
 ordering visible; it is not a proposed production scheduling policy.
+
+Before releasing A, the fixture also polls its exported completion and queries
+Linux's sync-file status, including the underlying native fences. A signaled
+error fails the test; readability alone is not successful image production.
+Vulkan is also allowed to return an already-completed sentinel instead of a
+descriptor. The fixture reports that case explicitly. A timeout is a test
+failure, not cancellation: cleanup still waits for submitted GPU work.
+
+`"$build_dir/sync-file-test"` checks rejection of invalid descriptors,
+unreadable pipes and readable objects that are not sync files. It requires no
+GPU and intentionally prints diagnostics for the rejected cases.
 
 All submitted uses finish before their resources are destroyed, including on
 test failure. Successful Vulkan imports consume their descriptors; failed
