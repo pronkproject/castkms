@@ -109,6 +109,53 @@ mod cases {
     use super::*;
 
     #[test]
+    fn empty_merge_needs_no_wait() -> Result {
+        assert!(Fence::merge_completion(&[])?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn singleton_merge_retains_the_original_record() -> Result {
+        let mut owner = ManualFence::new()?;
+        let original = owner.fence();
+        let merged = Fence::merge_completion(&[original.clone()])?.ok_or(EINVAL)?;
+        assert_eq!(merged.as_raw(), original.as_raw());
+        owner.complete(Err(EIO))?;
+        assert_eq!(merged.status(), Status::Complete(Err(EIO)));
+        Ok(())
+    }
+
+    #[test]
+    fn merged_completion_does_not_replace_error_records() -> Result {
+        let mut first = ManualFence::new()?;
+        let mut second = ManualFence::new()?;
+        let records = [first.fence(), second.fence()];
+        first.complete(Err(EIO))?;
+        let merged = Fence::merge_completion(&records)?.ok_or(EINVAL)?;
+        assert_eq!(merged.status(), Status::Pending);
+        second.complete(Ok(()))?;
+        assert_eq!(merged.status(), Status::Complete(Ok(())));
+        assert_eq!(records[0].status(), Status::Complete(Err(EIO)));
+        Ok(())
+    }
+
+    #[test]
+    fn nested_merge_waits_for_all_submitted_work() -> Result {
+        let mut first = ManualFence::new()?;
+        let mut second = ManualFence::new()?;
+        let mut third = ManualFence::new()?;
+        let inner = Fence::merge_completion(&[first.fence(), second.fence()])?.ok_or(EINVAL)?;
+        let merged = Fence::merge_completion(&[inner, third.fence()])?.ok_or(EINVAL)?;
+        assert_eq!(merged.status(), Status::Pending);
+        first.complete(Ok(()))?;
+        third.complete(Ok(()))?;
+        assert_eq!(merged.status(), Status::Pending);
+        second.complete(Ok(()))?;
+        assert_eq!(merged.status(), Status::Complete(Ok(())));
+        Ok(())
+    }
+
+    #[test]
     fn pending_then_success_remains_success_after_owner_drop() -> Result {
         let mut owner = ManualFence::new()?;
         let fence = owner.fence();
