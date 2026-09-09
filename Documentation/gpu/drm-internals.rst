@@ -355,6 +355,16 @@ fallible setup before installing files. It must treat rollback of a created
 control file as terminal rather than trying to reuse the same grant. There is
 no public grant-creation ABI in this helper alone.
 
+Rust providers call ``Authority::create_control_file()`` to obtain the same
+owned file without installing a descriptor. The adapter lives separately from
+the authority implementation and does not add file dependencies to provider
+callbacks. A returned ``ARef<File>`` retains the authority and its policy even
+after ordinary kernel authority references are dropped. Cloning that file
+shares its lifetime; calling the constructor again creates another independent
+revoker. Rust runtime tests exercise both cases, policy retention and file
+creation after revocation. Merely creating another file cannot reopen a
+terminal authority.
+
 Driver Initialization
 =====================
 
