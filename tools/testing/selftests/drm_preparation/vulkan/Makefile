@@ -13,8 +13,8 @@ all: $(OUTPUT)/probe $(OUTPUT)/handoff $(OUTPUT)/context-test
 $(OUTPUT)/probe: probe.c context.c context.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) probe.c context.c $(LDLIBS) -o $@
 
-$(OUTPUT)/handoff: handoff.c image.c image.h device.c device.h context.c context.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) handoff.c image.c device.c context.c $(LDLIBS) -o $@
+$(OUTPUT)/handoff: handoff.c image.c image.h device.c device.h context.c context.h sync_file.c sync_file.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) handoff.c image.c device.c context.c sync_file.c $(LDLIBS) -o $@
 
 $(OUTPUT)/context-test: context_test.c context.c context.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) context_test.c context.c $(LDLIBS) \
