@@ -72,7 +72,8 @@ not prove all ordering across imported allocations. See the layer's
 One Vulkan device allocates a 256-by-256 linear image and fills it using a GPU
 command. The fixture repeats the sequence for eight opaque RGB colors, with
 fresh devices and allocations each time. Another Vulkan device imports the
-same allocation through a DMA-BUF descriptor. The producer releases external image ownership,
+same allocation through a DMA-BUF descriptor. The producer releases external
+image ownership,
 submits its work, and exports a sync-file semaphore. The consumer imports that
 semaphore and waits on it before accessing the image. There is no host-created
 promise standing in for work that has not been submitted.
@@ -104,6 +105,14 @@ failure, not cancellation: cleanup still waits for submitted GPU work.
 `"$build_dir/sync-file-test"` checks rejection of invalid descriptors,
 unreadable pipes and readable objects that are not sync files. It requires no
 GPU and intentionally prints diagnostics for the rejected cases.
+
+The default modifier is linear (zero). Pass `--modifier INTEGER` to exercise
+another modifier reported by the probe, for example a hexadecimal value
+beginning with `0x`. The fixture requests exactly that modifier for A, E and D;
+it never silently substitutes another layout. Unsupported profiles fail
+before image creation. Each import uses the allocation's queried plane layout,
+not a pitch inferred from its width. Qualification of one modifier does not
+establish that a later encoder or PipeWire consumer can import it.
 
 All submitted uses finish before their resources are destroyed, including on
 test failure. Successful Vulkan imports consume their descriptors; failed
