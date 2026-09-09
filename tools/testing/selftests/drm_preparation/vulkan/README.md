@@ -69,11 +69,20 @@ submits its work, and exports a sync-file semaphore. The consumer imports that
 semaphore and waits on it before accessing the image. There is no host-created
 promise standing in for work that has not been submitted.
 
-The consumer copies the image to a host-visible buffer solely to check every
+That first consumer is the source worker. It blits A into an independently
+allocated private image E and exports the submitted operation's sync file.
+After the producer and source worker finish, the fixture destroys both Vulkan
+images referring to A. Only then does a third Vulkan device submit a blit from
+E into a separately allocated, exportable output D. No allocation belonging
+to A participates in that final submission.
+
+The output worker copies D to a host-visible buffer solely to check every
 pixel. That final test readback is not a proposed capture transport. The
-fixture has not yet composed into independent storage, exercised downstream
-backpressure, or passed a frame through PipeWire or an encoder. It is a
-correctness test, not a throughput measurement.
+fixture has not yet exercised downstream backpressure, passed a frame through
+PipeWire or an encoder, or integrated with a CastKMS preparation transaction.
+It is a correctness test, not a throughput measurement. Waiting for source
+completion on the host deliberately makes the destruction-before-output
+ordering visible; it is not a proposed production scheduling policy.
 
 All submitted uses finish before their resources are destroyed, including on
 test failure. Successful Vulkan imports consume their descriptors; failed
