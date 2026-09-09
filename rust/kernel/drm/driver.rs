@@ -158,6 +158,22 @@ pub trait Driver {
     /// usable from the render node (i.e. marked DRM_RENDER_ALLOW), whereas
     /// userspace processes using the master node can invoke any ioctl.
     const FEAT_RENDER: bool = false;
+
+    /// Observe installation or removal of the device's top-level DRM master.
+    ///
+    /// `Some` retains the installed identity; `None` announces its removal before DRM drops
+    /// the device's native reference. Notifications are serialized by DRM's master mutex.
+    /// They do not report individual lease changes or grant ongoing authority to a snapshot.
+    ///
+    /// The callback may precede file initialization or occur after unplug. It must not
+    /// acquire DRM's master mutex, perform modesetting, or wait for work needing that mutex.
+    /// Device-owned copies must be released on shutdown to avoid retaining the device forever.
+    fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>)
+    where
+        Self: Sized,
+    {
+        let _ = (dev, master);
+    }
 }
 
 /// The registration type of a `drm::Device`.

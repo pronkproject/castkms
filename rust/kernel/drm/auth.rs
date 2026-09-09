@@ -8,6 +8,8 @@ use super::{Device, Driver};
 use crate::{bindings, sync::aref::ARef};
 use core::ptr::NonNull;
 
+pub(super) mod callbacks;
+
 /// A file's associated master and current-master status sampled together.
 ///
 /// This is a historical observation, not an authorization token. Master handoff or lease
