@@ -107,4 +107,36 @@ mod cases {
         source.claim()?.release_cpu();
         Ok(())
     }
+
+    #[test]
+    fn readiness_observation_does_not_reserve_or_override_cancellation() -> Result {
+        let source = Source::new(1)?;
+        let set = RetirementSet::new(&[source.clone()])?;
+        let ticket = Ticket::new(&set)?;
+        ticket.wait_ready()?;
+        let attempt = ticket.reserve()?;
+        ticket.wait_ready()?;
+        assert!(matches!(ticket.reserve(), Err(EBUSY)));
+        ticket.cancel();
+        assert_eq!(ticket.wait_ready(), Err(ECANCELED));
+        drop(set);
+        drop(attempt);
+        source.claim()?.release_cpu();
+        Ok(())
+    }
+
+    #[test]
+    fn readiness_observation_reports_failed_claims_and_empty_scope() -> Result {
+        let source = Source::new(1)?;
+        let read = source.claim()?;
+        let set = RetirementSet::new(&[source])?;
+        let ticket = Ticket::new(&set)?;
+        drop(read);
+        assert_eq!(ticket.wait_ready(), Err(EIO));
+        ticket.cancel();
+        assert_eq!(ticket.wait_ready(), Err(ECANCELED));
+        let empty = RetirementSet::new(&[])?;
+        Ticket::new(&empty)?.wait_ready()?;
+        Ok(())
+    }
 }
