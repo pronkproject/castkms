@@ -5,7 +5,10 @@
 use super::Driver;
 use core::num::NonZeroU64;
 use kernel::{
-    drm::kms::framebuffer::FramebufferRef,
+    drm::{
+        auth::MasterRef,
+        kms::framebuffer::FramebufferRef, //
+    },
     prelude::*, //
 };
 
@@ -39,6 +42,8 @@ pub(super) struct Scene {
     _source: [u32; 4],
     _destination: [u32; 2],
     _content: ContentSerial,
+    // Historical attribution resolved by the accepted transaction, not live capture authority.
+    _owner: Option<MasterRef<Driver>>,
 }
 
 impl Scene {
@@ -46,12 +51,14 @@ impl Scene {
         framebuffer: FramebufferRef<Driver>,
         geometry: Geometry,
         content: ContentSerial,
+        owner: Option<MasterRef<Driver>>,
     ) -> Self {
         Self {
             _framebuffer: framebuffer,
             _source: geometry.source,
             _destination: geometry.destination,
             _content: content,
+            _owner: owner,
         }
     }
 }
