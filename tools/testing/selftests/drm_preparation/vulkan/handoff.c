@@ -9,6 +9,7 @@
 
 #include "image.h"
 #include "sync_file.h"
+#include "timing.h"
 
 static const VkImageSubresourceRange color_range = {
 	.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -129,7 +130,8 @@ static int produce(struct gpu_device *producer, const struct gpu_image *source,
 }
 
 static int begin_blit(struct gpu_device *device, const struct gpu_image *input,
-		      const struct gpu_image *output, VkCommandBuffer *commands)
+		      const struct gpu_image *output, VkCommandBuffer *commands,
+		      const struct gpu_timing *timing)
 {
 	VkImageBlit region = {
 		.srcSubresource = { .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
@@ -140,6 +142,7 @@ static int begin_blit(struct gpu_device *device, const struct gpu_image *input,
 
 	if (gpu_commands_begin(device, commands))
 		return -1;
+	gpu_timing_begin(*commands, timing);
 	whole_image_barrier(*commands, (VkImageMemoryBarrier) {
 		.image = input->handle,
 		.oldLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -243,6 +246,8 @@ struct workers {
 };
 
 struct frame {
+	struct gpu_timing source_timing;
+	struct gpu_timing output_timing;
 	struct gpu_image source;
 	struct gpu_image source_import;
 	struct gpu_image staging;
@@ -260,10 +265,13 @@ struct frame {
 };
 
 static int frame_create(struct workers *workers, struct frame *frame, uint64_t modifier,
-			VkExtent2D extent)
+			VkExtent2D extent, int timing)
 {
 	struct gpu_image_description description;
 
+	if (timing && (gpu_timing_create(&workers->source, &frame->source_timing) ||
+		       gpu_timing_create(&workers->output, &frame->output_timing)))
+		return -1;
 	if (gpu_image_create(&workers->producer, &frame->source, extent.width, extent.height, modifier) ||
 	    share_image(&workers->producer, &frame->source, &workers->source, &frame->source_import) ||
 	    gpu_image_create(&workers->source, &frame->staging, extent.width, extent.height, modifier) ||
@@ -289,7 +297,8 @@ static int submit_source(struct workers *workers, struct frame *frame, unsigned 
 	    gpu_semaphore_import(&workers->source, frame->source_acquired, producer_fd))
 		goto out;
 	producer_fd = -1;
-	if (begin_blit(&workers->source, &frame->source_import, &frame->staging, &commands))
+	if (begin_blit(&workers->source, &frame->source_import, &frame->staging, &commands,
+		       &frame->source_timing))
 		goto out;
 	whole_image_barrier(commands, (VkImageMemoryBarrier) {
 		.image = frame->staging.handle,
@@ -300,6 +309,7 @@ static int submit_source(struct workers *workers, struct frame *frame, unsigned 
 		.srcQueueFamilyIndex = workers->source.context->queue_family,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
 	});
+	gpu_timing_end(commands, &frame->source_timing);
 	if (submit_blit(&workers->source, commands, frame->source_acquired, frame->source_completed) ||
 	    gpu_semaphore_export(&workers->source, frame->source_completed, &frame->source_fence_fd))
 		goto out;
@@ -317,8 +327,10 @@ static int submit_output(struct workers *workers, struct frame *frame, int forei
 	if (gpu_semaphore_import(&workers->output, frame->output_acquired, frame->source_fence_fd))
 		return -1;
 	frame->source_fence_fd = -1;
-	if (begin_blit(&workers->output, &frame->staging_import, &frame->output, &commands))
+	if (begin_blit(&workers->output, &frame->staging_import, &frame->output, &commands,
+		       &frame->output_timing))
 		return -1;
+	gpu_timing_end(commands, &frame->output_timing);
 	copy_to_readback(commands, &frame->output, &frame->readback);
 	whole_image_barrier(commands, (VkImageMemoryBarrier) {
 		.image = frame->output.handle,
@@ -337,6 +349,8 @@ static int submit_output(struct workers *workers, struct frame *frame, int forei
 /* Every device must have finished submitted uses before any frame is destroyed. */
 static void frame_destroy(struct workers *workers, struct frame *frame)
 {
+	gpu_timing_destroy(&workers->output, &frame->output_timing);
+	gpu_timing_destroy(&workers->source, &frame->source_timing);
 	if (frame->source_fence_fd >= 0)
 		close(frame->source_fence_fd);
 	if (frame->output_fence_fd >= 0)
@@ -363,7 +377,7 @@ static void frame_destroy(struct workers *workers, struct frame *frame)
 }
 
 static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_output,
-		   VkExtent2D extent)
+		   VkExtent2D extent, int timing)
 {
 	struct workers workers = { 0 };
 	struct frame frames[FRAME_COUNT] = { 0 };
@@ -382,7 +396,7 @@ static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_o
 	    gpu_device_open(&workers.output, context))
 		goto out;
 	for (i = 0; i < FRAME_COUNT; i++)
-		if (frame_create(&workers, &frames[i], modifier, extent))
+		if (frame_create(&workers, &frames[i], modifier, extent, timing))
 			goto out;
 	for (i = 0; i < FRAME_COUNT; i++)
 		if (submit_source(&workers, &frames[i], i))
@@ -395,6 +409,8 @@ static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_o
 	    vkDeviceWaitIdle(workers.producer.handle) != VK_SUCCESS)
 		goto out;
 	for (i = 0; i < FRAME_COUNT; i++) {
+		if (gpu_timing_report(&workers.source, &frames[i].source_timing, "A-to-E", i))
+			goto out;
 		gpu_image_destroy(&workers.source, &frames[i].source_import);
 		gpu_image_destroy(&workers.producer, &frames[i].source);
 	}
@@ -409,7 +425,8 @@ static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_o
 	if (vkQueueWaitIdle(workers.output.queue) != VK_SUCCESS)
 		goto out;
 	for (i = 0; i < FRAME_COUNT; i++)
-		if (check_pixels(&workers.output, &frames[i].readback, i))
+		if (gpu_timing_report(&workers.output, &frames[i].output_timing, "E-to-D", i) ||
+		    check_pixels(&workers.output, &frames[i].readback, i))
 			goto out;
 	result = 0;
 out:
@@ -436,12 +453,15 @@ int main(int argc, char **argv)
 	VkExtent2D extent = { 256, 256 };
 	uint64_t modifier = 0;
 	int result, i, validation = 0, modifier_set = 0, foreign_output = 0, size_set = 0;
+	int timing = 0;
 
 	if (argc < 2)
 		goto usage;
 	for (i = 2; i < argc; i++) {
 		if (!strcmp(argv[i], "--validation") && !validation) {
 			validation = 1;
+		} else if (!strcmp(argv[i], "--timing") && !timing) {
+			timing = 1;
 		} else if (!strcmp(argv[i], "--foreign-output") && !foreign_output) {
 			foreign_output = 1;
 		} else if (!strcmp(argv[i], "--size") && !size_set && i + 1 < argc) {
@@ -479,7 +499,7 @@ int main(int argc, char **argv)
 	printf("requested_modifier=0x%016" PRIx64 "\n", modifier);
 	printf("image_size=%ux%u\n", extent.width, extent.height);
 	printf("output_ownership=%s\n", foreign_output ? "foreign driver" : "same Vulkan driver");
-	result = handoff(&context, modifier, foreign_output, extent);
+	result = handoff(&context, modifier, foreign_output, extent, timing);
 	gpu_context_close(&context);
 	if (atomic_load(&context.validation_errors))
 		result = 1;
@@ -488,6 +508,6 @@ int main(int argc, char **argv)
 	return result;
 usage:
 	fprintf(stderr, "Usage: %s RENDER_NODE [--validation] [--modifier INTEGER] [--foreign-output]\n"
-		"       [--size 256x256|1920x1080|3840x2160]\n", argv[0]);
+		"       [--size 256x256|1920x1080|3840x2160] [--timing]\n", argv[0]);
 	return 1;
 }
