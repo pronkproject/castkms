@@ -24,7 +24,8 @@ static void free_fixture(void *data)
 		drm_prepare_read_abandon(f->read);
 	if (f->ticket)
 		drm_prepare_ticket_put(f->ticket);
-	drm_prepare_source_put(f->source);
+	if (f->source)
+		drm_prepare_source_put(f->source);
 }
 
 static struct ticket_fixture *new_fixture_full(struct kunit *test, bool pending)
@@ -369,6 +370,79 @@ static void cancellation_does_not_cancel_another_ticket_in_the_domain(struct kun
 	join_ticket_wait(test, worker, &wait, 0);
 }
 
+static int record_notification(wait_queue_entry_t *entry, unsigned int mode, int flags, void *key)
+{
+	unsigned int *notifications = entry->private;
+
+	++*notifications;
+	return 1;
+}
+
+static void notification_outlives_canceled_source_ownership(struct kunit *test)
+{
+	struct ticket_fixture *f = new_fixture(test);
+	wait_queue_head_t *queue = drm_prepare_ticket_waitqueue(f->ticket);
+	wait_queue_entry_t entry;
+	unsigned int notifications = 0;
+
+	init_waitqueue_func_entry(&entry, record_notification);
+	entry.private = &notifications;
+	add_wait_queue(queue, &entry);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_ready(f->ticket), 0);
+	drm_prepare_ticket_cancel(f->ticket);
+	drm_prepare_source_put(f->source);
+	f->source = NULL;
+	KUNIT_EXPECT_PTR_EQ(test, drm_prepare_ticket_waitqueue(f->ticket), queue);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_ready(f->ticket), -ECANCELED);
+	drm_prepare_ticket_cancel(f->ticket);
+	KUNIT_EXPECT_GE(test, notifications, 1);
+	remove_wait_queue(queue, &entry);
+}
+
+static void registered_observer_receives_claim_release(struct kunit *test)
+{
+	struct ticket_fixture *f = new_fixture_full(test, true);
+	wait_queue_head_t *queue;
+	wait_queue_entry_t entry;
+	unsigned int notifications = 0;
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	queue = drm_prepare_ticket_waitqueue(f->ticket);
+	init_waitqueue_func_entry(&entry, record_notification);
+	entry.private = &notifications;
+	add_wait_queue(queue, &entry);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_ready(f->ticket), -EAGAIN);
+	drm_prepare_read_release(f->read, NULL);
+	f->read = NULL;
+	KUNIT_EXPECT_GE(test, notifications, 1);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_ready(f->ticket), 0);
+	remove_wait_queue(queue, &entry);
+}
+
+static void empty_ticket_notifies_terminal_state(struct kunit *test)
+{
+	struct drm_prepare_retirement_set *set = drm_prepare_retirement_set_create(NULL, 0);
+	struct drm_prepare_ticket *ticket;
+	wait_queue_head_t *queue;
+	wait_queue_entry_t entry;
+	unsigned int notifications = 0;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
+	ticket = drm_prepare_ticket_create(set);
+	drm_prepare_retirement_set_put(set);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
+	queue = drm_prepare_ticket_waitqueue(ticket);
+	init_waitqueue_func_entry(&entry, record_notification);
+	entry.private = &notifications;
+	add_wait_queue(queue, &entry);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_ready(ticket), 0);
+	drm_prepare_ticket_cancel(ticket);
+	KUNIT_EXPECT_GE(test, notifications, 1);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_ready(ticket), -ECANCELED);
+	remove_wait_queue(queue, &entry);
+	drm_prepare_ticket_put(ticket);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(failed_attempt_leaves_ticket_retryable),
 	KUNIT_CASE(cancellation_preserves_attempt_admission),
@@ -379,6 +453,9 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(interrupted_ticket_wait_keeps_request_live),
 	KUNIT_CASE(ticket_wait_observes_consumption_and_empty_scope),
 	KUNIT_CASE(cancellation_does_not_cancel_another_ticket_in_the_domain),
+	KUNIT_CASE(notification_outlives_canceled_source_ownership),
+	KUNIT_CASE(registered_observer_receives_claim_release),
+	KUNIT_CASE(empty_ticket_notifies_terminal_state),
 	{}
 };
 
