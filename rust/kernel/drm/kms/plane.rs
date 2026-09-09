@@ -147,6 +147,20 @@ pub trait DriverPlane: Send + Sync + Sized {
     fn atomic_check(_check: PlaneAtomicCheck<'_, Self>) -> Result {
         build_error::build_error("This should not be reachable")
     }
+
+    /// Prepare an unpublished framebuffer state before atomic acceptance.
+    ///
+    /// This hook may allocate and retain owned resources in the private state, but must not
+    /// wait for rendering. Native atomic helpers wait on the installed producer fence and
+    /// release its reference. Private resources are released when the state is destroyed;
+    /// drivers must not use this hook for resources needing a separate cleanup callback.
+    /// Preparation errors abort acceptance, and TEST_ONLY requests do not invoke this hook.
+    ///
+    /// When omitted, native GEM framebuffer preparation remains in effect. Implementations
+    /// replace that helper and must acquire the dependencies needed by their framebuffer.
+    fn prepare_framebuffer(_state: PlaneStateMutator<'_, PlaneState<Self::State>>) -> Result {
+        build_error::build_error("This should not be reachable")
+    }
 }
 
 /// The generated C vtable for a [`DriverPlane`].
@@ -180,7 +194,11 @@ impl<T: DriverPlane> Plane<T> {
         },
 
         helper_funcs: bindings::drm_plane_helper_funcs {
-            prepare_fb: None,
+            prepare_fb: if T::HAS_PREPARE_FRAMEBUFFER {
+                Some(prepare_framebuffer_callback::<T>)
+            } else {
+                None
+            },
             cleanup_fb: None,
             begin_fb_access: None,
             end_fb_access: None,
@@ -1482,6 +1500,19 @@ unsafe extern "C" fn atomic_update_callback<T: DriverPlane>(
     let commit = unsafe { PlaneAtomicCommit::new(plane, &state) };
 
     T::atomic_update(commit);
+}
+
+unsafe extern "C" fn prepare_framebuffer_callback<T: DriverPlane>(
+    _plane: *mut bindings::drm_plane,
+    state: *mut bindings::drm_plane_state,
+) -> i32 {
+    // SAFETY: Native preparation exclusively owns the unpublished candidate. Its allocation
+    // has the nominated private-state type, and the callback cannot move that allocation or
+    // expose its transaction owner. The local mask belongs only to this exclusive borrow.
+    let state = unsafe { PlaneState::<T::State>::from_raw_mut(state) };
+    let mask = Cell::new(state.plane().mask());
+    let state = PlaneStateMutator { state, mask: &mask };
+    from_result(|| T::prepare_framebuffer(state).map(|_| 0))
 }
 
 unsafe extern "C" fn atomic_check_callback<T: DriverPlane>(
