@@ -14,6 +14,12 @@ use crate::{
 };
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
+mod authority;
+pub use authority::{
+    Authority,
+    Policy, //
+};
+
 #[cfg(CONFIG_KUNIT)]
 mod tests;
 
