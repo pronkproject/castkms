@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 use super::*;
+use crate::dma_fence::{testing::ManualFence, Status};
 use crate::drm::preparation::Domain;
 
 #[kunit_tests(rust_drm_preparation_set)]
@@ -72,6 +73,96 @@ mod cases {
         let retained = set.clone();
         drop(set);
         drop(retained);
+        Ok(())
+    }
+
+    #[test]
+    fn preparation_waits_for_every_claim_and_retains_every_hold() -> Result {
+        let domain = Domain::new()?;
+        let a = Source::new_in(&domain, 1)?;
+        let b = Source::new_in(&domain, 1)?;
+        let first = a.claim()?;
+        let second = b.claim()?;
+        let set = RetirementSet::new(&[a.clone(), b.clone()])?;
+        assert!(set.prepared()?.is_none());
+        first.release_cpu();
+        assert!(set.prepared()?.is_none());
+        second.release_cpu();
+        let prepared = set.prepared()?.ok_or(EINVAL)?;
+        drop(set);
+        assert!(matches!(a.claim(), Err(EBUSY)));
+        assert!(matches!(b.claim(), Err(EBUSY)));
+        assert!(prepared.completion()?.is_none());
+        drop(prepared);
+        a.claim()?.release_cpu();
+        b.claim()?.release_cpu();
+        Ok(())
+    }
+
+    #[test]
+    fn abandonment_wins_over_another_pending_claim() -> Result {
+        let domain = Domain::new()?;
+        let a = Source::new_in(&domain, 1)?;
+        let b = Source::new_in(&domain, 1)?;
+        let first = a.claim()?;
+        let second = b.claim()?;
+        let set = RetirementSet::new(&[a, b])?;
+        drop(second);
+        assert!(matches!(set.prepared(), Err(EIO)));
+        first.release_cpu();
+        assert!(matches!(set.prepared(), Err(EIO)));
+        Ok(())
+    }
+
+    #[test]
+    fn completion_outlives_preparation_and_waits_for_both_readers() -> Result {
+        let domain = Domain::new()?;
+        let a = Source::new_in(&domain, 1)?;
+        let b = Source::new_in(&domain, 1)?;
+        let first = a.claim()?;
+        let second = b.claim()?;
+        let mut native_a = ManualFence::new()?;
+        let mut native_b = ManualFence::new()?;
+        let set = RetirementSet::new(&[a, b])?;
+        first.release_submitted(&native_a.fence());
+        second.release_submitted(&native_b.fence());
+        let prepared = set.prepared()?.ok_or(EINVAL)?;
+        let completion = prepared.completion()?.ok_or(EINVAL)?;
+        drop(set);
+        drop(prepared);
+        assert_eq!(completion.status(), Status::Pending);
+        native_a.complete(Ok(()))?;
+        assert_eq!(completion.status(), Status::Pending);
+        native_b.complete(Ok(()))?;
+        assert_eq!(completion.status(), Status::Complete(Ok(())));
+        Ok(())
+    }
+
+    #[test]
+    fn empty_preparation_needs_no_fence() -> Result {
+        let set = RetirementSet::new(&[])?;
+        let prepared = set.prepared()?.ok_or(EINVAL)?;
+        drop(set);
+        assert!(prepared.completion()?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn shared_native_completion_covers_both_sources() -> Result {
+        let domain = Domain::new()?;
+        let a = Source::new_in(&domain, 1)?;
+        let b = Source::new_in(&domain, 1)?;
+        let first = a.claim()?;
+        let second = b.claim()?;
+        let mut native = ManualFence::new()?;
+        let set = RetirementSet::new(&[a, b])?;
+        first.release_submitted(&native.fence());
+        second.release_submitted(&native.fence());
+        let prepared = set.prepared()?.ok_or(EINVAL)?;
+        let completion = prepared.completion()?.ok_or(EINVAL)?;
+        assert_eq!(completion.status(), Status::Pending);
+        native.complete(Ok(()))?;
+        assert_eq!(completion.status(), Status::Complete(Ok(())));
         Ok(())
     }
 }
