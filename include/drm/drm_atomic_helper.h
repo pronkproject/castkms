@@ -34,6 +34,9 @@
 #include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_util.h>
 
+struct drm_prepare_attempt;
+struct drm_prepare_retirement_guard;
+
 /*
  * Drivers that don't allow primary plane scaling may pass this macro in place
  * of the min/max scale parameters of the plane-state checker function.
@@ -136,6 +139,10 @@ drm_atomic_helper_disable_planes_on_crtc(struct drm_crtc_state *old_crtc_state,
 
 int __must_check drm_atomic_helper_swap_state(struct drm_atomic_commit *state,
 					      bool stall);
+int __must_check
+drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool stall,
+				    struct drm_prepare_attempt *attempt,
+				    struct drm_prepare_retirement_guard **guard);
 
 /* nonblocking commit helpers */
 int drm_atomic_helper_setup_commit(struct drm_atomic_commit *state,
