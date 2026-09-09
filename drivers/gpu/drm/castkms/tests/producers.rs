@@ -11,6 +11,22 @@ mod cases {
     use super::*;
 
     #[test]
+    fn local_framebuffer_reservation_needs_no_pixel_mapping() -> Result {
+        use kernel::drm::gem::BaseObject;
+
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        let snapshot = fb
+            .object::<gem::Object>()?
+            .reservation()
+            .snapshot(kernel::dma_resv::Usage::Write)?;
+        drop(fb);
+        drop(fixture);
+        assert!(snapshot.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn failed_producer_survives_native_wait_cleanup() -> Result {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
