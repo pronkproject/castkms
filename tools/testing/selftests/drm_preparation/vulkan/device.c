@@ -5,13 +5,14 @@
 
 #include "device.h"
 
-int gpu_device_open(struct gpu_device *device, struct gpu_context *context)
+static int open_device(struct gpu_device *device, struct gpu_context *context, int foreign)
 {
 	const char *extensions[] = {
 		VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
 		VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
 		VK_EXT_IMAGE_DRM_FORMAT_MODIFIER_EXTENSION_NAME,
 		VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+		VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
 	};
 	float priority = 1.0f;
 	VkDeviceQueueCreateInfo queue = {
@@ -24,7 +25,7 @@ int gpu_device_open(struct gpu_device *device, struct gpu_context *context)
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.queueCreateInfoCount = 1,
 		.pQueueCreateInfos = &queue,
-		.enabledExtensionCount = sizeof(extensions) / sizeof(extensions[0]),
+		.enabledExtensionCount = sizeof(extensions) / sizeof(extensions[0]) - !foreign,
 		.ppEnabledExtensionNames = extensions,
 	};
 	VkCommandPoolCreateInfo pool = {
@@ -60,6 +61,16 @@ fail:
 	fprintf(stderr, "Vulkan device setup failed: %d\n", result);
 	gpu_device_close(device);
 	return -1;
+}
+
+int gpu_device_open(struct gpu_device *device, struct gpu_context *context)
+{
+	return open_device(device, context, 0);
+}
+
+int gpu_device_open_foreign(struct gpu_device *device, struct gpu_context *context)
+{
+	return open_device(device, context, 1);
 }
 
 int gpu_device_close(struct gpu_device *device)
