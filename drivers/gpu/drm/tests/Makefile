@@ -15,6 +15,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_swap_test.o \
 	drm_bridge_test.o \
 	drm_capture_test.o \
+	drm_capture_wait_test.o \
 	drm_capture_authority_test.o \
 	drm_capture_file_test.o \
 	drm_cmdline_parser_test.o \
