@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "image.h"
+#include "sync_file.h"
 
 #define WIDTH 256
 #define HEIGHT 256
@@ -270,7 +271,8 @@ static int handoff(struct gpu_context *context)
 	    gpu_semaphore_export(&source_worker, source_completed, &sync_fd))
 		goto out;
 	printf("submitted A-to-E: sync_fd=%s\n", sync_fd == -1 ? "already complete" : "exported");
-	if (vkDeviceWaitIdle(source_worker.handle) != VK_SUCCESS ||
+	if (gpu_sync_file_check(sync_fd, 5000) ||
+	    vkDeviceWaitIdle(source_worker.handle) != VK_SUCCESS ||
 	    vkDeviceWaitIdle(producer.handle) != VK_SUCCESS)
 		goto out;
 	gpu_image_destroy(&source_worker, &source_import);
