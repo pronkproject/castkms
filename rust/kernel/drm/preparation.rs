@@ -51,11 +51,23 @@ unsafe impl AlwaysRefCounted for Source {
 }
 
 impl Source {
-    /// Allocate bounded source-generation accounting without granting source access.
+    /// Allocate bounded source-generation accounting in a private admission domain.
+    ///
+    /// This does not grant source access. Sources prepared together use [`Self::new_in`].
     pub fn new(capacity: u32) -> Result<ARef<Self>> {
         // SAFETY: Creation accepts a scalar capacity and returns an owned reference or error.
         let raw = from_err_ptr(unsafe { bindings::drm_prepare_source_create(capacity) })?;
         // SAFETY: Successful creation returns a non-null initialized native allocation.
+        Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
+    }
+
+    /// Allocate a source in a shared admission domain without granting pixel access.
+    pub fn new_in(domain: &Domain, capacity: u32) -> Result<ARef<Self>> {
+        // SAFETY: The borrowed domain remains live while native creation takes its reference.
+        let raw = from_err_ptr(unsafe {
+            bindings::drm_prepare_source_create_in(domain.0.get(), capacity)
+        })?;
+        // SAFETY: Successful creation transfers one initialized source reference.
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
     }
 
