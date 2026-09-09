@@ -53,6 +53,15 @@ pub(super) struct Scene {
 
 impl Scene {
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(super) fn producer_failed(&self) -> bool {
+        self._producer.as_ref().is_some_and(|records| {
+            records
+                .iter()
+                .any(|fence| matches!(fence.status(), kernel::dma_fence::Status::Complete(Err(_))))
+        })
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_status(&self) -> Option<kernel::dma_fence::Status> {
         self._producer
             .as_ref()?
