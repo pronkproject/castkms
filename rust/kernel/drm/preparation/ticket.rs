@@ -29,7 +29,7 @@ pub struct Ticket(Opaque<bindings::drm_prepare_ticket>);
 
 // SAFETY: Native reference counting and cancellation support ownership across tasks.
 unsafe impl Send for Ticket {}
-// SAFETY: Shared access exposes only mutex-protected cancellation and atomic reference counting.
+// SAFETY: Shared operations serialize cancellation and reservation through the native mutex.
 unsafe impl Sync for Ticket {}
 
 // SAFETY: Native get/put retain and release the initialized ticket allocation.
@@ -63,6 +63,44 @@ impl Ticket {
     pub fn cancel(&self) {
         // SAFETY: The shared reference retains the ticket; native cancellation is serialized.
         unsafe { bindings::drm_prepare_ticket_cancel(self.0.get()) };
+    }
+
+    /// Reserve one attempt without consuming the cancelable request.
+    ///
+    /// Pending claims return EAGAIN, another reservation returns EBUSY, and cancellation returns
+    /// ECANCELED. All native completion collection precedes publication. Dropping the returned
+    /// owner permits retry if the ticket is still live; it never invents successful installation.
+    pub fn reserve(&self) -> Result<Attempt> {
+        // SAFETY: The shared ticket remains live; reservation takes its own native reference.
+        let attempt = from_err_ptr(unsafe { bindings::drm_prepare_ticket_reserve(self.0.get()) })?;
+        Ok(Attempt {
+            // SAFETY: Successful reservation transfers one non-null, uniquely owned attempt.
+            raw: unsafe { NonNull::new_unchecked(attempt) },
+        })
+    }
+}
+
+/// A unique reservation retaining its ticket and preassembled retirement ownership.
+///
+/// Moving an attempt does not release admission. Dropping it abandons only that attempt,
+/// permitting a still-live ticket to retry. Cancellation may prevent acceptance but cannot
+/// release this owner's holds. No public method accepts a display update or exposes raw pointers.
+/// Destruction requires a context that may sleep.
+///
+/// # Invariants
+///
+/// The pointer owns one initialized native attempt, released exactly once by Drop.
+pub struct Attempt {
+    raw: NonNull<bindings::drm_prepare_attempt>,
+}
+
+// SAFETY: Exclusive ownership may move between tasks; native ticket access uses its own mutex.
+unsafe impl Send for Attempt {}
+
+impl Drop for Attempt {
+    fn drop(&mut self) {
+        // SAFETY: Drop exclusively consumes the native attempt and its retained references.
+        unsafe { bindings::drm_prepare_attempt_destroy(self.raw.as_ptr()) };
     }
 }
 
