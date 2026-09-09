@@ -18,14 +18,13 @@ use crtc::{
 };
 use kernel::{
     device,
-    dma_fence::Fence,
     drm::{
         fourcc,
         kms::*,
         Device, //
     },
     prelude::*,
-    sync::aref::ARef, //
+    sync::Arc, //
 };
 use plane::RawPlaneState;
 
@@ -45,7 +44,7 @@ pub(super) struct PlaneState {
     content: Option<scene::ContentSerial>,
     selection: Selection,
     owner: Option<kernel::drm::auth::MasterRef<Driver>>,
-    producer: Option<ARef<Fence>>,
+    producer: Option<Arc<framebuffer::dependencies::Dependencies>>,
 }
 
 impl plane::DriverPlaneState for PlaneState {
@@ -143,7 +142,6 @@ impl plane::DriverPlane for Plane {
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
         check_geometry(transaction, &mut state)?;
-        state.producer = state.producer_fence();
         state.content = scene::ContentSerial::for_update(old.content, state.geometry.is_some())?;
         state.selection = Selection::for_update(
             transaction.plane_input(state.plane())?,
@@ -152,6 +150,23 @@ impl plane::DriverPlane for Plane {
         );
         let current = transaction.drm_dev().authority.snapshot();
         state.owner = resolve_owner(old, &state, current.as_ref());
+        Ok(())
+    }
+
+    fn prepare_framebuffer(
+        mut state: plane::PlaneStateMutator<'_, plane::PlaneState<PlaneState>>,
+    ) -> Result {
+        state.producer = None;
+        if let Some(framebuffer) = state.framebuffer() {
+            let dependencies = framebuffer::dependencies::Dependencies::acquire(
+                framebuffer,
+                state.producer_fence(),
+            )?;
+            let completion = dependencies.completion()?;
+            let dependencies = Arc::new(dependencies, GFP_KERNEL)?;
+            state.set_producer_fence(completion);
+            state.producer = Some(dependencies);
+        }
         Ok(())
     }
 

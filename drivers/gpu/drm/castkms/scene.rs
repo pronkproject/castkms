@@ -5,13 +5,15 @@
 use super::Driver;
 use core::num::NonZeroU64;
 use kernel::{
-    dma_fence::Fence,
     drm::{
         auth::MasterRef,
-        kms::framebuffer::FramebufferRef, //
+        kms::framebuffer::{
+            dependencies::Dependencies,
+            FramebufferRef, //
+        }, //
     },
     prelude::*,
-    sync::aref::ARef, //
+    sync::Arc, //
 };
 
 /// A conservative content revision within one plane lifetime, not an ownership identity.
@@ -46,13 +48,17 @@ pub(super) struct Scene {
     _content: ContentSerial,
     // Historical attribution resolved by the accepted transaction, not live capture authority.
     _owner: Option<MasterRef<Driver>>,
-    _producer: Option<ARef<Fence>>,
+    _producer: Option<Arc<Dependencies>>,
 }
 
 impl Scene {
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_status(&self) -> Option<kernel::dma_fence::Status> {
-        self._producer.as_ref().map(|fence| fence.status())
+        self._producer
+            .as_ref()?
+            .iter()
+            .next()
+            .map(|fence| fence.status())
     }
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
@@ -65,7 +71,7 @@ impl Scene {
         geometry: Geometry,
         content: ContentSerial,
         owner: Option<MasterRef<Driver>>,
-        producer: Option<ARef<Fence>>,
+        producer: Option<Arc<Dependencies>>,
     ) -> Self {
         Self {
             _framebuffer: framebuffer,
