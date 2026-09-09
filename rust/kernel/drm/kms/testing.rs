@@ -24,6 +24,10 @@ use super::{
         FramebufferLayout,
         FramebufferRef, //
     },
+    plane::{
+        AsRawPlane,
+        Plane, //
+    },
     private::KmsImpl,
     KmsDriver, //
 };
@@ -87,6 +91,20 @@ impl<T: KmsDriver> TestDevice<T> {
             }
             let raw = crate::container_of!((*config).crtc_list.next, bindings::drm_crtc, head);
             Ok(Crtc::from_raw(raw))
+        }
+    }
+
+    /// Borrow the only plane, rejecting fixtures with a different topology.
+    pub fn plane(&self) -> Result<&Plane<T::Plane>> {
+        // SAFETY: Completed, privately owned setup excludes topology changes and teardown.
+        // Rust constructors enforce the driver's nominated concrete plane type.
+        unsafe {
+            let config = &raw const (*self.0.as_raw()).mode_config;
+            if (*config).num_total_plane != 1 {
+                return Err(EINVAL);
+            }
+            let raw = crate::container_of!((*config).plane_list.next, bindings::drm_plane, head);
+            Ok(Plane::from_raw(raw))
         }
     }
 
