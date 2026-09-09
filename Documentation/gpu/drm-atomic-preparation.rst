@@ -235,6 +235,43 @@ does not release that caller's holds underneath it. Notifications are shared by
 the source domain, but cancellation belongs to one ticket; a peer ticket must
 recheck its own state rather than interpreting any wakeup as cancellation.
 
+Observing a ticket through a file
+--------------------------------
+
+A ticket retains its notification domain independently of source admission.
+Its borrowed wait queue therefore remains valid after cancellation releases
+the source set, for as long as the observer retains the ticket. An empty ticket
+has its own notification domain. Observers register before querying readiness
+and unregister before releasing their final ticket reference.
+
+``drm_prepare_ticket_file_create()`` places that observation behind an anonymous,
+poll-only file. Pending preparation has no poll events; readiness reports
+readable; consumption reports hangup; cancellation or source failure reports
+error and hangup. Readability is an observation that preparation is ready, not
+an invitation to read a byte stream. It neither reserves the ticket nor proves
+that GPU reads have finished.
+
+The file has no read, write, mmap or ioctl operations. Checked kernel lookup
+through ``drm_prepare_ticket_file_get_ticket()`` returns an owned ticket
+reference, rejecting other file types. The Rust transport module exposes the
+same ownership through ``Ticket::create_file()`` and ``Ticket::from_file()``;
+the ticket implementation itself does not depend on file operations.
+
+Final file release cancels the ticket, including when an unpublished file is
+discarded. Duplicated file references share that lifetime. Closing one descriptor
+need not release the file while duplicates or active operations retain it, and
+file release may be deferred. Prompt revocation must use explicit cancellation.
+Creating a separate file for the same ticket creates another cancellation
+handle, not another independent request. Retaining a kernel ticket reference
+does not prevent file-driven cancellation; an accepted retirement guard remains
+independently owned.
+
+The constructor installs no descriptor and does not authenticate display scope.
+A future issuer must validate the request, reserve descriptors with close-on-exec
+and complete fallible setup before publication. The native and Rust file tests
+exercise polling and reference release without exposing a preparation-creation
+ioctl or enabling delegated source access.
+
 Where the helper installs display state
 --------------------------------------
 
