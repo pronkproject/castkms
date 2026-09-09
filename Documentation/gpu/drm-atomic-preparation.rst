@@ -181,7 +181,16 @@ before calling the swap helper. The current code only separates the wait
 phase; it does not add that hook or attach retirement guards to transactions.
 
 Native tests call the real swap helper with isolated state records. They
-interrupt each predecessor class, check that all pointers remain unchanged,
-then retry successfully. Completed and absent predecessors and the no-stall
-path are covered too. These tests do not run driver callbacks, validate a
-display configuration or establish locking for a future ticket interface.
+interrupt each predecessor class and check controllers, connectors, planes,
+color operations and driver-private objects together. The published pointers,
+the records selected for cleanup and the transaction backpointers must all
+remain unchanged. A successful retry must transfer each of those records to
+its installed position. Color operations and private objects have no separate
+predecessor wait in the helper; they still belong to the complete group that
+must remain unpublished when another member's wait is interrupted.
+
+Completed and absent predecessors and the no-stall path exercise successful
+installation of the same group. These tests do not run driver callbacks,
+validate a display configuration or establish locking for a future ticket
+interface. They also do not qualify commit-list or event ownership: the new
+controller state has no commit record in these fixtures.
