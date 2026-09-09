@@ -49,6 +49,10 @@ unsafe impl AlwaysRefCounted for Ticket {
 }
 
 impl Ticket {
+    pub(super) fn as_raw(&self) -> *mut bindings::drm_prepare_ticket {
+        self.0.get()
+    }
+
     /// Retain a set independently of the caller's original ownership.
     ///
     /// Read claims may still be pending. Ticket construction does not establish readiness or
