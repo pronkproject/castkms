@@ -3,6 +3,8 @@
 //! Real atomic callbacks with synthetic master observations; no userspace authority claims.
 
 use super::*;
+
+mod producers;
 use kernel::drm::{
     auth::MasterRef,
     gem::shmem,
@@ -68,6 +70,16 @@ impl Fixture {
     }
 
     fn select(&self, fb: &FramebufferRef<Driver>, check_only: bool, x: u16) -> Result {
+        self.select_with_producer(fb, check_only, x, None)
+    }
+
+    fn select_with_producer(
+        &self,
+        fb: &FramebufferRef<Driver>,
+        check_only: bool,
+        x: u16,
+        producer: Option<&kernel::dma_fence::Fence>,
+    ) -> Result {
         let mode = DisplayMode::from_timings(ModeTimings {
             clock_khz: 25175,
             hdisplay: 640,
@@ -87,12 +99,18 @@ impl Fixture {
             position: (x, 0),
         };
         let crtc = self.drm.crtc()?;
+        let update =
+            |mut transaction: Pin<&mut kernel::drm::kms::atomic::AtomicStateComposer<Driver>>| {
+                transaction.as_mut().set_crtc_config(crtc, Some(&scanout))?;
+                transaction
+                    .add_plane_state(self.drm.plane()?)?
+                    .set_producer_fence(producer.map(|fence| fence.to_owned_ref()));
+                Ok(())
+            };
         if check_only {
-            self.drm
-                .check(|transaction| transaction.set_crtc_config(crtc, Some(&scanout)))
+            self.drm.check(update)
         } else {
-            self.drm
-                .update(|transaction| transaction.set_crtc_config(crtc, Some(&scanout)))
+            self.drm.update(update)
         }
     }
 
