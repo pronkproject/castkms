@@ -223,6 +223,16 @@ impl<T: DriverObject, Ctx: DeviceContext> IntoGEMObject for Object<T, Ctx> {
 
 /// Base operations shared by all GEM object classes
 pub trait BaseObject: IntoGEMObject {
+    /// Borrow the object's native reservation for read-only dependency snapshots.
+    ///
+    /// The reservation may be shared with an importer or exporter. A snapshot retains only
+    /// the acquired completion records, not buffer contents or permission for a later access.
+    fn reservation(&self) -> &crate::dma_resv::Reservation {
+        // SAFETY: Initialized GEM objects retain their native reservation for the object
+        // lifetime, including an importer's borrowed exporter reservation.
+        unsafe { crate::dma_resv::Reservation::from_raw(self.raw_dma_resv()) }
+    }
+
     /// Returns the size of the object in bytes.
     fn size(&self) -> usize {
         // SAFETY: `self.as_raw()` is guaranteed to be a pointer to a valid `struct drm_gem_object`.
