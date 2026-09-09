@@ -48,6 +48,15 @@ impl<S: Unpin> Output<S> {
         };
         drop(retired);
     }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(super) fn inspect<R>(&self, inspect: impl FnOnce(Option<&S>) -> R) -> R {
+        let state = self.state.lock();
+        match &*state {
+            Publication::Open(scene) => inspect(scene.as_ref()),
+            Publication::Closed => inspect(None),
+        }
+    }
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]

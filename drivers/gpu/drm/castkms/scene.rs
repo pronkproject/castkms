@@ -47,6 +47,11 @@ pub(super) struct Scene {
 }
 
 impl Scene {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(super) fn owner(&self) -> Option<&MasterRef<Driver>> {
+        self._owner.as_ref()
+    }
+
     pub(super) fn new(
         framebuffer: FramebufferRef<Driver>,
         geometry: Geometry,
