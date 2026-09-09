@@ -5,6 +5,7 @@
 #include <linux/err.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
+#include <linux/sched/signal.h>
 #include <drm/drm_atomic_prepare.h>
 #include <kunit/test.h>
 
@@ -303,6 +304,140 @@ static void opposite_order_sets_acquire_without_deadlock(struct kunit *test)
 	}
 }
 
+struct set_wait {
+	struct drm_prepare_retirement_set *set;
+	struct completion started;
+	struct completion done;
+	int result;
+};
+
+static int wait_for_set(void *data)
+{
+	struct set_wait *wait = data;
+
+	allow_signal(SIGUSR1);
+	complete(&wait->started);
+	wait->result = drm_prepare_retirement_set_wait(wait->set);
+	flush_signals(current);
+	complete(&wait->done);
+	while (!kthread_should_stop())
+		schedule_timeout_interruptible(1);
+	return 0;
+}
+
+static struct task_struct *start_wait(struct kunit *test, struct set_wait *wait,
+				      struct drm_prepare_retirement_set *set)
+{
+	struct task_struct *worker;
+
+	wait->set = set;
+	init_completion(&wait->started);
+	init_completion(&wait->done);
+	worker = kthread_run(wait_for_set, wait, "prepare-set-wait");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, worker);
+	wait_for_completion(&wait->started);
+	schedule_timeout_uninterruptible(msecs_to_jiffies(20));
+	KUNIT_EXPECT_FALSE(test, completion_done(&wait->done));
+	return worker;
+}
+
+static void join_wait(struct kunit *test, struct task_struct *worker, struct set_wait *wait,
+		      int expected)
+{
+	unsigned long finished = wait_for_completion_timeout(&wait->done, HZ);
+
+	/* Interrupt a missing readiness wake before releasing borrowed fixture storage. */
+	if (!finished)
+		send_sig(SIGUSR1, worker, 0);
+	kthread_stop(worker);
+	KUNIT_EXPECT_NE(test, finished, 0);
+	KUNIT_EXPECT_EQ(test, wait->result, expected);
+}
+
+static const char *wait_fence_name(struct dma_fence *fence)
+{
+	return "prepare-set-wait";
+}
+
+static const struct dma_fence_ops wait_fence_ops = {
+	.get_driver_name = wait_fence_name,
+	.get_timeline_name = wait_fence_name,
+};
+
+static void put_wait_fence(void *fence)
+{
+	dma_fence_put(fence);
+}
+
+static void readiness_wait_ends_before_native_read_completion(struct kunit *test)
+{
+	struct drm_prepare_domain *domain = new_domain(test);
+	struct drm_prepare_source *source = new_source(test, domain);
+	struct drm_prepare_read_claim *read = claim_read(test, source);
+	struct drm_prepare_retirement_set *set = new_set(test, &source, 1);
+	struct dma_fence *fence = kzalloc_obj(*fence);
+	struct task_struct *worker;
+	struct set_wait wait;
+	unsigned long finished;
+
+	KUNIT_ASSERT_NOT_NULL(test, fence);
+	dma_fence_init(fence, &wait_fence_ops, NULL, dma_fence_context_alloc(1), 1);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_wait_fence, fence), 0);
+	worker = start_wait(test, &wait, set);
+	kunit_remove_action(test, abandon_read, read);
+	drm_prepare_read_release(read, fence);
+	finished = wait_for_completion_timeout(&wait.done, HZ);
+	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(fence));
+	/* Also unblock an implementation that incorrectly waits for GPU completion. */
+	dma_fence_signal(fence);
+	if (!finished)
+		send_sig(SIGUSR1, worker, 0);
+	kthread_stop(worker);
+	KUNIT_EXPECT_NE(test, finished, 0);
+	KUNIT_EXPECT_EQ(test, wait.result, 0);
+	kunit_release_action(test, put_wait_fence, fence);
+}
+
+static void abandoned_member_wakes_waiter_with_another_claim_pending(struct kunit *test)
+{
+	struct drm_prepare_domain *domain = new_domain(test);
+	struct drm_prepare_source *sources[] = { new_source(test, domain), new_source(test, domain) };
+	struct drm_prepare_read_claim *pending = claim_read(test, sources[0]);
+	struct drm_prepare_read_claim *lost = claim_read(test, sources[1]);
+	struct drm_prepare_retirement_set *set = new_set(test, sources, 2);
+	struct task_struct *worker;
+	struct set_wait wait;
+
+	worker = start_wait(test, &wait, set);
+	kunit_release_action(test, abandon_read, lost);
+	join_wait(test, worker, &wait, -EIO);
+	release_read(test, pending);
+}
+
+static void interrupted_wait_preserves_admission_and_retry(struct kunit *test)
+{
+	struct drm_prepare_domain *domain = new_domain(test);
+	struct drm_prepare_source *source = new_source(test, domain);
+	struct drm_prepare_read_claim *read = claim_read(test, source);
+	struct drm_prepare_retirement_set *set = new_set(test, &source, 1);
+	struct task_struct *worker;
+	struct set_wait wait;
+
+	worker = start_wait(test, &wait, set);
+	send_sig(SIGUSR1, worker, 0);
+	join_wait(test, worker, &wait, -ERESTARTSYS);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_source_claim(source)), -EBUSY);
+	release_read(test, read);
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_wait(set), 0);
+}
+
+static void empty_set_wait_needs_no_domain(struct kunit *test)
+{
+	struct drm_prepare_retirement_set *set = new_set(test, NULL, 0);
+
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_wait(set), 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(readiness_requires_every_member),
 	KUNIT_CASE(terminal_failure_takes_precedence_over_pending),
@@ -314,6 +449,10 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(members_retain_domain_and_source_lifetime),
 	KUNIT_CASE(release_does_not_resolve_existing_claims),
 	KUNIT_CASE(opposite_order_sets_acquire_without_deadlock),
+	KUNIT_CASE(readiness_wait_ends_before_native_read_completion),
+	KUNIT_CASE(abandoned_member_wakes_waiter_with_another_claim_pending),
+	KUNIT_CASE(interrupted_wait_preserves_admission_and_retry),
+	KUNIT_CASE(empty_set_wait_needs_no_domain),
 	{}
 };
 
