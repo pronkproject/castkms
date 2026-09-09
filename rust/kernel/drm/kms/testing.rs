@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
+
+//! Private, unregistered devices for testing driver atomic callbacks.
+//!
+//! No DRM minor is published. These fixtures exercise kernel transactions, not file ioctl
+//! authorization. Drivers must release any device-owned framebuffer references before dropping
+//! the fixture, just as their registration owner must do during shutdown.
+
+use super::{
+    atomic::{
+        self,
+        AtomicStateComposer, //
+    },
+    connector::{
+        AsRawConnector,
+        Connector, //
+    },
+    crtc::{
+        AsRawCrtc,
+        Crtc, //
+    },
+    framebuffer::{
+        Framebuffer,
+        FramebufferLayout,
+        FramebufferRef, //
+    },
+    private::KmsImpl,
+    KmsDriver, //
+};
+use crate::{
+    bindings,
+    drm::{
+        Device,
+        UnregisteredDevice, //
+    },
+    prelude::*, //
+};
+
+/// Initialized KMS configuration kept outside userspace registration.
+///
+/// Consuming the unregistered device prevents registration or further object construction
+/// through its setup view. Object borrows remain tied to this owner.
+pub struct TestDevice<T: KmsDriver>(UnregisteredDevice<T>);
+
+impl<T: KmsDriver> Drop for TestDevice<T> {
+    fn drop(&mut self) {
+        // SAFETY: The fixture owns completed KMS setup and excludes concurrent transactions.
+        // Retire accepted state before releasing the device's owning reference.
+        unsafe { bindings::drm_atomic_helper_shutdown(self.0.as_raw()) };
+    }
+}
+
+impl<T: KmsDriver> TestDevice<T> {
+    /// Initialize the driver's actual KMS objects and initial states without publishing them.
+    pub fn new(dev: UnregisteredDevice<T>) -> Result<Self> {
+        // SAFETY: Consuming the newly allocated device excludes registration. The only setup
+        // entry point for external callers consumes that owner as well.
+        unsafe { <T as KmsImpl>::setup_kms(&dev) }?;
+        Ok(Self(dev))
+    }
+
+    /// Borrow the initialized device for allocation and driver-private observations.
+    pub fn device(&self) -> &Device<T> {
+        &self.0
+    }
+
+    /// Borrow the only CRTC, rejecting fixtures with a different topology.
+    pub fn crtc(&self) -> Result<&Crtc<T::Crtc>> {
+        // SAFETY: Setup is complete, and this unregistered fixture excludes topology changes
+        // and teardown. Rust constructors enforce the nominated concrete object type.
+        unsafe {
+            let config = &raw const (*self.0.as_raw()).mode_config;
+            if (*config).num_crtc != 1 {
+                return Err(EINVAL);
+            }
+            let raw = crate::container_of!((*config).crtc_list.next, bindings::drm_crtc, head);
+            Ok(Crtc::from_raw(raw))
+        }
+    }
+
+    /// Borrow the only connector, rejecting fixtures with a different topology.
+    pub fn connector(&self) -> Result<&Connector<T::Connector>> {
+        // SAFETY: The same completed, exclusively owned topology guarantee as crtc() applies.
+        unsafe {
+            let config = &raw const (*self.0.as_raw()).mode_config;
+            if (*config).num_connector != 1 {
+                return Err(EINVAL);
+            }
+            let raw =
+                crate::container_of!((*config).connector_list.next, bindings::drm_connector, head);
+            Ok(Connector::from_raw(raw))
+        }
+    }
+
+    /// Construct a framebuffer using the shared layout checks and driver metadata storage.
+    pub fn framebuffer(
+        &self,
+        layout: &FramebufferLayout<'_, T>,
+        data: T::FramebufferData,
+    ) -> Result<FramebufferRef<T>> {
+        // SAFETY: This owner protects completed KMS setup. The returned framebuffer retains
+        // its device; driver-held references must be released before fixture shutdown.
+        unsafe { Framebuffer::from_objects_with_data_unchecked(&self.0, layout, data) }
+    }
+
+    /// Submit a blocking transaction through the installed driver callbacks.
+    ///
+    /// The callback must propagate errors and be replayable after lock contention. Do not
+    /// hold modeset locks or recursively submit transactions from the callback.
+    pub fn update(&self, update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result) -> Result {
+        // SAFETY: The fixture owns initialized mode configuration and excludes teardown.
+        unsafe { atomic::run_update(&self.0, update) }
+    }
+
+    /// Validate without publishing state or invoking commit callbacks.
+    ///
+    /// The callback has the same replay and locking requirements as [`Self::update`].
+    pub fn check(&self, update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result) -> Result {
+        // SAFETY: The same initialized-device guarantee as update() applies.
+        unsafe { atomic::run_check(&self.0, update) }
+    }
+}
