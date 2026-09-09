@@ -7,6 +7,7 @@
 #include <linux/export.h>
 #include <linux/kref.h>
 #include <linux/list.h>
+#include <linux/limits.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
 
@@ -26,8 +27,14 @@ struct drm_prepare_source {
 	unsigned int capacity;
 	unsigned int count;
 	unsigned int unresolved_claims;
+	unsigned int admission_holds;
 	bool sealed;
 	bool claim_abandoned;
+};
+
+struct drm_prepare_admission_hold {
+	struct kref ref;
+	struct drm_prepare_source *source;
 };
 
 static void free_reads(struct list_head *reads)
@@ -95,7 +102,7 @@ struct drm_prepare_read_claim *drm_prepare_source_claim(struct drm_prepare_sourc
 		error = -EIO;
 		goto unlock;
 	}
-	if (source->sealed) {
+	if (source->sealed || source->admission_holds) {
 		error = -EBUSY;
 		goto unlock;
 	}
@@ -133,11 +140,11 @@ void drm_prepare_source_seal(struct drm_prepare_source *source)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_source_seal);
 
-static int source_ready(struct drm_prepare_source *source)
+static int source_ready(struct drm_prepare_source *source, bool admission_held)
 {
 	if (source->claim_abandoned)
 		return -EIO;
-	return source->sealed && !source->unresolved_claims ? 0 : -EAGAIN;
+	return (source->sealed || admission_held) && !source->unresolved_claims ? 0 : -EAGAIN;
 }
 
 int drm_prepare_source_ready(struct drm_prepare_source *source)
@@ -145,11 +152,74 @@ int drm_prepare_source_ready(struct drm_prepare_source *source)
 	int error;
 
 	mutex_lock(&source->lock);
-	error = source_ready(source);
+	error = source_ready(source, false);
 	mutex_unlock(&source->lock);
 	return error;
 }
 EXPORT_SYMBOL_GPL(drm_prepare_source_ready);
+
+struct drm_prepare_admission_hold *drm_prepare_source_hold_admission(struct drm_prepare_source *source)
+{
+	struct drm_prepare_admission_hold *hold;
+	int error = 0;
+
+	hold = kzalloc_obj(*hold);
+	if (!hold)
+		return ERR_PTR(-ENOMEM);
+	mutex_lock(&source->lock);
+	if (source->claim_abandoned)
+		error = -EIO;
+	else if (source->admission_holds == UINT_MAX)
+		error = -EOVERFLOW;
+	else
+		source->admission_holds++;
+	mutex_unlock(&source->lock);
+	if (error) {
+		kfree(hold);
+		return ERR_PTR(error);
+	}
+	kref_init(&hold->ref);
+	hold->source = drm_prepare_source_get(source);
+	return hold;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_source_hold_admission);
+
+struct drm_prepare_admission_hold *drm_prepare_admission_hold_get(struct drm_prepare_admission_hold *hold)
+{
+	kref_get(&hold->ref);
+	return hold;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_admission_hold_get);
+
+static void admission_hold_free(struct kref *ref)
+{
+	struct drm_prepare_admission_hold *hold = container_of(ref, struct drm_prepare_admission_hold, ref);
+	struct drm_prepare_source *source = hold->source;
+
+	mutex_lock(&source->lock);
+	source->admission_holds--;
+	mutex_unlock(&source->lock);
+	drm_prepare_source_put(source);
+	kfree(hold);
+}
+
+void drm_prepare_admission_hold_put(struct drm_prepare_admission_hold *hold)
+{
+	kref_put(&hold->ref, admission_hold_free);
+}
+EXPORT_SYMBOL_GPL(drm_prepare_admission_hold_put);
+
+int drm_prepare_admission_hold_ready(struct drm_prepare_admission_hold *hold)
+{
+	struct drm_prepare_source *source = hold->source;
+	int error;
+
+	mutex_lock(&source->lock);
+	error = source_ready(source, true);
+	mutex_unlock(&source->lock);
+	return error;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_admission_hold_ready);
 
 static void finish_read(struct drm_prepare_read_claim *read, struct dma_fence *fence, bool abandoned)
 {
@@ -184,7 +254,8 @@ void drm_prepare_read_abandon(struct drm_prepare_read_claim *read)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_read_abandon);
 
-int drm_prepare_source_completion(struct drm_prepare_source *source, struct dma_fence **fence)
+static int source_completion(struct drm_prepare_source *source, bool admission_held,
+			     struct dma_fence **fence)
 {
 	struct dma_fence_unwrap *cursors = NULL;
 	struct dma_fence **inputs = NULL, *merged = NULL;
@@ -193,7 +264,7 @@ int drm_prepare_source_completion(struct drm_prepare_source *source, struct dma_
 	int error;
 
 	mutex_lock(&source->lock);
-	error = source_ready(source);
+	error = source_ready(source, admission_held);
 	if (error || !source->count)
 		goto unlock;
 	inputs = kmalloc_array(source->count, sizeof(*inputs), GFP_KERNEL);
@@ -210,8 +281,8 @@ int drm_prepare_source_completion(struct drm_prepare_source *source, struct dma_
 		inputs[count++] = read->fence;
 unlock:
 	mutex_unlock(&source->lock);
-	/* A ready source is sealed and has no remaining claim owner. Its list is
-	 * immutable, and the caller's source reference retains every borrowed input.
+	/* Permanent closure or the caller's hold excludes admission; no claim owner
+	 * remains. The retained source keeps the immutable list and its inputs alive.
 	 */
 	if (!error && count) {
 		merged = __dma_fence_unwrap_merge(count, inputs, cursors);
@@ -224,4 +295,15 @@ unlock:
 		*fence = merged;
 	return error;
 }
+
+int drm_prepare_source_completion(struct drm_prepare_source *source, struct dma_fence **fence)
+{
+	return source_completion(source, false, fence);
+}
 EXPORT_SYMBOL_GPL(drm_prepare_source_completion);
+
+int drm_prepare_admission_hold_completion(struct drm_prepare_admission_hold *hold, struct dma_fence **fence)
+{
+	return source_completion(hold->source, true, fence);
+}
+EXPORT_SYMBOL_GPL(drm_prepare_admission_hold_completion);
