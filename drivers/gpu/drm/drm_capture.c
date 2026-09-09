@@ -32,6 +32,7 @@ struct drm_capture {
 	struct kref ref;
 	/* Serializes request admission, state transitions and result access. */
 	struct mutex lock;
+	wait_queue_head_t result_wait;
 	struct list_head jobs;
 	unsigned int capacity;
 	unsigned int count;
@@ -85,6 +86,7 @@ struct drm_capture *drm_capture_create(unsigned int capacity, size_t frame_size)
 		return ERR_PTR(-ENOMEM);
 	kref_init(&capture->ref);
 	mutex_init(&capture->lock);
+	init_waitqueue_head(&capture->result_wait);
 	INIT_LIST_HEAD(&capture->jobs);
 	capture->capacity = capacity;
 	capture->frame_size = frame_size;
@@ -171,6 +173,7 @@ int drm_capture_cancel(struct drm_capture *capture, u64 id)
 	else
 		drm_capture_cancel_job(job, -ECANCELED);
 	mutex_unlock(&capture->lock);
+	wake_up_all(&capture->result_wait);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(drm_capture_cancel);
@@ -201,6 +204,7 @@ int drm_capture_discard(struct drm_capture *capture, u64 id)
 	else
 		drm_capture_free_job(job);
 	mutex_unlock(&capture->lock);
+	wake_up_all(&capture->result_wait);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(drm_capture_discard);
@@ -214,6 +218,7 @@ void drm_capture_revoke(struct drm_capture *capture)
 	list_for_each_entry(job, &capture->jobs, link)
 		drm_capture_cancel_job(job, -EKEYREVOKED);
 	mutex_unlock(&capture->lock);
+	wake_up_all(&capture->result_wait);
 }
 EXPORT_SYMBOL_GPL(drm_capture_revoke);
 
@@ -264,6 +269,7 @@ void drm_capture_complete(struct drm_capture_job *job, int status)
 	if (capture->closed || job->discarded)
 		drm_capture_free_job(job);
 	mutex_unlock(&capture->lock);
+	wake_up_all(&capture->result_wait);
 	kref_put(&capture->ref, drm_capture_release);
 }
 EXPORT_SYMBOL_GPL(drm_capture_complete);
@@ -319,6 +325,12 @@ int drm_capture_query(struct drm_capture *capture, u64 id,
 }
 EXPORT_SYMBOL_GPL(drm_capture_query);
 
+wait_queue_head_t *drm_capture_result_waitqueue(struct drm_capture *capture)
+{
+	return &capture->result_wait;
+}
+EXPORT_SYMBOL_GPL(drm_capture_result_waitqueue);
+
 ssize_t drm_capture_copy_result(struct drm_capture *capture, u64 id,
 				void *buffer, size_t size)
 {
@@ -358,6 +370,7 @@ int drm_capture_ack(struct drm_capture *capture, u64 id)
 	else
 		drm_capture_free_job(job);
 	mutex_unlock(&capture->lock);
+	wake_up_all(&capture->result_wait);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(drm_capture_ack);
@@ -374,6 +387,7 @@ void drm_capture_shutdown(struct drm_capture *capture)
 			drm_capture_free_job(job);
 	}
 	mutex_unlock(&capture->lock);
+	wake_up_all(&capture->result_wait);
 }
 EXPORT_SYMBOL_GPL(drm_capture_shutdown);
 

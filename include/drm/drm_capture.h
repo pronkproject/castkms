@@ -3,6 +3,7 @@
 #define __DRM_CAPTURE_H__
 
 #include <linux/types.h>
+#include <linux/wait.h>
 
 struct drm_capture;
 struct drm_capture_job;
@@ -40,6 +41,8 @@ int drm_capture_cancel(struct drm_capture *capture, u64 id);
 int drm_capture_discard(struct drm_capture *capture, u64 id);
 int drm_capture_query(struct drm_capture *capture, u64 id,
 		      struct drm_capture_result *result);
+/* Retain capture, register before querying, and recheck after every notification. */
+wait_queue_head_t *drm_capture_result_waitqueue(struct drm_capture *capture);
 int drm_capture_ack(struct drm_capture *capture, u64 id);
 ssize_t drm_capture_copy_result(struct drm_capture *capture, u64 id,
 				void *buffer, size_t size);
