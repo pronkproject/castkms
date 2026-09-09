@@ -7,6 +7,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_test.o \
 	drm_atomic_prepare_test.o \
 	drm_atomic_prepare_set_test.o \
+	drm_atomic_prepare_guard_test.o \
 	drm_atomic_commit_test.o \
 	drm_bridge_test.o \
 	drm_capture_test.o \
