@@ -43,6 +43,16 @@ int drm_capture_query(struct drm_capture *capture, u64 id,
 		      struct drm_capture_result *result);
 /* Retain capture, register before querying, and recheck after every notification. */
 wait_queue_head_t *drm_capture_result_waitqueue(struct drm_capture *capture);
+/*
+ * Wait interruptibly for a retained terminal result or disappearance of the ID.
+ * Zero returns a completed result, whose status may still be a producer error.
+ * Failure leaves result unchanged. Neither observation consumes the request.
+ * Cancel/revoke of a claimed request still needs actual provider completion;
+ * waiting does not turn cancellation into permission to release active storage.
+ * Do not hold locks needed by the provider. Caller retains capture throughout.
+ */
+int drm_capture_wait_result(struct drm_capture *capture, u64 id,
+			    struct drm_capture_result *result);
 int drm_capture_ack(struct drm_capture *capture, u64 id);
 ssize_t drm_capture_copy_result(struct drm_capture *capture, u64 id,
 				void *buffer, size_t size);
