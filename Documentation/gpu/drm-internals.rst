@@ -281,6 +281,49 @@ GPU source-use protocol. Providers still supply those policies and lifetimes;
 the shared operation prevents separating their approval from request admission
 with respect to authority revocation.
 
+Rust Authority Ownership
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Rust providers use ``capture::Authority<P>`` for the same native authority,
+where ``P`` implements the provider's ``Policy``. Construction transfers an
+``Arc`` reference to the native owner. Failure releases that reference without
+invoking the authority's revoke callback. Success retains both the provider
+and the module that contains its callbacks. The policy trait makes correct
+callback-module ownership an explicit safety obligation; the ``vtable`` implementation
+attribute selects the implementing module by default.
+
+Dropping the last authority reference revokes and releases its provider.
+Explicit ``revoke()`` waits for the cleanup callback but does not release
+other owners' references. ``is_revoked()`` observes closed admission, while
+``cleanup_done()`` observes the callback's return. Neither observation means
+that GPU work has completed. Avoid ownership cycles between a provider and
+its authority, and release module-pinning authorities before expecting their
+callback module to unload.
+
+``begin()`` returns an admission guard tied to the borrowed authority and the
+current task. Rust rejects moving it to another task, releasing its owner
+while it remains borrowed, or fabricating a guard without locking. The guard's
+``add_stream()`` operation registers cleanup ownership after provider policy
+validation. Dropping the guard unlocks admission; it does not revoke anything.
+``remove_stream()`` operates outside the guard and stops only the selected
+registered stream.
+
+``claim()`` uses native membership and policy checks. A missing
+``authorize_capture()`` implementation denies claims. Rust's result type
+permits only successful approval or an error, not an accidental positive
+integer. The provider still stabilizes its source and live policy across the
+call, in the same lock order as the native contract. Registration is not
+permission, and an approval callback must not assume that a request exists.
+
+A successful claim returns the existing unique CPU ``Job`` owner. That job
+retains its private result storage even if the authority and policy are
+subsequently released, while revocation prevents delivering its image. It
+does not retain arbitrary provider resources or asynchronous source access.
+Those require their own ownership; a CPU job must not stand in for a GPU
+release protocol. Runtime tests cover provider lifetime, denied claims,
+stream removal and active jobs across revocation. Compiler fixtures check the
+admission guard's ownership restrictions without granting real pixel access.
+
 Anonymous Revocation File
 ------------------------
 

@@ -88,6 +88,12 @@ directory next to `kms-typecheck.sh` after installation.
 
 ### What they protect
 
+Capture authority admission has a task-bound mutex guard. Its compiler
+fixtures reject moving that guard to another task, dropping the authority
+while the guard is still borrowed, and constructing a guard without acquiring
+admission. Those are ownership checks, not proof that a provider's capture
+permission policy is correct.
+
 A driver names one concrete type for each kind of display object. Building a
 CRTC must use that driver's CRTC, not some other implementation that happens
 to share a driver interface. The same rule applies to planes, connectors, and
