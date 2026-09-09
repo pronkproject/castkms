@@ -9,6 +9,7 @@ struct drm_prepare_source;
 struct drm_prepare_read_claim;
 struct drm_prepare_admission_hold;
 struct drm_prepare_domain;
+struct drm_prepare_retirement_set;
 
 /* Related sources share a provider-owned admission domain, not a global lock.
  * Domain operations may sleep. Each source independently retains its domain.
@@ -20,12 +21,27 @@ struct drm_prepare_source *
 drm_prepare_source_create_in(struct drm_prepare_domain *domain, unsigned int capacity);
 
 /*
+ * Atomically hold admission for a fixed collection of sources in one domain.
+ * Duplicate sources are coalesced. Empty sets are allowed; NULL members are
+ * invalid and mixed domains return -EXDEV. The caller retains the input array
+ * and every source throughout creation. Failure leaves no admission holds.
+ * Final put releases the complete set without canceling existing readers.
+ * All operations may sleep. The set neither grants access nor owns pixels.
+ */
+struct drm_prepare_retirement_set *
+drm_prepare_retirement_set_create(struct drm_prepare_source * const *sources,
+				  unsigned int count);
+struct drm_prepare_retirement_set *
+drm_prepare_retirement_set_get(struct drm_prepare_retirement_set *set);
+void drm_prepare_retirement_set_put(struct drm_prepare_retirement_set *set);
+
+/*
  * Kernel-only source-generation accounting, not an atomic ticket or pixel grant.
  * The provider establishes source authority and independently retains storage.
  * All operations may sleep and require a live reference. Claims retain their
  * source until release or abandonment consumes them. Permanent closure is
  * irreversible; temporary hold ownership is provided separately below.
- * Atomic ticket/cohort ownership is not implemented by this primitive.
+ * Atomic transaction scope and ticket validation are separate responsibilities.
  * Capacity counts unresolved claims plus submitted reads still pending.
  */
 /* Convenience constructor with a private domain for an independent source. */
