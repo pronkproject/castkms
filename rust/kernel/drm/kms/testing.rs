@@ -30,11 +30,23 @@ use super::{
 use crate::{
     bindings,
     drm::{
+        auth::{
+            MasterRef,
+            MasterSnapshot, //
+        },
         Device,
         UnregisteredDevice, //
     },
     prelude::*, //
 };
+use core::ptr::NonNull;
+
+// Native master allocation stays in the built-in test support, not in driver modules.
+#[inline(never)]
+fn allocate_master(dev: *mut bindings::drm_device) -> Result<NonNull<bindings::drm_master>> {
+    // SAFETY: The private caller retains its initialized DRM device across this call.
+    NonNull::new(unsafe { bindings::drm_master_create(dev) }).ok_or(ENOMEM)
+}
 
 /// Initialized KMS configuration kept outside userspace registration.
 ///
@@ -118,5 +130,16 @@ impl<T: KmsDriver> TestDevice<T> {
     pub fn check(&self, update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result) -> Result {
         // SAFETY: The same initialized-device guarantee as update() applies.
         unsafe { atomic::run_check(&self.0, update) }
+    }
+
+    /// Create synthetic creation evidence backed by a real retained native master identity.
+    ///
+    /// No file becomes master and no master callback is invoked. `was_current` is test input,
+    /// not an observation of native authority. File-transition tests are needed separately.
+    pub fn synthetic_master_snapshot(&self, was_current: bool) -> Result<MasterSnapshot<T>> {
+        let raw = allocate_master(self.0.as_raw())?;
+        // SAFETY: The constructor returned one owned reference belonging to this device.
+        let master = unsafe { MasterRef::from_owned_raw(raw, &self.0) };
+        Ok(MasterSnapshot::new(master, was_current))
     }
 }
