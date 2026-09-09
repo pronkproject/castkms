@@ -162,6 +162,72 @@ static void claim_retains_source_after_owner_put(struct kunit *test)
 	release_read(test, read, NULL);
 }
 
+static void put_admission_hold(void *hold)
+{
+	drm_prepare_admission_hold_put(hold);
+}
+
+static struct drm_prepare_admission_hold *hold_source(struct kunit *test, struct drm_prepare_source *source)
+{
+	struct drm_prepare_admission_hold *hold = drm_prepare_source_hold_admission(source);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, hold);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_admission_hold, hold), 0);
+	return hold;
+}
+
+static void overlapping_holds_keep_admission_closed(struct kunit *test)
+{
+	struct drm_prepare_source *source = new_source(test, 1);
+	struct drm_prepare_admission_hold *first = hold_source(test, source);
+	struct drm_prepare_admission_hold *second = hold_source(test, source);
+	struct drm_prepare_read_claim *read;
+	struct dma_fence *fence = ERR_PTR(-EINVAL);
+
+	KUNIT_EXPECT_EQ(test, drm_prepare_admission_hold_ready(first), 0);
+	KUNIT_EXPECT_EQ(test, drm_prepare_source_ready(source), -EAGAIN);
+	KUNIT_EXPECT_EQ(test, drm_prepare_source_completion(source, &fence), -EAGAIN);
+	KUNIT_EXPECT_PTR_EQ(test, fence, ERR_PTR(-EINVAL));
+	kunit_release_action(test, put_admission_hold, first);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_source_claim(source)), -EBUSY);
+	KUNIT_EXPECT_EQ(test, drm_prepare_admission_hold_ready(second), 0);
+	kunit_release_action(test, put_admission_hold, second);
+	read = claim_read(test, source);
+	release_read(test, read, NULL);
+}
+
+static void reopened_source_keeps_submitted_readers(struct kunit *test)
+{
+	struct drm_prepare_source *source = new_source(test, 2);
+	struct drm_prepare_read_claim *read = claim_read(test, source);
+	struct drm_prepare_admission_hold *hold = hold_source(test, source);
+	struct dma_fence *fence = new_fence(test), *completion;
+
+	release_read(test, read, fence);
+	KUNIT_EXPECT_EQ(test, drm_prepare_admission_hold_ready(hold), 0);
+	kunit_release_action(test, put_admission_hold, hold);
+	read = claim_read(test, source);
+	hold = hold_source(test, source);
+	KUNIT_EXPECT_EQ(test, drm_prepare_admission_hold_ready(hold), -EAGAIN);
+	release_read(test, read, NULL);
+	KUNIT_ASSERT_EQ(test, drm_prepare_admission_hold_completion(hold, &completion), 0);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_fence, completion), 0);
+	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(completion));
+	dma_fence_signal(fence);
+	KUNIT_EXPECT_TRUE(test, dma_fence_is_signaled(completion));
+}
+
+static void permanent_closure_survives_admission_hold_release(struct kunit *test)
+{
+	struct drm_prepare_source *source = new_source(test, 1);
+	struct drm_prepare_admission_hold *hold = hold_source(test, source);
+
+	drm_prepare_source_seal(source);
+	kunit_release_action(test, put_admission_hold, hold);
+	KUNIT_EXPECT_EQ(test, drm_prepare_source_ready(source), 0);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_source_claim(source)), -EBUSY);
+}
+
 struct claim_race {
 	struct drm_prepare_source *source;
 	struct drm_prepare_read_claim *read;
@@ -222,6 +288,9 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(submitted_reads_keep_credit_until_completion),
 	KUNIT_CASE(abandoned_claim_is_terminal_failure),
 	KUNIT_CASE(claim_retains_source_after_owner_put),
+	KUNIT_CASE(overlapping_holds_keep_admission_closed),
+	KUNIT_CASE(reopened_source_keeps_submitted_readers),
+	KUNIT_CASE(permanent_closure_survives_admission_hold_release),
 	KUNIT_CASE(seal_serializes_with_admission),
 	{}
 };
