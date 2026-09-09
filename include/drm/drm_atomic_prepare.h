@@ -34,6 +34,11 @@ drm_prepare_retirement_set_create(struct drm_prepare_source * const *sources,
 struct drm_prepare_retirement_set *
 drm_prepare_retirement_set_get(struct drm_prepare_retirement_set *set);
 void drm_prepare_retirement_set_put(struct drm_prepare_retirement_set *set);
+/*
+ * Zero means every member is ready, not that native readers have completed.
+ * Terminal member failure takes precedence over other pending claims.
+ */
+int drm_prepare_retirement_set_ready(struct drm_prepare_retirement_set *set);
 
 /*
  * Kernel-only source-generation accounting, not an atomic ticket or pixel grant.
