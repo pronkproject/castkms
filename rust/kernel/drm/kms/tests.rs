@@ -32,6 +32,8 @@ struct Counts {
     fail_framebuffer_data: AtomicU32,
     fail_gem_open: AtomicU32,
     fail_prime_import: AtomicU32,
+    master_sets: AtomicU32,
+    master_drops: AtomicU32,
     objects: AtomicU32,
     setup_failures: AtomicU32,
     plane_updates: AtomicU32,
@@ -293,6 +295,17 @@ impl drm::Driver for TestDriver {
         desc: c"Rust KMS runtime tests",
     };
     const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+
+    fn master_changed(dev: &Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
+        match master {
+            Some(_) => {
+                dev.counts.master_sets.fetch_add(1, Ordering::Relaxed);
+            }
+            None => {
+                dev.counts.master_drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
 }
 
 #[vtable]

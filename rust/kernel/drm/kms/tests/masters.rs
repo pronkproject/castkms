@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod transitions;
+
 // Install a native association on a private internal client. The fixture does not make the
 // file current master or publish it to other tasks. Native file close releases the reference.
 fn associate(client: &HandleClient) -> Result {
