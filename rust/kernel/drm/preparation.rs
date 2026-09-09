@@ -26,7 +26,10 @@ pub use self::{
         PreparedRetirement,
         RetirementSet, //
     },
-    ticket::Ticket, //
+    ticket::{
+        Attempt,
+        Ticket, //
+    }, //
 };
 
 /// Bounded admission for one source generation.
