@@ -24,3 +24,6 @@ impl Request {
         Ok(to_result(result.status))
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
