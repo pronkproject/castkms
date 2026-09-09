@@ -10,6 +10,9 @@ mod output;
 mod provenance;
 mod scene;
 
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+mod tests;
+
 use kernel::{
     device as bus,
     drm,
