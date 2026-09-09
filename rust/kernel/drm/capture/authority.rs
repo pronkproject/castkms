@@ -2,8 +2,14 @@
 
 //! Provider policy and revocation ownership, independent of capture file transport.
 
+use super::{
+    Stream, //
+};
 use crate::{
-    error::from_err_ptr,
+    error::{
+        from_err_ptr,
+        to_result, //
+    },
     prelude::*,
     sync::{
         aref::{
@@ -14,6 +20,7 @@ use crate::{
     },
     types::{
         ForeignOwnable,
+        NotThreadSafe,
         Opaque, //
     }, //
 };
@@ -131,5 +138,57 @@ impl<P: Policy> Authority<P> {
     pub fn cleanup_done(&self) -> bool {
         // SAFETY: The shared reference retains native completion storage.
         unsafe { bindings::drm_capture_authority_cleanup_done(self.raw.get()) }
+    }
+
+    /// Exclude revocation while the provider validates policy and registers resources.
+    ///
+    /// The guard holds the native admission mutex on the current task. It does not establish
+    /// pixel permission, authorize a stream or stabilize source state by itself.
+    pub fn begin(&self) -> Result<Admission<'_, P>> {
+        // SAFETY: The authority is initialized and the returned guard owns a successful lock.
+        to_result(unsafe { bindings::drm_capture_authority_begin(self.raw.get()) })?;
+        Ok(Admission {
+            authority: self,
+            _task: NotThreadSafe,
+        })
+    }
+
+    /// Remove a registered stream and stop its delivery without revoking sibling streams.
+    ///
+    /// False means no registration was found, possibly because revoke already owns its cleanup.
+    /// Only [`Self::revoke`] waits for all authority cleanup. Do not hold an admission guard.
+    pub fn remove_stream(&self, stream: &Stream) -> bool {
+        // SAFETY: Both shared references remain live throughout synchronized removal.
+        unsafe { bindings::drm_capture_authority_remove_stream(self.raw.get(), stream.0.get()) }
+    }
+}
+
+/// Task-bound admission ownership. Drop releases the mutex, not the authority or its resources.
+#[must_use = "dropping the guard ends the resource-admission interval"]
+pub struct Admission<'a, P: Policy> {
+    authority: &'a Authority<P>,
+    _task: NotThreadSafe,
+}
+
+impl<P: Policy> Admission<'_, P> {
+    /// Register a stream whose scope and recipient the provider has authorized.
+    ///
+    /// Success retains the stream until removal or revocation. Do not share a stream between
+    /// incompatible authority scopes. Registration does not replace policy checks at claim.
+    pub fn add_stream(&self, stream: &Stream) -> Result {
+        // SAFETY: The guard holds this authority's admission mutex and the stream remains live.
+        to_result(unsafe {
+            bindings::drm_capture_authority_add_stream_locked(
+                self.authority.raw.get(),
+                stream.0.get(),
+            )
+        })
+    }
+}
+
+impl<P: Policy> Drop for Admission<'_, P> {
+    fn drop(&mut self) {
+        // SAFETY: The task-bound guard owns exactly one successful begin and retains the authority.
+        unsafe { bindings::drm_capture_authority_end(self.authority.raw.get()) };
     }
 }

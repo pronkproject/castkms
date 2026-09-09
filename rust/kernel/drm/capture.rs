@@ -16,6 +16,7 @@ use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod authority;
 pub use authority::{
+    Admission,
     Authority,
     Policy, //
 };
