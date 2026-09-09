@@ -71,6 +71,8 @@ pub mod dma;
 pub mod dma_buf;
 #[cfg(CONFIG_DMA_SHARED_BUFFER)]
 pub mod dma_fence;
+#[cfg(CONFIG_DMA_SHARED_BUFFER)]
+pub mod dma_resv;
 pub mod driver;
 #[cfg(CONFIG_DRM = "y")]
 pub mod drm;
