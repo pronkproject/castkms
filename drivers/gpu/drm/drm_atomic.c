@@ -31,6 +31,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_prepare_commit.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_bridge.h>
@@ -213,6 +214,7 @@ drm_atomic_commit_init(struct drm_device *dev, struct drm_atomic_commit *state)
 	 */
 	state->allow_modeset = true;
 	state->plane_inputs_captured = false;
+	state->preparation = NULL;
 
 	state->crtcs = kzalloc_objs(*state->crtcs, dev->mode_config.num_crtc);
 	if (!state->crtcs)
@@ -388,16 +390,22 @@ EXPORT_SYMBOL(drm_atomic_commit_default_clear);
  *
  * Hence we must clear all cached state and completely start over, using this
  * function.
+ *
+ * Accepted preparation waits for submitted readers before object destruction.
+ * Its admission holds remain owned through the driver clear callback. Clearing
+ * an unaccepted transaction abandons its attempt without canceling the ticket.
  */
 void drm_atomic_commit_clear(struct drm_atomic_commit *state)
 {
 	struct drm_device *dev = state->dev;
 	struct drm_mode_config *config = &dev->mode_config;
 
+	drm_atomic_commit_wait_for_readers(state);
 	if (config->funcs->atomic_state_clear)
 		config->funcs->atomic_state_clear(state);
 	else
 		drm_atomic_commit_default_clear(state);
+	drm_atomic_commit_preparation_clear(state);
 }
 EXPORT_SYMBOL(drm_atomic_commit_clear);
 

@@ -512,6 +512,15 @@ struct drm_atomic_commit {
 	struct drm_device *dev;
 
 	/**
+	 * @preparation:
+	 *
+	 * Optional transaction-owned source retirement reservation, replaced by
+	 * accepted guard ownership at installation. Managed by atomic preparation
+	 * helpers; drivers must not access its contents or replace the pointer.
+	 */
+	struct drm_atomic_preparation *preparation;
+
+	/**
 	 * @allow_modeset:
 	 *
 	 * Allow full modeset. This is used by the ATOMIC IOCTL handler to
