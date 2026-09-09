@@ -114,6 +114,18 @@ before image creation. Each import uses the allocation's queried plane layout,
 not a pitch inferred from its width. Qualification of one modifier does not
 establish that a later encoder or PipeWire consumer can import it.
 
+The output submission exports its own native sync file, separate from the
+A-to-E completion. The fixture checks that result too. D is released in the
+general image layout for external use. Add `--foreign-output` when testing
+release to a different driver or API, such as VA. That explicitly enables
+Vulkan's foreign-queue extension and uses its ownership-transfer boundary;
+ordinary external Vulkan queues assume the same driver. See Khronos's
+[foreign queue contract](https://docs.vulkan.org/refpages/latest/refpages/source/VK_EXT_queue_family_foreign.html).
+
+The fixture does not send D to a media process. A successful foreign release
+and native completion are necessary inputs to that experiment, not evidence
+that the other driver imported the allocation or produced an encoded frame.
+
 All submitted uses finish before their resources are destroyed, including on
 test failure. Successful Vulkan imports consume their descriptors; failed
 imports leave the descriptors for cleanup. Image allocation, import and device
