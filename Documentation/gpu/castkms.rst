@@ -75,10 +75,11 @@ restore its framebuffer reference after shutdown begins. That ordering breaks
 the reference cycle between the output, framebuffer and DRM device.
 
 An owned allocation does not preserve its pixels against later writes. The
-description is not an authorized capture scene: it does not yet carry source
-ownership, retained producer status, or a read lease. There is no interface for
-reading or exporting its pixels. Capture publication must add those checks
-before using these descriptions for deferred work.
+description retains historical ownership resolved during atomic validation,
+but that attribution is not current permission to capture. Retained producer
+status and a read lease are still absent. There is no interface for reading or
+exporting pixels. Capture publication must establish permission and those
+remaining lifetime checks before using descriptions for deferred work.
 
 Testing in a disposable virtual machine
 --------------------------------------
