@@ -133,7 +133,7 @@ impl plane::DriverPlane for Plane {
                     scene::Scene::new(framebuffer.to_owned_ref(), geometry, content)
                 })
             });
-        transaction.drm_dev().publish(scene);
+        transaction.drm_dev().output.publish(scene);
     }
 }
 
