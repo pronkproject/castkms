@@ -85,3 +85,6 @@ impl Fence {
         self.into()
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+pub mod testing;
