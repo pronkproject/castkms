@@ -65,3 +65,6 @@ impl Ticket {
         unsafe { bindings::drm_prepare_ticket_cancel(self.0.get()) };
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
