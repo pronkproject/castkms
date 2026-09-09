@@ -176,8 +176,8 @@ impl<T: drm::Driver> UnregisteredDevice<T> {
         postclose: Some(drm::File::<T::File>::postclose_callback),
         unload: None,
         release: Some(Device::<T>::release),
-        master_set: None,
-        master_drop: None,
+        master_set: if T::HAS_MASTER_CHANGED { Some(drm::auth::callbacks::master_set::<T>) } else { None },
+        master_drop: if T::HAS_MASTER_CHANGED { Some(drm::auth::callbacks::master_drop::<T>) } else { None },
         debugfs_init: None,
 
         gem_create_object: T::Object::ALLOC_OPS.gem_create_object,
