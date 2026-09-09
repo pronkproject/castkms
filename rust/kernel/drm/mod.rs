@@ -13,6 +13,7 @@ pub mod gem;
 pub mod gpuvm;
 pub mod ioctl;
 pub mod kms;
+pub mod preparation;
 
 pub use self::device::Device;
 pub use self::device::DeviceContext;
