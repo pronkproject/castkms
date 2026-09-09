@@ -195,6 +195,20 @@ ticket mutex. No source lock is nested inside it: fence collection and source
 ownership destruction occur outside that mutex. The ticket does not acquire
 display locks for its caller, track generations or authenticate a requester.
 
+Rust ownership follows the same distinction. A ``Ticket`` is shared through
+reference counting and must be canceled explicitly when its authority ends.
+``Ticket::reserve()`` returns a unique ``Attempt`` that retains the reservation
+even if every external ticket reference is dropped. Moving that owner is
+allowed; copying it or constructing it from a raw pointer is not a public
+operation. Dropping an unaccepted attempt releases its reservation and permits
+a still-live ticket to retry.
+
+The Rust interface does not expose an arbitrary installation callback. Owning
+an attempt is not evidence that a caller has validated display scope, and the
+reservation alone does not establish successful display installation. Runtime
+tests exercise cancellation and release, while compiler fixtures reject
+duplication and construction outside the reservation path.
+
 Where the helper installs display state
 --------------------------------------
 
