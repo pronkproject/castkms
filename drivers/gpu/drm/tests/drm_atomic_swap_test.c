@@ -6,6 +6,7 @@
 #include <linux/sched/signal.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_colorop.h>
 #include <drm/drm_device.h>
 #include <kunit/test.h>
 
@@ -16,12 +17,15 @@ struct swap_fixture {
 	struct drm_crtc crtc;
 	struct drm_connector connector;
 	struct drm_plane plane;
+	struct drm_colorop colorop;
 	struct drm_crtc_state crtc_states[2];
 	struct drm_connector_state connector_states[2];
 	struct drm_plane_state plane_states[2];
+	struct drm_colorop_state colorop_states[2];
 	struct __drm_crtcs_state crtc_slot;
 	struct __drm_connnectors_state connector_slot;
 	struct __drm_planes_state plane_slot;
+	struct __drm_colorops_state colorop_slot;
 	struct drm_crtc_commit predecessors[3];
 	struct completion finished;
 	bool stall;
@@ -37,15 +41,18 @@ static struct swap_fixture *new_fixture(struct kunit *test)
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	f->dev.mode_config.num_crtc = 1;
 	f->dev.mode_config.num_total_plane = 1;
+	f->dev.mode_config.num_colorop = 1;
 	raw_spin_lock_init(&f->dev.mode_config.panic_lock);
 	f->state.dev = &f->dev;
 	f->state.num_connector = 1;
 	f->state.crtcs = &f->crtc_slot;
 	f->state.connectors = &f->connector_slot;
 	f->state.planes = &f->plane_slot;
+	f->state.colorops = &f->colorop_slot;
 	f->crtc.state = &f->crtc_states[0];
 	f->connector.state = &f->connector_states[0];
 	f->plane.state = &f->plane_states[0];
+	f->colorop.state = &f->colorop_states[0];
 	f->crtc_slot.ptr = &f->crtc;
 	f->crtc_slot.old_state = &f->crtc_states[0];
 	f->crtc_slot.new_state = &f->crtc_states[1];
@@ -58,12 +65,17 @@ static struct swap_fixture *new_fixture(struct kunit *test)
 	f->plane_slot.old_state = &f->plane_states[0];
 	f->plane_slot.new_state = &f->plane_states[1];
 	f->plane_slot.state_to_destroy = &f->plane_states[1];
+	f->colorop_slot.ptr = &f->colorop;
+	f->colorop_slot.old_state = &f->colorop_states[0];
+	f->colorop_slot.new_state = &f->colorop_states[1];
+	f->colorop_slot.state = &f->colorop_states[1];
 	f->crtc_states[0].commit = &f->predecessors[0];
 	f->connector_states[0].commit = &f->predecessors[1];
 	f->plane_states[0].commit = &f->predecessors[2];
 	f->crtc_states[1].state = &f->state;
 	f->connector_states[1].state = &f->state;
 	f->plane_states[1].state = &f->state;
+	f->colorop_states[1].state = &f->state;
 	for (i = 0; i < ARRAY_SIZE(f->predecessors); i++)
 		init_completion(&f->predecessors[i].hw_done);
 	init_completion(&f->finished);
@@ -110,6 +122,10 @@ static void expect_installed(struct kunit *test, struct swap_fixture *f)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc.state, &f->crtc_states[1]);
 	KUNIT_EXPECT_PTR_EQ(test, f->connector.state, &f->connector_states[1]);
 	KUNIT_EXPECT_PTR_EQ(test, f->plane.state, &f->plane_states[1]);
+	KUNIT_EXPECT_PTR_EQ(test, f->colorop.state, &f->colorop_states[1]);
+	KUNIT_EXPECT_PTR_EQ(test, f->colorop_slot.state, &f->colorop_states[0]);
+	KUNIT_EXPECT_PTR_EQ(test, f->colorop_states[0].state, &f->state);
+	KUNIT_EXPECT_PTR_EQ(test, f->colorop_states[1].state, NULL);
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc_slot.state_to_destroy, &f->crtc_states[0]);
 	KUNIT_EXPECT_PTR_EQ(test, f->connector_slot.state_to_destroy, &f->connector_states[0]);
 	KUNIT_EXPECT_PTR_EQ(test, f->plane_slot.state_to_destroy, &f->plane_states[0]);
@@ -138,6 +154,10 @@ static void each_interrupted_predecessor_leaves_all_state_uninstalled(struct kun
 		KUNIT_EXPECT_PTR_EQ(test, f->crtc.state, &f->crtc_states[0]);
 		KUNIT_EXPECT_PTR_EQ(test, f->connector.state, &f->connector_states[0]);
 		KUNIT_EXPECT_PTR_EQ(test, f->plane.state, &f->plane_states[0]);
+		KUNIT_EXPECT_PTR_EQ(test, f->colorop.state, &f->colorop_states[0]);
+		KUNIT_EXPECT_PTR_EQ(test, f->colorop_slot.state, &f->colorop_states[1]);
+		KUNIT_EXPECT_PTR_EQ(test, f->colorop_states[0].state, NULL);
+		KUNIT_EXPECT_PTR_EQ(test, f->colorop_states[1].state, &f->state);
 		KUNIT_EXPECT_PTR_EQ(test, f->crtc_slot.state_to_destroy, &f->crtc_states[1]);
 		KUNIT_EXPECT_PTR_EQ(test, f->connector_slot.state_to_destroy, &f->connector_states[1]);
 		KUNIT_EXPECT_PTR_EQ(test, f->plane_slot.state_to_destroy, &f->plane_states[1]);
