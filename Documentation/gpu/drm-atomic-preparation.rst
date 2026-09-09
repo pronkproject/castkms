@@ -209,6 +209,20 @@ reservation alone does not establish successful display installation. Runtime
 tests exercise cancellation and release, while compiler fixtures reject
 duplication and construction outside the reservation path.
 
+A caller that owns a retirement set may wait interruptibly with
+``drm_prepare_retirement_set_wait()`` or Rust's
+``RetirementSet::wait_prepared()``. Claim release and abandonment notify a
+wait queue shared by the source domain. The wait checks every member: one
+abandoned claim ends it with an error even while another member remains
+pending. Rust returns a retained prepared set, so dropping the original set
+does not invalidate the result.
+
+Readiness may precede completion of every submitted GPU read. An interrupted
+wait also leaves the caller's admission holds intact for retry or release.
+Callers must not hold display or provider locks needed by the claim owners
+while waiting. Waiting on a separately owned set is not a ticket cancellation
+operation; canceling a ticket does not withdraw that independent set ownership.
+
 Where the helper installs display state
 --------------------------------------
 
