@@ -234,10 +234,11 @@ guard also does not itself delay old framebuffer cleanup: the caller must join
 the retained native completion to its normal retirement path before releasing
 old source use.
 
-Ordinary helper callers remain unchanged. No file adapter, automatic commit-tail
-wait, scope-validation implementation or pixel-export interface is supplied by
-the prepared swap entry point. Those pieces are required before enabling
-delegated capture.
+Transactions without preparation retain ordinary helper behavior. The separate
+prepared-swap entry point leaves guard ownership and completion waits to its
+caller. No file adapter, scope-validation implementation or pixel-export
+interface is supplied by that entry point. Those pieces are required before
+enabling delegated capture.
 
 Native tests call the real swap helper with isolated state records. They
 interrupt each predecessor class and check controllers, connectors, planes,
@@ -259,3 +260,45 @@ followed by retry, cancellation before installation, and accepted ownership
 surviving ticket release. The ticket tests separately race cancellation against
 a synthetic installation callback. Neither test fixture supplies real display
 locks or proves the caller's generation and authority checks.
+
+Preparation owned by the transaction
+-----------------------------------
+
+A driver using the shared atomic commit helpers can attach a ticket with
+``drm_atomic_commit_prepare()`` instead of retaining a separate attempt beside
+the transaction. The call reserves one attempt and allocates its owner before
+installation. It may fail without changing the transaction. Attaching a second
+reservation is rejected; a caller rebuilding its scope must clear the old
+transaction and construct a new one.
+
+The ordinary swap helper consumes attached preparation at the same serialized
+installation decision described above. Until installation succeeds, cancellation
+still prevents acceptance. An interrupted predecessor wait leaves the same
+reservation available for retry. Successful installation retains the accepted
+guard in the transaction, independently of ticket cancellation or release.
+
+The shared commit dependency wait also waits for the submitted native readers.
+That wait occurs before hardware programming and notification that the old
+display use has retired. It is not a wait for userspace to submit more work.
+An error completion ends native access without establishing that the captured
+pixels are valid. Driver-specific commit paths must perform the same reader
+wait before reporting retirement or releasing old source use.
+
+Atomic core cleanup waits for accepted readers before calling the driver's
+object-clear callback, then releases preparation only after that callback has
+finished. Admission therefore remains held while old state is destroyed, even
+if the normal commit-tail wait was not reached. Clearing an unaccepted update
+instead abandons its reservation without waiting for readers or canceling the
+ticket. A still-live ticket may then be reserved for a rebuilt transaction.
+
+The async plane-update shortcut is rejected when preparation is attached: that
+path does not use the ordinary installation decision. Nonblocking atomic
+commits still use that decision and are not the same operation as async plane
+updates.
+
+These operations manage ownership, not display policy. The caller must still
+validate every retiring source generation and its authority, and keep that
+scope stable through installation. No ioctl or source-export facility is
+enabled merely by adding a transaction owner. The native tests use a custom
+object-clear callback and submitted test fences to check lifetime and wait
+ordering; they do not qualify a physical GPU or a complete capture provider.
