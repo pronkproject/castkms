@@ -133,6 +133,39 @@ impl<T: KmsDriver> TestDevice<T> {
         unsafe { Framebuffer::from_objects_with_data_unchecked(&self.0, layout, data) }
     }
 
+    /// Insert a native dependency into a framebuffer owned by this private test device.
+    ///
+    /// The caller must not hold a reservation lock. The framebuffer is retained throughout
+    /// insertion, and the native reservation acquires its own fence reference.
+    pub fn add_framebuffer_fence(
+        &self,
+        framebuffer: &Framebuffer<T>,
+        plane: usize,
+        fence: &crate::dma_fence::Fence,
+        usage: crate::dma_resv::Usage,
+    ) -> Result {
+        use super::ModeObject;
+        use crate::drm::gem::IntoGEMObject;
+        use crate::error::to_result;
+
+        if !core::ptr::eq(framebuffer.drm_dev(), self.device()) {
+            return Err(EINVAL);
+        }
+        let object = framebuffer.object_at(plane)?;
+        // SAFETY: The framebuffer retains its initialized GEM object and reservation.
+        let reservation = unsafe { (*object.as_raw()).resv };
+        // SAFETY: A single private reservation is locked without an enclosing acquire context.
+        to_result(unsafe { bindings::dma_resv_lock(reservation, core::ptr::null_mut()) })?;
+        // SAFETY: Insertion holds the lock and reserves capacity before adding a reference.
+        let result = to_result(unsafe { bindings::dma_resv_reserve_fences(reservation, 1) });
+        if result.is_ok() {
+            unsafe { bindings::dma_resv_add_fence(reservation, fence.as_raw(), usage as _) };
+        }
+        // SAFETY: Balance the lock on both allocation outcomes.
+        unsafe { bindings::dma_resv_unlock(reservation) };
+        result
+    }
+
     /// Submit a blocking transaction through the installed driver callbacks.
     ///
     /// The callback must propagate errors and be replayable after lock contention. Do not
