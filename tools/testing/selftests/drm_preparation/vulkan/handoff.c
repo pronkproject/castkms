@@ -55,8 +55,14 @@ static int readback_create(struct gpu_device *device, struct readback *readback)
 	return vkBindBufferMemory(device->handle, readback->buffer, readback->memory, 0) == VK_SUCCESS ? 0 : -1;
 }
 
-static int check_pixels(struct gpu_device *device, struct readback *readback)
+static int check_pixels(struct gpu_device *device, struct readback *readback, unsigned int frame)
 {
+	const unsigned char expected[] = {
+		(frame & 4) ? 255 : 0,
+		(frame & 2) ? 255 : 0,
+		(frame & 1) ? 255 : 0,
+		255,
+	};
 	unsigned char *pixels;
 	unsigned int i;
 	int result = 0;
@@ -64,10 +70,9 @@ static int check_pixels(struct gpu_device *device, struct readback *readback)
 	if (vkMapMemory(device->handle, readback->memory, 0, VK_WHOLE_SIZE, 0, (void **)&pixels) != VK_SUCCESS)
 		return -1;
 	for (i = 0; i < WIDTH * HEIGHT; i++) {
-		/* The producer clears opaque red; B8G8R8A8 stores blue first. */
-		if (pixels[4 * i] || pixels[4 * i + 1] ||
-		    pixels[4 * i + 2] != 255 || pixels[4 * i + 3] != 255) {
-			fprintf(stderr, "Pixel %u mismatch: %u %u %u %u\n", i,
+		/* The pixel oracle reads B8G8R8A8 bytes, not Vulkan's RGBA clear order. */
+		if (memcmp(&pixels[4 * i], expected, sizeof(expected))) {
+			fprintf(stderr, "Frame %u pixel %u mismatch: %u %u %u %u\n", frame, i,
 				pixels[4 * i], pixels[4 * i + 1], pixels[4 * i + 2], pixels[4 * i + 3]);
 			result = -1;
 			break;
@@ -78,10 +83,12 @@ static int check_pixels(struct gpu_device *device, struct readback *readback)
 }
 
 static int produce(struct gpu_device *producer, const struct gpu_image *source,
-		   VkSemaphore produced, int *sync_fd)
+		   VkSemaphore produced, int *sync_fd, unsigned int frame)
 {
 	VkCommandBuffer commands;
-	VkClearColorValue red = { .float32 = { 1.0f, 0.0f, 0.0f, 1.0f } };
+	VkClearColorValue color = {
+		.float32 = { !!(frame & 1), !!(frame & 2), !!(frame & 4), 1.0f },
+	};
 	VkSubmitInfo submit = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.commandBufferCount = 1,
@@ -102,7 +109,7 @@ static int produce(struct gpu_device *producer, const struct gpu_image *source,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
 	});
 	vkCmdClearColorImage(commands, source->handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			     &red, 1, &color_range);
+			     &color, 1, &color_range);
 	whole_image_barrier(commands, (VkImageMemoryBarrier) {
 		.image = source->handle,
 		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -225,7 +232,7 @@ static int share_image(struct gpu_device *owner, const struct gpu_image *image,
 	return result;
 }
 
-static int handoff(struct gpu_context *context)
+static int handoff(struct gpu_context *context, unsigned int frame)
 {
 	struct gpu_device producer = { 0 }, source_worker = { 0 }, output_worker = { 0 };
 	struct gpu_image source = { 0 }, source_import = { 0 };
@@ -252,7 +259,7 @@ static int handoff(struct gpu_context *context)
 	    gpu_semaphore_create(&output_worker, &output_acquired) ||
 	    readback_create(&output_worker, &readback))
 		goto out;
-	if (produce(&producer, &source, produced, &sync_fd) ||
+	if (produce(&producer, &source, produced, &sync_fd, frame) ||
 	    gpu_semaphore_import(&source_worker, source_acquired, sync_fd))
 		goto out;
 	sync_fd = -1;
@@ -285,7 +292,7 @@ static int handoff(struct gpu_context *context)
 		goto out;
 	copy_to_readback(commands, &output, &readback);
 	if (submit_blit(&output_worker, commands, output_acquired, VK_NULL_HANDLE) ||
-	    vkQueueWaitIdle(output_worker.queue) != VK_SUCCESS || check_pixels(&output_worker, &readback))
+	    vkQueueWaitIdle(output_worker.queue) != VK_SUCCESS || check_pixels(&output_worker, &readback, frame))
 		goto out;
 	result = 0;
 out:
@@ -328,6 +335,7 @@ out:
 int main(int argc, char **argv)
 {
 	struct gpu_context context;
+	unsigned int frame;
 	int result;
 
 	if ((argc != 2 && argc != 3) || (argc == 3 && strcmp(argv[2], "--validation"))) {
@@ -337,11 +345,16 @@ int main(int argc, char **argv)
 	result = gpu_context_open(&context, argv[1], argc == 3);
 	if (result)
 		return result == -ENODEV ? 4 : 1;
-	result = handoff(&context);
+	for (frame = 0; frame < 8; frame++) {
+		printf("frame=%u\n", frame);
+		result = handoff(&context, frame);
+		if (result || atomic_load(&context.validation_errors))
+			break;
+	}
 	gpu_context_close(&context);
 	if (atomic_load(&context.validation_errors))
 		result = 1;
 	if (!result)
-		puts("PASS: staged A-to-E-to-D GPU blits preserve every pixel after source destruction");
+		puts("PASS: eight changing A-to-E-to-D images match after source destruction");
 	return result;
 }
