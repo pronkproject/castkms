@@ -237,3 +237,6 @@ impl<P: Policy> Drop for Admission<'_, P> {
         unsafe { bindings::drm_capture_authority_end(self.authority.raw.get()) };
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
