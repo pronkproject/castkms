@@ -51,3 +51,6 @@ impl Domain {
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
