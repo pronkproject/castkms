@@ -160,6 +160,7 @@ impl plane::DriverPlane for Plane {
                         framebuffer.to_owned_ref(),
                         geometry,
                         content,
+                        state.owner.clone(),
                     )
                 })
             });
