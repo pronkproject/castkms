@@ -133,8 +133,23 @@ successor file, and finally disables the output and checks framebuffer release.
 These cases exercise the real paths that supply attribution evidence. They
 observe ordinary DRM state, not the driver's private scene owner, so passing
 them does not establish that historical ownership was resolved correctly.
-In-kernel assertions are needed for that separate property. Neither test adds
-a private ioctl or exports pixels.
+Neither userspace test adds a private ioctl or exports pixels.
+
+With ``CONFIG_DRM_CASTKMS_KUNIT_TEST``, a separate set of kernel tests creates
+unregistered CastKMS devices and submits transactions through their real atomic
+validation and commit callbacks. These tests inspect the private scene owner.
+They check that a same-framebuffer update preserves accepted attribution,
+including unknown attribution, after a master change. Test-only and rejected
+replacements must leave the owner unchanged; an accepted explicit replacement
+may adopt the current master. Master loss preserves historical attribution,
+disable clears the scene, and terminal shutdown prevents publication even
+when a later atomic tail runs.
+
+The kernel fixture creates real retained master identities but supplies the
+creation snapshots and master-change observations itself. It neither opens
+userspace files nor establishes native master authority. Its results test
+CastKMS policy and publication, complementing rather than replacing the real
+file tests above. No pixels are read and no capture permission is granted.
 
 Building without another display driver
 --------------------------------------
