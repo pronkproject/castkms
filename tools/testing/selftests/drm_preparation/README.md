@@ -45,6 +45,7 @@ no extra Python packages.
 ./preparation-model.py
 ./output-model.py
 ./pipeline-model.py
+./reservation-model.py
 ```
 
 ## What the source model is trying to protect
@@ -498,6 +499,39 @@ conservatively invalidates on every accepted replacement and does not attempt
 damage-based reuse or detect unannounced writes into a current framebuffer.
 Nor does it derive ownership adoption from a content update: recipient scopes
 remain a separate policy oracle, not an implementation of DRM attribution.
+
+## Owning a commit attempt before acceptance
+
+``reservation-model.py`` extends the source model with an explicit owner for
+one attempt to use a prepared ticket. A ticket may have only one reserved
+attempt. The attempt retains the whole source group and its fixed completion
+set while validation or predecessor waits happen elsewhere. Reserving one
+output does not prevent an independent output from accepting an update.
+
+If an attempt fails before acceptance, releasing it leaves a still-valid
+ticket available for retry. Closing the ticket instead cancels permission to
+accept, but the active attempt retains its resources until it releases them.
+An overlapping update may proceed and invalidate the attempt's old scope;
+it must not wait for the caller to submit or abandon that attempt.
+
+At acceptance, revalidation, installing the complete replacement state and
+transferring ownership to the commit are one model decision. Closing the
+ticket afterward cannot release the commit's admission holds or reader
+completion. Authority loss and executor loss reject unaccepted attempts.
+Neither rejection signals native completion.
+
+The tests include failed allocation, failed acceptance, retry, duplicate
+reservation, cancellation, overlapping and independent outputs, and pending
+native readers after acceptance. They also enumerate all 120 orderings of
+reserve, close, failed acceptance, abort and acceptance, checking the complete
+owner set after each decision and requiring successful paths to occur.
+
+Those are protocol scheduling boundaries, not a proof of kernel locking. In
+the current helper, ``drm_atomic_helper_swap_state()`` can fail while waiting
+for predecessor hardware completion before it starts installing state. A
+kernel implementation must finish those fallible waits before the serialized
+acceptance decision. Merely consuming the ticket before calling that helper
+does not implement the modeled contract.
 
 ## What passing does not mean
 
