@@ -76,10 +76,19 @@ the reference cycle between the output, framebuffer and DRM device.
 
 An owned allocation does not preserve its pixels against later writes. The
 description retains historical ownership resolved during atomic validation,
-but that attribution is not current permission to capture. Retained producer
-status and a read lease are still absent. There is no interface for reading or
-exporting pixels. Capture publication must establish permission and those
-remaining lifetime checks before using descriptions for deferred work.
+but that attribution is not current permission to capture. Each update retains
+its explicit plane producer fence before DRM's commit helper waits and drops
+that fence. A producer error remains observable after an otherwise accepted
+display commit; completion alone does not establish valid pixels. A new update
+does not inherit the previous update's fence, including on a same-framebuffer
+recommit. An absent fence is missing synchronization evidence, not a success
+result.
+
+Required implicit dependencies and a read lease are still absent. There is no
+interface for reading or exporting pixels. Capture publication must establish
+permission and those remaining lifetime checks before using descriptions for
+deferred work. A later reservation scan cannot recover producer error history
+that was discarded before collection.
 
 Testing in a disposable virtual machine
 --------------------------------------
@@ -150,6 +159,12 @@ creation snapshots and master-change observations itself. It neither opens
 userspace files nor establishes native master authority. Its results test
 CastKMS policy and publication, complementing rather than replacing the real
 file tests above. No pixels are read and no capture permission is granted.
+
+Producer tests also pass fences through the real atomic path. They verify
+retained failures both before submission and when native waiting enables
+signaling, successful producer retention across a test-only candidate, and
+the absence of an inherited error on the next same-framebuffer update. These
+tests do not implement implicit dependency collection or deferred source reads.
 
 Building without another display driver
 --------------------------------------
