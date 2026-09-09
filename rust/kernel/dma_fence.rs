@@ -4,7 +4,8 @@
 //!
 //! A completed fence may report failure. Retaining a fence preserves its completion status,
 //! not the contents of a buffer, permission to access it, or completion of dependent work.
-//! This interface does not create or signal production fences.
+//! This interface can combine submitted completion records, but cannot represent future
+//! submissions or signal production fences.
 
 use crate::{
     bindings,
@@ -54,6 +55,40 @@ unsafe impl AlwaysRefCounted for Fence {
 }
 
 impl Fence {
+    /// Combine completion of submitted work without retaining its error history.
+    ///
+    /// Empty input needs no wait. Native merging flattens containers, omits completed
+    /// fences and keeps only the latest pending fence on each timeline. Callers needing
+    /// producer validity must retain and inspect the original records independently.
+    /// The returned fence does not authorize buffer access or close submission admission.
+    pub fn merge_completion(fences: &[ARef<Self>]) -> Result<Option<ARef<Self>>> {
+        match fences {
+            [] => return Ok(None),
+            [fence] => return Ok(Some(fence.clone())),
+            _ => {}
+        }
+
+        let mut raw = KVec::with_capacity(fences.len(), GFP_KERNEL)?;
+        let mut cursors = KVec::with_capacity(fences.len(), GFP_KERNEL)?;
+        for fence in fences {
+            raw.push(fence.as_raw(), GFP_KERNEL)?;
+            cursors.push(Opaque::<bindings::dma_fence_unwrap>::zeroed(), GFP_KERNEL)?;
+        }
+        // SAFETY: Both arrays have one initialized entry per retained input fence. The
+        // native merge borrows those references, initializes and exhausts its cursors,
+        // and returns an independently owned reference without nesting containers.
+        let merged = unsafe {
+            bindings::__dma_fence_unwrap_merge(
+                fences.len(),
+                raw.as_mut_ptr(),
+                cursors.as_mut_ptr().cast(),
+            )
+        };
+        let merged = NonNull::new(merged.cast::<Self>()).ok_or(ENOMEM)?;
+        // SAFETY: A non-null merge result transfers one initialized native reference.
+        Ok(Some(unsafe { ARef::from_raw(merged) }))
+    }
+
     /// Borrow a native fence while its owner excludes destruction.
     ///
     /// # Safety
