@@ -77,6 +77,38 @@ mod cases {
     }
 
     #[test]
+    fn readiness_wait_retains_holds_without_waiting_for_gpu() -> Result {
+        let source = Source::new(1)?;
+        let read = source.claim()?;
+        let set = RetirementSet::new(&[source.clone()])?;
+        let mut native = ManualFence::new()?;
+        read.release_submitted(&native.fence());
+        let prepared = set.wait_prepared()?;
+        drop(set);
+        let completion = prepared.completion()?.ok_or(EINVAL)?;
+        assert_eq!(completion.status(), Status::Pending);
+        assert!(matches!(source.claim(), Err(EBUSY)));
+        native.complete(Err(EIO))?;
+        drop(prepared);
+        source.claim()?.release_cpu();
+        Ok(())
+    }
+
+    #[test]
+    fn readiness_wait_reports_abandonment_and_accepts_empty_sets() -> Result {
+        let source = Source::new(1)?;
+        let read = source.claim()?;
+        let set = RetirementSet::new(&[source])?;
+        drop(read);
+        assert!(matches!(set.wait_prepared(), Err(EIO)));
+        let empty = RetirementSet::new(&[])?;
+        let ready = empty.wait_prepared()?;
+        drop(empty);
+        assert!(ready.completion()?.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn preparation_waits_for_every_claim_and_retains_every_hold() -> Result {
         let domain = Domain::new()?;
         let a = Source::new_in(&domain, 1)?;
