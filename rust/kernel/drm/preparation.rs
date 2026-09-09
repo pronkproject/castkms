@@ -16,7 +16,8 @@ use core::{mem::ManuallyDrop, ptr::NonNull};
 
 /// Bounded admission for one source generation.
 ///
-/// Sealing is irreversible in this primitive. It is not a multi-output preparation ticket.
+/// [`Self::seal`] closes admission permanently; [`Self::hold_admission`] owns an admission hold.
+/// Neither operation creates a multi-output preparation ticket.
 /// Capacity includes unresolved claims and submitted reads that have not completed.
 ///
 /// # Invariants
@@ -55,7 +56,7 @@ impl Source {
     /// Admit a read after the provider has authorized it and secured independent destination
     /// capacity. The returned claim must not wait for downstream buffer reuse.
     pub fn claim(&self) -> Result<ReadClaim> {
-        // SAFETY: The source is retained and the native core serializes admission with seal.
+        // SAFETY: The source is retained and the native core serializes admission with hold.
         let raw = from_err_ptr(unsafe { bindings::drm_prepare_source_claim(self.0.get()) })?;
         Ok(ReadClaim {
             // SAFETY: A successful claim returns a unique non-null claim owner.
@@ -69,17 +70,71 @@ impl Source {
         unsafe { bindings::drm_prepare_source_seal(self.0.get()) };
     }
 
+    /// Block new read claims while an admission hold or its prepared owner remains alive.
+    /// Final release permits admission again unless another hold or permanent seal remains.
+    pub fn hold_admission(&self) -> Result<ARef<AdmissionHold>> {
+        // SAFETY: The source is live and native creation atomically records an admission hold.
+        let raw =
+            from_err_ptr(unsafe { bindings::drm_prepare_source_hold_admission(self.0.get()) })?;
+        // SAFETY: Successful creation transfers one initialized admission-hold reference.
+        Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
+    }
+
     /// Retain proof that admission is closed and every claim has been relinquished.
     ///
     /// `None` means preparation remains pending. Abandonment reports terminal EIO.
-    /// Successful preparation does not mean native reads have completed.
+    /// Successful preparation requires a permanent seal, not completion of native reads.
+    /// Admission-hold owners use [`AdmissionHold::prepared`] to retain their own admission hold.
     pub fn prepared(&self) -> Result<Option<PreparedSource>> {
         // SAFETY: The source is live and readiness is inspected under the native lock.
         match to_result(unsafe { bindings::drm_prepare_source_ready(self.0.get()) }) {
             Err(EAGAIN) => Ok(None),
             Err(error) => Err(error),
             Ok(()) => Ok(Some(PreparedSource {
-                source: self.into(),
+                admission_closure: AdmissionClosure::PermanentlySealed(self.into()),
+            })),
+        }
+    }
+}
+
+/// An owned hold on new read admission, independent of any ticket file descriptor.
+///
+/// Holding admission does not pause GPU execution, stop existing readers, or freeze pixels.
+///
+/// # Invariants
+///
+/// The native hold remains initialized and retains its source throughout every reference.
+#[repr(transparent)]
+pub struct AdmissionHold(Opaque<bindings::drm_prepare_admission_hold>);
+
+// SAFETY: Native references and source accounting support cross-task ownership.
+unsafe impl Send for AdmissionHold {}
+// SAFETY: Shared methods inspect synchronized state without releasing the owned hold.
+unsafe impl Sync for AdmissionHold {}
+
+// SAFETY: Native get/put maintain the admission-hold allocation and its source reference.
+unsafe impl AlwaysRefCounted for AdmissionHold {
+    fn inc_ref(&self) {
+        // SAFETY: A shared reference proves the native admission hold remains alive.
+        unsafe { bindings::drm_prepare_admission_hold_get(self.0.get()) };
+    }
+
+    unsafe fn dec_ref(ptr: NonNull<Self>) {
+        // SAFETY: Consume the caller's reference to the identically represented native hold.
+        unsafe { bindings::drm_prepare_admission_hold_put(ptr.as_ptr().cast()) };
+    }
+}
+
+impl AdmissionHold {
+    /// Retain this admission hold once all admitted readers have relinquished their claims.
+    /// Dropping another reference cannot invalidate the returned owner's preparation proof.
+    pub fn prepared(&self) -> Result<Option<PreparedSource>> {
+        // SAFETY: The retained hold excludes reopening while native readiness is inspected.
+        match to_result(unsafe { bindings::drm_prepare_admission_hold_ready(self.0.get()) }) {
+            Err(EAGAIN) => Ok(None),
+            Err(error) => Err(error),
+            Ok(()) => Ok(Some(PreparedSource {
+                admission_closure: AdmissionClosure::Held(self.into()),
             })),
         }
     }
@@ -132,11 +187,17 @@ impl Drop for ReadClaim {
     }
 }
 
-/// A sealed, successfully resolved source, not a GPU fence or accepted KMS transaction.
+/// A source with admission closed and all claims resolved, not completed GPU work or a KMS commit.
 ///
-/// No claims remain and admission cannot reopen, so the native completion set cannot grow.
+/// No claims remain and admission cannot reopen while this owner exists, so its native
+/// completion set cannot grow.
 pub struct PreparedSource {
-    source: ARef<Source>,
+    admission_closure: AdmissionClosure,
+}
+
+enum AdmissionClosure {
+    PermanentlySealed(ARef<Source>),
+    Held(ARef<AdmissionHold>),
 }
 
 impl PreparedSource {
@@ -144,10 +205,18 @@ impl PreparedSource {
     /// Fence errors establish ended access, not a valid captured image.
     pub fn completion(&self) -> Result<Option<ARef<Fence>>> {
         let mut fence = core::ptr::null_mut();
-        // SAFETY: The prepared owner retains its sealed source; the output is writable.
-        to_result(unsafe {
-            bindings::drm_prepare_source_completion(self.source.0.get(), &mut fence)
-        })?;
+        // SAFETY: The prepared owner retains admission closure; the output is writable.
+        let result = unsafe {
+            match &self.admission_closure {
+                AdmissionClosure::PermanentlySealed(source) => {
+                    bindings::drm_prepare_source_completion(source.0.get(), &mut fence)
+                }
+                AdmissionClosure::Held(hold) => {
+                    bindings::drm_prepare_admission_hold_completion(hold.0.get(), &mut fence)
+                }
+            }
+        };
+        to_result(result)?;
         // SAFETY: A non-null successful result transfers one native fence reference.
         Ok(NonNull::new(fence.cast::<Fence>()).map(|raw| unsafe { ARef::from_raw(raw) }))
     }
