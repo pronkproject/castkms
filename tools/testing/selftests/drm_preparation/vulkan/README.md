@@ -141,6 +141,31 @@ Run `sh handoff-args.sh "$build_dir/handoff"` from this directory to check
 rejection of malformed and repeated size options without a GPU. Those checks
 verify the usage error, not merely a failure to open the supplied device.
 
+Add `--timing` to record a pair of GPU timestamps for each source and output
+job. The source interval covers imported-image acquisition, A-to-E blitting
+and E's external ownership release. The output interval covers acquisition
+and E-to-D blitting, ending before the oracle copy and D's final ownership
+release. An execution barrier keeps the oracle copy after that timestamp.
+Query results are read only after the containing submission completes. No
+timestamp is subtracted from a timestamp on a different Vulkan device.
+
+The report includes raw ticks, the selected queue's valid counter width,
+nanoseconds per tick and the resulting milliseconds. A queue without usable
+timestamps fails an explicitly requested timing run; ordinary correctness
+runs do not need timestamp support. Subtraction handles a counter wrapping
+through zero, and a conservative host-lifetime bound rejects intervals long
+enough to make the wrap count ambiguous. See Khronos's contracts for
+[timestamp writes](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdWriteTimestamp.html)
+and [query results](https://docs.vulkan.org/refpages/latest/refpages/source/vkGetQueryPoolResults.html).
+
+These are instrumented command intervals, not isolated memory bandwidth or
+end-to-end latency. They include barriers and may reflect contention or work
+overlap on the shared GPU. Instrumentation also changes scheduling. Record
+validation settings and compare repeated runs; do not turn eight samples into
+a sustained-cadence claim or sum intervals that might overlap. Allocation,
+host scheduling, media conversion, encoding and receiver presentation are
+outside the measured stages.
+
 The output submission exports its own native sync file, separate from the
 A-to-E completion. The fixture checks that result too. D is released in the
 general image layout for external use. Add `--foreign-output` when testing
