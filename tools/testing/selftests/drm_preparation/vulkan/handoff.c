@@ -234,119 +234,196 @@ static int share_image(struct gpu_device *owner, const struct gpu_image *image,
 	return result;
 }
 
-static int handoff(struct gpu_context *context, unsigned int frame, uint64_t modifier,
-		   int foreign_output)
-{
-	struct gpu_device producer = { 0 }, source_worker = { 0 }, output_worker = { 0 };
-	struct gpu_image source = { 0 }, source_import = { 0 };
-	struct gpu_image staging = { 0 }, staging_import = { 0 }, output = { 0 };
-	struct gpu_image_description output_description;
-	struct readback readback = { 0 };
-	VkSemaphore produced = VK_NULL_HANDLE, source_acquired = VK_NULL_HANDLE;
-	VkSemaphore source_completed = VK_NULL_HANDLE, output_acquired = VK_NULL_HANDLE;
-	VkSemaphore output_completed = VK_NULL_HANDLE;
-	VkCommandBuffer commands;
-	int sync_fd = -1, output_fd = -1, result = 1;
+#define FRAME_COUNT 8
 
-	if (gpu_device_open(&producer, context) || gpu_device_open(&source_worker, context))
+struct workers {
+	struct gpu_device producer;
+	struct gpu_device source;
+	struct gpu_device output;
+};
+
+struct frame {
+	struct gpu_image source;
+	struct gpu_image source_import;
+	struct gpu_image staging;
+	struct gpu_image staging_import;
+	struct gpu_image output;
+	struct readback readback;
+	VkSemaphore produced;
+	VkSemaphore source_acquired;
+	VkSemaphore source_completed;
+	VkSemaphore output_acquired;
+	VkSemaphore output_completed;
+	int source_fence_fd;
+	int output_fence_fd;
+	int output_memory_fd;
+};
+
+static int frame_create(struct workers *workers, struct frame *frame, uint64_t modifier)
+{
+	struct gpu_image_description description;
+
+	if (gpu_image_create(&workers->producer, &frame->source, WIDTH, HEIGHT, modifier) ||
+	    share_image(&workers->producer, &frame->source, &workers->source, &frame->source_import) ||
+	    gpu_image_create(&workers->source, &frame->staging, WIDTH, HEIGHT, modifier) ||
+	    share_image(&workers->source, &frame->staging, &workers->output, &frame->staging_import) ||
+	    gpu_image_create(&workers->output, &frame->output, WIDTH, HEIGHT, modifier) ||
+	    gpu_image_export(&workers->output, &frame->output, &description, &frame->output_memory_fd) ||
+	    gpu_semaphore_create(&workers->producer, &frame->produced) ||
+	    gpu_semaphore_create(&workers->source, &frame->source_acquired) ||
+	    gpu_semaphore_create(&workers->source, &frame->source_completed) ||
+	    gpu_semaphore_create(&workers->output, &frame->output_acquired) ||
+	    gpu_semaphore_create(&workers->output, &frame->output_completed) ||
+	    readback_create(&workers->output, &frame->readback))
+		return -1;
+	return 0;
+}
+
+static int submit_source(struct workers *workers, struct frame *frame, unsigned int index)
+{
+	VkCommandBuffer commands;
+	int producer_fd = -1, result = -1;
+
+	if (produce(&workers->producer, &frame->source, frame->produced, &producer_fd, index) ||
+	    gpu_semaphore_import(&workers->source, frame->source_acquired, producer_fd))
 		goto out;
-	if (foreign_output ? gpu_device_open_foreign(&output_worker, context) :
-	    gpu_device_open(&output_worker, context))
-		goto out;
-	if (gpu_image_create(&producer, &source, WIDTH, HEIGHT, modifier) ||
-	    share_image(&producer, &source, &source_worker, &source_import) ||
-	    gpu_image_create(&source_worker, &staging, WIDTH, HEIGHT, modifier) ||
-	    share_image(&source_worker, &staging, &output_worker, &staging_import) ||
-	    gpu_image_create(&output_worker, &output, WIDTH, HEIGHT, modifier) ||
-	    gpu_image_export(&output_worker, &output, &output_description, &output_fd) ||
-	    gpu_semaphore_create(&producer, &produced) ||
-	    gpu_semaphore_create(&source_worker, &source_acquired) ||
-	    gpu_semaphore_create(&source_worker, &source_completed) ||
-	    gpu_semaphore_create(&output_worker, &output_acquired) ||
-	    gpu_semaphore_create(&output_worker, &output_completed) ||
-	    readback_create(&output_worker, &readback))
-		goto out;
-	if (produce(&producer, &source, produced, &sync_fd, frame) ||
-	    gpu_semaphore_import(&source_worker, source_acquired, sync_fd))
-		goto out;
-	sync_fd = -1;
-	if (begin_blit(&source_worker, &source_import, &staging, &commands))
+	producer_fd = -1;
+	if (begin_blit(&workers->source, &frame->source_import, &frame->staging, &commands))
 		goto out;
 	whole_image_barrier(commands, (VkImageMemoryBarrier) {
-		.image = staging.handle,
+		.image = frame->staging.handle,
 		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
 		.dstAccessMask = 0,
-		.srcQueueFamilyIndex = context->queue_family,
+		.srcQueueFamilyIndex = workers->source.context->queue_family,
 		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
 	});
-	if (submit_blit(&source_worker, commands, source_acquired, source_completed) ||
-	    gpu_semaphore_export(&source_worker, source_completed, &sync_fd))
+	if (submit_blit(&workers->source, commands, frame->source_acquired, frame->source_completed) ||
+	    gpu_semaphore_export(&workers->source, frame->source_completed, &frame->source_fence_fd))
 		goto out;
-	printf("submitted A-to-E: sync_fd=%s\n", sync_fd == -1 ? "already complete" : "exported");
-	if (gpu_sync_file_check(sync_fd, 5000) ||
-	    vkDeviceWaitIdle(source_worker.handle) != VK_SUCCESS ||
-	    vkDeviceWaitIdle(producer.handle) != VK_SUCCESS)
-		goto out;
-	gpu_image_destroy(&source_worker, &source_import);
-	gpu_image_destroy(&producer, &source);
-	puts("source A destroyed before E-to-D submission");
-	if (gpu_semaphore_import(&output_worker, output_acquired, sync_fd))
-		goto out;
-	sync_fd = -1;
-	if (begin_blit(&output_worker, &staging_import, &output, &commands))
-		goto out;
-	copy_to_readback(commands, &output, &readback);
+	result = 0;
+out:
+	if (producer_fd >= 0)
+		close(producer_fd);
+	return result;
+}
+
+static int submit_output(struct workers *workers, struct frame *frame, int foreign_output)
+{
+	VkCommandBuffer commands;
+
+	if (gpu_semaphore_import(&workers->output, frame->output_acquired, frame->source_fence_fd))
+		return -1;
+	frame->source_fence_fd = -1;
+	if (begin_blit(&workers->output, &frame->staging_import, &frame->output, &commands))
+		return -1;
+	copy_to_readback(commands, &frame->output, &frame->readback);
 	whole_image_barrier(commands, (VkImageMemoryBarrier) {
-		.image = output.handle,
+		.image = frame->output.handle,
 		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 		.newLayout = VK_IMAGE_LAYOUT_GENERAL,
 		.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT,
 		.dstAccessMask = 0,
-		.srcQueueFamilyIndex = context->queue_family,
+		.srcQueueFamilyIndex = workers->output.context->queue_family,
 		.dstQueueFamilyIndex = foreign_output ? VK_QUEUE_FAMILY_FOREIGN_EXT : VK_QUEUE_FAMILY_EXTERNAL,
 	});
-	if (submit_blit(&output_worker, commands, output_acquired, output_completed) ||
-	    gpu_semaphore_export(&output_worker, output_completed, &sync_fd) ||
-	    gpu_sync_file_check(sync_fd, 5000) ||
-	    vkQueueWaitIdle(output_worker.queue) != VK_SUCCESS || check_pixels(&output_worker, &readback, frame))
+	if (submit_blit(&workers->output, commands, frame->output_acquired, frame->output_completed))
+		return -1;
+	return gpu_semaphore_export(&workers->output, frame->output_completed, &frame->output_fence_fd);
+}
+
+/* Every device must have finished submitted uses before any frame is destroyed. */
+static void frame_destroy(struct workers *workers, struct frame *frame)
+{
+	if (frame->source_fence_fd >= 0)
+		close(frame->source_fence_fd);
+	if (frame->output_fence_fd >= 0)
+		close(frame->output_fence_fd);
+	if (frame->output_memory_fd >= 0)
+		close(frame->output_memory_fd);
+	if (workers->output.handle) {
+		vkDestroyBuffer(workers->output.handle, frame->readback.buffer, NULL);
+		vkFreeMemory(workers->output.handle, frame->readback.memory, NULL);
+		vkDestroySemaphore(workers->output.handle, frame->output_acquired, NULL);
+		vkDestroySemaphore(workers->output.handle, frame->output_completed, NULL);
+	}
+	if (workers->source.handle) {
+		vkDestroySemaphore(workers->source.handle, frame->source_acquired, NULL);
+		vkDestroySemaphore(workers->source.handle, frame->source_completed, NULL);
+	}
+	if (workers->producer.handle)
+		vkDestroySemaphore(workers->producer.handle, frame->produced, NULL);
+	gpu_image_destroy(&workers->output, &frame->output);
+	gpu_image_destroy(&workers->output, &frame->staging_import);
+	gpu_image_destroy(&workers->source, &frame->staging);
+	gpu_image_destroy(&workers->source, &frame->source_import);
+	gpu_image_destroy(&workers->producer, &frame->source);
+}
+
+static int handoff(struct gpu_context *context, uint64_t modifier, int foreign_output)
+{
+	struct workers workers = { 0 };
+	struct frame frames[FRAME_COUNT] = { 0 };
+	unsigned int i;
+	int result = 1;
+
+	/* Zero is a valid descriptor, including during partial-construction cleanup. */
+	for (i = 0; i < FRAME_COUNT; i++) {
+		frames[i].source_fence_fd = -1;
+		frames[i].output_fence_fd = -1;
+		frames[i].output_memory_fd = -1;
+	}
+	if (gpu_device_open(&workers.producer, context) || gpu_device_open(&workers.source, context))
 		goto out;
+	if (foreign_output ? gpu_device_open_foreign(&workers.output, context) :
+	    gpu_device_open(&workers.output, context))
+		goto out;
+	for (i = 0; i < FRAME_COUNT; i++)
+		if (frame_create(&workers, &frames[i], modifier))
+			goto out;
+	for (i = 0; i < FRAME_COUNT; i++)
+		if (submit_source(&workers, &frames[i], i))
+			goto out;
+	printf("submitted source jobs=%u before first host completion wait\n", FRAME_COUNT);
+	for (i = 0; i < FRAME_COUNT; i++)
+		if (gpu_sync_file_check(frames[i].source_fence_fd, 5000))
+			goto out;
+	if (vkDeviceWaitIdle(workers.source.handle) != VK_SUCCESS ||
+	    vkDeviceWaitIdle(workers.producer.handle) != VK_SUCCESS)
+		goto out;
+	for (i = 0; i < FRAME_COUNT; i++) {
+		gpu_image_destroy(&workers.source, &frames[i].source_import);
+		gpu_image_destroy(&workers.producer, &frames[i].source);
+	}
+	printf("destroyed sources=%u before output submissions\n", FRAME_COUNT);
+	for (i = 0; i < FRAME_COUNT; i++)
+		if (submit_output(&workers, &frames[i], foreign_output))
+			goto out;
+	printf("submitted output jobs=%u before first output wait\n", FRAME_COUNT);
+	for (i = 0; i < FRAME_COUNT; i++)
+		if (gpu_sync_file_check(frames[i].output_fence_fd, 5000))
+			goto out;
+	if (vkQueueWaitIdle(workers.output.queue) != VK_SUCCESS)
+		goto out;
+	for (i = 0; i < FRAME_COUNT; i++)
+		if (check_pixels(&workers.output, &frames[i].readback, i))
+			goto out;
 	result = 0;
 out:
-	/* A failed test still owns resources referenced by any accepted GPU submissions. */
-	if (output_worker.handle && vkDeviceWaitIdle(output_worker.handle) != VK_SUCCESS)
+	if (workers.output.handle && vkDeviceWaitIdle(workers.output.handle) != VK_SUCCESS)
 		result = 1;
-	if (source_worker.handle && vkDeviceWaitIdle(source_worker.handle) != VK_SUCCESS)
+	if (workers.source.handle && vkDeviceWaitIdle(workers.source.handle) != VK_SUCCESS)
 		result = 1;
-	if (producer.handle && vkDeviceWaitIdle(producer.handle) != VK_SUCCESS)
+	if (workers.producer.handle && vkDeviceWaitIdle(workers.producer.handle) != VK_SUCCESS)
 		result = 1;
-	if (output_fd >= 0)
-		close(output_fd);
-	if (sync_fd >= 0)
-		close(sync_fd);
-	if (output_worker.handle) {
-		vkDestroyBuffer(output_worker.handle, readback.buffer, NULL);
-		vkFreeMemory(output_worker.handle, readback.memory, NULL);
-		vkDestroySemaphore(output_worker.handle, output_acquired, NULL);
-		vkDestroySemaphore(output_worker.handle, output_completed, NULL);
-	}
-	if (source_worker.handle) {
-		vkDestroySemaphore(source_worker.handle, source_acquired, NULL);
-		vkDestroySemaphore(source_worker.handle, source_completed, NULL);
-	}
-	if (producer.handle)
-		vkDestroySemaphore(producer.handle, produced, NULL);
-	gpu_image_destroy(&output_worker, &output);
-	gpu_image_destroy(&output_worker, &staging_import);
-	gpu_image_destroy(&source_worker, &staging);
-	gpu_image_destroy(&source_worker, &source_import);
-	gpu_image_destroy(&producer, &source);
-	if (gpu_device_close(&output_worker))
+	for (i = 0; i < FRAME_COUNT; i++)
+		frame_destroy(&workers, &frames[i]);
+	if (gpu_device_close(&workers.output))
 		result = 1;
-	if (gpu_device_close(&source_worker))
+	if (gpu_device_close(&workers.source))
 		result = 1;
-	if (gpu_device_close(&producer))
+	if (gpu_device_close(&workers.producer))
 		result = 1;
 	return result;
 }
@@ -354,7 +431,6 @@ out:
 int main(int argc, char **argv)
 {
 	struct gpu_context context;
-	unsigned int frame;
 	uint64_t modifier = 0;
 	int result, i, validation = 0, modifier_set = 0, foreign_output = 0;
 
@@ -387,12 +463,7 @@ int main(int argc, char **argv)
 		return result == -ENODEV ? 4 : 1;
 	printf("requested_modifier=0x%016" PRIx64 "\n", modifier);
 	printf("output_ownership=%s\n", foreign_output ? "foreign driver" : "same Vulkan driver");
-	for (frame = 0; frame < 8; frame++) {
-		printf("frame=%u\n", frame);
-		result = handoff(&context, frame, modifier, foreign_output);
-		if (result || atomic_load(&context.validation_errors))
-			break;
-	}
+	result = handoff(&context, modifier, foreign_output);
 	gpu_context_close(&context);
 	if (atomic_load(&context.validation_errors))
 		result = 1;
