@@ -51,6 +51,11 @@ pub(super) struct Scene {
 
 impl Scene {
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(super) fn producer_status(&self) -> Option<kernel::dma_fence::Status> {
+        self._producer.as_ref().map(|fence| fence.status())
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn owner(&self) -> Option<&MasterRef<Driver>> {
         self._owner.as_ref()
     }
