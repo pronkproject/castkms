@@ -127,3 +127,6 @@ impl Drop for Snapshot {
         unsafe { bindings::kfree(self.fences.cast()) };
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+pub mod testing;
