@@ -20,6 +20,16 @@ void drm_prepare_ticket_put(struct drm_prepare_ticket *ticket);
 void drm_prepare_ticket_cancel(struct drm_prepare_ticket *ticket);
 
 /*
+ * Interruptibly observe readiness or terminal ticket state. Cancellation wakes
+ * pending waits with -ECANCELED; consumption returns -EALREADY. Success does not
+ * reserve an attempt, exclude another waiter, or wait for submitted GPU readers.
+ * Reservation must recheck ticket state. Do not hold locks needed by claim owners
+ * or by cancellation. A wait temporarily retains admission independently of the
+ * ticket until it returns. The caller retains its live ticket reference.
+ */
+int drm_prepare_ticket_wait(struct drm_prepare_ticket *ticket);
+
+/*
  * At most one attempt reserves a ticket. Readiness and native completion are
  * collected before publication; pending claims return -EAGAIN. An attempt owns
  * admission independently of cancellation and retains its ticket. Destroying
