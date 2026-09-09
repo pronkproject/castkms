@@ -3,6 +3,7 @@
 //! CastKMS virtual display device.
 
 mod authority;
+mod device;
 mod display;
 mod gem;
 mod output;
@@ -10,7 +11,7 @@ mod provenance;
 mod scene;
 
 use kernel::{
-    device,
+    device as bus,
     drm,
     faux,
     prelude::*,
@@ -30,24 +31,22 @@ module! {
 struct CastKms {
     _display: drm::Registration<'static, Driver>,
     _parent: faux::Registration,
-    output: Arc<output::Output<scene::Scene>>,
+    state: device::Owner,
 }
 
 impl Drop for CastKms {
     fn drop(&mut self) {
         // Close before atomic shutdown; an already accepted tail must not repopulate the output.
-        self.output.close();
+        self.state.close();
     }
 }
 
 impl kernel::Module for CastKms {
     fn init(_: &'static ThisModule) -> Result<Self> {
         let parent = faux::Registration::new(c"castkms", None)?;
-        let output = Arc::pin_init(output::Output::new(), GFP_KERNEL)?;
-        let drm = drm::UnregisteredDevice::<Driver>::new(
-            parent.as_ref(),
-            Ok::<_, Error>(output.clone()),
-        )?;
+        let state = device::Owner::new()?;
+        let drm =
+            drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
         // SAFETY: After successful construction, field drop order unplugs DRM before parent
         // unbind. On failure the registration constructor unwinds before the local parent drops.
         let display = unsafe {
@@ -56,7 +55,7 @@ impl kernel::Module for CastKms {
         Ok(Self {
             _display: display,
             _parent: parent,
-            output,
+            state,
         })
     }
 }
@@ -74,11 +73,11 @@ impl drm::file::DriverFile for File {
 
 #[vtable]
 impl drm::Driver for Driver {
-    type Data = Arc<output::Output<scene::Scene>>;
+    type Data = Arc<device::State>;
     type RegistrationData<'a> = ();
     type File = File;
     type Object = drm::gem::shmem::Object<gem::Object>;
-    type ParentDevice<Ctx: device::DeviceContext> = faux::Device<Ctx>;
+    type ParentDevice<Ctx: bus::DeviceContext> = faux::Device<Ctx>;
     type Kms = Self;
 
     const INFO: drm::DriverInfo = drm::DriverInfo {
@@ -89,4 +88,8 @@ impl drm::Driver for Driver {
         desc: c"CastKMS virtual display",
     };
     const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+
+    fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
+        dev.authority.changed(master);
+    }
 }
