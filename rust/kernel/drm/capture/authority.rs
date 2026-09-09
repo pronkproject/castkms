@@ -2,6 +2,8 @@
 
 //! Provider policy and revocation ownership, independent of capture file transport.
 
+mod file;
+
 use super::{
     Job,
     Stream, //
