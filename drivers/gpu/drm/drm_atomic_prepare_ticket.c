@@ -13,6 +13,7 @@
 struct drm_prepare_ticket {
 	struct kref ref;
 	struct mutex lock;
+	struct drm_prepare_domain *domain;
 	struct drm_prepare_retirement_set *set;
 	struct drm_prepare_attempt *active;
 	bool consumed;
@@ -27,9 +28,18 @@ struct drm_prepare_ticket *
 drm_prepare_ticket_create(struct drm_prepare_retirement_set *set)
 {
 	struct drm_prepare_ticket *ticket = kzalloc_obj(*ticket);
+	struct drm_prepare_domain *domain;
 
 	if (!ticket)
 		return ERR_PTR(-ENOMEM);
+	domain = drm_prepare_retirement_set_domain(set);
+	ticket->domain = domain ? drm_prepare_domain_get(domain) : drm_prepare_domain_create();
+	if (IS_ERR(ticket->domain)) {
+		int error = PTR_ERR(ticket->domain);
+
+		kfree(ticket);
+		return ERR_PTR(error);
+	}
 	kref_init(&ticket->ref);
 	mutex_init(&ticket->lock);
 	ticket->set = drm_prepare_retirement_set_get(set);
@@ -50,6 +60,7 @@ static void ticket_free(struct kref *ref)
 
 	if (ticket->set)
 		drm_prepare_retirement_set_put(ticket->set);
+	drm_prepare_domain_put(ticket->domain);
 	mutex_destroy(&ticket->lock);
 	kfree(ticket);
 }
@@ -60,13 +71,11 @@ void drm_prepare_ticket_put(struct drm_prepare_ticket *ticket)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_ticket_put);
 
-static void wake_set(struct drm_prepare_retirement_set *set)
+wait_queue_head_t *drm_prepare_ticket_waitqueue(struct drm_prepare_ticket *ticket)
 {
-	wait_queue_head_t *queue = drm_prepare_retirement_set_waitqueue(set);
-
-	if (queue)
-		wake_up_all(queue);
+	return drm_prepare_domain_waitqueue(ticket->domain);
 }
+EXPORT_SYMBOL_GPL(drm_prepare_ticket_waitqueue);
 
 void drm_prepare_ticket_cancel(struct drm_prepare_ticket *ticket)
 {
@@ -76,10 +85,9 @@ void drm_prepare_ticket_cancel(struct drm_prepare_ticket *ticket)
 	set = ticket->set;
 	ticket->set = NULL;
 	mutex_unlock(&ticket->lock);
-	if (set) {
-		wake_set(set);
+	wake_up_all(drm_prepare_ticket_waitqueue(ticket));
+	if (set)
 		drm_prepare_retirement_set_put(set);
-	}
 }
 EXPORT_SYMBOL_GPL(drm_prepare_ticket_cancel);
 
@@ -97,6 +105,25 @@ static int ticket_readiness(struct drm_prepare_ticket *ticket,
 	mutex_unlock(&ticket->lock);
 	return ready;
 }
+
+int drm_prepare_ticket_ready(struct drm_prepare_ticket *ticket)
+{
+	struct drm_prepare_retirement_set *set;
+	int ready;
+
+	mutex_lock(&ticket->lock);
+	if (ticket->consumed || !ticket->set) {
+		ready = ticket->consumed ? -EALREADY : -ECANCELED;
+		mutex_unlock(&ticket->lock);
+		return ready;
+	}
+	set = drm_prepare_retirement_set_get(ticket->set);
+	mutex_unlock(&ticket->lock);
+	ready = ticket_readiness(ticket, set);
+	drm_prepare_retirement_set_put(set);
+	return ready;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_ticket_ready);
 
 struct ticket_wait {
 	struct drm_prepare_ticket *ticket;
@@ -232,7 +259,7 @@ int drm_prepare_attempt_commit(struct drm_prepare_attempt *attempt,
 unlock:
 	mutex_unlock(&ticket->lock);
 	if (set) {
-		wake_set(set);
+		wake_up_all(drm_prepare_ticket_waitqueue(ticket));
 		drm_prepare_retirement_set_put(set);
 	}
 	return error;

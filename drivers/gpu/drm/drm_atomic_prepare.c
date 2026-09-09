@@ -333,10 +333,15 @@ int drm_prepare_admission_hold_ready(struct drm_prepare_admission_hold *hold)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_admission_hold_ready);
 
-wait_queue_head_t *
-drm_prepare_admission_hold_waitqueue(struct drm_prepare_admission_hold *hold)
+struct drm_prepare_domain *
+drm_prepare_admission_hold_domain(struct drm_prepare_admission_hold *hold)
 {
-	return &hold->source->domain->readiness;
+	return hold->source->domain;
+}
+
+wait_queue_head_t *drm_prepare_domain_waitqueue(struct drm_prepare_domain *domain)
+{
+	return &domain->readiness;
 }
 
 static void finish_read(struct drm_prepare_read_claim *read, struct dma_fence *fence, bool abandoned)

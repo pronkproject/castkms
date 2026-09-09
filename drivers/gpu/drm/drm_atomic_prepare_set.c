@@ -118,7 +118,15 @@ EXPORT_SYMBOL_GPL(drm_prepare_retirement_set_ready);
 wait_queue_head_t *
 drm_prepare_retirement_set_waitqueue(struct drm_prepare_retirement_set *set)
 {
-	return set->count ? drm_prepare_admission_hold_waitqueue(set->holds[0]) : NULL;
+	struct drm_prepare_domain *domain = drm_prepare_retirement_set_domain(set);
+
+	return domain ? drm_prepare_domain_waitqueue(domain) : NULL;
+}
+
+struct drm_prepare_domain *
+drm_prepare_retirement_set_domain(struct drm_prepare_retirement_set *set)
+{
+	return set->count ? drm_prepare_admission_hold_domain(set->holds[0]) : NULL;
 }
 
 static int set_ready(void *data)

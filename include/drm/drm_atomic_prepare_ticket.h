@@ -2,6 +2,8 @@
 #ifndef __DRM_ATOMIC_PREPARE_TICKET_H__
 #define __DRM_ATOMIC_PREPARE_TICKET_H__
 
+#include <linux/wait.h>
+
 struct drm_prepare_retirement_set;
 struct drm_prepare_retirement_guard;
 struct drm_prepare_ticket;
@@ -28,6 +30,17 @@ void drm_prepare_ticket_cancel(struct drm_prepare_ticket *ticket);
  * ticket until it returns. The caller retains its live ticket reference.
  */
 int drm_prepare_ticket_wait(struct drm_prepare_ticket *ticket);
+
+/*
+ * Nonblocking readiness observation: zero, -EAGAIN, or terminal ticket/source
+ * error. The queue is borrowed for the ticket reference's lifetime, including
+ * after cancellation or consumption releases its source holds. Register before
+ * querying to avoid missed notifications; every wake requires another query.
+ * Retaining the queue's ticket keeps notification storage, not source admission.
+ * Observers must unregister before releasing their final ticket reference.
+ */
+int drm_prepare_ticket_ready(struct drm_prepare_ticket *ticket);
+wait_queue_head_t *drm_prepare_ticket_waitqueue(struct drm_prepare_ticket *ticket);
 
 /*
  * At most one attempt reserves a ticket. Readiness and native completion are
