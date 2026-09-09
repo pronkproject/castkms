@@ -4,7 +4,10 @@
 
 use super::RetirementSet;
 use crate::{
-    error::from_err_ptr,
+    error::{
+        from_err_ptr,
+        to_result, //
+    },
     prelude::*,
     sync::aref::{
         ARef,
@@ -63,6 +66,18 @@ impl Ticket {
     pub fn cancel(&self) {
         // SAFETY: The shared reference retains the ticket; native cancellation is serialized.
         unsafe { bindings::drm_prepare_ticket_cancel(self.0.get()) };
+    }
+
+    /// Wait interruptibly for readiness or cancellation without reserving an attempt.
+    ///
+    /// Success is an observation, not permission to install an update: [`Self::reserve`] still
+    /// checks exclusive ownership and ticket lifetime. Cancellation wakes a pending wait with
+    /// ECANCELED; consumed tickets return EALREADY. GPU reads need not have completed. The wait
+    /// temporarily retains admission until it returns, including after cancellation. Do not
+    /// hold locks needed by claim owners or cancellation while waiting.
+    pub fn wait_ready(&self) -> Result {
+        // SAFETY: The shared reference retains the ticket and native waiting retains its set.
+        to_result(unsafe { bindings::drm_prepare_ticket_wait(self.0.get()) })
     }
 
     /// Reserve one attempt without consuming the cancelable request.
