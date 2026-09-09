@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <linux/completion.h>
+#include <linux/dma-fence.h>
 #include <linux/err.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
@@ -61,6 +62,64 @@ static void expect_admission(struct kunit *test, struct drm_prepare_source *sour
 static void abandon_read(void *read)
 {
 	drm_prepare_read_abandon(read);
+}
+
+static struct drm_prepare_read_claim *claim_read(struct kunit *test,
+					       struct drm_prepare_source *source)
+{
+	struct drm_prepare_read_claim *read = drm_prepare_source_claim(source);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, abandon_read, read), 0);
+	return read;
+}
+
+static void release_read(struct kunit *test, struct drm_prepare_read_claim *read)
+{
+	kunit_remove_action(test, abandon_read, read);
+	drm_prepare_read_release(read, NULL);
+}
+
+static void readiness_requires_every_member(struct kunit *test)
+{
+	struct drm_prepare_domain *domain = new_domain(test);
+	struct drm_prepare_source *sources[] = { new_source(test, domain), new_source(test, domain) };
+	struct drm_prepare_read_claim *a = claim_read(test, sources[0]);
+	struct drm_prepare_read_claim *b = claim_read(test, sources[1]);
+	struct drm_prepare_retirement_set *set = new_set(test, sources, 2);
+	struct dma_fence *fence = ERR_PTR(-EINVAL);
+
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_ready(set), -EAGAIN);
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_completion(set, &fence), -EAGAIN);
+	KUNIT_EXPECT_PTR_EQ(test, fence, ERR_PTR(-EINVAL));
+	release_read(test, a);
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_ready(set), -EAGAIN);
+	release_read(test, b);
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_ready(set), 0);
+	KUNIT_ASSERT_EQ(test, drm_prepare_retirement_set_completion(set, &fence), 0);
+	KUNIT_EXPECT_PTR_EQ(test, fence, NULL);
+}
+
+static void terminal_failure_takes_precedence_over_pending(struct kunit *test)
+{
+	struct drm_prepare_domain *domain = new_domain(test);
+	struct drm_prepare_source *sources[] = { new_source(test, domain), new_source(test, domain) };
+	struct drm_prepare_read_claim *pending, *failed;
+	struct drm_prepare_retirement_set *set;
+	struct dma_fence *fence = ERR_PTR(-EINVAL);
+
+	/* Creation sorts by address: put the pending member first in that order. */
+	if ((unsigned long)sources[0] > (unsigned long)sources[1])
+		swap(sources[0], sources[1]);
+	pending = claim_read(test, sources[0]);
+	failed = claim_read(test, sources[1]);
+	set = new_set(test, sources, 2);
+	kunit_release_action(test, abandon_read, failed);
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_ready(set), -EIO);
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_completion(set, &fence), -EIO);
+	KUNIT_EXPECT_PTR_EQ(test, fence, ERR_PTR(-EINVAL));
+	release_read(test, pending);
+	KUNIT_EXPECT_EQ(test, drm_prepare_retirement_set_ready(set), -EIO);
 }
 
 static void empty_and_invalid_sets(struct kunit *test)
@@ -245,6 +304,8 @@ static void opposite_order_sets_acquire_without_deadlock(struct kunit *test)
 }
 
 static struct kunit_case cases[] = {
+	KUNIT_CASE(readiness_requires_every_member),
+	KUNIT_CASE(terminal_failure_takes_precedence_over_pending),
 	KUNIT_CASE(empty_and_invalid_sets),
 	KUNIT_CASE(duplicate_members_and_retained_owner),
 	KUNIT_CASE(overlapping_sets_release_only_their_holds),
