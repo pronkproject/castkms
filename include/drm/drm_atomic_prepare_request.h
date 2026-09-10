@@ -49,6 +49,7 @@ int drm_atomic_commit_request(struct drm_device *dev,
  * uses an owned ticket; revocation wakes preparation and excludes installation
  * through outstanding reservations. Reacquired authority must not substitute a
  * new issuer into an outstanding request. Requires device preparation support.
+ * Modeset lock acquisition is interruptible, as are preparation waits.
  *
  * The builder still validates the selected objects and any authority not covered
  * by issuer revocation. The issuer alone grants no object access. A

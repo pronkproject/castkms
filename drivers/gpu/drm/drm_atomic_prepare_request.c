@@ -48,7 +48,7 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 
 	if (!build || !drm_core_check_feature(dev, DRIVER_ATOMIC))
 		return -EINVAL;
-	drm_modeset_acquire_init(&ctx, 0);
+	drm_modeset_acquire_init(&ctx, owner ? DRM_MODESET_ACQUIRE_INTERRUPTIBLE : 0);
 
 	for (;;) {
 		state = drm_atomic_commit_alloc(dev);
