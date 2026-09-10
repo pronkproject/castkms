@@ -23,6 +23,12 @@ __rust_helper int rust_helper_dma_set_mask_and_coherent(struct device *dev,
 	return dma_set_mask_and_coherent(dev, mask);
 }
 
+__rust_helper int rust_helper_dma_coerce_mask_and_coherent(struct device *dev,
+							   u64 mask)
+{
+	return dma_coerce_mask_and_coherent(dev, mask);
+}
+
 __rust_helper int rust_helper_dma_set_mask(struct device *dev, u64 mask)
 {
 	return dma_set_mask(dev, mask);
