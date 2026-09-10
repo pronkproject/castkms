@@ -12,6 +12,7 @@
 #include <drm/drm_file.h>
 #include <drm/drm_lease.h>
 #include <drm/drm_print.h>
+#include <drm/drm_util.h>
 
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
@@ -344,6 +345,7 @@ void drm_lease_revoke(struct drm_master *top)
 	_drm_lease_revoke(top);
 	mutex_unlock(&top->dev->mode_config.idr_mutex);
 }
+EXPORT_SYMBOL_FOR_TESTS_ONLY(drm_lease_revoke);
 
 static int validate_lease(struct drm_device *dev,
 			  int object_count,
