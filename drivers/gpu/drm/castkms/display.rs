@@ -263,6 +263,7 @@ impl KmsDriver for Driver {
     }
 
     fn create_objects(dev: &UnregisteredKmsDevice<'_, Self>) -> Result {
+        dev.enable_preparation(8)?;
         let plane = plane::UnregisteredPlane::<Plane>::new(
             dev,
             0,
