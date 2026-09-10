@@ -35,6 +35,7 @@
 #include <drm/drm_util.h>
 
 struct drm_prepare_attempt;
+struct drm_prepare_owner;
 struct drm_prepare_output_generation;
 struct drm_prepare_retirement_guard;
 
@@ -168,6 +169,10 @@ int drm_atomic_helper_disable_plane(struct drm_plane *plane,
 				    struct drm_modeset_acquire_ctx *ctx);
 int drm_atomic_helper_set_config(struct drm_mode_set *set,
 				 struct drm_modeset_acquire_ctx *ctx);
+int drm_atomic_helper_set_config_request(struct drm_mode_set *set,
+					struct drm_prepare_owner *owner,
+					int (*validate)(struct drm_mode_set *set, void *data),
+					void *data);
 int __drm_atomic_helper_set_config(struct drm_mode_set *set,
 				   struct drm_atomic_commit *state);
 
