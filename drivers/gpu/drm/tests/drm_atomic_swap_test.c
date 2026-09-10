@@ -7,6 +7,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_colorop.h>
 #include <drm/drm_device.h>
@@ -103,6 +104,7 @@ static struct swap_fixture *new_fixture(struct kunit *test)
 static int swap_worker(void *data)
 {
 	struct swap_fixture *f = data;
+	struct drm_prepare_output_generation output = { .crtc_id = 1, .source = f->source };
 
 	if (f->interrupt) {
 		allow_signal(SIGUSR1);
@@ -112,7 +114,7 @@ static int swap_worker(void *data)
 	}
 	if (f->attempt)
 		f->result = drm_atomic_helper_swap_state_prepared(&f->state, f->stall,
-							       f->attempt, &f->guard);
+							       f->attempt, &output, 1, &f->guard);
 	else
 		f->result = drm_atomic_helper_swap_state(&f->state, f->stall);
 finished:
@@ -253,15 +255,13 @@ static void free_preparation(void *data)
 
 static void prepare_fixture(struct kunit *test, struct swap_fixture *f)
 {
-	struct drm_prepare_retirement_set *set;
+	struct drm_prepare_output_generation output;
 
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, free_preparation, f), 0);
 	f->source = drm_prepare_source_create(1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->source);
-	set = drm_prepare_retirement_set_create(&f->source, 1);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
-	f->ticket = drm_prepare_ticket_create(set);
-	drm_prepare_retirement_set_put(set);
+	output = (struct drm_prepare_output_generation) { .crtc_id = 1, .source = f->source };
+	f->ticket = drm_prepare_ticket_create(&output, 1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->ticket);
 	f->attempt = drm_prepare_ticket_reserve(f->ticket);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->attempt);
@@ -297,8 +297,13 @@ static void interrupted_preparation_retries_without_consumption(struct kunit *te
 
 	for (blocked = 0; blocked < 3; blocked++) {
 		struct swap_fixture *f = new_fixture(test);
+		struct drm_prepare_output_generation output;
 
 		prepare_fixture(test, f);
+		output = (struct drm_prepare_output_generation) {
+			.crtc_id = 1,
+			.source = f->source,
+		};
 		for (i = 0; i < ARRAY_SIZE(f->predecessors); i++) {
 			if (i != blocked)
 				complete_all(&f->predecessors[i].hw_done);
@@ -309,8 +314,9 @@ static void interrupted_preparation_retries_without_consumption(struct kunit *te
 		expect_uninstalled(test, f);
 		KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
 		KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_ticket_reserve(f->ticket)), -EBUSY);
-		KUNIT_ASSERT_EQ(test, drm_atomic_helper_swap_state_prepared(&f->state, true,
-									f->attempt, &f->guard), 0);
+		KUNIT_ASSERT_EQ(test,
+			drm_atomic_helper_swap_state_prepared(&f->state, true, f->attempt,
+							    &output, 1, &f->guard), 0);
 		expect_installed(test, f);
 		KUNIT_EXPECT_NOT_NULL(test, f->guard);
 		KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_ticket_reserve(f->ticket)), -EALREADY);
@@ -364,19 +370,26 @@ static void installed_preparation_survives_ticket_release(struct kunit *test)
 static void async_preparation_leaves_state_and_ticket_unchanged(struct kunit *test)
 {
 	struct swap_fixture *f = new_fixture(test);
+	struct drm_prepare_output_generation output;
 
 	prepare_fixture(test, f);
+	output = (struct drm_prepare_output_generation) {
+		.crtc_id = 1,
+		.source = f->source,
+	};
 	f->stall = false;
 	f->state.async_update = true;
 	run_swap(test, f);
 	KUNIT_ASSERT_EQ(test, f->result, -EOPNOTSUPP);
 	expect_uninstalled(test, f);
 	KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket),
+			DRM_PREPARE_TICKET_READY);
 
 	f->state.async_update = false;
 	KUNIT_ASSERT_EQ(test,
 		drm_atomic_helper_swap_state_prepared(&f->state, false, f->attempt,
-						    &f->guard), 0);
+						    &output, 1, &f->guard), 0);
 	expect_installed(test, f);
 	KUNIT_EXPECT_NOT_NULL(test, f->guard);
 }

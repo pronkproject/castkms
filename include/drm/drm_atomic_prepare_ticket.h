@@ -8,7 +8,7 @@ struct drm_prepare_retirement_set;
 struct drm_prepare_retirement_guard;
 struct drm_prepare_ticket;
 struct drm_prepare_attempt;
-struct drm_prepare_scope_entry;
+struct drm_prepare_output_generation;
 struct drm_prepare_owner;
 
 enum drm_prepare_ticket_status {
@@ -24,33 +24,26 @@ enum drm_prepare_ticket_status {
  * a ticket reserved by another attempt and does not promise successful reserve.
  * Cancellation or consumption can follow any observation. FAILED means source
  * accounting cannot establish read closure; it does not describe a GPU error.
- * No status grants authority or validates a transaction's display scope.
+ * No status grants authority or validates the transaction's output generations.
  */
 enum drm_prepare_ticket_status
 drm_prepare_ticket_status(struct drm_prepare_ticket *ticket);
 
 /*
- * Internal ticket ownership, independent of files and display scope validation.
- * Creation retains the borrowed set. Reference release is not cancellation;
- * a transport owner must cancel explicitly when its authority ends. All calls
- * require live references and may sleep. No operation grants pixel access.
- */
-struct drm_prepare_ticket *
-drm_prepare_ticket_create(struct drm_prepare_retirement_set *set);
-
-/*
- * Capture a scope and derive the ticket's admission holds from that exact scope.
- * Inputs follow drm_prepare_scope_create(); the caller stabilizes them through
+ * Capture output generations and hold admission for exactly those sources.
+ * Inputs follow drm_prepare_outputs_create(); the caller stabilizes them through
  * construction. Failure releases every acquired reference and hold. The ticket
- * owns the captured scope for its lifetime and cannot accept an unscoped commit.
- * This binds source generations, not device or modesetting authority.
+ * owns the captured output generations for its lifetime. Every acceptance must
+ * match them. Reference release is not cancellation; a transport owner cancels
+ * explicitly when its authority ends. No operation grants pixel access or
+ * authenticates device or modesetting authority. All calls may sleep.
  */
 struct drm_prepare_ticket *
-drm_prepare_ticket_create_scoped(const struct drm_prepare_scope_entry *entries,
+drm_prepare_ticket_create(const struct drm_prepare_output_generation *entries,
 				unsigned int count);
 
 /*
- * Bind a scoped ticket to one continuous issuer lifetime. The ticket retains
+ * Bind a ticket to one continuous issuer lifetime. The ticket retains
  * owner identity without retaining a DRM file. The issuer must revoke that owner
  * on authority loss. Revocation cancels unaccepted tickets and prevents future
  * acceptance through outstanding reservations. Creation may fail with -ENOSPC
@@ -58,7 +51,7 @@ drm_prepare_ticket_create_scoped(const struct drm_prepare_scope_entry *entries,
  */
 struct drm_prepare_ticket *
 drm_prepare_ticket_create_owned(struct drm_prepare_owner *owner,
-				const struct drm_prepare_scope_entry *entries,
+				const struct drm_prepare_output_generation *entries,
 				unsigned int count);
 struct drm_prepare_ticket *drm_prepare_ticket_get(struct drm_prepare_ticket *ticket);
 void drm_prepare_ticket_put(struct drm_prepare_ticket *ticket);
@@ -107,8 +100,8 @@ void drm_prepare_attempt_destroy(struct drm_prepare_attempt *attempt);
 
 /*
  * Serialize installation with cancellation and single consumption. The caller
- * holds the display locks that stabilize its complete scope. install validates
- * that scope and current authority, returning a negative error BEFORE any state
+ * holds the display locks that stabilize all retiring outputs. install validates
+ * current authority, returning a negative error BEFORE any state
  * change, or installs the complete update and returns zero. It must not wait,
  * allocate, acquire display locks or reenter ticket/preparation operations.
  * Lock order is display locks, then the issuer's owner lock (when present),
@@ -119,22 +112,16 @@ void drm_prepare_attempt_destroy(struct drm_prepare_attempt *attempt);
  * the ticket, and makes further acceptance return -EALREADY. The attempt must
  * still be destroyed. Cancellation after success cannot revoke the guard.
  * Native completion is not waited for, and source storage remains caller-owned.
- */
-int drm_prepare_attempt_commit(struct drm_prepare_attempt *attempt,
-			       int (*install)(void *data), void *data,
-			       struct drm_prepare_retirement_guard **guard);
-
-/*
- * Accept only a scoped ticket matching the complete observed output cohort.
+ *
+ * Accept only a ticket matching the complete observed output generations.
  * Validation occurs inside the ticket's cancellation/consumption decision,
  * before install. The caller holds display locks stabilizing observed entries
  * and retains their sources through installation. install still validates
- * current authority and obeys drm_prepare_attempt_commit()'s callback contract.
- * Scope mismatch leaves the attempt retryable and *guard unchanged. Unscoped
- * tickets return -EINVAL; the unscoped commit entry rejects scoped tickets too.
+ * current authority and obeys the callback contract above. Mismatched output
+ * generations leave the attempt retryable and *guard unchanged.
  */
-int drm_prepare_attempt_commit_scoped(struct drm_prepare_attempt *attempt,
-				      const struct drm_prepare_scope_entry *observed,
+int drm_prepare_attempt_commit(struct drm_prepare_attempt *attempt,
+				      const struct drm_prepare_output_generation *observed,
 				      unsigned int count,
 				      int (*install)(void *data), void *data,
 				      struct drm_prepare_retirement_guard **guard);
