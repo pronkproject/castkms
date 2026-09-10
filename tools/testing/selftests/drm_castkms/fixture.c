@@ -33,7 +33,8 @@ void destroy_buffer(int fd, struct buffer *b)
 	struct drm_mode_destroy_dumb destroy = { .handle = b->dumb.handle };
 
 	CHECK(drmModeRmFB(fd, b->fb) == 0);
-	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy) == 0);
+	if (destroy.handle)
+		CHECK(drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy) == 0);
 }
 
 void property(int fd, drmModeAtomicReq *req, uint32_t id, uint32_t type,
