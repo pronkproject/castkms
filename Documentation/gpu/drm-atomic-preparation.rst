@@ -315,8 +315,9 @@ before the first pointer changes; successful installation transfers the guard
 and consumes the ticket without an interval of reopened admission.
 
 The caller must supply every retiring output generation and keep the list
-stable under its display and provider locks throughout the call. Authority invalidation must
-either cancel the ticket or participate in that same caller-owned locking. The
+stable under its display and provider locks throughout the call. Authority
+invalidation must either cancel the ticket or participate in that same
+caller-owned locking. The
 caller must not hold a lock needed for predecessor completion across the waits.
 The helper does not infer source generations from framebuffer pointers. Its returned
 guard also does not itself delay old framebuffer cleanup: the caller must join
@@ -394,3 +395,44 @@ selection stable through installation. No ioctl or source-export facility is
 enabled merely by adding a transaction owner. The native tests use a custom
 object-clear callback and submitted test fences to check lifetime and wait
 ordering; they do not qualify a physical GPU or a complete capture provider.
+
+Following modesetting authority
+------------------------------
+
+``drm_file_prepare_owner()`` returns a retained issuer identity for the current
+modesetting master file, including a lease master. Duplicated descriptors refer
+to the same file and issuer. A separate file associated with that master is not
+the issuing master file and cannot borrow its issuer identity. The reference
+preserves identity, not permission to use any particular display object.
+
+``drm_prepare_ticket_create_owned()`` binds a request to that continuous issuer
+lifetime. An issuer admits at most 256 retained tickets, including terminal
+tickets whose references have not been released. That allocation bound is not
+a capture queue limit. Reservation checks the issuer identity, and acceptance
+serializes with its revocation before entering the ticket's own decision.
+
+Dropping master revokes the issuer and its lease descendants. Revoking a lease
+revokes its subtree without canceling sibling issuers. Final release of the
+issuing file cancels preparation before framebuffer and other display-state
+teardown. Closing an associated file or one of several references to the issuing
+file does not trigger that boundary. Master reacquisition obtains a fresh
+issuer; retaining an old owner or ticket never revives it. An already accepted
+retirement guard remains responsible for its source holds and native readers.
+
+Issuer lookup takes ``master_mutex`` followed by ``mode_config.idr_mutex``.
+Callers must not hold display locks during lookup. Lease-tree cancellation
+takes the owner and ticket locks under ``idr_mutex`` and never waits for future
+userspace submission or native GPU completion. Owners do not retain DRM files,
+so retained ticket descriptors cannot keep an issuing file alive in a cycle.
+
+These hooks are not a preparation ioctl. A provider must still authorize every
+selected display object, publish current generations, and stabilize the complete
+retiring list through installation. The existing atomic attachment helper takes
+unowned kernel tickets; accepting file-issued tickets needs a separate adapter
+that checks the issuer. Device removal and blocking internal entry paths also
+need their provider integration before delegated execution is enabled.
+
+KUnit tests use controlled master trees and real master drop/reacquisition,
+file-release and lease-revocation paths. They check associated-file rejection,
+duplicate-reference lifetime and descendant cancellation. They do not exercise
+lease creation through an ioctl, unplug or a physical display.
