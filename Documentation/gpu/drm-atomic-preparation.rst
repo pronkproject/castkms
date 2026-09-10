@@ -354,7 +354,8 @@ VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
 off by default. The Rust CastKMS device enables the same accounting through its
 unregistered-device wrapper. Neither provider admits external pixel readers
 yet. Kernel shutdown, suspend, framebuffer removal and kernel display clients
-use the request entry described below. Legacy userspace updates and other
+use the request entry described below. The legacy SETCRTC ioctl uses a resolved
+request callback on participating providers. Other legacy userspace updates and
 internal callers still need preparation integration before delegated reading
 can be enabled. Testing explicit blocking tickets does not establish those paths.
 
@@ -412,10 +413,34 @@ does not certify current authority. Rebuilding briefly retains two tickets to
 keep admission held across attempts, so the issuer's ticket budget needs room
 for both. Allocation failure rejects the request and releases its holds.
 
-The entry is independent of DRM files and userspace descriptors. A future
+The entry is independent of DRM files and userspace descriptors. A
 userspace adapter must obtain the issuer through the file's authority policy,
 retain resolved input objects and revalidate the selected display objects. The
 request helper alone does not make legacy ioctls preparation-aware.
+
+SETCRTC resolves its requested framebuffer, mode and connectors under the initial
+display locks. On a preparation-enabled device, it retains those inputs after
+dropping the locks and calls the provider's ``set_config_request`` operation.
+No userspace connector array or framebuffer identifier is reread after a
+preparation wait. The special request to use the current framebuffer resolves
+to one retained framebuffer reference, not whichever buffer is current after
+waiting. Object references keep storage alive; they do not make pixels immutable.
+
+The standard ``drm_atomic_helper_set_config_request()`` implementation rebuilds
+the legacy modeset under display locks, preserving conflicting-encoder handling
+and checking the viewport against current plane rotation. Each attempt asks DRM
+core to revalidate the selected controller, primary plane when enabling, and
+connectors against the file's lease. A connector that has been unregistered is
+rejected. The retained issuer prevents installation after master loss or lease
+revocation even when those events follow validation.
+
+The operations-table boundary lets DRM core retain inputs and apply file policy
+without depending on the separately built atomic-helper module. VKMS and the
+Rust CRTC wrapper register the standard helper. A preparation-enabled provider
+without that callback rejects SETCRTC with an unsupported-operation error.
+Devices without preparation continue using their existing ``set_config`` path.
+The new callback is also callable with resolved kernel inputs and a kernel
+authorization callback; it neither requires nor manufactures a userspace request.
 
 ``drm_atomic_helper_shutdown()`` uses ``drm_atomic_commit_request()`` on
 participating devices.
@@ -493,6 +518,13 @@ pending reader wait and after reservation before state installation. The waiting
 test keeps the original reader unresolved and verifies that cancellation releases
 only the request's admission holds. Other tests require rebuilding with a live
 issuer and reject calls without an issuer or device preparation support.
+A contended-lock test presents a pending signal and requires an issuer-bound
+request to return without checking or installing display state.
+SETCRTC tests call the ioctl handler with a disable request and a pending reader,
+drop the file's master authority through the ordinary ioctl dispatch, and reject
+providers without the request callback. A separate helper test denies selected
+object authorization on the attempt rebuilt after waiting. These tests do not
+exercise copying a userspace connector array while a reader is pending.
 The test driver installs state through the real swap helper; it does not program
 display hardware or exercise native GPU execution.
 
