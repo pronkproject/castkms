@@ -397,7 +397,28 @@ authority needed by the operation must be revalidated when rebuilding.
 These requirements are part of the kernel callback contract; the helper does
 not freeze userspace memory or supply an adapter for ordinary atomic ioctls.
 
-``drm_atomic_helper_shutdown()`` uses that entry on participating devices.
+A request made on behalf of revocable authority uses
+``drm_atomic_commit_request_owned()`` with a retained issuer identity. Every
+rebuilt ticket belongs to that same identity. Revoking the issuer wakes a pending
+preparation wait and excludes installation through a reservation that was ready
+before revocation. Retaining the issuer does not prolong its authority, and
+reacquiring display ownership must not replace the issuer of an outstanding
+request. The entry requires preparation support rather than silently accepting
+an ordinary commit without that protection.
+
+The builder still validates the selected objects and any permission not covered
+by issuer revocation. Reporting that no change is needed installs nothing and
+does not certify current authority. Rebuilding briefly retains two tickets to
+keep admission held across attempts, so the issuer's ticket budget needs room
+for both. Allocation failure rejects the request and releases its holds.
+
+The entry is independent of DRM files and userspace descriptors. A future
+userspace adapter must obtain the issuer through the file's authority policy,
+retain resolved input objects and revalidate the selected display objects. The
+request helper alone does not make legacy ioctls preparation-aware.
+
+``drm_atomic_helper_shutdown()`` uses ``drm_atomic_commit_request()`` on
+participating devices.
 Its operation is to disable every output, which it reconstructs from current
 state after a wait. The caller must stop new display producers and retain the
 device resources until shutdown finishes. Devices without preparation retain
@@ -467,6 +488,11 @@ Client tests use a disabled-output configuration to exercise modeset and power
 requests, check-only operation and reader failure through the public client
 helpers. They test preparation and request ownership, not console rendering or
 physical display power transitions.
+Issuer-bound request tests revoke authority before ticket creation, during a
+pending reader wait and after reservation before state installation. The waiting
+test keeps the original reader unresolved and verifies that cancellation releases
+only the request's admission holds. Other tests require rebuilding with a live
+issuer and reject calls without an issuer or device preparation support.
 The test driver installs state through the real swap helper; it does not program
 display hardware or exercise native GPU execution.
 
