@@ -4,6 +4,7 @@
 
 struct drm_device;
 struct drm_atomic_commit;
+struct drm_prepare_owner;
 
 enum drm_atomic_request_result {
 	DRM_ATOMIC_REQUEST_COMMIT = 0,
@@ -41,5 +42,24 @@ enum drm_atomic_request_result {
 int drm_atomic_commit_request(struct drm_device *dev,
 			      int (*build)(struct drm_atomic_commit *state, void *data),
 			      void *data);
+
+/*
+ * Rebuild a request under one continuous, revocable issuer lifetime. The caller
+ * retains owner until return and revokes it when authority ends. Each attempt
+ * uses an owned ticket; revocation wakes preparation and excludes installation
+ * through outstanding reservations. Reacquired authority must not substitute a
+ * new issuer into an outstanding request. Requires device preparation support.
+ *
+ * The builder still validates the selected objects and any authority not covered
+ * by issuer revocation. The issuer alone grants no object access. A
+ * DRM_ATOMIC_REQUEST_UNCHANGED result makes no installation or authority
+ * guarantee. All other input, locking
+ * and lifetime rules of drm_atomic_commit_request() apply. Rebuilding overlaps
+ * tickets, requiring room for two tickets in the issuer's allocation budget.
+ */
+int drm_atomic_commit_request_owned(struct drm_device *dev,
+				    struct drm_prepare_owner *owner,
+				    int (*build)(struct drm_atomic_commit *state, void *data),
+				    void *data);
 
 #endif
