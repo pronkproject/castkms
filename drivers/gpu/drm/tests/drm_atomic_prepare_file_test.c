@@ -88,16 +88,19 @@ static void poll_observes_release_then_kernel_cancellation(struct kunit *test)
 
 	poll_initwait(&wait);
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, &wait.pt), 0);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_PENDING);
 	drm_prepare_read_release(f->read, NULL);
 	f->read = NULL;
 	KUNIT_EXPECT_TRUE(test, wait.triggered);
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLIN | EPOLLRDNORM);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_READY);
 	poll_freewait(&wait);
 	poll_initwait(&wait);
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, &wait.pt), EPOLLIN | EPOLLRDNORM);
 	drm_prepare_ticket_cancel(f->ticket);
 	KUNIT_EXPECT_TRUE(test, wait.triggered);
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLERR | EPOLLHUP);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_CANCELED);
 	poll_freewait(&wait);
 }
 
@@ -111,6 +114,7 @@ static void poll_reports_abandoned_claim_without_readiness(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, &wait.pt), 0);
 	drm_prepare_read_abandon(f->read);
 	f->read = NULL;
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_FAILED);
 	KUNIT_EXPECT_TRUE(test, wait.triggered);
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLERR | EPOLLHUP);
 	poll_freewait(&wait);
@@ -135,7 +139,9 @@ static void closing_consumed_file_preserves_accepted_guard(struct kunit *test)
 	drm_prepare_attempt_destroy(attempt);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLHUP);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_CONSUMED);
 	kunit_release_action(test, put_file, file);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_CONSUMED);
 	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_source_claim(f->source)), -EBUSY);
 	drm_prepare_retirement_guard_destroy(guard);
 	read = drm_prepare_source_claim(f->source);

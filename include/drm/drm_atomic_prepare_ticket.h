@@ -9,6 +9,24 @@ struct drm_prepare_retirement_guard;
 struct drm_prepare_ticket;
 struct drm_prepare_attempt;
 
+enum drm_prepare_ticket_status {
+	DRM_PREPARE_TICKET_PENDING,
+	DRM_PREPARE_TICKET_READY,
+	DRM_PREPARE_TICKET_CONSUMED,
+	DRM_PREPARE_TICKET_CANCELED,
+	DRM_PREPARE_TICKET_FAILED,
+};
+
+/*
+ * Observe submission preparation, not native reader completion. READY includes
+ * a ticket reserved by another attempt and does not promise successful reserve.
+ * Cancellation or consumption can follow any observation. FAILED means source
+ * accounting cannot establish read closure; it does not describe a GPU error.
+ * No status grants authority or validates a transaction's display scope.
+ */
+enum drm_prepare_ticket_status
+drm_prepare_ticket_status(struct drm_prepare_ticket *ticket);
+
 /*
  * Internal ticket ownership, independent of files and display scope validation.
  * Creation retains the borrowed set. Reference release is not cancellation;
