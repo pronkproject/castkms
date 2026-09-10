@@ -81,6 +81,8 @@ struct drm_plane_helper_funcs;
 struct drm_crtc_state {
 	/** @crtc: backpointer to the CRTC */
 	struct drm_crtc *crtc;
+	/** @prepare_source: Owned read-accounting generation for this output use. */
+	struct drm_prepare_source *prepare_source;
 
 	/**
 	 * @enable: Whether the CRTC should be enabled, gates all other state.
