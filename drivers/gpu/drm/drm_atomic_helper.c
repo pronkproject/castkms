@@ -3573,6 +3573,16 @@ fail:
 }
 EXPORT_SYMBOL(drm_atomic_helper_disable_plane);
 
+static int build_legacy_config(struct drm_mode_set *set,
+			       struct drm_atomic_commit *state)
+{
+	int ret = __drm_atomic_helper_set_config(set, state);
+
+	if (ret)
+		return ret;
+	return handle_conflicting_encoders(state, true);
+}
+
 /**
  * drm_atomic_helper_set_config - set a new config from userspace
  * @set: mode set configuration
@@ -3601,11 +3611,7 @@ int drm_atomic_helper_set_config(struct drm_mode_set *set,
 		return -ENOMEM;
 
 	state->acquire_ctx = ctx;
-	ret = __drm_atomic_helper_set_config(set, state);
-	if (ret != 0)
-		goto fail;
-
-	ret = handle_conflicting_encoders(state, true);
+	ret = build_legacy_config(set, state);
 	if (ret)
 		goto fail;
 
