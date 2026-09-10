@@ -32,6 +32,7 @@
 #include <linux/slab.h>
 
 #include <drm/drm_auth.h>
+#include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
 #include <drm/drm_lease.h>
@@ -280,6 +281,8 @@ int drm_setmaster_ioctl(struct drm_device *dev, void *data,
 static void drm_drop_master(struct drm_device *dev,
 			    struct drm_file *fpriv)
 {
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
+		drm_master_cancel_preparation(fpriv->master);
 	if (dev->driver->master_drop)
 		dev->driver->master_drop(dev, fpriv);
 	drm_master_put(&dev->master);
@@ -439,8 +442,10 @@ static void drm_master_destroy(struct kref *kref)
 	struct drm_master *master = container_of(kref, struct drm_master, refcount);
 	struct drm_device *dev = master->dev;
 
-	if (drm_core_check_feature(dev, DRIVER_MODESET))
+	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
+		drm_master_cancel_preparation(master);
 		drm_lease_destroy(master);
+	}
 
 	idr_destroy(&master->magic_map);
 	idr_destroy(&master->leases);
