@@ -112,6 +112,13 @@ Closing the file does not signal the underlying work. A pending record stays
 pending until its producer completes it, and poll readiness alone does not
 establish that the pixels are valid.
 
+Extraction also works from an already-held file: native type validation returns
+an independently retained fence or rejects a file of another type. Kernel
+callers do not need to install a descriptor and look it up again. The descriptor
+lookup interface uses the same operation after acquiring the file. Rust accepts
+a thread-local file borrow because extraction does not use file-position state;
+it neither waits nor discards a completed producer error.
+
 That transport helper grants no source access. A future executor handoff still
 needs authorization, source lifetime management and close-on-exec descriptor
 publication after fallible setup. It must not turn preparation readiness or a
