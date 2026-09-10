@@ -542,6 +542,31 @@ drm_atomic_crtc_get_property(struct drm_crtc *crtc,
 	return 0;
 }
 
+/**
+ * drm_atomic_set_fence_for_plane - retain a resolved input fence
+ * @plane_state: caller-owned incoming plane state
+ * @fence: input fence, or NULL for no explicit dependency
+ *
+ * Takes a reference without consuming the caller's reference. An existing
+ * fence cannot be replaced, even with NULL. Passing NULL to a state without
+ * a fence is a no-op. The caller must serialize access to the incoming state.
+ * Normal plane-state destruction releases the retained reference.
+ *
+ * Request builders may retain a resolved fence across discarded attempts and
+ * supply it to each fresh state without looking up a userspace descriptor.
+ *
+ * Returns: zero on success or -EINVAL if the state already has a fence.
+ */
+int drm_atomic_set_fence_for_plane(struct drm_plane_state *plane_state,
+				 struct dma_fence *fence)
+{
+	if (plane_state->fence)
+		return -EINVAL;
+	plane_state->fence = dma_fence_get(fence);
+	return 0;
+}
+EXPORT_SYMBOL(drm_atomic_set_fence_for_plane);
+
 static int drm_atomic_plane_set_property(struct drm_plane *plane,
 		struct drm_plane_state *state, struct drm_file *file_priv,
 		struct drm_property *property, uint64_t val)
