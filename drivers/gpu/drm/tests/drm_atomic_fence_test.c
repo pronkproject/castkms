@@ -75,9 +75,21 @@ static void existing_fence_cannot_be_replaced(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&second->refcount), 1);
 }
 
+static void null_fence_cannot_remove_dependency(struct kunit *test)
+{
+	struct dma_fence *fence = new_fence(test);
+	struct drm_plane_state *state = new_state(test);
+
+	KUNIT_ASSERT_EQ(test, drm_atomic_set_fence_for_plane(state, fence), 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_set_fence_for_plane(state, NULL), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, state->fence, fence);
+	KUNIT_EXPECT_EQ(test, kref_read(&fence->refcount), 2);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(resolved_fence_survives_discarded_attempt),
 	KUNIT_CASE(existing_fence_cannot_be_replaced),
+	KUNIT_CASE(null_fence_cannot_remove_dependency),
 	{}
 };
 
