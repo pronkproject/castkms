@@ -53,6 +53,14 @@ int drm_atomic_commit_request(struct drm_device *dev,
 		}
 		state->acquire_ctx = &ctx;
 		ret = build(state, data);
+		if (ret == DRM_ATOMIC_REQUEST_UNCHANGED) {
+			ret = 0;
+			break;
+		}
+		if (ret > 0) {
+			ret = -EINVAL;
+			break;
+		}
 		if (!ret)
 			ret = drm_atomic_check_only(state);
 		if (ret)
