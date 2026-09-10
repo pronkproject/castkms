@@ -24,6 +24,8 @@ struct buffer {
 
 struct buffer create_buffer(int fd, uint32_t width, uint32_t height,
 			    unsigned char pixel);
+struct buffer import_buffer(int fd, const char *heap, uint32_t width,
+			    uint32_t height);
 void destroy_buffer(int fd, struct buffer *buffer);
 void property(int fd, drmModeAtomicReq *req, uint32_t id, uint32_t type,
 	      const char *name, uint64_t value);

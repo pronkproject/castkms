@@ -6,5 +6,5 @@ TEST_FILES := standalone.config
 LOCAL_HDRS := fixture.h
 include ../lib.mk
 
-$(OUTPUT)/modeset: fixture.c
+$(OUTPUT)/modeset: fixture.c import.c
 $(OUTPUT)/master-lifetime: fixture.c
