@@ -11,6 +11,10 @@ struct drm_prepare_attempt;
 struct drm_prepare_output_generation;
 struct drm_prepare_owner;
 
+/* Compare immutable issuer identity; does not check readiness or live authority. */
+bool drm_prepare_ticket_is_owned_by(struct drm_prepare_ticket *ticket,
+				  struct drm_prepare_owner *owner);
+
 enum drm_prepare_ticket_status {
 	DRM_PREPARE_TICKET_PENDING,
 	DRM_PREPARE_TICKET_READY,
