@@ -46,7 +46,14 @@ impl Drop for CastKms {
 
 impl kernel::Module for CastKms {
     fn init(_: &'static ThisModule) -> Result<Self> {
-        let parent = faux::Registration::new(c"castkms", None)?;
+        Self::new(c"castkms")
+    }
+}
+
+impl CastKms {
+    fn new(name: &CStr) -> Result<Self> {
+        let parent =
+            faux::Registration::new_with_dma_mask(name, None, kernel::dma::DmaMask::new::<64>())?;
         let state = device::Owner::new()?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;

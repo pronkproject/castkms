@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Local display buffer allocation. No compositor mapping or capture authority lives here.
+//! Display storage allocation and import, without compositor mapping or capture authority.
 
 use super::Driver;
 use kernel::{
@@ -21,6 +21,10 @@ impl drm::gem::DriverObject for Object {
     }
 
     fn dumb_create_args(_: &drm::Device<Driver>, _: usize) -> Result<()> {
+        Ok(())
+    }
+
+    fn prime_import_args(_: &drm::Device<Driver>, _: usize) -> Result<()> {
         Ok(())
     }
 }

@@ -4,6 +4,8 @@
 
 use super::*;
 
+#[cfg(CONFIG_DRM_CLIENT)]
+mod imports;
 mod producers;
 use kernel::drm::{
     auth::MasterRef,
@@ -33,7 +35,11 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Result<Self> {
-        let parent = faux::Registration::new(c"castkms-attribution-test", None)?;
+        let parent = faux::Registration::new_with_dma_mask(
+            c"castkms-attribution-test",
+            None,
+            kernel::dma::DmaMask::new::<64>(),
+        )?;
         let state = device::Owner::new()?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
