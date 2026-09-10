@@ -17,6 +17,7 @@
 #include <drm/drm_gem.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_prepare_display.h>
 #include <drm/drm_colorop.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fbdev_shmem.h>
@@ -39,6 +40,10 @@
 #define DRIVER_MINOR	0
 
 static struct vkms_config *default_config;
+
+static bool enable_preparation;
+module_param_named(enable_preparation, enable_preparation, bool, 0444);
+MODULE_PARM_DESC(enable_preparation, "Enable experimental atomic preparation tickets");
 
 static bool enable_cursor = true;
 module_param_named(enable_cursor, enable_cursor, bool, 0444);
@@ -138,6 +143,11 @@ static int vkms_modeset_init(struct vkms_device *vkmsdev)
 	ret = drmm_mode_config_init(dev);
 	if (ret)
 		return ret;
+	if (enable_preparation) {
+		ret = drm_atomic_prepare_display_init(dev, 8);
+		if (ret)
+			return ret;
+	}
 
 	dev->mode_config.funcs = &vkms_mode_funcs;
 	dev->mode_config.min_width = XRES_MIN;
