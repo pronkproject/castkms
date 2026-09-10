@@ -353,10 +353,10 @@ including an unchanged framebuffer or blank output.
 VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
 off by default. The Rust CastKMS device enables the same accounting through its
 unregistered-device wrapper. Neither provider admits external pixel readers
-yet. Kernel shutdown, suspend and framebuffer removal use the request entry
-described below. Legacy updates and other internal callers still need preparation
-integration before delegated reading can be enabled. Testing explicit blocking
-tickets does not establish those paths.
+yet. Kernel shutdown, suspend, framebuffer removal and kernel display clients
+use the request entry described below. Legacy userspace updates and other
+internal callers still need preparation integration before delegated reading
+can be enabled. Testing explicit blocking tickets does not establish those paths.
 
 Rebuilding a blocking kernel request
 -----------------------------------
@@ -437,6 +437,20 @@ propagate that error to the removal ioctl. A successful ioctl return therefore
 does not establish that a failed display change completed or authorize source
 reuse after such a failure.
 
+The in-kernel display client uses the request entry for atomic modesets and
+display power changes. Its modeset mutex keeps the requested configuration and
+its object references stable throughout rebuilding. The internal master lock
+continues to exclude a userspace display owner until the operation returns.
+Those two locks remain held during preparation, so a provider must not require
+either lock to finish a reader. Modeset locks are released during the wait.
+The caller still owns the client's lifetime and device resources.
+
+Checking a client's proposed configuration does not replace display state and
+does not wait for readers or hold their admission. Devices without preparation
+retain the ordinary client commit path. These client operations do not provide
+preparation for legacy userspace ioctls or driver helpers that borrow modeset
+locks from their callers.
+
 Kernel tests use an outstanding read claim and a second thread which needs the
 modeset lock before releasing it. They check rebuilding, intervening generation
 changes, rejected requests and shutdown without depending on a userspace
@@ -449,6 +463,10 @@ Removal tests retain an outstanding reader, exercise controller-disable
 fallback and leave a competing replacement installed without an empty commit.
 They call the shared framebuffer removal helper, not the file-close or removal
 ioctl entry points themselves.
+Client tests use a disabled-output configuration to exercise modeset and power
+requests, check-only operation and reader failure through the public client
+helpers. They test preparation and request ownership, not console rendering or
+physical display power transitions.
 The test driver installs state through the real swap helper; it does not program
 display hardware or exercise native GPU execution.
 
