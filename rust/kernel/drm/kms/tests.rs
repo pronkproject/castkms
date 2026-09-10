@@ -1018,7 +1018,10 @@ mod cases {
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
     fn same_device_import_reuses_original_object() -> Result {
-        use gem::IntoGEMObject;
+        use gem::{
+            BaseObject,
+            IntoGEMObject, //
+        };
 
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-prime-self", None)?;
@@ -1045,6 +1048,7 @@ mod cases {
         let (attachment, original) =
             unsafe { ((*imported.as_raw()).import_attach, (*buffer.as_raw()).priv_) };
         assert!(attachment.is_null());
+        assert!(imported.imported_dma_buf().is_none());
         assert_eq!(imported.as_raw().cast::<core::ffi::c_void>(), original);
         drop(client);
         drop(buffer);
@@ -1094,6 +1098,8 @@ mod cases {
         };
         assert_eq!(imported.size(), 16384);
         assert_eq!(imported.allocated_size, 16384);
+        let retained = imported.imported_dma_buf().ok_or(EINVAL)?;
+        assert!(core::ptr::eq(&*retained, &*buffer));
         assert_eq!(target_counts.gem_objects.load(Ordering::Relaxed), 1);
         // SAFETY: Import completed before publication. These backing fields remain immutable.
         let (attachment, filp, reservation, source_reservation) = unsafe {
@@ -1128,10 +1134,15 @@ mod cases {
         // SAFETY: KUnit runs in a kernel thread; drain deferred file release before inspecting
         // exporter lifetime. No object or reservation locks are held across the flush.
         unsafe { bindings::flush_delayed_fput() };
-        assert_eq!(source_counts.gem_objects.load(Ordering::Relaxed), 0);
         assert_eq!(target_counts.gem_objects.load(Ordering::Relaxed), 0);
-        assert_eq!(source_counts.objects.load(Ordering::Relaxed), 0);
         assert_eq!(target_counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(retained.size(), 16384);
+        assert_eq!(source_counts.gem_objects.load(Ordering::Relaxed), 1);
+        drop(retained);
+        // SAFETY: No locks are held while draining the final exported-buffer reference.
+        unsafe { bindings::flush_delayed_fput() };
+        assert_eq!(source_counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(source_counts.objects.load(Ordering::Relaxed), 0);
         Ok(())
     }
 
