@@ -1110,6 +1110,15 @@ static int atomic_remove_fb(struct drm_framebuffer *fb)
 	struct drm_atomic_commit *state;
 	int ret;
 
+	if (dev->mode_config.preparation) {
+		ret = drm_atomic_commit_request(dev, build_remove_fb, &request);
+		if (ret == -EINVAL) {
+			request.disable_crtcs = true;
+			ret = drm_atomic_commit_request(dev, build_remove_fb, &request);
+		}
+		return ret;
+	}
+
 retry_disable:
 	drm_modeset_acquire_init(&ctx, 0);
 	state = drm_atomic_commit_alloc(dev);
