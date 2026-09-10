@@ -24,6 +24,7 @@
 #include <linux/uaccess.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_prepare_request.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_debugfs.h>
@@ -1028,33 +1029,25 @@ void drm_framebuffer_cleanup(struct drm_framebuffer *fb)
 }
 EXPORT_SYMBOL(drm_framebuffer_cleanup);
 
-static int atomic_remove_fb(struct drm_framebuffer *fb)
+struct remove_fb_request {
+	struct drm_framebuffer *fb;
+	bool disable_crtcs;
+};
+
+static int build_remove_fb(struct drm_atomic_commit *state, void *data)
 {
-	struct drm_modeset_acquire_ctx ctx;
+	struct remove_fb_request *request = data;
+	struct drm_framebuffer *fb = request->fb;
 	struct drm_device *dev = fb->dev;
-	struct drm_atomic_commit *state;
 	struct drm_plane *plane;
 	struct drm_connector *conn __maybe_unused;
 	struct drm_connector_state *conn_state;
 	int i, ret;
-	unsigned plane_mask;
-	bool disable_crtcs = false;
+	unsigned int plane_mask = 0;
 
-retry_disable:
-	drm_modeset_acquire_init(&ctx, 0);
-
-	state = drm_atomic_commit_alloc(dev);
-	if (!state) {
-		ret = -ENOMEM;
-		goto out;
-	}
-	state->acquire_ctx = &ctx;
-
-retry:
-	plane_mask = 0;
-	ret = drm_modeset_lock_all_ctx(dev, &ctx);
+	ret = drm_modeset_lock_all_ctx(dev, state->acquire_ctx);
 	if (ret)
-		goto unlock;
+		return ret;
 
 	drm_for_each_plane(plane, dev) {
 		struct drm_plane_state *plane_state;
@@ -1067,12 +1060,10 @@ retry:
 			    plane->base.id, plane->name, fb->base.id);
 
 		plane_state = drm_atomic_get_plane_state(state, plane);
-		if (IS_ERR(plane_state)) {
-			ret = PTR_ERR(plane_state);
-			goto unlock;
-		}
+		if (IS_ERR(plane_state))
+			return PTR_ERR(plane_state);
 
-		if (disable_crtcs && plane_state->crtc->primary == plane) {
+		if (request->disable_crtcs && plane_state->crtc->primary == plane) {
 			struct drm_crtc_state *crtc_state;
 
 			drm_dbg_kms(dev,
@@ -1084,18 +1075,18 @@ retry:
 
 			ret = drm_atomic_add_affected_connectors(state, plane_state->crtc);
 			if (ret)
-				goto unlock;
+				return ret;
 
 			crtc_state->active = false;
 			ret = drm_atomic_set_mode_for_crtc(crtc_state, NULL);
 			if (ret)
-				goto unlock;
+				return ret;
 		}
 
 		drm_atomic_set_fb_for_plane(plane_state, NULL);
 		ret = drm_atomic_set_crtc_for_plane(plane_state, NULL);
 		if (ret)
-			goto unlock;
+			return ret;
 
 		plane_mask |= drm_plane_mask(plane);
 	}
@@ -1105,13 +1096,36 @@ retry:
 		ret = drm_atomic_set_crtc_for_connector(conn_state, NULL);
 
 		if (ret)
-			goto unlock;
+			return ret;
 	}
 
-	if (plane_mask)
+	return plane_mask ? DRM_ATOMIC_REQUEST_COMMIT : DRM_ATOMIC_REQUEST_UNCHANGED;
+}
+
+static int atomic_remove_fb(struct drm_framebuffer *fb)
+{
+	struct remove_fb_request request = { .fb = fb };
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_device *dev = fb->dev;
+	struct drm_atomic_commit *state;
+	int ret;
+
+retry_disable:
+	drm_modeset_acquire_init(&ctx, 0);
+	state = drm_atomic_commit_alloc(dev);
+	if (!state) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	state->acquire_ctx = &ctx;
+
+retry:
+	ret = build_remove_fb(state, &request);
+	if (ret == DRM_ATOMIC_REQUEST_UNCHANGED)
+		ret = 0;
+	else if (!ret)
 		ret = drm_atomic_commit(state);
 
-unlock:
 	if (ret == -EDEADLK) {
 		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
@@ -1124,8 +1138,8 @@ out:
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 
-	if (ret == -EINVAL && !disable_crtcs) {
-		disable_crtcs = true;
+	if (ret == -EINVAL && !request.disable_crtcs) {
+		request.disable_crtcs = true;
 		goto retry_disable;
 	}
 
