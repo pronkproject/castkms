@@ -11,6 +11,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_prepare_display_test.o \
 	drm_atomic_prepare_request_test.o \
 	drm_atomic_prepare_request_owner_test.o \
+	drm_atomic_prepare_setcrtc_test.o \
 	drm_atomic_prepare_remove_test.o \
 	drm_atomic_prepare_ticket_outputs_test.o \
 	drm_atomic_prepare_guard_test.o \
