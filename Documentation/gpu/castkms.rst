@@ -149,6 +149,20 @@ including same-framebuffer updates. Each submitted flip must produce exactly
 one event. A scaling request must be rejected. Finally the test disables the
 output and releases its framebuffers, buffer handles and mode description.
 
+To exercise imported storage, also enable ``CONFIG_DMABUF_HEAPS`` and
+``CONFIG_DMABUF_HEAPS_SYSTEM`` in the guest kernel, then supply the heap::
+
+    tools/testing/selftests/drm_castkms/modeset /dev/dri/cardN /dev/dma_heap/system
+
+That variant replaces the second local buffer with a private system-heap
+allocation. The test imports the allocation and creates an explicitly linear
+framebuffer without mapping or reading its pixels. It closes both the DMA-BUF
+descriptor and the imported buffer handle before submitting any updates, so
+the framebuffer must retain the storage throughout the flips and teardown.
+The test covers the native import and modesetting interfaces, not GPU
+execution, producer dependencies or capture of the imported pixels. A
+missing or inaccessible explicitly selected heap fails the test.
+
 The test also submits a test-only framebuffer replacement while the output is
 active and verifies that the selected framebuffer remains unchanged. It turns
 the output off and on without removing its plane configuration before testing
