@@ -353,9 +353,56 @@ including an unchanged framebuffer or blank output.
 VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
 off by default. The Rust CastKMS device enables the same accounting through its
 unregistered-device wrapper. Neither provider admits external pixel readers
-yet. Legacy, internal and teardown transactions without negotiated tickets
-still need their preparation entry paths before delegated reading can be
-enabled. Testing explicit blocking tickets does not establish those paths.
+yet. Kernel shutdown uses the request entry described below. Legacy updates,
+other internal callers, suspend and file-close teardown still need preparation
+integration before delegated reading can be enabled. Testing explicit blocking
+tickets does not establish those paths.
+
+Rebuilding a blocking kernel request
+-----------------------------------
+
+An internal caller may describe its operation to ``drm_atomic_commit_request()``
+instead of assembling an atomic state that must survive a wait. The helper
+owns its modeset lock context and allocates a fresh atomic state for each
+attempt. Its callback applies the requested operation to that state using the
+ordinary atomic getters. The callback does not install anything itself.
+
+After checking has added every affected output, the helper captures a kernel
+ticket for those outputs. If an admitted reader has not relinquished its claim,
+the helper destroys the attempted atomic state, drops the modeset locks and
+waits. The ticket retains the admission holds, but no borrowed display state
+survives that interval. After readiness, the callback runs again against the
+current display state. A replacement ticket acquires its holds before the
+previous ticket is released, so unchanged generations do not reopen admission
+during rebuilding. A concurrent display update instead causes the rebuilt
+request to prepare the newly current generations.
+
+Checking, ticket reservation and the driver's blocking commit then use the
+same locked state. Installation still validates the complete output set and
+transfers native completion into the accepted transaction. Preparation failure
+or interruption returns an error without installing the request. An ordinary
+lock deadlock follows the modeset backoff protocol and also rebuilds the state.
+
+The caller must enter without modeset locks or other locks needed by readers.
+It owns the operation's inputs and keeps the device and callback alive until
+return. For example, a framebuffer reference or producer fence must remain a
+reference, not a handle or descriptor looked up again after waiting. Any
+authority needed by the operation must be revalidated when rebuilding.
+These requirements are part of the kernel callback contract; the helper does
+not freeze userspace memory or supply an adapter for ordinary atomic ioctls.
+
+``drm_atomic_helper_shutdown()`` uses that entry on participating devices.
+Its operation is to disable every output, which it reconstructs from current
+state after a wait. The caller must stop new display producers and retain the
+device resources until shutdown finishes. Devices without preparation retain
+the ordinary shutdown path. Suspend is separate because saving state for resume
+must be coordinated with the eventual disabling transaction.
+
+Kernel tests use an outstanding read claim and a second thread which needs the
+modeset lock before releasing it. They check rebuilding, intervening generation
+changes, rejected requests and shutdown without depending on a userspace
+executor. The test driver installs state through the real swap helper; it does
+not program display hardware or exercise native GPU execution.
 
 Where the helper installs display state
 --------------------------------------
