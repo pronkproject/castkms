@@ -8,7 +8,10 @@ CPPFLAGS += $(shell $(PKG_CONFIG) --cflags vulkan)
 LDLIBS += $(shell $(PKG_CONFIG) --libs vulkan)
 
 .PHONY: all
-all: $(OUTPUT)/probe $(OUTPUT)/handoff $(OUTPUT)/sync-file-test $(OUTPUT)/context-test
+all: $(OUTPUT)/probe $(OUTPUT)/handoff $(OUTPUT)/reuse $(OUTPUT)/sync-file-test $(OUTPUT)/context-test
+
+$(OUTPUT)/reuse: reuse.c recycle.c recycle.h image.c image.h device.c device.h context.c context.h sync_file.c sync_file.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) reuse.c recycle.c image.c device.c context.c sync_file.c -o $@ $(LDLIBS)
 
 $(OUTPUT)/probe: probe.c context.c context.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) probe.c context.c $(LDLIBS) -o $@
