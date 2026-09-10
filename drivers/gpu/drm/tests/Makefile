@@ -46,4 +46,8 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_fixp_test.o \
 	drm_kunit_edid.o
 
+ifeq ($(CONFIG_DRM_CLIENT),y)
+obj-$(CONFIG_DRM_KUNIT_TEST) += drm_atomic_prepare_client_test.o
+endif
+
 CFLAGS_drm_mm_test.o := $(DISABLE_STRUCTLEAK_PLUGIN)
