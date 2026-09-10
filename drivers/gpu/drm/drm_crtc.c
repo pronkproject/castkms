@@ -702,6 +702,22 @@ int drm_crtc_check_viewport(const struct drm_crtc *crtc,
 }
 EXPORT_SYMBOL(drm_crtc_check_viewport);
 
+static void release_setcrtc_inputs(struct drm_device *dev,
+				  struct drm_framebuffer *fb,
+				  struct drm_display_mode *mode,
+				  struct drm_connector **connectors,
+				  unsigned int count)
+{
+	unsigned int i;
+
+	if (fb)
+		drm_framebuffer_put(fb);
+	for (i = 0; i < count; i++)
+		drm_connector_put(connectors[i]);
+	kfree(connectors);
+	drm_mode_destroy(dev, mode);
+}
+
 /**
  * drm_mode_setcrtc - set CRTC configuration
  * @dev: drm device for the ioctl
@@ -896,17 +912,7 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 		ret = __drm_mode_set_config_internal(&set, &ctx);
 
 out:
-	if (fb)
-		drm_framebuffer_put(fb);
-
-	if (connector_set) {
-		for (i = 0; i < num_connectors; i++) {
-			if (connector_set[i])
-				drm_connector_put(connector_set[i]);
-		}
-	}
-	kfree(connector_set);
-	drm_mode_destroy(dev, mode);
+	release_setcrtc_inputs(dev, fb, mode, connector_set, num_connectors);
 
 	/* In case we need to retry... */
 	connector_set = NULL;
