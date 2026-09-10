@@ -3889,6 +3889,30 @@ free:
 }
 EXPORT_SYMBOL(drm_atomic_helper_duplicate_state);
 
+struct suspend_request {
+	struct drm_atomic_commit *saved;
+};
+
+static int build_suspend_request(struct drm_atomic_commit *state, void *data)
+{
+	struct suspend_request *request = data;
+	struct drm_atomic_commit *saved;
+	int ret;
+
+	if (request->saved) {
+		drm_atomic_commit_put(request->saved);
+		request->saved = NULL;
+	}
+	ret = drm_modeset_lock_all_ctx(state->dev, state->acquire_ctx);
+	if (ret)
+		return ret;
+	saved = drm_atomic_helper_duplicate_state(state->dev, state->acquire_ctx);
+	if (IS_ERR(saved))
+		return PTR_ERR(saved);
+	request->saved = saved;
+	return build_disable_all(state, NULL);
+}
+
 /**
  * drm_atomic_helper_suspend - subsystem-level suspend helper
  * @dev: DRM device
@@ -3898,6 +3922,11 @@ EXPORT_SYMBOL(drm_atomic_helper_duplicate_state);
  * pass this pointer to the drm_atomic_helper_resume() helper upon resume to
  * restore the output configuration that was active at the time the system
  * entered suspend.
+ *
+ * On preparation-enabled devices, a reader wait releases modeset locks and
+ * rebuilds the disable operation. The saved copy is refreshed on every attempt
+ * so it describes the configuration disabled by the successful commit. The
+ * caller must keep display producers stopped through suspend and resume.
  *
  * Note that it is potentially unsafe to use this. The atomic state object
  * returned by this function is assumed to be persistent. Drivers must ensure
@@ -3916,9 +3945,20 @@ EXPORT_SYMBOL(drm_atomic_helper_duplicate_state);
  */
 struct drm_atomic_commit *drm_atomic_helper_suspend(struct drm_device *dev)
 {
+	struct suspend_request request = {};
 	struct drm_modeset_acquire_ctx ctx;
 	struct drm_atomic_commit *state;
 	int err;
+
+	if (dev->mode_config.preparation) {
+		err = drm_atomic_commit_request(dev, build_suspend_request, &request);
+		if (err) {
+			if (request.saved)
+				drm_atomic_commit_put(request.saved);
+			return ERR_PTR(err);
+		}
+		return request.saved;
+	}
 
 	/* This can never be returned, but it makes the compiler happy */
 	state = ERR_PTR(-EINVAL);
