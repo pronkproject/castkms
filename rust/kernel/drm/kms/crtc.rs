@@ -244,6 +244,7 @@ impl<T: DriverCrtc> Crtc<T> {
             page_flip_target: None,
             reset: None,
             set_config: Some(bindings::drm_atomic_helper_set_config),
+            set_config_request: None,
             set_crc_source: None,
             set_property: None,
             verify_crc_source: None,

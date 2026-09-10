@@ -41,6 +41,7 @@ struct drm_framebuffer;
 struct drm_mode_set;
 struct drm_file;
 struct drm_printer;
+struct drm_prepare_owner;
 struct drm_self_refresh_data;
 struct device_node;
 struct edid;
@@ -544,6 +545,26 @@ struct drm_crtc_funcs {
 	 */
 	int (*set_config)(struct drm_mode_set *set,
 			  struct drm_modeset_acquire_ctx *ctx);
+
+	/**
+	 * @set_config_request:
+	 *
+	 * Execute a resolved legacy modeset on a preparation-enabled device.
+	 * The caller retains the configuration and referenced inputs until return,
+	 * but holds no modeset locks. The implementation must revalidate selected
+	 * object access through the supplied validation callback on every rebuilt
+	 * attempt and bind installation to the issuer. Neither callback data nor
+	 * request inputs may be retained after return. Returns zero or a negative
+	 * error.
+	 *
+	 * Atomic helper drivers may use drm_atomic_helper_set_config_request().
+	 * Other devices keep using @set_config. Preparation-enabled devices without
+	 * this callback reject SETCRTC rather than bypassing preparation.
+	 */
+	int (*set_config_request)(struct drm_mode_set *set,
+				  struct drm_prepare_owner *owner,
+				  int (*validate)(struct drm_mode_set *set, void *data),
+				  void *data);
 
 	/**
 	 * @page_flip:
