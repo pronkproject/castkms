@@ -21,6 +21,8 @@ use core::{
     },
 };
 
+mod dma;
+
 /// A faux device.
 ///
 /// A faux device is a virtual device backed by the faux bus, primarily used for scenarios where a
