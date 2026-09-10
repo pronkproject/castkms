@@ -163,8 +163,21 @@ static void owned_request_rebuilds_after_reader_release(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 1);
 }
 
+static void revoked_issuer_cannot_install_request(struct kunit *test)
+{
+	struct owner_request_fixture *f = new_request(test);
+	struct drm_crtc_state *before = f->crtc->state;
+
+	drm_prepare_owner_revoke(f->owner);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_owned(f->dev, f->owner,
+							   build_request, f), -ECANCELED);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(owned_request_rebuilds_after_reader_release),
+	KUNIT_CASE(revoked_issuer_cannot_install_request),
 	{}
 };
 
