@@ -43,6 +43,8 @@
 #include <drm/drm_managed.h>
 #include <drm/drm_modeset_lock.h>
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_prepare_auth.h>
+#include <drm/drm_atomic_prepare_owner.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_debugfs_crc.h>
 #include <drm/drm_drv.h>
@@ -718,6 +720,25 @@ static void release_setcrtc_inputs(struct drm_device *dev,
 	drm_mode_destroy(dev, mode);
 }
 
+static int validate_setcrtc_request(struct drm_mode_set *set, void *data)
+{
+	struct drm_file *file = data;
+	unsigned int i;
+
+	if (!drm_lease_held(file, set->crtc->base.id))
+		return -EACCES;
+	/* Disabling a controller does not require its primary plane's lease. */
+	if (set->mode && !drm_lease_held(file, set->crtc->primary->base.id))
+		return -EACCES;
+	for (i = 0; i < set->num_connectors; i++) {
+		if (drm_connector_is_unregistered(set->connectors[i]))
+			return -ENOENT;
+		if (!drm_lease_held(file, set->connectors[i]->base.id))
+			return -EACCES;
+	}
+	return 0;
+}
+
 /**
  * drm_mode_setcrtc - set CRTC configuration
  * @dev: drm device for the ioctl
@@ -744,6 +765,7 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	struct drm_mode_set set;
 	uint32_t __user *set_connectors_ptr;
 	struct drm_modeset_acquire_ctx ctx;
+	struct drm_prepare_owner *owner = NULL;
 	int ret, i, num_connectors = 0;
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
@@ -768,6 +790,13 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	/* allow disabling with the primary plane leased */
 	if (crtc_req->mode_valid && !drm_lease_held(file_priv, plane->base.id))
 		return -EACCES;
+	if (config->preparation) {
+		if (!crtc->funcs->set_config_request)
+			return -EOPNOTSUPP;
+		owner = drm_file_prepare_owner(file_priv);
+		if (IS_ERR(owner))
+			return PTR_ERR(owner);
+	}
 
 	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx,
 				   DRM_MODESET_ACQUIRE_INTERRUPTIBLE, ret);
@@ -906,6 +935,10 @@ int drm_mode_setcrtc(struct drm_device *dev, void *data,
 	set.num_connectors = num_connectors;
 	set.fb = fb;
 
+	if (owner) {
+		ret = 0;
+		goto modeset_lock_fail;
+	}
 	if (drm_drv_uses_atomic_modeset(dev))
 		ret = crtc->funcs->set_config(&set, &ctx);
 	else
@@ -922,6 +955,13 @@ out:
 
 	DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
 
+	if (owner) {
+		if (!ret)
+			ret = crtc->funcs->set_config_request(&set, owner,
+						     validate_setcrtc_request, file_priv);
+		release_setcrtc_inputs(dev, fb, mode, connector_set, num_connectors);
+		drm_prepare_owner_put(owner);
+	}
 	return ret;
 }
 
