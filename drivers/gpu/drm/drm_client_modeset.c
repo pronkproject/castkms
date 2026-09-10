@@ -1032,33 +1032,27 @@ bool drm_client_rotation(struct drm_mode_set *modeset, unsigned int *rotation)
 }
 EXPORT_SYMBOL(drm_client_rotation);
 
-static int drm_client_modeset_commit_atomic(struct drm_client_dev *client, bool active, bool check)
+struct client_modeset_request {
+	struct drm_client_dev *client;
+	bool active;
+};
+
+static int build_client_modeset(struct drm_atomic_commit *state, void *data)
 {
+	struct client_modeset_request *request = data;
+	struct drm_client_dev *client = request->client;
 	struct drm_device *dev = client->dev;
 	struct drm_plane *plane;
-	struct drm_atomic_commit *state;
-	struct drm_modeset_acquire_ctx ctx;
 	struct drm_mode_set *mode_set;
 	int ret;
 
-	drm_modeset_acquire_init(&ctx, 0);
-
-	state = drm_atomic_commit_alloc(dev);
-	if (!state) {
-		ret = -ENOMEM;
-		goto out_ctx;
-	}
-
-	state->acquire_ctx = &ctx;
-retry:
+	lockdep_assert_held(&client->modeset_mutex);
 	drm_for_each_plane(plane, dev) {
 		struct drm_plane_state *plane_state;
 
 		plane_state = drm_atomic_get_plane_state(state, plane);
-		if (IS_ERR(plane_state)) {
-			ret = PTR_ERR(plane_state);
-			goto out_state;
-		}
+		if (IS_ERR(plane_state))
+			return PTR_ERR(plane_state);
 
 		plane_state->rotation = DRM_MODE_ROTATE_0;
 
@@ -1068,7 +1062,7 @@ retry:
 
 		ret = __drm_atomic_helper_disable_plane(plane, plane_state);
 		if (ret != 0)
-			goto out_state;
+			return ret;
 	}
 
 	drm_client_for_each_modeset(mode_set, client) {
@@ -1085,13 +1079,13 @@ retry:
 
 		ret = __drm_atomic_helper_set_config(mode_set, state);
 		if (ret != 0)
-			goto out_state;
+			return ret;
 
 		/*
 		 * __drm_atomic_helper_set_config() sets active when a
 		 * mode is set, unconditionally clear it if we force DPMS off
 		 */
-		if (!active) {
+		if (!request->active) {
 			struct drm_crtc *crtc = mode_set->crtc;
 			struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
 
@@ -1099,6 +1093,28 @@ retry:
 		}
 	}
 
+	return 0;
+}
+
+static int drm_client_modeset_commit_atomic(struct drm_client_dev *client, bool active, bool check)
+{
+	struct client_modeset_request request = { .client = client, .active = active };
+	struct drm_device *dev = client->dev;
+	struct drm_atomic_commit *state;
+	struct drm_modeset_acquire_ctx ctx;
+	int ret;
+
+	drm_modeset_acquire_init(&ctx, 0);
+	state = drm_atomic_commit_alloc(dev);
+	if (!state) {
+		ret = -ENOMEM;
+		goto out_ctx;
+	}
+	state->acquire_ctx = &ctx;
+retry:
+	ret = build_client_modeset(state, &request);
+	if (ret)
+		goto out_state;
 	if (check)
 		ret = drm_atomic_check_only(state);
 	else
