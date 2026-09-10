@@ -9,10 +9,11 @@ framebuffer preparation callback collects producer dependencies before ordinary
 atomic acceptance. The source accounting in ``drm_atomic_prepare.c`` addresses
 the other side: claims already admitted to read one source generation.
 
-The accounting and its multi-output tickets are kernel interfaces. Atomic
-helper adapters transfer preparation into accepted transactions, but do not
-enable CastKMS capture by themselves. No preparation ioctl, compositor
-negotiation or executor binding is provided yet.
+The accounting and its multi-output tickets have kernel interfaces and an
+experimental userspace adapter. Participating virtual drivers can issue tickets
+for their current display state and accept them with atomic updates. Those
+operations do not enable CastKMS capture by themselves: executor binding and
+pixel access remain separate work.
 
 Admission, release and completion
 --------------------------------
@@ -266,18 +267,20 @@ Observing a ticket through a file
 
 A ticket retains its notification domain independently of source admission.
 Its borrowed wait queue therefore remains valid after cancellation releases
-the source set, for as long as the observer retains the ticket. An empty ticket
-has its own notification domain. Observers register before querying readiness
+the source set, for as long as the observer retains the ticket.
+Observers register before querying readiness
 and unregister before releasing their final ticket reference.
 
 ``drm_prepare_ticket_file_create()`` places that observation behind an anonymous,
-poll-only file. Pending preparation has no poll events; readiness reports
+file. Pending preparation has no poll events; readiness reports
 readable; consumption reports hangup; cancellation or source failure reports
 error and hangup. Readability is an observation that preparation is ready, not
 an invitation to read a byte stream. It neither reserves the ticket nor proves
 that GPU reads have finished.
 
-The file has no read, write, mmap or ioctl operations. Checked kernel lookup
+The file has no read, write or mmap operations. ``DRM_IOCTL_PREPARE_QUERY``
+reports pending, ready, consumed, canceled or failed status without consuming
+the ticket. Checked kernel lookup
 through ``drm_prepare_ticket_file_get_ticket()`` returns an owned ticket
 reference, rejecting other file types. The Rust transport module exposes the
 same ownership through ``Ticket::create_file()`` and ``Ticket::from_file()``;
@@ -293,10 +296,66 @@ does not prevent file-driven cancellation; an accepted retirement guard remains
 independently owned.
 
 The constructor installs no descriptor and does not authenticate display access.
-A future issuer must validate the request, reserve descriptors with close-on-exec
+Its issuer must validate the request, reserve descriptors with close-on-exec
 and complete fallible setup before publication. The native and Rust file tests
-exercise polling and reference release without exposing a preparation-creation
-ioctl or enabling delegated source access.
+exercise polling and reference release independently of the creation ioctl
+described below. Neither interface enables delegated source access.
+
+Issuing tickets for atomic updates
+---------------------------------
+
+A participating device advertises ``DRM_CAP_ATOMIC_PREPARATION``. A client
+first enables ordinary atomic modesetting, then enables
+``DRM_CLIENT_CAP_ATOMIC_PREPARATION`` on the same DRM file. The negotiated
+interface requires a ticket for each non-test atomic update, including blocking
+updates. Its capability and ioctl numbers are experimental, not an assigned
+upstream ABI.
+
+``DRM_IOCTL_MODE_PREPARE_REPLACE`` accepts one to 32 unique CRTC IDs belonging
+to that file's modesetting authority. It captures their current accepted
+generations under the display locks and prevents new read admission to them.
+The ioctl does not wait for outstanding claims to be released. It returns a
+close-on-exec descriptor as its positive return value; the input structure has
+no output fields. Descriptor installation follows all fallible setup, so a
+failed result copy cannot leave an undisclosed descriptor in the caller.
+
+The client waits for that descriptor outside the atomic ioctl and queries its
+status after a wakeup. READY describes submission preparation, not GPU
+completion. Every covered CRTC in the replacement request carries the same
+descriptor through ``PREPARE_FD``. The property is an input for that request,
+not persistent display state; reading it returns -1. Descriptor numbers are
+never ticket identities, and the atomic transaction retains the ticket rather
+than the descriptor or its file.
+
+Acceptance checks the issuing authority and the complete CRTC generation set
+after driver validation has expanded the atomic update. An incomplete or stale
+set returns ``ESTALE`` without installing new state. The client must discard
+the old ticket and prepare the intended output set again. Pending preparation
+returns ``EAGAIN``; a competing ordinary update may still produce ``EBUSY``.
+Neither error means that display state was accepted. Closing or revoking a
+ticket cancels an unaccepted request, while an accepted transaction retains
+its own retirement obligations.
+
+TEST_ONLY does not require a ticket and never reserves or consumes one. A
+supplied descriptor is checked for type and issuer, but TEST_ONLY does not
+promise that its generation set will match a subsequent real commit. Async
+plane updates are not supported by the participating display accounting.
+
+The kernel equivalent separates selection from transport.
+``drm_atomic_prepare_crtcs()`` captures locked CRTC generations;
+``drm_atomic_prepare_submission_init()`` and ``_set()`` collect an issuer and
+ticket for the submitted CRTCs. ``_attach()`` gives the ordinary transaction
+the preparation obligation. These operations need no userspace descriptor.
+Drivers opt in before constructing CRTCs, use the shared state lifetime and
+installation helpers, and obtain a new generation for each accepted CRTC use,
+including an unchanged framebuffer or blank output.
+
+VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
+off by default. The Rust CastKMS device enables the same accounting through its
+unregistered-device wrapper. Neither provider admits external pixel readers
+yet. Legacy, internal and teardown transactions without negotiated tickets
+still need their preparation entry paths before delegated reading can be
+enabled. Testing explicit blocking tickets does not establish those paths.
 
 Where the helper installs display state
 --------------------------------------
