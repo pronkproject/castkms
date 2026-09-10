@@ -17,6 +17,7 @@ struct remove_fixture {
 	struct drm_crtc *crtc;
 	struct drm_plane *plane;
 	struct drm_framebuffer *fb;
+	struct drm_framebuffer *replacement;
 	struct drm_prepare_source *source;
 	struct drm_prepare_read_claim *read;
 	struct task_struct *worker;
@@ -144,6 +145,8 @@ static int release_reader(void *data)
 {
 	struct remove_fixture *f = data;
 	struct drm_modeset_acquire_ctx ctx;
+	struct drm_atomic_commit *state;
+	struct drm_plane_state *plane;
 
 	wait_for_completion(&f->checked);
 	drm_modeset_acquire_init(&ctx, 0);
@@ -154,6 +157,22 @@ static int release_reader(void *data)
 		f->worker_error = drm_modeset_backoff(&ctx);
 		if (f->worker_error)
 			break;
+	}
+	if (!f->worker_error && f->replacement) {
+		state = drm_atomic_commit_alloc(f->dev);
+		if (!state) {
+			f->worker_error = -ENOMEM;
+		} else {
+			state->acquire_ctx = &ctx;
+			plane = drm_atomic_get_plane_state(state, f->plane);
+			if (IS_ERR(plane)) {
+				f->worker_error = PTR_ERR(plane);
+			} else {
+				drm_atomic_set_fb_for_plane(plane, f->replacement);
+				f->worker_error = drm_atomic_commit(state);
+			}
+			drm_atomic_commit_put(state);
+		}
 	}
 	drm_prepare_read_release(f->read, NULL);
 	f->read = NULL;
@@ -219,9 +238,26 @@ static void removal_preserves_controller_disable_fallback(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
 }
 
+static void removal_leaves_replacement_framebuffer_installed(struct kunit *test)
+{
+	struct remove_fixture *f = new_remove(test);
+
+	f->replacement = new_fb(test, f->dev);
+	start_reader(test, f);
+	drm_framebuffer_get(f->fb);
+	drm_framebuffer_remove(f->fb);
+	kthread_stop(f->worker);
+	f->worker = NULL;
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, f->replacement);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(removal_waits_for_reader_before_disabling_plane),
 	KUNIT_CASE(removal_preserves_controller_disable_fallback),
+	KUNIT_CASE(removal_leaves_replacement_framebuffer_installed),
 	{}
 };
 
