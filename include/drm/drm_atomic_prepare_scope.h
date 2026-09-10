@@ -5,6 +5,7 @@
 #include <linux/types.h>
 
 struct drm_prepare_source;
+struct drm_prepare_retirement_set;
 struct drm_prepare_scope;
 
 /* KMS represents CRTC membership with a 32-bit mask. */
@@ -43,5 +44,13 @@ void drm_prepare_scope_destroy(struct drm_prepare_scope *scope);
 int drm_prepare_scope_validate(const struct drm_prepare_scope *scope,
 			       const struct drm_prepare_scope_entry *observed,
 			       unsigned int count);
+
+/*
+ * Hold admission for exactly the captured sources. The result owns its holds
+ * independently of scope lifetime. Validate observed display scope before using
+ * those holds for acceptance. Creation never expands the captured cohort.
+ */
+struct drm_prepare_retirement_set *
+drm_prepare_scope_hold(const struct drm_prepare_scope *scope);
 
 #endif

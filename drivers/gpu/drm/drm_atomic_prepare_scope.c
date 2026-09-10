@@ -94,3 +94,15 @@ int drm_prepare_scope_validate(const struct drm_prepare_scope *scope,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_prepare_scope_validate);
+
+struct drm_prepare_retirement_set *
+drm_prepare_scope_hold(const struct drm_prepare_scope *scope)
+{
+	struct drm_prepare_source *sources[DRM_PREPARE_SCOPE_MAX_OUTPUTS];
+	unsigned int i;
+
+	for (i = 0; i < scope->count; i++)
+		sources[i] = scope->entries[i].source;
+	return drm_prepare_retirement_set_create(sources, scope->count);
+}
+EXPORT_SYMBOL_GPL(drm_prepare_scope_hold);
