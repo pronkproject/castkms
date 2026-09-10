@@ -584,16 +584,20 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 		if (fb)
 			drm_framebuffer_put(fb);
 	} else if (property == config->prop_in_fence_fd) {
+		struct dma_fence *fence;
+
 		if (state->fence)
 			return -EINVAL;
 
 		if (U642I64(val) == -1)
-			return 0;
+			return drm_atomic_set_fence_for_plane(state, NULL);
 
-		state->fence = sync_file_get_fence(val);
-		if (!state->fence)
+		fence = sync_file_get_fence(val);
+		if (!fence)
 			return -EINVAL;
-
+		ret = drm_atomic_set_fence_for_plane(state, fence);
+		dma_fence_put(fence);
+		return ret;
 	} else if (property == config->prop_crtc_id) {
 		struct drm_crtc *crtc = drm_crtc_find(dev, file_priv, val);
 
