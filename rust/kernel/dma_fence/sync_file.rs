@@ -4,13 +4,31 @@
 
 use super::Fence;
 use crate::{
-    fs::File,
+    fs::{
+        File,
+        LocalFile, //
+    },
     prelude::*,
     sync::aref::ARef, //
 };
 use core::ptr::NonNull;
 
 impl Fence {
+    /// Retain the completion record from a borrowed native sync file.
+    ///
+    /// Files of another type return `EINVAL`. The returned reference outlives the file and
+    /// preserves pending and failed status without waiting. No descriptor lookup or file-position
+    /// access occurs, so a thread-local file borrow suffices. Import does not establish source
+    /// authority, submission closure or that a supplied dependency obeys a provider's policy.
+    pub fn from_sync_file(file: &LocalFile) -> Result<ARef<Self>> {
+        // SAFETY: The borrowed file remains initialized through native type validation and
+        // fence acquisition. Neither operation touches file-position-dependent state.
+        let fence = NonNull::new(unsafe { bindings::sync_file_get_fence_from_file(file.as_ptr()) })
+            .ok_or(EINVAL)?;
+        // SAFETY: Successful extraction transfers one initialized native fence reference.
+        Ok(unsafe { ARef::from_raw(fence.cast()) })
+    }
+
     /// Create an owned sync file retaining this exact completion record.
     ///
     /// Creation neither waits nor installs a descriptor. Pending, successful and failed

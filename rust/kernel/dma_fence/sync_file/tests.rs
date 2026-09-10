@@ -40,6 +40,55 @@ mod cases {
     use super::*;
 
     #[test]
+    fn extracted_fence_survives_closing_its_file() -> Result {
+        let mut owner = ManualFence::new()?;
+        let original = owner.fence();
+        let file = original.create_sync_file()?;
+        let extracted = Fence::from_sync_file(&file)?;
+        assert_eq!(extracted.as_raw(), original.as_raw());
+        release_file(file);
+        drop(original);
+        assert_eq!(extracted.status(), Status::Pending);
+        owner.complete(Err(EIO))?;
+        drop(owner);
+        assert_eq!(extracted.status(), Status::Complete(Err(EIO)));
+        Ok(())
+    }
+
+    #[test]
+    fn completed_error_survives_file_extraction() -> Result {
+        let mut owner = ManualFence::new()?;
+        owner.complete(Err(EIO))?;
+        let file = owner.fence().create_sync_file()?;
+        let fence = Fence::from_sync_file(&file)?;
+        release_file(file);
+        drop(owner);
+        assert_eq!(fence.status(), Status::Complete(Err(EIO)));
+        Ok(())
+    }
+
+    #[test]
+    fn unrelated_file_is_rejected_before_private_data_access() -> Result {
+        const OPS: &bindings::file_operations = &pin_init::zeroed();
+        // SAFETY: The immutable empty operations table has static lifetime and no module
+        // callbacks. The unpublished anonymous file needs no private data or release callback.
+        let file = crate::error::from_err_ptr(unsafe {
+            bindings::anon_inode_getfile(
+                c"rust-not-sync".as_char_ptr(),
+                OPS,
+                core::ptr::null_mut(),
+                0,
+            )
+        })?;
+        // SAFETY: Creation transfers an initialized unpublished file reference; no fdget_pos
+        // operation exists on it. The transparent Rust file type adopts that exact reference.
+        let file = unsafe { ARef::<File>::from_raw(NonNull::new_unchecked(file.cast())) };
+        assert!(matches!(Fence::from_sync_file(&file), Err(EINVAL)));
+        release_file(file);
+        Ok(())
+    }
+
+    #[test]
     fn pending_file_observes_later_producer_failure() -> Result {
         let mut owner = ManualFence::new()?;
         let fence = owner.fence();
