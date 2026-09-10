@@ -907,9 +907,16 @@ mod cases {
         assert_eq!(fb.pitch(0)?, 64);
         assert_eq!(fb.pitch(1)?, 64);
         assert!(fb.pitch(2).is_err());
+        assert_eq!(fb.modifier(), Some(fourcc::FORMAT_MOD_LINEAR));
+        assert_eq!(fb.offset(0)?, 0);
+        assert_eq!(fb.offset(1)?, 4096);
+        assert_eq!(fb.offset(2), Err(EINVAL));
+        assert_eq!(fb.offset(usize::MAX), Err(EINVAL));
         drop(object);
         drop(registration);
         assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 1);
+        assert_eq!(fb.offset(1)?, 4096);
+        assert_eq!(fb.modifier(), Some(fourcc::FORMAT_MOD_LINEAR));
         drop(fb);
         assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
         assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
