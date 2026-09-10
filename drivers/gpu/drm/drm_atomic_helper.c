@@ -3623,6 +3623,65 @@ fail:
 }
 EXPORT_SYMBOL(drm_atomic_helper_set_config);
 
+struct legacy_config_request {
+	struct drm_mode_set *set;
+	int (*validate)(struct drm_mode_set *set, void *data);
+	void *data;
+};
+
+static int build_config_request(struct drm_atomic_commit *state, void *data)
+{
+	struct legacy_config_request *request = data;
+	int ret;
+
+	ret = drm_modeset_lock_all_ctx(state->dev, state->acquire_ctx);
+	if (ret)
+		return ret;
+	if (request->validate) {
+		ret = request->validate(request->set, request->data);
+		if (ret)
+			return ret;
+	}
+	if (request->set->mode) {
+		ret = drm_crtc_check_viewport(request->set->crtc, request->set->x,
+					      request->set->y, request->set->mode,
+					      request->set->fb);
+		if (ret)
+			return ret;
+	}
+	return build_legacy_config(request->set, state);
+}
+
+/**
+ * drm_atomic_helper_set_config_request - rebuild a resolved legacy modeset
+ * @set: stable configuration with caller-retained mode, buffers and connectors
+ * @owner: retained issuer, revoked by the caller's authority policy
+ * @validate: optional selected-object authorization check on every attempt
+ * @data: caller-owned validation data
+ *
+ * The caller holds no modeset locks and keeps all inputs and the device alive
+ * until return. No handles, descriptor numbers or userspace arrays are resolved
+ * here. Validation runs under all modeset locks before building each attempt.
+ * Issuer revocation excludes installation after validation. Any authority not
+ * represented by the issuer remains the caller's responsibility.
+ *
+ * Uses the standard atomic set_config policy, including conflicting encoder
+ * handling. It does not invoke a driver's custom set_config callback.
+ *
+ * Returns: zero on success or a negative error.
+ */
+int drm_atomic_helper_set_config_request(struct drm_mode_set *set,
+					struct drm_prepare_owner *owner,
+					int (*validate)(struct drm_mode_set *set, void *data),
+					void *data)
+{
+	struct legacy_config_request request = { set, validate, data };
+
+	return drm_atomic_commit_request_owned(set->crtc->dev, owner,
+					      build_config_request, &request);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_helper_set_config_request);
+
 static int build_disable_all(struct drm_atomic_commit *state, void *data)
 {
 	struct drm_device *dev = state->dev;
