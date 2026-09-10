@@ -33,6 +33,7 @@
 #include <linux/wait.h>
 
 struct drm_file;
+struct drm_prepare_owner;
 
 /**
  * struct drm_master - drm master structure
@@ -47,6 +48,11 @@ struct drm_file;
 struct drm_master {
 	struct kref refcount;
 	struct drm_device *dev;
+	/**
+	 * @prepare_owner: Continuous preparation issuer lifetime. Protected by
+	 * &drm_mode_config.idr_mutex. Cleared on master loss or lease revocation.
+	 */
+	struct drm_prepare_owner *prepare_owner;
 	/**
 	 * @unique: Unique identifier: e.g. busid. Protected by
 	 * &drm_device.master_mutex.
