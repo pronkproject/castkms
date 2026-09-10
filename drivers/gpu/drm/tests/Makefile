@@ -8,6 +8,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_prepare_test.o \
 	drm_atomic_prepare_set_test.o \
 	drm_atomic_prepare_outputs_test.o \
+	drm_atomic_prepare_display_test.o \
 	drm_atomic_prepare_ticket_outputs_test.o \
 	drm_atomic_prepare_guard_test.o \
 	drm_atomic_prepare_ticket_test.o \
