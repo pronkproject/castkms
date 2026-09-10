@@ -231,12 +231,23 @@ static void owned_request_requires_preparation_support(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
+static void owned_request_requires_an_issuer(struct kunit *test)
+{
+	struct owner_request_fixture *f = new_request(test, true);
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_owned(f->dev, NULL,
+							   build_request, f), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->builds, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(owned_request_rebuilds_after_reader_release),
 	KUNIT_CASE(revoked_issuer_cannot_install_request),
 	KUNIT_CASE(issuer_revocation_wakes_pending_request),
 	KUNIT_CASE(issuer_revocation_excludes_reserved_installation),
 	KUNIT_CASE(owned_request_requires_preparation_support),
+	KUNIT_CASE(owned_request_requires_an_issuer),
 	{}
 };
 
