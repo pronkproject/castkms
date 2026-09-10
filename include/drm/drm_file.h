@@ -192,6 +192,9 @@ struct drm_file {
 	/** @atomic: True if client understands atomic properties. */
 	bool atomic;
 
+	/** @atomic_preparation: Client accepts explicit output preparation tickets. */
+	bool atomic_preparation;
+
 	/**
 	 * @aspect_ratio_allowed:
 	 *

@@ -4,6 +4,38 @@
 
 #include "drm.h"
 
+/* Experimental assignments for the preparation development interface. */
+#define DRM_CAP_ATOMIC_PREPARATION 0x16
+#define DRM_CLIENT_CAP_ATOMIC_PREPARATION 8
+
+/**
+ * struct drm_mode_prepare_replace - Prepare replacement of current output uses
+ * @crtc_ids: Pointer to an array of @count_crtcs u32 CRTC object IDs.
+ * @count_crtcs: Number of unique CRTCs, from 1 through 32.
+ * @flags: Must be zero.
+ * @reserved: Must be zero.
+ *
+ * Requires DRM_CLIENT_CAP_ATOMIC_PREPARATION on the issuing master file.
+ * All CRTCs must be accessible through that file. The request captures their
+ * currently accepted generations and holds new read admission. It does not
+ * wait for preparation readiness, native GPU completion or presentation.
+ *
+ * Success returns a CLOEXEC preparation descriptor as the ioctl return value;
+ * all structure fields are input. Supply that ticket through PREPARE_FD on
+ * every covered CRTC in an ordinary atomic request. PREPARE_FD reads as -1
+ * and is not persistent display state. A missing or changed output generation
+ * rejects acceptance with ESTALE; preparation must then be requested again.
+ * Final file release cancels unused preparation. No pixel access is granted.
+ */
+struct drm_mode_prepare_replace {
+	__u64 crtc_ids;
+	__u32 count_crtcs;
+	__u32 flags;
+	__u64 reserved[2];
+};
+
+#define DRM_IOCTL_MODE_PREPARE_REPLACE DRM_IOW(0xD3, struct drm_mode_prepare_replace)
+
 /* Submission preparation states, not GPU completion or framebuffer release. */
 #define DRM_PREPARE_PENDING 0
 #define DRM_PREPARE_READY 1
