@@ -10,6 +10,7 @@
 #include <drm/drm_atomic_prepare_ticket.h>
 
 #include "drm_atomic_prepare_internal.h"
+#include "drm_atomic_prepare_owner_internal.h"
 
 struct drm_prepare_ticket {
 	struct kref ref;
@@ -17,6 +18,8 @@ struct drm_prepare_ticket {
 	struct drm_prepare_domain *domain;
 	struct drm_prepare_retirement_set *set;
 	struct drm_prepare_scope *scope;
+	struct drm_prepare_owner *owner;
+	struct drm_prepare_owner_registration registration;
 	struct drm_prepare_attempt *active;
 	bool consumed;
 };
@@ -78,6 +81,34 @@ destroy_scope:
 }
 EXPORT_SYMBOL_GPL(drm_prepare_ticket_create_scoped);
 
+static void cancel_owned_ticket(void *data)
+{
+	drm_prepare_ticket_cancel(data);
+}
+
+struct drm_prepare_ticket *
+drm_prepare_ticket_create_owned(struct drm_prepare_owner *owner,
+				const struct drm_prepare_scope_entry *entries,
+				unsigned int count)
+{
+	struct drm_prepare_ticket *ticket;
+	int ret;
+
+	if (!owner)
+		return ERR_PTR(-EINVAL);
+	ticket = drm_prepare_ticket_create_scoped(entries, count);
+	if (IS_ERR(ticket))
+		return ticket;
+	ret = drm_prepare_owner_register(owner, &ticket->registration, cancel_owned_ticket, ticket);
+	if (ret) {
+		drm_prepare_ticket_put(ticket);
+		return ERR_PTR(ret);
+	}
+	ticket->owner = owner;
+	return ticket;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_ticket_create_owned);
+
 struct drm_prepare_ticket *drm_prepare_ticket_get(struct drm_prepare_ticket *ticket)
 {
 	kref_get(&ticket->ref);
@@ -89,6 +120,8 @@ static void ticket_free(struct kref *ref)
 {
 	struct drm_prepare_ticket *ticket = container_of(ref, struct drm_prepare_ticket, ref);
 
+	if (ticket->owner)
+		drm_prepare_owner_unregister(ticket->owner, &ticket->registration);
 	if (ticket->set)
 		drm_prepare_retirement_set_put(ticket->set);
 	if (ticket->scope)
@@ -223,12 +256,15 @@ static int ticket_available(struct drm_prepare_ticket *ticket)
 	return 0;
 }
 
-struct drm_prepare_attempt *drm_prepare_ticket_reserve(struct drm_prepare_ticket *ticket)
+static struct drm_prepare_attempt *ticket_reserve(struct drm_prepare_ticket *ticket,
+						 struct drm_prepare_owner *owner)
 {
 	struct drm_prepare_retirement_set *set;
 	struct drm_prepare_attempt *attempt;
 	int error;
 
+	if (ticket->owner != owner)
+		return ERR_PTR(-EACCES);
 	mutex_lock(&ticket->lock);
 	error = ticket_available(ticket);
 	if (error) {
@@ -264,7 +300,22 @@ free_attempt:
 	kfree(attempt);
 	return ERR_PTR(error);
 }
+
+struct drm_prepare_attempt *drm_prepare_ticket_reserve(struct drm_prepare_ticket *ticket)
+{
+	return ticket_reserve(ticket, NULL);
+}
 EXPORT_SYMBOL_GPL(drm_prepare_ticket_reserve);
+
+struct drm_prepare_attempt *
+drm_prepare_ticket_reserve_owned(struct drm_prepare_ticket *ticket,
+				 struct drm_prepare_owner *owner)
+{
+	if (!owner)
+		return ERR_PTR(-EINVAL);
+	return ticket_reserve(ticket, owner);
+}
+EXPORT_SYMBOL_GPL(drm_prepare_ticket_reserve_owned);
 
 void drm_prepare_attempt_destroy(struct drm_prepare_attempt *attempt)
 {
@@ -290,6 +341,11 @@ static int attempt_commit(struct drm_prepare_attempt *attempt,
 	struct drm_prepare_retirement_set *set = NULL;
 	int error;
 
+	if (ticket->owner) {
+		error = drm_prepare_owner_lock_live(ticket->owner);
+		if (error)
+			return error;
+	}
 	mutex_lock(&ticket->lock);
 	if (ticket->consumed) {
 		error = -EALREADY;
@@ -319,6 +375,8 @@ static int attempt_commit(struct drm_prepare_attempt *attempt,
 	ticket->set = NULL;
 unlock:
 	mutex_unlock(&ticket->lock);
+	if (ticket->owner)
+		drm_prepare_owner_unlock(ticket->owner);
 	if (set) {
 		wake_up_all(drm_prepare_ticket_waitqueue(ticket));
 		drm_prepare_retirement_set_put(set);

@@ -9,6 +9,7 @@ struct drm_prepare_retirement_guard;
 struct drm_prepare_ticket;
 struct drm_prepare_attempt;
 struct drm_prepare_scope_entry;
+struct drm_prepare_owner;
 
 enum drm_prepare_ticket_status {
 	DRM_PREPARE_TICKET_PENDING,
@@ -47,6 +48,18 @@ drm_prepare_ticket_create(struct drm_prepare_retirement_set *set);
 struct drm_prepare_ticket *
 drm_prepare_ticket_create_scoped(const struct drm_prepare_scope_entry *entries,
 				unsigned int count);
+
+/*
+ * Bind a scoped ticket to one continuous issuer lifetime. The ticket retains
+ * owner identity without retaining a DRM file. The issuer must revoke that owner
+ * on authority loss. Revocation cancels unaccepted tickets and prevents future
+ * acceptance through outstanding reservations. Creation may fail with -ENOSPC
+ * at the owner's ticket limit, or -ECANCELED after revocation.
+ */
+struct drm_prepare_ticket *
+drm_prepare_ticket_create_owned(struct drm_prepare_owner *owner,
+				const struct drm_prepare_scope_entry *entries,
+				unsigned int count);
 struct drm_prepare_ticket *drm_prepare_ticket_get(struct drm_prepare_ticket *ticket);
 void drm_prepare_ticket_put(struct drm_prepare_ticket *ticket);
 void drm_prepare_ticket_cancel(struct drm_prepare_ticket *ticket);
@@ -80,6 +93,16 @@ wait_queue_head_t *drm_prepare_ticket_waitqueue(struct drm_prepare_ticket *ticke
  * Attempt operations require exclusive caller ownership.
  */
 struct drm_prepare_attempt *drm_prepare_ticket_reserve(struct drm_prepare_ticket *ticket);
+
+/*
+ * An owned ticket requires its exact issuer identity for reservation. The
+ * unowned reserve entry rejects owned tickets; an unrelated owner returns
+ * -EACCES without reserving. The issuer checks device and display authority
+ * before supplying its owner. No descriptor number or credential is an identity.
+ */
+struct drm_prepare_attempt *
+drm_prepare_ticket_reserve_owned(struct drm_prepare_ticket *ticket,
+				 struct drm_prepare_owner *owner);
 void drm_prepare_attempt_destroy(struct drm_prepare_attempt *attempt);
 
 /*
@@ -88,7 +111,8 @@ void drm_prepare_attempt_destroy(struct drm_prepare_attempt *attempt);
  * that scope and current authority, returning a negative error BEFORE any state
  * change, or installs the complete update and returns zero. It must not wait,
  * allocate, acquire display locks or reenter ticket/preparation operations.
- * Lock order is display locks, then the private ticket mutex.
+ * Lock order is display locks, then the issuer's owner lock (when present),
+ * then the private ticket mutex. install must not reenter owner operations.
  *
  * Failure leaves *guard untouched and the attempt available for retry or
  * destruction. Success transfers the preassembled guard to *guard, consumes
