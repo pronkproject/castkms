@@ -400,6 +400,8 @@ struct drm_mode_config {
 
 	/** @preparation: Optional output accounting, fixed before registration. */
 	struct drm_prepare_display *preparation;
+	/** @prop_prepare_fd: Transient preparation descriptor on participating CRTCs. */
+	struct drm_property *prop_prepare_fd;
 
 	/**
 	 * @object_idr:

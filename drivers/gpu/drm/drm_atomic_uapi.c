@@ -29,6 +29,9 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_prepare_auth.h>
+#include <drm/drm_atomic_prepare_owner.h>
+#include <drm/drm_atomic_prepare_submission.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_print.h>
@@ -44,6 +47,7 @@
 #include <linux/file.h>
 
 #include "drm_crtc_internal.h"
+#include "drm_atomic_prepare_uapi.h"
 
 /**
  * DOC: overview
@@ -519,6 +523,8 @@ drm_atomic_crtc_get_property(struct drm_crtc *crtc,
 		*val = state->background_color;
 	else if (property == config->prop_out_fence_ptr)
 		*val = 0;
+	else if (property == config->prop_prepare_fd)
+		*val = U64_MAX;
 	else if (property == crtc->scaling_filter_property)
 		*val = state->scaling_filter;
 	else if (property == crtc->sharpness_strength_property)
@@ -1257,6 +1263,10 @@ int drm_atomic_set_property(struct drm_atomic_commit *state,
 			ret = drm_atomic_check_prop_changes(ret, old_val, prop_value, prop);
 			break;
 		}
+		if (prop == state->dev->mode_config.prop_prepare_fd) {
+			ret = drm_atomic_prepare_set_fd(state, crtc, prop_value);
+			break;
+		}
 
 		ret = drm_atomic_crtc_set_property(crtc,
 				crtc_state, prop, prop_value);
@@ -1618,6 +1628,7 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 	struct drm_atomic_commit *state;
 	struct drm_modeset_acquire_ctx ctx;
 	struct drm_out_fence_state *fence_state;
+	struct drm_prepare_owner *prepare_owner = NULL;
 	int ret = 0;
 	unsigned int i, j, num_fences;
 	bool async_flip = false;
@@ -1667,6 +1678,14 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 	state = drm_atomic_commit_alloc(dev);
 	if (!state)
 		return -ENOMEM;
+	if (file_priv->atomic_preparation) {
+		prepare_owner = drm_file_prepare_owner(file_priv);
+		if (IS_ERR(prepare_owner)) {
+			ret = PTR_ERR(prepare_owner);
+			drm_atomic_commit_put(state);
+			return ret;
+		}
+	}
 
 	drm_modeset_acquire_init(&ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE);
 	state->acquire_ctx = &ctx;
@@ -1678,6 +1697,11 @@ retry:
 	copied_props = 0;
 	fence_state = NULL;
 	num_fences = 0;
+	if (prepare_owner) {
+		ret = drm_atomic_prepare_submission_init(state, prepare_owner);
+		if (ret)
+			goto out;
+	}
 
 	for (i = 0; i < arg->count_objs; i++) {
 		uint32_t obj_id, count_props;
@@ -1759,6 +1783,11 @@ retry:
 
 	if (arg->flags & DRM_MODE_PAGE_FLIP_ASYNC)
 		set_async_flip(state);
+	if (!(arg->flags & DRM_MODE_ATOMIC_TEST_ONLY)) {
+		ret = drm_atomic_prepare_submission_attach(state);
+		if (ret)
+			goto out;
+	}
 
 	if (arg->flags & DRM_MODE_ATOMIC_TEST_ONLY) {
 		ret = drm_atomic_check_only(state);
@@ -1782,6 +1811,8 @@ out:
 
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
+	if (prepare_owner)
+		drm_prepare_owner_put(prepare_owner);
 
 	return ret;
 }
