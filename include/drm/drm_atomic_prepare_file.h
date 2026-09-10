@@ -2,8 +2,23 @@
 #ifndef __DRM_ATOMIC_PREPARE_FILE_H__
 #define __DRM_ATOMIC_PREPARE_FILE_H__
 
+#include <drm/drm_atomic_prepare_commit.h>
+
 struct drm_prepare_ticket;
 struct file;
+
+/*
+ * Resolve a borrowed preparation file and reserve its ticket for the current
+ * issuer. The caller obtains owner from drm_file_prepare_owner() before taking
+ * display locks and validates the submitting device and every retiring object.
+ * Failure leaves the transaction unchanged. No file reference is retained:
+ * final file release cancels an unaccepted reservation, whereas accepted native
+ * reader ownership survives independently. See drm_atomic_commit_prepare_owned().
+ */
+int drm_atomic_commit_prepare_file(struct drm_atomic_commit *state,
+				  struct file *file,
+				  struct drm_prepare_owner *owner,
+				  drm_atomic_prepare_observe_fn observe);
 
 /*
  * Create an observation file for a provider-authorized preparation ticket. Failure
