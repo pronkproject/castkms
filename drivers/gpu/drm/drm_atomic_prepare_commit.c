@@ -16,9 +16,10 @@ struct drm_atomic_preparation {
 	drm_atomic_prepare_observe_fn observe;
 };
 
-int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
-			     struct drm_prepare_ticket *ticket,
-			     drm_atomic_prepare_observe_fn observe)
+static int commit_prepare(struct drm_atomic_commit *state,
+			  struct drm_prepare_ticket *ticket,
+			  struct drm_prepare_owner *owner,
+			  drm_atomic_prepare_observe_fn observe)
 {
 	struct drm_atomic_preparation *preparation;
 	struct drm_prepare_attempt *attempt;
@@ -33,7 +34,8 @@ int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
 	preparation = kzalloc(sizeof(*preparation), GFP_KERNEL);
 	if (!preparation)
 		return -ENOMEM;
-	attempt = drm_prepare_ticket_reserve(ticket);
+	attempt = owner ? drm_prepare_ticket_reserve_owned(ticket, owner) :
+			  drm_prepare_ticket_reserve(ticket);
 	if (IS_ERR(attempt)) {
 		kfree(preparation);
 		return PTR_ERR(attempt);
@@ -43,7 +45,25 @@ int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
 	state->preparation = preparation;
 	return 0;
 }
+
+int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
+			     struct drm_prepare_ticket *ticket,
+			     drm_atomic_prepare_observe_fn observe)
+{
+	return commit_prepare(state, ticket, NULL, observe);
+}
 EXPORT_SYMBOL_GPL(drm_atomic_commit_prepare);
+
+int drm_atomic_commit_prepare_owned(struct drm_atomic_commit *state,
+				   struct drm_prepare_ticket *ticket,
+				   struct drm_prepare_owner *owner,
+				   drm_atomic_prepare_observe_fn observe)
+{
+	if (!owner)
+		return -EINVAL;
+	return commit_prepare(state, ticket, owner, observe);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_commit_prepare_owned);
 
 static int install_matching_outputs(struct drm_atomic_commit *state,
 				    int (*install)(void *data))
