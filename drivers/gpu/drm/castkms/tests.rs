@@ -20,6 +20,8 @@ fn check(condition: bool) -> Result {
     }
 }
 
+#[cfg(CONFIG_DRM_CLIENT)]
+mod imports;
 mod producers;
 use kernel::drm::{
     auth::MasterRef,
@@ -47,9 +49,24 @@ struct Fixture {
     _parent: faux::Registration,
 }
 
+/// Keeps the exporter's parent bound until the callback's deferred file releases end.
+#[cfg(CONFIG_DRM_CLIENT)]
+fn with_exporter(test: impl FnOnce(&Fixture) -> Result) -> Result {
+    let source = Fixture::new()?;
+    let result = test(&source);
+    // SAFETY: Called by the import tests in a kernel thread, with no locks held.
+    // Their callbacks release every exported buffer and imported object before returning.
+    unsafe { kernel::bindings::flush_delayed_fput() };
+    result
+}
+
 impl Fixture {
     fn new() -> Result<Self> {
-        let parent = faux::Registration::new(c"castkms-attribution-test", None)?;
+        let parent = faux::Registration::new_with_dma_mask(
+            c"castkms-attribution-test",
+            None,
+            kernel::dma::DmaMask::new::<64>(),
+        )?;
         let state = device::Owner::new()?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
