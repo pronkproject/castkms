@@ -5,6 +5,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST_HELPERS) += \
 
 obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_test.o \
+	drm_atomic_fence_test.o \
 	drm_atomic_prepare_test.o \
 	drm_atomic_prepare_set_test.o \
 	drm_atomic_prepare_outputs_test.o \
