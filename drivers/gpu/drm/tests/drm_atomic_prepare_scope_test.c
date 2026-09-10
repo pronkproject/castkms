@@ -101,9 +101,36 @@ static void malformed_cohorts_are_rejected(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_prepare_scope_validate(empty, NULL, 0), 0);
 }
 
+static void scope_retains_identity_without_holding_admission(struct kunit *test)
+{
+	struct drm_prepare_domain *domain = new_domain(test);
+	struct drm_prepare_scope_entry entry = { 11, new_source(test, domain) };
+	struct drm_prepare_scope *scope = new_scope(test, &entry, 1);
+	struct drm_prepare_retirement_set *set;
+	struct drm_prepare_read_claim *read;
+
+	kunit_release_action(test, put_source, entry.source);
+	read = drm_prepare_source_claim(entry.source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
+	drm_prepare_read_release(read, NULL);
+	set = drm_prepare_scope_hold(scope);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
+	/* Retain a probe reference independently of both owners. */
+	drm_prepare_source_get(entry.source);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_source, entry.source), 0);
+	kunit_release_action(test, destroy_scope, scope);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_source_claim(entry.source)), -EBUSY);
+	drm_prepare_retirement_set_put(set);
+	read = drm_prepare_source_claim(entry.source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
+	drm_prepare_read_release(read, NULL);
+	kunit_release_action(test, put_source, entry.source);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(cohort_matches_by_output_and_generation),
 	KUNIT_CASE(malformed_cohorts_are_rejected),
+	KUNIT_CASE(scope_retains_identity_without_holding_admission),
 	{}
 };
 
