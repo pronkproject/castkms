@@ -353,8 +353,8 @@ including an unchanged framebuffer or blank output.
 VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
 off by default. The Rust CastKMS device enables the same accounting through its
 unregistered-device wrapper. Neither provider admits external pixel readers
-yet. Kernel shutdown and suspend use the request entry described below. Legacy
-updates, other internal callers and file-close teardown still need preparation
+yet. Kernel shutdown, suspend and framebuffer removal use the request entry
+described below. Legacy updates and other internal callers still need preparation
 integration before delegated reading can be enabled. Testing explicit blocking
 tickets does not establish those paths.
 
@@ -366,6 +366,12 @@ instead of assembling an atomic state that must survive a wait. The helper
 owns its modeset lock context and allocates a fresh atomic state for each
 attempt. Its callback applies the requested operation to that state using the
 ordinary atomic getters. The callback does not install anything itself.
+
+A callback may instead return ``DRM_ATOMIC_REQUEST_UNCHANGED`` after establishing
+under the appropriate locks that no display change is needed. The helper then
+releases its attempted state and any retained ticket without checking or
+installing an update. That result is successful completion of the operation,
+not an error and not permission to skip checking a requested display change.
 
 After checking has added every affected output, the helper captures a kernel
 ticket for those outputs. If an admitted reader has not relinquished its claim,
@@ -412,6 +418,25 @@ copy; it is not an entry for replacing an output that admits new capture reads
 while suspended. Provider suspension and restart remain separate integration
 obligations before external reader admission is enabled.
 
+Framebuffer removal uses the same entry on participating devices. It keeps a
+reference to the framebuffer being removed and finds every plane still using
+that object on each attempt. If another update replaces the framebuffer while
+preparation waits, removal leaves the replacement alone. If no plane still uses
+the old framebuffer, the callback reports that no display change is needed.
+The existing fallback to disabling the controller remains available when the
+driver rejects disabling its primary plane alone.
+
+Explicit framebuffer removal and file-close framebuffer cleanup both reach that
+operation through their shared removal worker. Neither path keeps the file's
+framebuffer-list lock across the worker's preparation wait. Closing the file
+does not itself relinquish a reader claim; provider teardown still needs its
+own policy for stopping readers and accounting for accepted work. A preparation
+error prevents the attempted display change. The existing removal wrapper
+reports atomic removal failure with a warning; its void interface does not
+propagate that error to the removal ioctl. A successful ioctl return therefore
+does not establish that a failed display change completed or authorize source
+reuse after such a failure.
+
 Kernel tests use an outstanding read claim and a second thread which needs the
 modeset lock before releasing it. They check rebuilding, intervening generation
 changes, rejected requests and shutdown without depending on a userspace
@@ -420,6 +445,10 @@ contexts and requires a rebuilt request. An interruption test leaves the
 original reader unresolved, checks release of the request's admission hold,
 and retries after that reader finishes. Suspend tests restore state changed
 during the wait and reject failed preparation without returning a saved copy.
+Removal tests retain an outstanding reader, exercise controller-disable
+fallback and leave a competing replacement installed without an empty commit.
+They call the shared framebuffer removal helper, not the file-close or removal
+ioctl entry points themselves.
 The test driver installs state through the real swap helper; it does not program
 display hardware or exercise native GPU execution.
 
