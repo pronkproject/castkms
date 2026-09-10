@@ -709,6 +709,7 @@ static void drm_test_framebuffer_free(struct kunit *test)
 	int id, ret;
 
 	priv->buffer_freed = false;
+	INIT_LIST_HEAD(&fb.filp_head);
 
 	/*
 	 * Mock	a framebuffer that was not unregistered	at the moment of the
