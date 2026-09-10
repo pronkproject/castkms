@@ -283,6 +283,21 @@ static void rebuild_failure_releases_admission(struct kunit *test)
 	drm_prepare_read_release(read, NULL);
 }
 
+static void shutdown_waits_without_modeset_locks(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	start_reader(test, f);
+	drm_atomic_helper_shutdown(f->dev);
+	kthread_stop(f->worker);
+	f->worker = NULL;
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installations, 1);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->enable);
+	KUNIT_EXPECT_PTR_NE(test, f->crtc->state->prepare_source, f->source);
+}
 
 static struct kunit_case cases[] = {
 	KUNIT_CASE(ready_request_installs_once),
@@ -292,6 +307,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(replacement_during_wait_uses_current_generation),
 	KUNIT_CASE(abandoned_reader_prevents_install),
 	KUNIT_CASE(rebuild_failure_releases_admission),
+	KUNIT_CASE(shutdown_waits_without_modeset_locks),
 	{}
 };
 
