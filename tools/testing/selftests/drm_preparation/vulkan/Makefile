@@ -8,7 +8,13 @@ CPPFLAGS += $(shell $(PKG_CONFIG) --cflags vulkan)
 LDLIBS += $(shell $(PKG_CONFIG) --libs vulkan)
 
 .PHONY: all
-all: $(OUTPUT)/probe $(OUTPUT)/handoff $(OUTPUT)/reuse $(OUTPUT)/sync-file-test $(OUTPUT)/context-test
+all: $(OUTPUT)/probe $(OUTPUT)/handoff $(OUTPUT)/reuse $(OUTPUT)/reuse-test $(OUTPUT)/sync-file-test $(OUTPUT)/context-test
+
+$(OUTPUT)/reuse-main.o: reuse.c recycle.h image.h device.h context.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Dmain=gpu_reuse_main -c reuse.c -o $@
+
+$(OUTPUT)/reuse-test: reuse_test.c recycle.h image.h device.h context.h $(OUTPUT)/reuse-main.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) reuse_test.c $(OUTPUT)/reuse-main.o -o $@
 
 $(OUTPUT)/reuse: reuse.c recycle.c recycle.h image.c image.h device.c device.h context.c context.h sync_file.c sync_file.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) reuse.c recycle.c image.c device.c context.c sync_file.c -o $@ $(LDLIBS)
