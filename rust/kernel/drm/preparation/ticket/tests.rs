@@ -42,6 +42,7 @@ mod cases {
         let set = RetirementSet::new(&[source.clone()])?;
         let ticket = Ticket::new(&set)?;
         let attempt = ticket.reserve()?;
+        assert_eq!(ticket.status(), TicketStatus::Ready);
         assert!(matches!(ticket.reserve(), Err(EBUSY)));
         drop(attempt);
         let retry = ticket.reserve()?;
@@ -59,8 +60,10 @@ mod cases {
         let claim = source.claim()?;
         let set = RetirementSet::new(&[source.clone()])?;
         let ticket = Ticket::new(&set)?;
+        assert_eq!(ticket.status(), TicketStatus::Pending);
         assert!(matches!(ticket.reserve(), Err(EAGAIN)));
         claim.release_cpu();
+        assert_eq!(ticket.status(), TicketStatus::Ready);
         let attempt = ticket.reserve()?;
         drop(attempt);
         Ok(())
@@ -73,6 +76,7 @@ mod cases {
         let set = RetirementSet::new(&[source.clone()])?;
         let ticket = Ticket::new(&set)?;
         drop(claim);
+        assert_eq!(ticket.status(), TicketStatus::Failed);
         assert!(matches!(ticket.reserve(), Err(EIO)));
         Ok(())
     }
@@ -84,6 +88,7 @@ mod cases {
         let ticket = Ticket::new(&set)?;
         let attempt = ticket.reserve()?;
         ticket.cancel();
+        assert_eq!(ticket.status(), TicketStatus::Canceled);
         assert!(matches!(ticket.reserve(), Err(ECANCELED)));
         drop(set);
         drop(ticket);
@@ -137,6 +142,26 @@ mod cases {
         assert_eq!(ticket.wait_ready(), Err(ECANCELED));
         let empty = RetirementSet::new(&[])?;
         Ticket::new(&empty)?.wait_ready()?;
+        Ok(())
+    }
+
+    #[test]
+    fn native_completion_error_does_not_fail_submission_preparation() -> Result {
+        let source = Source::new(1)?;
+        let claim = source.claim()?;
+        let set = RetirementSet::new(&[source])?;
+        let ticket = Ticket::new(&set)?;
+        let mut native = crate::dma_fence::testing::ManualFence::new()?;
+        assert_eq!(ticket.status(), TicketStatus::Pending);
+        claim.release_submitted(&native.fence());
+        assert_eq!(ticket.status(), TicketStatus::Ready);
+        native.complete(Err(EIO))?;
+        assert_eq!(ticket.status(), TicketStatus::Ready);
+        let attempt = ticket.reserve()?;
+        assert_eq!(ticket.status(), TicketStatus::Ready);
+        drop(attempt);
+        ticket.cancel();
+        assert_eq!(ticket.status(), TicketStatus::Canceled);
         Ok(())
     }
 }

@@ -17,6 +17,21 @@ use crate::{
 };
 use core::ptr::NonNull;
 
+/// An observation of submission preparation, independent of native GPU completion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TicketStatus {
+    /// At least one admitted read claim has not been relinquished.
+    Pending,
+    /// Claims have been relinquished; another attempt may still own the reservation.
+    Ready,
+    /// An accepted transaction consumed the ticket and retains retirement ownership.
+    Consumed,
+    /// The ticket no longer permits acceptance; existing attempts retain their holds.
+    Canceled,
+    /// Abandoned source access prevents establishing submission closure.
+    Failed,
+}
+
 /// A shared, explicitly cancelable owner of a source retirement set.
 ///
 /// Dropping a reference is not cancellation. A transport or authority owner must call
@@ -70,6 +85,26 @@ impl Ticket {
     pub fn cancel(&self) {
         // SAFETY: The shared reference retains the ticket; native cancellation is serialized.
         unsafe { bindings::drm_prepare_ticket_cancel(self.0.get()) };
+    }
+
+    /// Observe ticket status without waiting for read claims or native GPU completion.
+    ///
+    /// The query may sleep while taking internal locks. It neither reserves an attempt nor
+    /// authenticates display scope. Cancellation or consumption can follow the observation;
+    /// even [`TicketStatus::Ready`] requires [`Self::reserve`] to recheck availability.
+    pub fn status(&self) -> TicketStatus {
+        // SAFETY: The shared reference retains the initialized ticket during the query.
+        match unsafe { bindings::drm_prepare_ticket_status(self.0.get()) } {
+            bindings::drm_prepare_ticket_status_DRM_PREPARE_TICKET_PENDING => TicketStatus::Pending,
+            bindings::drm_prepare_ticket_status_DRM_PREPARE_TICKET_READY => TicketStatus::Ready,
+            bindings::drm_prepare_ticket_status_DRM_PREPARE_TICKET_CONSUMED => {
+                TicketStatus::Consumed
+            }
+            bindings::drm_prepare_ticket_status_DRM_PREPARE_TICKET_CANCELED => {
+                TicketStatus::Canceled
+            }
+            _ => TicketStatus::Failed,
+        }
     }
 
     /// Wait interruptibly for readiness or cancellation without reserving an attempt.
