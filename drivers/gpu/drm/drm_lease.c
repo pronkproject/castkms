@@ -6,6 +6,7 @@
 #include <linux/uaccess.h>
 
 #include <drm/drm_auth.h>
+#include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
@@ -310,6 +311,7 @@ static void _drm_lease_revoke(struct drm_master *top)
 	 * the tree is fully connected, we can do this without recursing
 	 */
 	for (;;) {
+		drm_master_cancel_preparation_locked(master);
 		drm_dbg_lease(master->dev, "revoke leases for %p %d\n",
 			      master, master->lessee_id);
 

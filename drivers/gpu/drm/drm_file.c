@@ -42,6 +42,7 @@
 #include <linux/vga_switcheroo.h>
 
 #include <drm/drm_client_event.h>
+#include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
 #include <drm/drm_gem.h>
@@ -238,6 +239,8 @@ void drm_file_free(struct drm_file *file)
 		return;
 
 	dev = file->minor->dev;
+
+	drm_file_cancel_preparation(file);
 
 	drm_dbg_core(dev, "comm=\"%s\", pid=%d, dev=0x%lx, open_count=%d\n",
 		     current->comm, task_pid_nr(current),
