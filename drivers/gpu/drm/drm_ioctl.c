@@ -39,7 +39,9 @@
 #include <drm/drm_file.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_print.h>
+#include <uapi/drm/drm_prepare.h>
 
+#include "drm_atomic_prepare_uapi.h"
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
 
@@ -304,6 +306,9 @@ static int drm_getcap(struct drm_device *dev, void *data, struct drm_file *file_
 		req->value = drm_core_check_feature(dev, DRIVER_ATOMIC) &&
 			     dev->mode_config.async_page_flip;
 		break;
+	case DRM_CAP_ATOMIC_PREPARATION:
+		req->value = !!dev->mode_config.preparation;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -351,6 +356,13 @@ drm_setclientcap(struct drm_device *dev, void *data, struct drm_file *file_priv)
 		 * No atomic user-space blows up on aspect ratio mode bits.
 		 */
 		file_priv->aspect_ratio_allowed = req->value;
+		break;
+	case DRM_CLIENT_CAP_ATOMIC_PREPARATION:
+		if (req->value > 1)
+			return -EINVAL;
+		if (req->value && (!file_priv->atomic || !dev->mode_config.preparation))
+			return -EOPNOTSUPP;
+		file_priv->atomic_preparation = req->value;
 		break;
 	case DRM_CLIENT_CAP_ASPECT_RATIO:
 		if (req->value > 1)
@@ -703,6 +715,7 @@ static const struct drm_ioctl_desc drm_ioctls[] = {
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_ADDFB2, drm_mode_addfb2_ioctl, 0),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_RMFB, drm_mode_rmfb_ioctl, 0),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CLOSEFB, drm_mode_closefb_ioctl, 0),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_PREPARE_REPLACE, drm_mode_prepare_replace_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_PAGE_FLIP, drm_mode_page_flip_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_DIRTYFB, drm_mode_dirtyfb_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CREATE_DUMB, drm_mode_create_dumb_ioctl, 0),
