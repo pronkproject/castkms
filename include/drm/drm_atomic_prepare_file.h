@@ -6,7 +6,7 @@ struct drm_prepare_ticket;
 struct file;
 
 /*
- * Create a poll-only file for a provider-authorized preparation ticket. Failure
+ * Create an observation file for a provider-authorized preparation ticket. Failure
  * leaves the borrowed ticket unchanged. The owned file reference retains the
  * ticket; final fput cancels it, including for an unpublished file. get_file/dup
  * shares that file lifetime. Kernel ticket references do not prevent cancellation.
@@ -16,7 +16,8 @@ struct file;
  * Pending tickets have no poll events, ready tickets report readable, consumed
  * tickets report hangup, and cancellation/source failure report error and hangup.
  * Readability is readiness observation, not a byte stream or successful reserve.
- * No pixel, modesetting, query ioctl or descriptor-installation API is exposed.
+ * DRM_IOCTL_PREPARE_QUERY returns the native ticket status as a UAPI value.
+ * No pixel, modesetting or descriptor-installation API is exposed.
  * The eventual issuer must reserve descriptors with O_CLOEXEC and finish fallible
  * setup before publication. Issuing a file does not validate the ticket's scope.
  */
