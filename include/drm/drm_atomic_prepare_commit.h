@@ -4,6 +4,18 @@
 
 struct drm_atomic_commit;
 struct drm_prepare_ticket;
+struct drm_prepare_scope_entry;
+
+/*
+ * Observe every output retired by the final transaction, including outputs added
+ * by atomic checking. Return the entry count or a negative error. The callback
+ * must not write more than capacity entries. Display locks stabilize the sources
+ * from observation through installation; entries borrow those source references.
+ * Observation runs at installation, not reservation, and must not change state.
+ */
+typedef int (*drm_atomic_prepare_observe_fn)(struct drm_atomic_commit *state,
+					   struct drm_prepare_scope_entry *entries,
+					   unsigned int capacity);
 
 /*
  * Reserve preparation for an exclusively owned, unaccepted atomic transaction.
@@ -15,6 +27,17 @@ struct drm_prepare_ticket;
  */
 int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
 			     struct drm_prepare_ticket *ticket);
+
+/*
+ * Reserve a scoped ticket using a provider's observation of the final transaction.
+ * A scoped ticket requires this entry point; the unscoped path cannot accept it.
+ * The caller separately authenticates the device and continuous caller authority
+ * and holds the required display locks through installation. The callback has
+ * static lifetime. Clearing the transaction drops it along with the reservation.
+ */
+int drm_atomic_commit_prepare_scoped(struct drm_atomic_commit *state,
+				    struct drm_prepare_ticket *ticket,
+				    drm_atomic_prepare_observe_fn observe);
 
 /*
  * Atomic core/helper integration. Installation has the callback contract of
