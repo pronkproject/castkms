@@ -8,6 +8,7 @@ struct drm_prepare_retirement_set;
 struct drm_prepare_retirement_guard;
 struct drm_prepare_ticket;
 struct drm_prepare_attempt;
+struct drm_prepare_scope_entry;
 
 enum drm_prepare_ticket_status {
 	DRM_PREPARE_TICKET_PENDING,
@@ -35,6 +36,17 @@ drm_prepare_ticket_status(struct drm_prepare_ticket *ticket);
  */
 struct drm_prepare_ticket *
 drm_prepare_ticket_create(struct drm_prepare_retirement_set *set);
+
+/*
+ * Capture a scope and derive the ticket's admission holds from that exact scope.
+ * Inputs follow drm_prepare_scope_create(); the caller stabilizes them through
+ * construction. Failure releases every acquired reference and hold. The ticket
+ * owns the captured scope for its lifetime and cannot accept an unscoped commit.
+ * This binds source generations, not device or modesetting authority.
+ */
+struct drm_prepare_ticket *
+drm_prepare_ticket_create_scoped(const struct drm_prepare_scope_entry *entries,
+				unsigned int count);
 struct drm_prepare_ticket *drm_prepare_ticket_get(struct drm_prepare_ticket *ticket);
 void drm_prepare_ticket_put(struct drm_prepare_ticket *ticket);
 void drm_prepare_ticket_cancel(struct drm_prepare_ticket *ticket);
@@ -87,5 +99,20 @@ void drm_prepare_attempt_destroy(struct drm_prepare_attempt *attempt);
 int drm_prepare_attempt_commit(struct drm_prepare_attempt *attempt,
 			       int (*install)(void *data), void *data,
 			       struct drm_prepare_retirement_guard **guard);
+
+/*
+ * Accept only a scoped ticket matching the complete observed output cohort.
+ * Validation occurs inside the ticket's cancellation/consumption decision,
+ * before install. The caller holds display locks stabilizing observed entries
+ * and retains their sources through installation. install still validates
+ * current authority and obeys drm_prepare_attempt_commit()'s callback contract.
+ * Scope mismatch leaves the attempt retryable and *guard unchanged. Unscoped
+ * tickets return -EINVAL; the unscoped commit entry rejects scoped tickets too.
+ */
+int drm_prepare_attempt_commit_scoped(struct drm_prepare_attempt *attempt,
+				      const struct drm_prepare_scope_entry *observed,
+				      unsigned int count,
+				      int (*install)(void *data), void *data,
+				      struct drm_prepare_retirement_guard **guard);
 
 #endif
