@@ -33,6 +33,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare_commit.h>
+#include <drm/drm_atomic_prepare_request.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
@@ -3763,8 +3764,11 @@ EXPORT_SYMBOL(drm_atomic_helper_reset_crtc);
  * suspend should instead be handled with drm_atomic_helper_suspend(), since
  * that also takes a snapshot of the modeset state to be restored on resume.
  *
- * This is just a convenience wrapper around drm_atomic_helper_disable_all(),
- * and it is the atomic version of drm_helper_force_disable_all().
+ * Devices with preparation rebuild the disable request after any reader wait,
+ * without holding modeset locks during that wait. The caller must stop new
+ * display producers and keep device resources alive until shutdown returns.
+ * Other devices use drm_atomic_helper_disable_all() under all modeset locks.
+ * This is the atomic version of drm_helper_force_disable_all().
  */
 void drm_atomic_helper_shutdown(struct drm_device *dev)
 {
@@ -3774,15 +3778,19 @@ void drm_atomic_helper_shutdown(struct drm_device *dev)
 	if (dev == NULL)
 		return;
 
-	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, 0, ret);
+	if (dev->mode_config.preparation) {
+		ret = drm_atomic_commit_request(dev, build_disable_all, NULL);
+	} else {
+		DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, 0, ret);
 
-	ret = drm_atomic_helper_disable_all(dev, &ctx);
+		ret = drm_atomic_helper_disable_all(dev, &ctx);
+
+		DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
+	}
 	if (ret)
 		drm_err(dev,
 			"Disabling all crtc's during unload failed with %i\n",
 			ret);
-
-	DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
 }
 EXPORT_SYMBOL(drm_atomic_helper_shutdown);
 
