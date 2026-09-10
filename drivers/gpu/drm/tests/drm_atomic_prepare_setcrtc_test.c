@@ -3,7 +3,9 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_atomic_prepare_display.h>
+#include <drm/drm_atomic_prepare_owner.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_file.h>
 #include <drm/drm_ioctl.h>
@@ -25,6 +27,7 @@ struct setcrtc_fixture {
 	struct completion checked;
 	unsigned int checks;
 	unsigned int installs;
+	unsigned int validations;
 	int worker_error;
 	bool drop_master;
 };
@@ -241,10 +244,41 @@ static void setcrtc_requires_request_callback(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
+static int validate_config(struct drm_mode_set *set, void *data)
+{
+	struct setcrtc_fixture *f = data;
+
+	return ++f->validations == 1 ? 0 : -EACCES;
+}
+
+static void put_owner(void *data)
+{
+	drm_prepare_owner_put(data);
+}
+
+static void config_request_revalidates_after_wait(struct kunit *test)
+{
+	struct setcrtc_fixture *f = new_setcrtc(test);
+	struct drm_mode_set set = { .crtc = f->crtc };
+	struct drm_prepare_owner *owner = drm_file_prepare_owner(f->file->private_data);
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, owner);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_owner, owner), 0);
+	start_reader(test, f);
+	ret = drm_atomic_helper_set_config_request(&set, owner, validate_config, f);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, ret, -EACCES);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setcrtc_disable_waits_for_reader),
 	KUNIT_CASE(master_loss_cancels_setcrtc),
 	KUNIT_CASE(setcrtc_requires_request_callback),
+	KUNIT_CASE(config_request_revalidates_after_wait),
 	{}
 };
 
