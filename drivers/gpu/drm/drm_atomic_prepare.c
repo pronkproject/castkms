@@ -142,6 +142,11 @@ struct drm_prepare_source *drm_prepare_source_get(struct drm_prepare_source *sou
 }
 EXPORT_SYMBOL_GPL(drm_prepare_source_get);
 
+struct drm_prepare_domain *drm_prepare_source_domain(struct drm_prepare_source *source)
+{
+	return source->domain;
+}
+
 void drm_prepare_source_put(struct drm_prepare_source *source)
 {
 	kref_put(&source->ref, source_free);

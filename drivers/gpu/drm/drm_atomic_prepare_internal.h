@@ -12,6 +12,9 @@ struct drm_prepare_domain;
 /* The callback runs in TASK_RUNNING and may sleep while checking readiness. */
 int drm_prepare_wait_until_ready(wait_queue_head_t *queue, int (*ready)(void *data), void *data);
 
+/* Immutable domain identity, borrowed for the source reference's lifetime. */
+struct drm_prepare_domain *drm_prepare_source_domain(struct drm_prepare_source *source);
+
 /* Borrowed notification ownership, independent of admission holds. */
 struct drm_prepare_domain *
 drm_prepare_admission_hold_domain(struct drm_prepare_admission_hold *hold);
