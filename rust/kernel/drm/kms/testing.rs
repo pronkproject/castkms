@@ -45,6 +45,9 @@ use crate::{
 };
 use core::ptr::NonNull;
 
+#[cfg(CONFIG_DRM_CLIENT)]
+mod buffers;
+
 // Native master allocation stays in the built-in test support, not in driver modules.
 #[inline(never)]
 fn allocate_master(dev: *mut bindings::drm_device) -> Result<NonNull<bindings::drm_master>> {

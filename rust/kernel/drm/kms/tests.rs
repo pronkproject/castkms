@@ -7,6 +7,8 @@
 
 #[cfg(CONFIG_FAILSLAB)]
 mod allocation;
+#[cfg(CONFIG_DRM_CLIENT)]
+mod buffers;
 mod connector_refs;
 mod events;
 mod framebuffers;
