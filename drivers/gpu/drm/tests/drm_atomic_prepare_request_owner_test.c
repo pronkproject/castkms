@@ -23,6 +23,7 @@ struct owner_request_fixture {
 	unsigned int checks;
 	unsigned int installs;
 	int worker_error;
+	bool revoke_waiting;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -110,8 +111,12 @@ static int finish_reader(void *data)
 	wait_for_completion(&f->checked);
 	drm_modeset_acquire_init(&ctx, 0);
 	f->worker_error = drm_modeset_lock(&f->crtc->mutex, &ctx);
-	drm_prepare_read_release(f->read, NULL);
-	f->read = NULL;
+	if (f->revoke_waiting) {
+		drm_prepare_owner_revoke(f->owner);
+	} else {
+		drm_prepare_read_release(f->read, NULL);
+		f->read = NULL;
+	}
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -175,9 +180,31 @@ static void revoked_issuer_cannot_install_request(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
 }
 
+static void issuer_revocation_wakes_pending_request(struct kunit *test)
+{
+	struct owner_request_fixture *f = new_request(test);
+	struct drm_crtc_state *before = f->crtc->state;
+	struct drm_prepare_read_claim *another;
+
+	f->revoke_waiting = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_owned(f->dev, f->owner,
+							   build_request, f), -ECANCELED);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_NOT_NULL(test, f->read);
+	KUNIT_EXPECT_EQ(test, f->builds, 1);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+	another = drm_prepare_source_claim(f->source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, another);
+	drm_prepare_read_release(another, NULL);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(owned_request_rebuilds_after_reader_release),
 	KUNIT_CASE(revoked_issuer_cannot_install_request),
+	KUNIT_CASE(issuer_revocation_wakes_pending_request),
 	{}
 };
 
