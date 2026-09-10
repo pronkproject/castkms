@@ -6,6 +6,7 @@
 #include <drm/drm_atomic_prepare_display.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_file.h>
+#include <drm/drm_ioctl.h>
 #include <drm/drm_kunit_helpers.h>
 #include <kunit/test.h>
 #include <linux/completion.h>
@@ -25,6 +26,7 @@ struct setcrtc_fixture {
 	unsigned int checks;
 	unsigned int installs;
 	int worker_error;
+	bool drop_master;
 };
 
 static int check_config(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -145,8 +147,15 @@ static int finish_reader(void *data)
 	f->worker_error = drm_modeset_lock(&f->crtc->mutex, &ctx);
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
-	drm_prepare_read_release(f->read, NULL);
-	f->read = NULL;
+	if (f->drop_master) {
+		int ret = drm_ioctl(f->file, DRM_IOCTL_DROP_MASTER, 0);
+
+		if (!f->worker_error)
+			f->worker_error = ret;
+	} else {
+		drm_prepare_read_release(f->read, NULL);
+		f->read = NULL;
+	}
 	set_current_state(TASK_INTERRUPTIBLE);
 	while (!kthread_should_stop()) {
 		schedule();
@@ -196,8 +205,26 @@ static void setcrtc_disable_waits_for_reader(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 1);
 }
 
+static void master_loss_cancels_setcrtc(struct kunit *test)
+{
+	struct setcrtc_fixture *f = new_setcrtc(test);
+	struct drm_mode_crtc request = { .crtc_id = f->crtc->base.id };
+	struct drm_crtc_state *before = f->crtc->state;
+
+	f->drop_master = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_mode_setcrtc(f->dev, &request, f->file->private_data),
+			-ECANCELED);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_NOT_NULL(test, f->read);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setcrtc_disable_waits_for_reader),
+	KUNIT_CASE(master_loss_cancels_setcrtc),
 	{}
 };
 
