@@ -4,6 +4,7 @@
 
 struct drm_atomic_commit;
 struct drm_prepare_ticket;
+struct drm_prepare_owner;
 struct drm_prepare_output_generation;
 
 /*
@@ -33,6 +34,19 @@ typedef int (*drm_atomic_prepare_observe_fn)(struct drm_atomic_commit *state,
 int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
 				    struct drm_prepare_ticket *ticket,
 				    drm_atomic_prepare_observe_fn observe);
+
+/*
+ * Reserve a ticket issued by the given owner, with the same transaction contract
+ * as drm_atomic_commit_prepare(). NULL owners and tickets from another issuer
+ * are rejected. The caller obtains the current issuer before acquiring display
+ * locks; retaining that reference does not preserve authority. Revocation after
+ * reservation still prevents installation. The attempt retains the ticket and
+ * its issuer independently of the caller's references.
+ */
+int drm_atomic_commit_prepare_owned(struct drm_atomic_commit *state,
+				   struct drm_prepare_ticket *ticket,
+				   struct drm_prepare_owner *owner,
+				   drm_atomic_prepare_observe_fn observe);
 
 /*
  * Atomic core/helper integration. Installation has the callback contract of
