@@ -235,6 +235,18 @@ static void build_failure_does_not_install(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->builds, 1);
 }
 
+static void unchanged_request_does_not_check_or_install(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+	struct drm_crtc_state *before = f->crtc->state;
+
+	f->build_error = DRM_ATOMIC_REQUEST_UNCHANGED;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request(f->dev, build_request, f), 0);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+}
+
 static void pending_reader_releases_locks_before_rebuild(struct kunit *test)
 {
 	struct request_fixture *f = new_request(test, true);
@@ -484,6 +496,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(ordinary_request_needs_no_accounting),
 	KUNIT_CASE(build_failure_does_not_install),
+	KUNIT_CASE(unchanged_request_does_not_check_or_install),
 	KUNIT_CASE(pending_reader_releases_locks_before_rebuild),
 	KUNIT_CASE(replacement_during_wait_uses_current_generation),
 	KUNIT_CASE(abandoned_reader_prevents_install),
