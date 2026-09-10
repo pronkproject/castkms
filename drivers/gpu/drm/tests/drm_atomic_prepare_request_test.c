@@ -459,6 +459,27 @@ static void suspend_saves_the_state_disabled_after_wait(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->state->background_color, f->replacement_color);
 }
 
+static void failed_suspend_returns_no_saved_state(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+	struct drm_atomic_commit *saved;
+	struct drm_crtc_state *before = f->crtc->state;
+
+	f->abandon = true;
+	start_reader(test, f);
+	saved = drm_atomic_helper_suspend(f->dev);
+	kthread_stop(f->worker);
+	f->worker = NULL;
+	KUNIT_EXPECT_TRUE(test, IS_ERR(saved));
+	if (IS_ERR(saved))
+		KUNIT_EXPECT_EQ(test, PTR_ERR(saved), -EIO);
+	else
+		drm_atomic_commit_put(saved);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(ordinary_request_needs_no_accounting),
@@ -471,6 +492,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(interrupted_request_preserves_unreleased_reader),
 	KUNIT_CASE(contended_request_rebuilds_after_real_deadlock),
 	KUNIT_CASE(suspend_saves_the_state_disabled_after_wait),
+	KUNIT_CASE(failed_suspend_returns_no_saved_state),
 	{}
 };
 
