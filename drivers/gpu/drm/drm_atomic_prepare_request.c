@@ -12,6 +12,7 @@
 #include <drm/drm_drv.h>
 
 static int prepare_request(struct drm_atomic_commit *state,
+			   struct drm_prepare_owner *owner,
 			   struct drm_prepare_ticket **ticket)
 {
 	struct drm_prepare_output_generation entries[DRM_PREPARE_MAX_OUTPUTS];
@@ -21,7 +22,8 @@ static int prepare_request(struct drm_atomic_commit *state,
 	count = drm_atomic_prepare_display_observe(state, entries, ARRAY_SIZE(entries));
 	if (count < 0)
 		return count;
-	next = drm_prepare_ticket_create(entries, count);
+	next = owner ? drm_prepare_ticket_create_owned(owner, entries, count) :
+		       drm_prepare_ticket_create(entries, count);
 	if (IS_ERR(next))
 		return PTR_ERR(next);
 
@@ -29,12 +31,15 @@ static int prepare_request(struct drm_atomic_commit *state,
 	if (*ticket)
 		drm_prepare_ticket_put(*ticket);
 	*ticket = next;
+	if (owner)
+		return drm_atomic_commit_prepare_owned(state, next, owner,
+						      drm_atomic_prepare_display_observe);
 	return drm_atomic_commit_prepare(state, next, drm_atomic_prepare_display_observe);
 }
 
-int drm_atomic_commit_request(struct drm_device *dev,
-			      int (*build)(struct drm_atomic_commit *state, void *data),
-			      void *data)
+static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owner,
+			  int (*build)(struct drm_atomic_commit *state, void *data),
+			  void *data)
 {
 	struct drm_prepare_ticket *ticket = NULL;
 	struct drm_modeset_acquire_ctx ctx;
@@ -67,7 +72,7 @@ int drm_atomic_commit_request(struct drm_device *dev,
 			goto retry_lock;
 
 		if (dev->mode_config.preparation) {
-			ret = prepare_request(state, &ticket);
+			ret = prepare_request(state, owner, &ticket);
 			if (ret == -EAGAIN) {
 				drm_atomic_commit_put(state);
 				state = NULL;
@@ -100,4 +105,24 @@ retry_lock:
 		drm_prepare_ticket_put(ticket);
 	return ret;
 }
+
+int drm_atomic_commit_request(struct drm_device *dev,
+			      int (*build)(struct drm_atomic_commit *state, void *data),
+			      void *data)
+{
+	return commit_request(dev, NULL, build, data);
+}
 EXPORT_SYMBOL_GPL(drm_atomic_commit_request);
+
+int drm_atomic_commit_request_owned(struct drm_device *dev,
+				    struct drm_prepare_owner *owner,
+				    int (*build)(struct drm_atomic_commit *state, void *data),
+				    void *data)
+{
+	if (!owner)
+		return -EINVAL;
+	if (!dev->mode_config.preparation)
+		return -EOPNOTSUPP;
+	return commit_request(dev, owner, build, data);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_commit_request_owned);
