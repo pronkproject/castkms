@@ -8,6 +8,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_commit.h>
+#include <drm/drm_atomic_prepare_scope.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_device.h>
 #include <kunit/test.h>
@@ -24,6 +25,9 @@ struct prepare_commit_fixture {
 	bool admission_held_at_clear;
 	bool completed_at_clear;
 	bool clear_in_worker;
+	struct drm_prepare_scope_entry observed;
+	int observation_count;
+	unsigned int observations;
 };
 
 static void clear_objects(struct drm_atomic_commit *state)
@@ -223,12 +227,82 @@ static void async_update_does_not_bypass_preparation(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
 }
 
+static int observe_scope(struct drm_atomic_commit *state,
+			 struct drm_prepare_scope_entry *entries,
+			 unsigned int capacity)
+{
+	struct prepare_commit_fixture *f = container_of(state, typeof(*f), state);
+
+	f->observations++;
+	if (capacity && f->observation_count == 1)
+		entries[0] = f->observed;
+	return f->observation_count;
+}
+
+static void observe_final_scope_before_acceptance(struct kunit *test)
+{
+	struct prepare_commit_fixture *f = new_fixture(test, false);
+	struct drm_prepare_scope_entry entry;
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	drm_prepare_ticket_put(f->ticket);
+	entry = (struct drm_prepare_scope_entry) { .crtc_id = 1, .source = f->source };
+	f->ticket = drm_prepare_ticket_create_scoped(&entry, 1);
+	if (IS_ERR(f->ticket)) {
+		f->ticket = NULL;
+		KUNIT_FAIL(test, "scoped ticket allocation failed");
+		return;
+	}
+	f->observed = entry;
+	f->observation_count = 1;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare_scoped(&f->state, f->ticket, NULL),
+			-EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, f->state.preparation, NULL);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare_scoped(&f->state, f->ticket,
+							    observe_scope), 0);
+	KUNIT_EXPECT_EQ(test, f->observations, 0);
+	f->observed.crtc_id = 2;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ESTALE);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_READY);
+	f->observation_count = -EACCES;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EACCES);
+	f->observation_count = DRM_PREPARE_SCOPE_MAX_OUTPUTS + 1;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -E2BIG);
+	f->observation_count = 0;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ESTALE);
+	f->observed = entry;
+	f->observation_count = 1;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
+	KUNIT_EXPECT_EQ(test, f->observations, 5);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_CONSUMED);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EALREADY);
+	KUNIT_EXPECT_EQ(test, f->observations, 5);
+	drm_atomic_commit_clear(&f->state);
+	KUNIT_EXPECT_TRUE(test, f->admission_held_at_clear);
+	expect_open(test, f);
+}
+
+static void scope_observer_does_not_authorize_unscoped_ticket(struct kunit *test)
+{
+	struct prepare_commit_fixture *f = new_fixture(test, false);
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare_scoped(&f->state, f->ticket,
+							    observe_scope), 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EINVAL);
+	drm_atomic_commit_clear(&f->state);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
+}
+
 static struct kunit_case prepare_commit_cases[] = {
 	KUNIT_CASE(clearing_unaccepted_transaction_allows_retry),
 	KUNIT_CASE(accepted_transaction_holds_admission_through_object_cleanup),
 	KUNIT_CASE(commit_dependencies_wait_for_submitted_readers),
 	KUNIT_CASE(object_cleanup_waits_for_failed_native_completion),
 	KUNIT_CASE(async_update_does_not_bypass_preparation),
+	KUNIT_CASE(observe_final_scope_before_acceptance),
+	KUNIT_CASE(scope_observer_does_not_authorize_unscoped_ticket),
 	{}
 };
 
