@@ -168,9 +168,23 @@ static void client_check_leaves_reader_pending(struct kunit *test)
 	drm_prepare_read_release(another, NULL);
 }
 
+static void client_power_off_waits_for_reader(struct kunit *test)
+{
+	struct client_fixture *f = new_client(test);
+
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_client_modeset_dpms(&f->client, DRM_MODE_DPMS_OFF), 0);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(client_commit_waits_for_reader),
 	KUNIT_CASE(client_check_leaves_reader_pending),
+	KUNIT_CASE(client_power_off_waits_for_reader),
 	{}
 };
 
