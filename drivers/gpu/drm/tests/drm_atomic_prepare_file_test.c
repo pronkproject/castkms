@@ -4,10 +4,13 @@
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/module.h>
+#include <linux/mman.h>
 #include <linux/poll.h>
+#include <linux/uaccess.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_file.h>
 #include <drm/drm_atomic_prepare_ticket.h>
+#include <uapi/drm/drm_prepare.h>
 #include <kunit/test.h>
 
 struct ticket_file_fixture {
@@ -162,8 +165,65 @@ static void ticket_file_has_no_pixel_or_modeset_dispatch(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->write_iter, NULL);
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->mmap, NULL);
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->llseek, NULL);
-	KUNIT_EXPECT_PTR_EQ(test, file->f_op->unlocked_ioctl, NULL);
-	KUNIT_EXPECT_PTR_EQ(test, file->f_op->compat_ioctl, NULL);
+	KUNIT_ASSERT_NOT_NULL(test, file->f_op->unlocked_ioctl);
+	KUNIT_EXPECT_EQ(test, file->f_op->unlocked_ioctl(file, DRM_IOCTL_VERSION, 0), -ENOTTY);
+	KUNIT_EXPECT_EQ(test, file->f_op->unlocked_ioctl(file, DRM_IOCTL_PREPARE_QUERY, 0),
+			-EFAULT);
+	KUNIT_EXPECT_EQ(test, file->f_op->unlocked_ioctl(file,
+			_IOWR(DRM_IOCTL_BASE, 0x00, struct drm_prepare_query), 0), -ENOTTY);
+	KUNIT_EXPECT_TRUE(test, file->f_op->compat_ioctl == compat_ptr_ioctl);
+}
+
+static void expect_query(struct kunit *test, struct file *file, unsigned long address,
+			 u32 expected)
+{
+	struct drm_prepare_query query;
+	unsigned int i;
+
+	memset(&query, 0xa5, sizeof(query));
+	KUNIT_ASSERT_EQ(test, copy_to_user((void __user *)address, &query, sizeof(query)), 0);
+	KUNIT_ASSERT_EQ(test, file->f_op->unlocked_ioctl(file, DRM_IOCTL_PREPARE_QUERY, address),
+			0);
+	KUNIT_ASSERT_EQ(test, copy_from_user(&query, (void __user *)address, sizeof(query)), 0);
+	KUNIT_EXPECT_EQ(test, query.status, expected);
+	for (i = 0; i < ARRAY_SIZE(query.reserved); i++)
+		KUNIT_EXPECT_EQ(test, query.reserved[i], 0);
+}
+
+static void query_observes_status_without_consumption(struct kunit *test)
+{
+	struct ticket_file_fixture *f;
+	struct file *file = new_file(test, &f, true);
+	struct drm_prepare_retirement_guard *guard;
+	struct drm_prepare_attempt *attempt;
+	unsigned long address;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_MMU))
+		kunit_skip(test, "userspace query requires MMU");
+	address = kunit_vm_mmap(test, NULL, 0, PAGE_SIZE, PROT_READ | PROT_WRITE,
+			       MAP_PRIVATE | MAP_ANONYMOUS, 0);
+	KUNIT_ASSERT_NE(test, address, 0);
+	KUNIT_ASSERT_FALSE(test, IS_ERR_VALUE(address));
+	expect_query(test, file, address, DRM_PREPARE_PENDING);
+	drm_prepare_read_release(f->read, NULL);
+	f->read = NULL;
+	expect_query(test, file, address, DRM_PREPARE_READY);
+	attempt = drm_prepare_ticket_reserve(f->ticket);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, attempt);
+	expect_query(test, file, address, DRM_PREPARE_READY);
+	ret = drm_prepare_attempt_commit(attempt, accept, NULL, &guard);
+	drm_prepare_attempt_destroy(attempt);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	drm_prepare_retirement_guard_destroy(guard);
+	expect_query(test, file, address, DRM_PREPARE_CONSUMED);
+
+	file = new_file(test, &f, true);
+	drm_prepare_read_abandon(f->read);
+	f->read = NULL;
+	expect_query(test, file, address, DRM_PREPARE_FAILED);
+	drm_prepare_ticket_cancel(f->ticket);
+	expect_query(test, file, address, DRM_PREPARE_CANCELED);
 }
 
 static struct kunit_case cases[] = {
@@ -172,6 +232,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(poll_reports_abandoned_claim_without_readiness),
 	KUNIT_CASE(closing_consumed_file_preserves_accepted_guard),
 	KUNIT_CASE(ticket_file_has_no_pixel_or_modeset_dispatch),
+	KUNIT_CASE(query_observes_status_without_consumption),
 	{}
 };
 

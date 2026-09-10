@@ -5,8 +5,39 @@
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/poll.h>
+#include <linux/uaccess.h>
 #include <drm/drm_atomic_prepare_file.h>
 #include <drm/drm_atomic_prepare_ticket.h>
+#include <uapi/drm/drm_prepare.h>
+
+static u32 ticket_query_status(struct drm_prepare_ticket *ticket)
+{
+	switch (drm_prepare_ticket_status(ticket)) {
+	case DRM_PREPARE_TICKET_PENDING:
+		return DRM_PREPARE_PENDING;
+	case DRM_PREPARE_TICKET_READY:
+		return DRM_PREPARE_READY;
+	case DRM_PREPARE_TICKET_CONSUMED:
+		return DRM_PREPARE_CONSUMED;
+	case DRM_PREPARE_TICKET_CANCELED:
+		return DRM_PREPARE_CANCELED;
+	case DRM_PREPARE_TICKET_FAILED:
+		return DRM_PREPARE_FAILED;
+	}
+	return DRM_PREPARE_FAILED;
+}
+
+static long ticket_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct drm_prepare_query query = {};
+
+	if (cmd != DRM_IOCTL_PREPARE_QUERY)
+		return -ENOTTY;
+	query.status = ticket_query_status(file->private_data);
+	if (copy_to_user((void __user *)arg, &query, sizeof(query)))
+		return -EFAULT;
+	return 0;
+}
 
 static int ticket_release(struct inode *inode, struct file *file)
 {
@@ -40,6 +71,8 @@ static const struct file_operations ticket_fops = {
 	.owner = THIS_MODULE,
 	.release = ticket_release,
 	.poll = ticket_poll,
+	.unlocked_ioctl = ticket_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
 };
 
 struct file *drm_prepare_ticket_file_create(struct drm_prepare_ticket *ticket)
