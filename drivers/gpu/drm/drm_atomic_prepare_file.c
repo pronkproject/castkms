@@ -94,3 +94,20 @@ struct drm_prepare_ticket *drm_prepare_ticket_file_get_ticket(struct file *file)
 	return drm_prepare_ticket_get(file->private_data);
 }
 EXPORT_SYMBOL_GPL(drm_prepare_ticket_file_get_ticket);
+
+int drm_atomic_commit_prepare_file(struct drm_atomic_commit *state,
+				  struct file *file,
+				  struct drm_prepare_owner *owner,
+				  drm_atomic_prepare_observe_fn observe)
+{
+	struct drm_prepare_ticket *ticket;
+	int ret;
+
+	ticket = drm_prepare_ticket_file_get_ticket(file);
+	if (IS_ERR(ticket))
+		return PTR_ERR(ticket);
+	ret = drm_atomic_commit_prepare_owned(state, ticket, owner, observe);
+	drm_prepare_ticket_put(ticket);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_atomic_commit_prepare_file);
