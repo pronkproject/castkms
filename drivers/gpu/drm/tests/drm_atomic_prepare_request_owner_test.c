@@ -22,8 +22,10 @@ struct owner_request_fixture {
 	unsigned int builds;
 	unsigned int checks;
 	unsigned int installs;
+	unsigned int commit_calls;
 	int worker_error;
 	bool revoke_waiting;
+	bool revoke_installing;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -42,6 +44,9 @@ static int install_request(struct drm_device *dev, struct drm_atomic_commit *sta
 	struct owner_request_fixture *f = dev->dev_private;
 	int ret;
 
+	f->commit_calls++;
+	if (f->revoke_installing)
+		drm_prepare_owner_revoke(f->owner);
 	ret = drm_atomic_helper_swap_state(state, false);
 	if (!ret)
 		f->installs++;
@@ -201,10 +206,25 @@ static void issuer_revocation_wakes_pending_request(struct kunit *test)
 	drm_prepare_read_release(another, NULL);
 }
 
+static void issuer_revocation_excludes_reserved_installation(struct kunit *test)
+{
+	struct owner_request_fixture *f = new_request(test);
+	struct drm_crtc_state *before = f->crtc->state;
+
+	f->revoke_installing = true;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_owned(f->dev, f->owner,
+							   build_request, f), -ECANCELED);
+	KUNIT_EXPECT_EQ(test, f->checks, 1);
+	KUNIT_EXPECT_EQ(test, f->commit_calls, 1);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(owned_request_rebuilds_after_reader_release),
 	KUNIT_CASE(revoked_issuer_cannot_install_request),
 	KUNIT_CASE(issuer_revocation_wakes_pending_request),
+	KUNIT_CASE(issuer_revocation_excludes_reserved_installation),
 	{}
 };
 
