@@ -254,6 +254,13 @@ static int ticket_available(struct drm_prepare_ticket *ticket)
 	return 0;
 }
 
+bool drm_prepare_ticket_is_owned_by(struct drm_prepare_ticket *ticket,
+				  struct drm_prepare_owner *owner)
+{
+	return owner && ticket->owner == owner;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_ticket_is_owned_by);
+
 static struct drm_prepare_attempt *ticket_reserve(struct drm_prepare_ticket *ticket,
 						 struct drm_prepare_owner *owner)
 {
