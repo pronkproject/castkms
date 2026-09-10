@@ -222,9 +222,29 @@ static void master_loss_cancels_setcrtc(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
 }
 
+static const struct drm_crtc_funcs unsupported_funcs = {
+	.reset = drm_atomic_helper_crtc_reset,
+	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
+	.set_config = drm_atomic_helper_set_config,
+};
+
+static void setcrtc_requires_request_callback(struct kunit *test)
+{
+	struct setcrtc_fixture *f = new_setcrtc(test);
+	struct drm_mode_crtc request = { .crtc_id = f->crtc->base.id };
+
+	f->crtc->funcs = &unsupported_funcs;
+	KUNIT_EXPECT_EQ(test, drm_mode_setcrtc(f->dev, &request, f->file->private_data),
+			-EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setcrtc_disable_waits_for_reader),
 	KUNIT_CASE(master_loss_cancels_setcrtc),
+	KUNIT_CASE(setcrtc_requires_request_callback),
 	{}
 };
 
