@@ -94,6 +94,26 @@ err:
 }
 
 /**
+ * sync_file_get_fence_from_file - retain the fence from a sync file
+ * @file: live file borrowed from the caller
+ *
+ * Returns a new fence reference if @file is a sync file, or NULL otherwise.
+ * Does not consume the caller's file reference, wait for completion, or look
+ * up a descriptor in the current task's file table.
+ */
+struct dma_fence *sync_file_get_fence_from_file(struct file *file)
+{
+	struct sync_file *sync_file;
+
+	if (file->f_op != &sync_file_fops)
+		return NULL;
+
+	sync_file = file->private_data;
+	return dma_fence_get(sync_file->fence);
+}
+EXPORT_SYMBOL(sync_file_get_fence_from_file);
+
+/**
  * sync_file_get_fence - get the fence related to the sync_file fd
  * @fd:		sync_file fd to get the fence from
  *
@@ -102,15 +122,15 @@ err:
  */
 struct dma_fence *sync_file_get_fence(int fd)
 {
-	struct sync_file *sync_file;
+	struct file *file;
 	struct dma_fence *fence;
 
-	sync_file = sync_file_fdget(fd);
-	if (!sync_file)
+	file = fget(fd);
+	if (!file)
 		return NULL;
 
-	fence = dma_fence_get(sync_file->fence);
-	fput(sync_file->file);
+	fence = sync_file_get_fence_from_file(file);
+	fput(file);
 
 	return fence;
 }
