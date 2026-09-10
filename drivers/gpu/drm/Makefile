@@ -44,6 +44,7 @@ drm-y := \
 	drm_atomic_prepare_owner.o \
 	drm_atomic_prepare_auth.o \
 	drm_atomic_prepare_commit.o \
+	drm_atomic_prepare_submission.o \
 	drm_atomic_prepare_file.o \
 	drm_atomic_uapi.o \
 	drm_auth.o \

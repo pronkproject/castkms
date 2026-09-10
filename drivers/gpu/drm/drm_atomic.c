@@ -32,6 +32,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare_commit.h>
+#include <drm/drm_atomic_prepare_submission.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_bridge.h>
@@ -406,6 +407,7 @@ void drm_atomic_commit_clear(struct drm_atomic_commit *state)
 	else
 		drm_atomic_commit_default_clear(state);
 	drm_atomic_commit_preparation_clear(state);
+	drm_atomic_prepare_submission_clear(state);
 }
 EXPORT_SYMBOL(drm_atomic_commit_clear);
 

@@ -499,6 +499,8 @@ struct __drm_private_objs_state {
  * pointer. The former is the preferred form.
  */
 struct drm_atomic_commit {
+	/** @prepare_submission: Optional issuer-bound preparation for selected CRTCs. */
+	struct drm_atomic_prepare_submission *prepare_submission;
 	/**
 	 * @ref:
 	 *
