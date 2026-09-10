@@ -10,6 +10,7 @@
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_property.h>
 
 struct drm_prepare_display {
 	struct drm_prepare_domain *domain;
@@ -35,6 +36,13 @@ int drm_atomic_prepare_display_init(struct drm_device *dev, unsigned int capacit
 		return ret;
 	}
 	display->capacity = capacity;
+	dev->mode_config.prop_prepare_fd = drm_property_create_signed_range(dev,
+					DRM_MODE_PROP_ATOMIC, "PREPARE_FD", -1, INT_MAX);
+	if (!dev->mode_config.prop_prepare_fd) {
+		drm_prepare_domain_put(display->domain);
+		kfree(display);
+		return -ENOMEM;
+	}
 	dev->mode_config.preparation = display;
 	return 0;
 }

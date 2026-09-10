@@ -323,6 +323,8 @@ static int __drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *
 		cursor->possible_crtcs = drm_crtc_mask(crtc);
 
 	if (drm_core_check_feature(dev, DRIVER_ATOMIC)) {
+		if (config->prop_prepare_fd)
+			drm_object_attach_property(&crtc->base, config->prop_prepare_fd, -1);
 		drm_object_attach_property(&crtc->base, config->prop_active, 0);
 		drm_object_attach_property(&crtc->base, config->prop_mode_id, 0);
 		drm_object_attach_property(&crtc->base,
