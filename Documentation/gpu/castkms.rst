@@ -104,6 +104,19 @@ CastKMS uses those snapshots during framebuffer preparation. Drivers that do
 not supply the optional Rust preparation callback retain the native GEM
 helper's ordinary implicit waiting.
 
+The shared Rust fence interface can place an existing completion record in an
+owned sync file. Such a file lets userspace wait for submitted work and inspect
+its success or failure using the established Linux synchronization interface.
+Creation does not wait, install a descriptor or combine away error records.
+Closing the file does not signal the underlying work. A pending record stays
+pending until its producer completes it, and poll readiness alone does not
+establish that the pixels are valid.
+
+That transport helper grants no source access. A future executor handoff still
+needs authorization, source lifetime management and close-on-exec descriptor
+publication after fallible setup. It must not turn preparation readiness or a
+userspace promise to submit work into a DMA fence.
+
 Testing in a disposable virtual machine
 --------------------------------------
 
