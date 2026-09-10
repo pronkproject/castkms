@@ -10,6 +10,7 @@
 #include <linux/completion.h>
 #include <linux/delay.h>
 #include <linux/kthread.h>
+#include <linux/sched/signal.h>
 
 struct request_fixture {
 	struct drm_device *dev;
@@ -27,6 +28,7 @@ struct request_fixture {
 	bool abandon;
 	bool held_on_rebuild;
 	bool fail_rebuild;
+	struct task_struct *interrupt;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -152,11 +154,18 @@ static int finish_reader(void *data)
 			drm_atomic_commit_put(state);
 		}
 	}
-	if (f->abandon)
+	if (f->interrupt) {
+		int signal_error = send_sig(SIGUSR1, f->interrupt, 0);
+
+		if (!f->worker_error)
+			f->worker_error = signal_error;
+	} else if (f->abandon) {
 		drm_prepare_read_abandon(f->read);
-	else
+		f->read = NULL;
+	} else {
 		drm_prepare_read_release(f->read, NULL);
-	f->read = NULL;
+		f->read = NULL;
+	}
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -299,6 +308,33 @@ static void shutdown_waits_without_modeset_locks(struct kunit *test)
 	KUNIT_EXPECT_PTR_NE(test, f->crtc->state->prepare_source, f->source);
 }
 
+static void interrupted_request_preserves_unreleased_reader(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+	struct drm_prepare_read_claim *read;
+	int ret;
+
+	f->interrupt = current;
+	start_reader(test, f);
+	allow_signal(SIGUSR1);
+	ret = drm_atomic_commit_request(f->dev, build_request, f);
+	flush_signals(current);
+	disallow_signal(SIGUSR1);
+	kthread_stop(f->worker);
+	f->worker = NULL;
+	KUNIT_EXPECT_EQ(test, ret, -ERESTARTSYS);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_ASSERT_NOT_NULL(test, f->read);
+	read = drm_prepare_source_claim(f->source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
+	drm_prepare_read_release(read, NULL);
+	drm_prepare_read_release(f->read, NULL);
+	f->read = NULL;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request(f->dev, build_request, f), 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 1);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(ordinary_request_needs_no_accounting),
@@ -308,6 +344,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(abandoned_reader_prevents_install),
 	KUNIT_CASE(rebuild_failure_releases_admission),
 	KUNIT_CASE(shutdown_waits_without_modeset_locks),
+	KUNIT_CASE(interrupted_request_preserves_unreleased_reader),
 	{}
 };
 
