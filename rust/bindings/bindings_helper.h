@@ -120,6 +120,9 @@
 #include <linux/security.h>
 #include <linux/serdev.h>
 #include <linux/slab.h>
+#ifdef CONFIG_SYNC_FILE
+#include <linux/sync_file.h>
+#endif
 #include <linux/sys_soc.h>
 #include <linux/task_work.h>
 #include <linux/tracepoint.h>
