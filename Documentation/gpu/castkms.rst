@@ -11,9 +11,14 @@ C CastKMS casting installation.
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create one
 always-connected virtual output. The driver accepts atomic modesetting and
 linear XRGB8888 framebuffers, with local storage allocated through the usual
-DRM dumb-buffer interface. Modes up to 1920 by 1080 are offered for development.
+DRM dumb-buffer interface or foreign storage imported through PRIME. Modes up
+to 1920 by 1080 are offered for development.
 That size is a temporary driver limit, not a receiver or transport policy.
-Foreign DMA-BUF import is not enabled yet.
+The virtual parent has DMA addressing configured before DRM registration so
+exporters can map imported attachments. Import retains the exporter's storage
+and reservation without requiring a persistent CPU mapping. It does not add
+new scanout formats or modifiers, authorize capture, or qualify a real GPU's
+allocation and synchronization path.
 
 There is no display clock. A successful flip event means that the driver has
 accepted the new state and no longer needs the old buffer; it does not mean
@@ -198,7 +203,15 @@ Producer tests also pass fences through the real atomic path. They verify
 retained failures both before submission and when native waiting enables
 signaling, successful producer retention across a test-only candidate, and
 the absence of an inherited error on the next same-framebuffer update. These
-tests do not implement implicit dependency collection or deferred source reads.
+tests also cover implicit reservation errors, usage filtering and test-only
+exclusion. They do not exercise deferred source reads.
+
+When DRM client support is enabled, the import tests export private dumb
+storage through an internal client and import it into a separately registered
+CastKMS device. They check allocation identity, framebuffer layout and retained
+references through teardown without reading pixels. The shared export fixture
+has its own handle-cleanup and invalid-dimension tests. Those VM cases do not
+qualify a physical GPU's buffers or a userspace compositor's submission path.
 
 Building without another display driver
 --------------------------------------
