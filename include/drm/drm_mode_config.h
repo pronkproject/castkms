@@ -398,6 +398,9 @@ struct drm_mode_config {
 	 */
 	struct mutex idr_mutex;
 
+	/** @preparation: Optional output accounting, fixed before registration. */
+	struct drm_prepare_display *preparation;
+
 	/**
 	 * @object_idr:
 	 *
