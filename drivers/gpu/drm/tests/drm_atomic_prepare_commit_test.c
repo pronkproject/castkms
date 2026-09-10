@@ -2,12 +2,15 @@
 
 #include <linux/completion.h>
 #include <linux/dma-fence.h>
+#include <linux/file.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_commit.h>
+#include <drm/drm_atomic_prepare_file.h>
+#include <drm/drm_atomic_prepare_owner.h>
 #include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_device.h>
@@ -300,6 +303,101 @@ static void missing_outputs_prevent_installation(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
 }
 
+static void put_owner(void *data)
+{
+	drm_prepare_owner_put(data);
+}
+
+static void close_ticket_file(void *data)
+{
+	__fput_sync(data);
+}
+
+static struct drm_prepare_owner *new_owner(struct kunit *test)
+{
+	struct drm_prepare_owner *owner = drm_prepare_owner_create(2);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, owner);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_owner, owner), 0);
+	return owner;
+}
+
+static struct file *owned_file(struct kunit *test, struct prepare_commit_fixture *f,
+			       struct drm_prepare_owner *owner)
+{
+	struct drm_prepare_ticket *ticket;
+	struct file *file;
+
+	ticket = drm_prepare_ticket_create_owned(owner, &f->observed, 1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
+	drm_prepare_ticket_put(f->ticket);
+	f->ticket = ticket;
+	file = drm_prepare_ticket_file_create(ticket);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, file);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, close_ticket_file, file), 0);
+	return file;
+}
+
+static void file_acceptance_requires_matching_issuer(struct kunit *test)
+{
+	struct prepare_commit_fixture *f = new_fixture(test, false);
+	struct drm_prepare_owner *owner = new_owner(test);
+	struct drm_prepare_owner *other = new_owner(test);
+	struct file *file = owned_file(test, f, owner);
+	struct file wrong_file = {};
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare_file(&f->state, &wrong_file,
+			owner, observe_outputs), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare_file(&f->state, file,
+			NULL, observe_outputs), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare_file(&f->state, file,
+			other, observe_outputs), -EACCES);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket,
+			observe_outputs), -EACCES);
+	KUNIT_EXPECT_PTR_EQ(test, f->state.preparation, NULL);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare_file(&f->state, file,
+			owner, observe_outputs), 0);
+	f->observed.crtc_id = 2;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ESTALE);
+	f->observed.crtc_id = 1;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
+	kunit_release_action(test, close_ticket_file, file);
+	drm_prepare_owner_revoke(owner);
+	drm_atomic_commit_clear(&f->state);
+	KUNIT_EXPECT_TRUE(test, f->admission_held_at_clear);
+	expect_open(test, f);
+}
+
+static void file_close_cancels_reserved_acceptance(struct kunit *test)
+{
+	struct prepare_commit_fixture *f = new_fixture(test, false);
+	struct drm_prepare_owner *owner = new_owner(test);
+	struct file *file = owned_file(test, f, owner);
+
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare_file(&f->state, file,
+			owner, observe_outputs), 0);
+	kunit_release_action(test, close_ticket_file, file);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ECANCELED);
+	drm_atomic_commit_clear(&f->state);
+	KUNIT_EXPECT_TRUE(test, f->admission_held_at_clear);
+	expect_open(test, f);
+}
+
+static void issuer_loss_cancels_reserved_acceptance(struct kunit *test)
+{
+	struct prepare_commit_fixture *f = new_fixture(test, false);
+	struct drm_prepare_owner *owner = new_owner(test);
+	struct file *file = owned_file(test, f, owner);
+
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare_file(&f->state, file,
+			owner, observe_outputs), 0);
+	drm_prepare_owner_revoke(owner);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ECANCELED);
+	drm_atomic_commit_clear(&f->state);
+	KUNIT_EXPECT_TRUE(test, f->admission_held_at_clear);
+	expect_open(test, f);
+}
+
 static struct kunit_case prepare_commit_cases[] = {
 	KUNIT_CASE(clearing_unaccepted_transaction_allows_retry),
 	KUNIT_CASE(accepted_transaction_holds_admission_through_object_cleanup),
@@ -308,6 +406,9 @@ static struct kunit_case prepare_commit_cases[] = {
 	KUNIT_CASE(async_update_does_not_bypass_preparation),
 	KUNIT_CASE(observe_final_outputs_before_acceptance),
 	KUNIT_CASE(missing_outputs_prevent_installation),
+	KUNIT_CASE(file_acceptance_requires_matching_issuer),
+	KUNIT_CASE(file_close_cancels_reserved_acceptance),
+	KUNIT_CASE(issuer_loss_cancels_reserved_acceptance),
 	{}
 };
 
