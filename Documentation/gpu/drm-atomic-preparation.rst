@@ -353,8 +353,8 @@ including an unchanged framebuffer or blank output.
 VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
 off by default. The Rust CastKMS device enables the same accounting through its
 unregistered-device wrapper. Neither provider admits external pixel readers
-yet. Kernel shutdown uses the request entry described below. Legacy updates,
-other internal callers, suspend and file-close teardown still need preparation
+yet. Kernel shutdown and suspend use the request entry described below. Legacy
+updates, other internal callers and file-close teardown still need preparation
 integration before delegated reading can be enabled. Testing explicit blocking
 tickets does not establish those paths.
 
@@ -395,14 +395,33 @@ not freeze userspace memory or supply an adapter for ordinary atomic ioctls.
 Its operation is to disable every output, which it reconstructs from current
 state after a wait. The caller must stop new display producers and retain the
 device resources until shutdown finishes. Devices without preparation retain
-the ordinary shutdown path. Suspend is separate because saving state for resume
-must be coordinated with the eventual disabling transaction.
+the ordinary shutdown path.
+
+``drm_atomic_helper_suspend()`` also uses the entry on participating devices.
+Each attempt copies current display state for resume before constructing the
+disable operation under the same modeset locks. A preparation wait discards the
+disable attempt; rebuilding releases its saved copy and takes a fresh one. Only
+the copy belonging to the successful disabling attempt is returned. Failure
+releases that copy and returns an error rather than a state to resume from.
+The saved copy owns its duplicated state and buffer references; it is not a
+retained reference to the attempted disable transaction.
+
+The driver must keep display producers stopped throughout suspend and resume.
+The ordinary resume helper still resets device state before restoring the saved
+copy; it is not an entry for replacing an output that admits new capture reads
+while suspended. Provider suspension and restart remain separate integration
+obligations before external reader admission is enabled.
 
 Kernel tests use an outstanding read claim and a second thread which needs the
 modeset lock before releasing it. They check rebuilding, intervening generation
 changes, rejected requests and shutdown without depending on a userspace
-executor. The test driver installs state through the real swap helper; it does
-not program display hardware or exercise native GPU execution.
+executor. A second locking test creates a real deadlock between two acquire
+contexts and requires a rebuilt request. An interruption test leaves the
+original reader unresolved, checks release of the request's admission hold,
+and retries after that reader finishes. Suspend tests restore state changed
+during the wait and reject failed preparation without returning a saved copy.
+The test driver installs state through the real swap helper; it does not program
+display hardware or exercise native GPU execution.
 
 Where the helper installs display state
 --------------------------------------
