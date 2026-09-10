@@ -1,4 +1,4 @@
-# A small model of display preparation
+# Display preparation models and interface tests
 
 CastKMS wants to show a virtual monitor, capture what appears on it, and send
 that image somewhere else. The proposed design composes pixels in userspace,
@@ -37,8 +37,7 @@ are not a kernel driver, not a userspace API, and not a promise that Linux DRM
 can implement the same decisions under its real locks. They exist so the
 protocol can be argued about with tests before anyone freezes ioctl numbers.
 
-Run them with Python 3, or through the kernel selftest Makefile in this
-directory. They need no kernel build, no graphics device, no GPU library, and
+Run the models with Python 3. They need no kernel build, no graphics device, no GPU library, and
 no extra Python packages.
 
 ```sh
@@ -47,6 +46,19 @@ no extra Python packages.
 ./pipeline-model.py
 ./reservation-model.py
 ```
+
+The separate `atomic-ticket` program exercises the experimental preparation
+ioctls on a real DRM device. Build it with `make atomic-ticket`; that requires
+the libdrm development headers and library. Run it only against an isolated
+virtual device, for example VKMS in a guest booted with
+`vkms.enable_preparation=1`. An optional device path replaces its default
+`/dev/dri/card0`. It acquires modesetting authority and submits unchanged-state
+atomic updates, so it is not a passive test of an active desktop.
+
+The interface test checks malformed requests, close-on-exec descriptors,
+readiness, unrelated descriptors, non-consuming TEST_ONLY requests, blocking
+acceptance and rejection after the selected generation changes. It does not
+admit pixel readers, test native GPU completion or qualify a capture executor.
 
 ## What the source model is trying to protect
 
