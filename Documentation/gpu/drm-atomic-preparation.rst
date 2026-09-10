@@ -442,6 +442,21 @@ Devices without preparation continue using their existing ``set_config`` path.
 The new callback is also callable with resolved kernel inputs and a kernel
 authorization callback; it neither requires nor manufactures a userspace request.
 
+Rebuilding an ordinary atomic ioctl needs additional input retention. In
+particular, an input-fence descriptor number is not a stable identity: another
+thread may close it and reuse the number while preparation waits. A request
+must retain the resolved fence itself. ``drm_atomic_set_fence_for_plane()``
+takes a separate reference for each incoming plane state, leaving the request's
+reference alive when an attempt is discarded. It rejects replacing an existing
+fence, including replacing it with no dependency. Passing no fence to an empty
+state leaves it available for a subsequent assignment.
+
+The ordinary input-fence property adapter uses that setter after descriptor
+lookup. That shared assignment policy does not yet retain all atomic ioctl
+inputs across retries or enable implicit preparation of blocking atomic ioctls.
+Framebuffer and blob references, selected-object authorization, and output
+event and fence handling remain separate parts of that integration.
+
 ``drm_atomic_helper_shutdown()`` uses ``drm_atomic_commit_request()`` on
 participating devices.
 Its operation is to disable every output, which it reconstructs from current
