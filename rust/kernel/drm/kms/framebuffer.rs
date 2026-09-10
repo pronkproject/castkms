@@ -415,6 +415,26 @@ impl<T: KmsDriver> Framebuffer<T> {
         unsafe { (*(*self.0.get()).format).format }
     }
 
+    /// Return the explicit DRM format modifier, or `None` for implicit layout.
+    ///
+    /// An implicit layout must not be presented to an external importer as an explicitly
+    /// negotiated linear modifier. These metadata describe storage, not source-read authority.
+    pub fn modifier(&self) -> Option<u64> {
+        // SAFETY: Initialized framebuffers retain immutable creation flags and modifier.
+        let raw = unsafe { &*self.0.get() };
+        (raw.flags & bindings::DRM_MODE_FB_MODIFIERS as c_int != 0).then_some(raw.modifier)
+    }
+
+    /// Return the byte offset within the backing object for a valid format plane.
+    pub fn offset(&self, plane: usize) -> Result<u32> {
+        // SAFETY: The live framebuffer retains immutable layout metadata and its format.
+        let raw = unsafe { &*self.0.get() };
+        if plane >= self.plane_count() || plane >= raw.offsets.len() {
+            return Err(EINVAL);
+        }
+        Ok(raw.offsets[plane])
+    }
+
     /// Return the pitch for `plane`, rejecting indices outside the format's actual plane count.
     pub fn pitch(&self, plane: usize) -> Result<u32> {
         // SAFETY: The framebuffer is initialized via its type invariant.
