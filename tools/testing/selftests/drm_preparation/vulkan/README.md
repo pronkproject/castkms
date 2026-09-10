@@ -178,8 +178,67 @@ The fixture does not send D to a media process. A successful foreign release
 and native completion are necessary inputs to that experiment, not evidence
 that the other driver imported the allocation or produced an encoded frame.
 
+## Persistent pools under consumer backpressure
+
+The separate `reuse` executable checks persistent allocation reuse:
+
+```sh
+VK_VALIDATION_VALIDATE_SYNC=1 "$build_dir/reuse" /dev/dri/renderD128 --validation
+```
+
+Add `--modifier INTEGER` to select a reported modifier. The image size is
+fixed at 256-by-256. Two staging allocations E are shared between a source
+worker and an output worker; three output allocations D are shared between
+the output worker and a simulated consumer. Each worker has its own Vulkan
+device. Allocations and imported images persist for four rounds, serving
+twenty changing source images. Pool sizes are fixture budgets, not kernel
+limits or a prescribed relationship to a transport window.
+
+Each round fills D and leaves its ownership with the consumer. While all
+three outputs remain held, two more generated sources are cleared and blitted
+into available E allocations. Each source is destroyed after its submitted
+native completion is checked, without returning any D. Once E is full, another
+capture attempt returns backpressure before allocating or accessing a source.
+The consumer reads every held D again into fresh oracle storage and checks
+that the pixels still match its earlier frame. Returning D permits the queued
+E images to drain; the following round reuses the same imports with new pixels.
+
+E returns from the output worker before the source worker writes it again.
+D returns from the consumer before the output worker writes it again.
+Both directions use external queue ownership barriers in the general layout
+and sync-file semaphores exported from accepted submissions. An E-to-D job's
+completion covers both its E read and D write, but that job is admitted only
+when D is new or has been returned. Its completion is not part of the preceding
+source image's retirement. See Khronos's
+[external queue ownership rules](https://docs.vulkan.org/spec/latest/chapters/synchronization.html#synchronization-queue-transfers).
+
+`recycle.c` handles the native image exchanges, submission lifetimes and pixel
+oracle. `reuse.c` owns the separate staging/output budgets and admission policy.
+Command buffers, semaphores and oracle storage are reclaimed after each
+operation; the native command pool does not grow with frame count. Any native
+error aborts the experiment. A timeout is not cancellation: teardown still
+waits for accepted commands and is not a bounded GPU-hang recovery mechanism.
+
+Run `"$build_dir/reuse-test"` for a hardware-independent policy check, failure
+injection at every operation boundary, partial-construction teardown checks
+and malformed-argument rejection. Its doubles reject overwrite of occupied
+staging or output slots and verify delivered frame identities. Those checks
+do not validate the Vulkan implementation, native allocation-failure paths or
+real pixels; the GPU executable provides the separate native exercise.
+
+The consumer hold is an application-level retention of a real imported GPU
+image, not an unsignaled encoder fence or simulated GPU hang. Operations wait
+for completion on the host to make the ordering deterministic. There is no
+throughput claim, overlapping GPU-work qualification, PipeWire release
+protocol, hardware encoder or KMS transaction here. Generated A is local to
+the source worker; the separate `handoff` fixture exercises producer-device
+import. Readback is solely the test oracle, not the proposed media path.
+An installed media consumer's returned-buffer synchronization and a submitted
+downstream reuse wait remain separate qualifications.
+
 All submitted uses finish before their resources are destroyed, including on
-test failure. Successful Vulkan imports consume their descriptors; failed
-imports leave the descriptors for cleanup. Image allocation, import and device
+test failure. Import helpers track whether Vulkan consumed each descriptor,
+including failures after memory import; cleanup closes only descriptors still
+owned by the caller. Image allocation, import and device
 setup live separately from the test's submission sequence. The fixture uses
 only its own generated content, not compositor or CastKMS source buffers.
