@@ -6,6 +6,7 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_scope.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 
 #include "drm_atomic_prepare_internal.h"
@@ -15,6 +16,7 @@ struct drm_prepare_ticket {
 	struct mutex lock;
 	struct drm_prepare_domain *domain;
 	struct drm_prepare_retirement_set *set;
+	struct drm_prepare_scope *scope;
 	struct drm_prepare_attempt *active;
 	bool consumed;
 };
@@ -47,6 +49,35 @@ drm_prepare_ticket_create(struct drm_prepare_retirement_set *set)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_ticket_create);
 
+struct drm_prepare_ticket *
+drm_prepare_ticket_create_scoped(const struct drm_prepare_scope_entry *entries,
+				unsigned int count)
+{
+	struct drm_prepare_scope *scope;
+	struct drm_prepare_retirement_set *set;
+	struct drm_prepare_ticket *ticket;
+
+	scope = drm_prepare_scope_create(entries, count);
+	if (IS_ERR(scope))
+		return ERR_CAST(scope);
+	set = drm_prepare_scope_hold(scope);
+	if (IS_ERR(set)) {
+		ticket = ERR_CAST(set);
+		goto destroy_scope;
+	}
+	ticket = drm_prepare_ticket_create(set);
+	drm_prepare_retirement_set_put(set);
+	if (IS_ERR(ticket))
+		goto destroy_scope;
+	ticket->scope = scope;
+	return ticket;
+
+destroy_scope:
+	drm_prepare_scope_destroy(scope);
+	return ticket;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_ticket_create_scoped);
+
 struct drm_prepare_ticket *drm_prepare_ticket_get(struct drm_prepare_ticket *ticket)
 {
 	kref_get(&ticket->ref);
@@ -60,6 +91,8 @@ static void ticket_free(struct kref *ref)
 
 	if (ticket->set)
 		drm_prepare_retirement_set_put(ticket->set);
+	if (ticket->scope)
+		drm_prepare_scope_destroy(ticket->scope);
 	drm_prepare_domain_put(ticket->domain);
 	mutex_destroy(&ticket->lock);
 	kfree(ticket);
@@ -248,9 +281,10 @@ void drm_prepare_attempt_destroy(struct drm_prepare_attempt *attempt)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_attempt_destroy);
 
-int drm_prepare_attempt_commit(struct drm_prepare_attempt *attempt,
-			       int (*install)(void *data), void *data,
-			       struct drm_prepare_retirement_guard **guard)
+static int attempt_commit(struct drm_prepare_attempt *attempt,
+			  bool scoped, const struct drm_prepare_scope_entry *observed,
+			  unsigned int count, int (*install)(void *data), void *data,
+			  struct drm_prepare_retirement_guard **guard)
 {
 	struct drm_prepare_ticket *ticket = attempt->ticket;
 	struct drm_prepare_retirement_set *set = NULL;
@@ -264,6 +298,15 @@ int drm_prepare_attempt_commit(struct drm_prepare_attempt *attempt,
 	if (!ticket->set) {
 		error = -ECANCELED;
 		goto unlock;
+	}
+	if (!!ticket->scope != scoped) {
+		error = -EINVAL;
+		goto unlock;
+	}
+	if (scoped) {
+		error = drm_prepare_scope_validate(ticket->scope, observed, count);
+		if (error)
+			goto unlock;
 	}
 	error = install(data);
 	if (error)
@@ -282,4 +325,21 @@ unlock:
 	}
 	return error;
 }
+
+int drm_prepare_attempt_commit(struct drm_prepare_attempt *attempt,
+			       int (*install)(void *data), void *data,
+			       struct drm_prepare_retirement_guard **guard)
+{
+	return attempt_commit(attempt, false, NULL, 0, install, data, guard);
+}
 EXPORT_SYMBOL_GPL(drm_prepare_attempt_commit);
+
+int drm_prepare_attempt_commit_scoped(struct drm_prepare_attempt *attempt,
+				      const struct drm_prepare_scope_entry *observed,
+				      unsigned int count,
+				      int (*install)(void *data), void *data,
+				      struct drm_prepare_retirement_guard **guard)
+{
+	return attempt_commit(attempt, true, observed, count, install, data, guard);
+}
+EXPORT_SYMBOL_GPL(drm_prepare_attempt_commit_scoped);
