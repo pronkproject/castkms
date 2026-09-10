@@ -63,6 +63,36 @@ mod tests {
     }
 
     #[test]
+    fn implicit_layout_does_not_claim_an_explicit_modifier() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-fb-implicit-layout", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let object = gem::shmem::Object::<TestObject>::new(&dev, 4096, Default::default(), ())?;
+        let planes = [framebuffer::FramebufferPlane {
+            object: &*object,
+            pitch: 64,
+            offset: 64,
+        }];
+        let layout = framebuffer::FramebufferLayout {
+            width: 16,
+            height: 16,
+            format: fourcc::XRGB8888,
+            modifier: None,
+            interlaced: false,
+            planes: &planes,
+        };
+        // SAFETY: The private initialized fixture excludes KMS setup changes and teardown.
+        let fb = unsafe { framebuffer::Framebuffer::from_objects_unchecked(&dev, &layout) }?;
+        drop(object);
+        drop(dev);
+        assert_eq!(fb.modifier(), None);
+        assert_eq!(fb.offset(0)?, 64);
+        assert_eq!(fb.offset(1), Err(EINVAL));
+        assert_eq!(fb.offset(usize::MAX), Err(EINVAL));
+        Ok(())
+    }
+
+    #[test]
     fn invalid_storage_releases_metadata() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-fb-metadata-reject", None)?;
