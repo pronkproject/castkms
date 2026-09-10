@@ -17,6 +17,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_prepare_request.h>
 #include <drm/drm_client.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_crtc.h>
@@ -1103,6 +1104,9 @@ static int drm_client_modeset_commit_atomic(struct drm_client_dev *client, bool 
 	struct drm_atomic_commit *state;
 	struct drm_modeset_acquire_ctx ctx;
 	int ret;
+
+	if (!check && dev->mode_config.preparation)
+		return drm_atomic_commit_request(dev, build_client_modeset, &request);
 
 	drm_modeset_acquire_init(&ctx, 0);
 	state = drm_atomic_commit_alloc(dev);
