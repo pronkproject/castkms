@@ -4,6 +4,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_display.h>
+#include <drm/drm_atomic_prepare_file.h>
 #include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_owner.h>
 #include <drm/drm_atomic_prepare_submission.h>
@@ -11,11 +12,22 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_kunit_helpers.h>
 #include <kunit/test.h>
+#include <linux/file.h>
+#include <linux/poll.h>
 
 struct display_fixture {
 	struct drm_device *dev;
 	struct drm_crtc *crtc;
+	struct drm_prepare_read_claim *read;
 };
+
+static void release_display(void *data)
+{
+	struct display_fixture *f = data;
+
+	if (f->read)
+		drm_prepare_read_abandon(f->read);
+}
 
 static struct display_fixture *new_display(struct kunit *test, bool enabled)
 {
@@ -35,6 +47,7 @@ static struct display_fixture *new_display(struct kunit *test, bool enabled)
 	f->crtc = drm_kunit_helper_create_crtc(test, f->dev, plane, NULL, NULL, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->crtc);
 	drm_mode_config_reset(f->dev);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, release_display, f), 0);
 	return f;
 }
 
@@ -180,6 +193,39 @@ static void release_ticket(void *data)
 	drm_prepare_ticket_put(data);
 }
 
+static void release_ticket_file(void *data)
+{
+	__fput_sync(data);
+}
+
+static void free_poll_wait(void *data)
+{
+	poll_freewait(data);
+}
+
+static void claim_display(struct kunit *test, struct display_fixture *f,
+			  struct drm_prepare_source *source)
+{
+	struct drm_prepare_read_claim *read = drm_prepare_source_claim(source);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
+	f->read = read;
+}
+
+static struct poll_wqueues *watch_ticket(struct kunit *test, struct drm_prepare_ticket *ticket)
+{
+	struct file *file = drm_prepare_ticket_file_create(ticket);
+	struct poll_wqueues *wait = kunit_kzalloc(test, sizeof(*wait), GFP_KERNEL);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, file);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, release_ticket_file, file), 0);
+	KUNIT_ASSERT_NOT_NULL(test, wait);
+	poll_initwait(wait);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, free_poll_wait, wait), 0);
+	KUNIT_ASSERT_EQ(test, vfs_poll(file, &wait->pt), 0);
+	return wait;
+}
+
 static struct drm_prepare_owner *new_owner(struct kunit *test)
 {
 	struct drm_prepare_owner *owner = drm_prepare_owner_create(4);
@@ -254,12 +300,69 @@ static void submission_rejects_generation_replaced_after_issue(struct kunit *tes
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_READY);
 }
 
+static void pending_reader_wakes_ticket_before_acceptance(struct kunit *test)
+{
+	struct display_fixture *f = new_display(test, true);
+	struct drm_atomic_commit *state = new_update(test, f);
+	struct drm_prepare_owner *owner = new_owner(test);
+	struct drm_prepare_source *source = display_source(f->crtc);
+	struct drm_prepare_ticket *ticket;
+	struct poll_wqueues *wait;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, source);
+	claim_display(test, f, source);
+	ticket = new_ticket(test, f, owner);
+	wait = watch_ticket(test, ticket);
+	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_submission_init(state, owner), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_submission_set(state, f->crtc, ticket), 0);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_prepare_submission_attach), -EAGAIN);
+	KUNIT_EXPECT_PTR_EQ(test, display_source(f->crtc), source);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_PENDING);
+	drm_prepare_read_release(f->read, NULL);
+	f->read = NULL;
+	KUNIT_EXPECT_TRUE(test, wait->triggered);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_READY);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_prepare_submission_attach), 0);
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_CONSUMED);
+	drm_atomic_commit_clear(state);
+}
+
+static void revoked_pending_ticket_cannot_accept_after_reader_release(struct kunit *test)
+{
+	struct display_fixture *f = new_display(test, true);
+	struct drm_atomic_commit *state = new_update(test, f);
+	struct drm_prepare_owner *owner = new_owner(test);
+	struct drm_prepare_source *source = display_source(f->crtc);
+	struct drm_prepare_ticket *ticket;
+	struct poll_wqueues *wait;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, source);
+	claim_display(test, f, source);
+	ticket = new_ticket(test, f, owner);
+	wait = watch_ticket(test, ticket);
+	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_submission_init(state, owner), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_submission_set(state, f->crtc, ticket), 0);
+	drm_prepare_owner_revoke(owner);
+	KUNIT_EXPECT_TRUE(test, wait->triggered);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_CANCELED);
+	drm_prepare_read_release(f->read, NULL);
+	f->read = NULL;
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_CANCELED);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_prepare_submission_attach), -ECANCELED);
+	KUNIT_EXPECT_PTR_EQ(test, display_source(f->crtc), source);
+	drm_atomic_commit_clear(state);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(unchanged_blank_update_has_distinct_generation),
 	KUNIT_CASE(discarded_check_preserves_accepted_generation),
 	KUNIT_CASE(ordinary_device_does_not_allocate_generations),
 	KUNIT_CASE(submission_requires_matching_issuer_and_current_generation),
 	KUNIT_CASE(submission_rejects_generation_replaced_after_issue),
+	KUNIT_CASE(pending_reader_wakes_ticket_before_acceptance),
+	KUNIT_CASE(revoked_pending_ticket_cannot_accept_after_reader_release),
 	{}
 };
 
