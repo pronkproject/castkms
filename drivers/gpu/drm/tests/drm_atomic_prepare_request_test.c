@@ -29,6 +29,7 @@ struct request_fixture {
 	bool held_on_rebuild;
 	bool fail_rebuild;
 	struct task_struct *interrupt;
+	u64 replacement_color;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -149,8 +150,11 @@ static int finish_reader(void *data)
 			state->acquire_ctx = &ctx;
 			if (IS_ERR(drm_atomic_get_crtc_state(state, f->crtc)))
 				f->worker_error = -EINVAL;
-			else
+			else {
+				drm_atomic_get_new_crtc_state(state, f->crtc)->background_color =
+					f->replacement_color;
 				f->worker_error = drm_atomic_commit(state);
+			}
 			drm_atomic_commit_put(state);
 		}
 	}
@@ -431,6 +435,30 @@ static void contended_request_rebuilds_after_real_deadlock(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, display->installations, 1);
 }
 
+static void suspend_saves_the_state_disabled_after_wait(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+	struct drm_atomic_commit *saved;
+	struct drm_crtc_state *crtc_state;
+
+	f->replace = true;
+	f->replacement_color = 0xffff111122223333ULL;
+	start_reader(test, f);
+	saved = drm_atomic_helper_suspend(f->dev);
+	kthread_stop(f->worker);
+	f->worker = NULL;
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, saved);
+	crtc_state = drm_atomic_get_new_crtc_state(saved, f->crtc);
+	KUNIT_EXPECT_NOT_NULL(test, crtc_state);
+	if (crtc_state)
+		KUNIT_EXPECT_EQ(test, crtc_state->background_color, f->replacement_color);
+	KUNIT_EXPECT_PTR_EQ(test, saved->acquire_ctx, NULL);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 2);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_resume(f->dev, saved), 0);
+	KUNIT_EXPECT_EQ(test, f->crtc->state->background_color, f->replacement_color);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(ordinary_request_needs_no_accounting),
@@ -442,6 +470,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(shutdown_waits_without_modeset_locks),
 	KUNIT_CASE(interrupted_request_preserves_unreleased_reader),
 	KUNIT_CASE(contended_request_rebuilds_after_real_deadlock),
+	KUNIT_CASE(suspend_saves_the_state_disabled_after_wait),
 	{}
 };
 
