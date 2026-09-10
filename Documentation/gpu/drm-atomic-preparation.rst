@@ -9,9 +9,10 @@ framebuffer preparation callback collects producer dependencies before ordinary
 atomic acceptance. The source accounting in ``drm_atomic_prepare.c`` addresses
 the other side: claims already admitted to read one source generation.
 
-The accounting is a kernel-only primitive. It neither changes atomic commit
-semantics nor enables CastKMS capture. No preparation ioctl, multi-output
-ticket, compositor negotiation or executor binding is provided yet.
+The accounting and its multi-output tickets are kernel interfaces. Atomic
+helper adapters transfer preparation into accepted transactions, but do not
+enable CastKMS capture by themselves. No preparation ioctl, compositor
+negotiation or executor binding is provided yet.
 
 Admission, release and completion
 --------------------------------
@@ -70,11 +71,12 @@ Releasing an admission hold does not cancel access already admitted. Later
 preparation must still account for those readers before establishing readiness
 and native completion.
 
-The primitive must not be installed as a complete atomic preparation ticket:
-validated multi-output scope, gap-free transfer to accepted commits, blocking
-internal callers and teardown integration remain separate work. Kernel and Rust tests
-exercise the primitive without publishing source buffers or touching a physical
-display.
+The source primitive is not a complete display transaction. Output matching,
+cancelable tickets and transfer into accepted commits belong to the layers
+described below. Providers still need authority checks, generation publication
+and preparation entry paths for blocking callers and teardown. Kernel and Rust
+tests exercise the accounting without publishing source buffers or touching a
+physical display.
 
 Holding several sources together
 -------------------------------
@@ -110,8 +112,8 @@ domain and set submodules of ``drm::preparation``.
 
 The set is an internal ownership container, not a validated display transaction.
 Its caller must determine which generations the update actually retires and
-keep that selection stable. Transfer into an accepted commit is not provided
-by the container yet.
+keep that selection stable. Transfer into an accepted commit belongs to the
+ticket and transaction adapters, not the container.
 
 Preparing the complete set
 -------------------------
@@ -163,12 +165,34 @@ The guard deliberately does not provide an ``accept()`` operation. Moving it
 alone does not establish display acceptance. A separate ticket and attempt
 interface serializes that decision with cancellation.
 
+Identifying retiring outputs
+----------------------------
+
+``drm_prepare_output_generation`` pairs a nonzero CRTC object ID with a retained
+source generation. The provider publishes a fresh generation for every accepted
+output use, including same-framebuffer updates and blank outputs. Framebuffer
+identity alone cannot distinguish those uses.
+
+``drm_prepare_outputs_create()`` copies a complete list with unique CRTC IDs and
+sources in one admission domain. Its limit of 32 outputs follows the KMS CRTC
+mask limit, not capture queue depth or receiver frame rate. Malformed lists
+return ``-EINVAL``, oversized lists ``-E2BIG``, and mixed domains ``-EXDEV``.
+Matching ignores entry order but requires the same IDs and source identities;
+changed membership or generations return ``-ESTALE``. An empty list matches
+only an empty observation. It is not a wildcard.
+
+The list retains accounting objects, not pixel storage, authority or admission
+holds. ``drm_prepare_outputs_hold()`` derives a retirement set from precisely
+those sources. Ticket construction performs both operations. Rust callers use
+``OutputGeneration`` and pass the complete borrowed slice to ``Ticket::new()``;
+the ticket takes independent references before construction returns.
+
 Reserving a cancelable request
 -----------------------------
 
-An internal ``drm_prepare_ticket`` retains a source set independently of any
-file. It represents a cancelable request, not a grant of pixel access or proof
-that the set matches a display update. ``drm_prepare_ticket_reserve()`` first
+An internal ``drm_prepare_ticket`` captures output generations and retains their
+source set independently of any file. It represents a cancelable request, not a
+grant of pixel access. ``drm_prepare_ticket_reserve()`` first
 collects a retirement guard, then reserves the ticket for one attempt. Pending
 source claims reject reservation without consuming the request. A competing
 attempt receives ``-EBUSY``. Allocation and completion collection happen outside
@@ -179,11 +203,12 @@ attempt allows another reservation if the ticket remains live. Canceling the
 ticket prevents installation and drops the ticket's source-set reference, but
 does not destroy an active attempt's guard. That distinction prevents
 cancellation from reopening admission while an operation still owns the old
-sources. Reference release is not cancellation; a future file or authority
+sources. Reference release is not cancellation; a file or authority
 adapter must call cancellation explicitly at its specified lifetime boundary.
 
 ``drm_prepare_attempt_commit()`` runs a kernel installation callback under the
-same mutex used by cancellation. The callback must reject invalid scope or
+same mutex used by cancellation. It compares the complete observed output list
+with the ticket before calling the installer. The callback must reject invalid
 authority before changing anything, or install the complete transaction without
 another fallible step. It must not allocate, wait or reenter preparation. On
 success the call transfers the preassembled guard to the caller and consumes
@@ -193,7 +218,8 @@ guard. The attempt still needs destruction, separately from its returned guard.
 Display and provider locks that stabilize the selected generations precede the
 ticket mutex. No source lock is nested inside it: fence collection and source
 ownership destruction occur outside that mutex. The ticket does not acquire
-display locks for its caller, track generations or authenticate a requester.
+display locks for its caller, derive current generations or authenticate a
+requester.
 
 Rust ownership follows the same distinction. A ``Ticket`` is shared through
 reference counting and must be canceled explicitly when its authority ends.
@@ -204,8 +230,8 @@ operation. Dropping an unaccepted attempt releases its reservation and permits
 a still-live ticket to retry.
 
 The Rust interface does not expose an arbitrary installation callback. Owning
-an attempt is not evidence that a caller has validated display scope, and the
-reservation alone does not establish successful display installation. Runtime
+an attempt is not evidence that a caller has validated the retiring outputs.
+The reservation alone does not establish successful display installation. Runtime
 tests exercise cancellation and release, while compiler fixtures reject
 duplication and construction outside the reservation path.
 
@@ -266,7 +292,7 @@ handle, not another independent request. Retaining a kernel ticket reference
 does not prevent file-driven cancellation; an accepted retirement guard remains
 independently owned.
 
-The constructor installs no descriptor and does not authenticate display scope.
+The constructor installs no descriptor and does not authenticate display access.
 A future issuer must validate the request, reserve descriptors with close-on-exec
 and complete fallible setup before publication. The native and Rust file tests
 exercise polling and reference release without exposing a preparation-creation
@@ -288,8 +314,8 @@ private installer as ordinary swaps. Cancellation rejects the prepared swap
 before the first pointer changes; successful installation transfers the guard
 and consumes the ticket without an interval of reopened admission.
 
-The caller must validate the complete retirement scope and keep it stable under
-its display and provider locks throughout the call. Authority invalidation must
+The caller must supply every retiring output generation and keep the list
+stable under its display and provider locks throughout the call. Authority invalidation must
 either cancel the ticket or participate in that same caller-owned locking. The
 caller must not hold a lock needed for predecessor completion across the waits.
 The helper does not infer source generations from framebuffer pointers. Its returned
@@ -299,9 +325,10 @@ old source use.
 
 Transactions without preparation retain ordinary helper behavior. The separate
 prepared-swap entry point leaves guard ownership and completion waits to its
-caller. No file adapter, scope-validation implementation or pixel-export
-interface is supplied by that entry point. Those pieces are required before
-enabling delegated capture.
+caller. The entry point checks the supplied generations, but does not derive
+them from the expanded atomic update or authenticate the submitting file.
+Those provider and issuer adapters are required before enabling delegated
+capture; no pixel-export interface is supplied here.
 
 Native tests call the real swap helper with isolated state records. They
 interrupt each predecessor class and check controllers, connectors, planes,
@@ -329,10 +356,12 @@ Preparation owned by the transaction
 
 A driver using the shared atomic commit helpers can attach a ticket with
 ``drm_atomic_commit_prepare()`` instead of retaining a separate attempt beside
-the transaction. The call reserves one attempt and allocates its owner before
+the transaction. A mandatory observer supplies the complete output-generation
+list at installation, under the caller's display and provider locks. The call
+reserves one attempt and allocates its owner before
 installation. It may fail without changing the transaction. Attaching a second
-reservation is rejected; a caller rebuilding its scope must clear the old
-transaction and construct a new one.
+reservation is rejected; a caller changing the retiring outputs must clear the
+old transaction and construct a new one.
 
 The ordinary swap helper consumes attached preparation at the same serialized
 installation decision described above. Until installation succeeds, cancellation
@@ -361,7 +390,7 @@ updates.
 
 These operations manage ownership, not display policy. The caller must still
 validate every retiring source generation and its authority, and keep that
-scope stable through installation. No ioctl or source-export facility is
+selection stable through installation. No ioctl or source-export facility is
 enabled merely by adding a transaction owner. The native tests use a custom
 object-clear callback and submitted test fences to check lifetime and wait
 ordering; they do not qualify a physical GPU or a complete capture provider.
