@@ -965,6 +965,8 @@ out:
 	return ret;
 }
 
+EXPORT_SYMBOL_FOR_TESTS_ONLY(drm_mode_setcrtc);
+
 int drm_mode_crtc_set_obj_prop(struct drm_mode_object *obj,
 			       struct drm_property *property,
 			       uint64_t value)
