@@ -2,7 +2,7 @@
 
 //! Cancelable request ownership above source admission accounting.
 
-use super::RetirementSet;
+use super::Source;
 use crate::{
     error::{
         from_err_ptr,
@@ -16,6 +16,26 @@ use crate::{
     types::Opaque, //
 };
 use core::ptr::NonNull;
+
+/// One output's accepted source generation, borrowed for ticket construction.
+///
+/// The provider supplies a fresh source for every accepted use, including same-framebuffer
+/// updates and blank outputs, and holds display locks while collecting the complete list.
+#[derive(Clone, Copy)]
+pub struct OutputGeneration<'a> {
+    crtc_id: core::num::NonZeroU32,
+    source: &'a Source,
+}
+
+impl<'a> OutputGeneration<'a> {
+    /// Describe an output without granting display authority or pixel access.
+    pub fn new(crtc_id: u32, source: &'a Source) -> Result<Self> {
+        Ok(Self {
+            crtc_id: core::num::NonZeroU32::new(crtc_id).ok_or(EINVAL)?,
+            source,
+        })
+    }
+}
 
 /// An observation of submission preparation, independent of native GPU completion.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,12 +52,13 @@ pub enum TicketStatus {
     Failed,
 }
 
-/// A shared, explicitly cancelable owner of a source retirement set.
+/// A shared, explicitly cancelable preparation request for exact output generations.
 ///
 /// Dropping a reference is not cancellation. A transport or authority owner must call
 /// [`Self::cancel`] at its specified lifetime boundary. Cancellation cannot release ownership
 /// retained by an active attempt or accepted display update. The ticket does not authenticate
-/// callers, validate display scope or grant pixel access. All operations may sleep.
+/// callers or grant pixel access. Native acceptance compares the complete observed output
+/// generations with the captured list. All operations may sleep.
 ///
 /// # Invariants
 ///
@@ -68,13 +89,30 @@ impl Ticket {
         self.0.get()
     }
 
-    /// Retain a set independently of the caller's original ownership.
+    /// Capture output generations and hold admission for their sources.
     ///
     /// Read claims may still be pending. Ticket construction does not establish readiness or
     /// wait for completion; reservation checks that condition before creating an attempt.
-    pub fn new(set: &RetirementSet) -> Result<ARef<Self>> {
-        // SAFETY: The borrowed set remains initialized throughout native reference acquisition.
-        let ticket = from_err_ptr(unsafe { bindings::drm_prepare_ticket_create(set.as_raw()) })?;
+    /// IDs must be unique and sources must share an admission domain. An empty list matches
+    /// only a transaction retiring no outputs; it is not a wildcard. The caller stabilizes
+    /// the complete list with its display locks during construction.
+    pub fn new(outputs: &[OutputGeneration<'_>]) -> Result<ARef<Self>> {
+        let mut entries = [bindings::drm_prepare_output_generation {
+            crtc_id: 0,
+            source: core::ptr::null_mut(),
+        }; bindings::DRM_PREPARE_MAX_OUTPUTS as usize];
+        if outputs.len() > entries.len() {
+            return Err(E2BIG);
+        }
+        for (entry, output) in entries.iter_mut().zip(outputs) {
+            entry.crtc_id = output.crtc_id.get();
+            entry.source = output.source.0.get();
+        }
+        // SAFETY: Entries borrow initialized sources throughout native construction, which
+        // copies the list and takes independent source references and admission holds.
+        let ticket = from_err_ptr(unsafe {
+            bindings::drm_prepare_ticket_create(entries.as_ptr(), outputs.len() as u32)
+        })?;
         // SAFETY: Successful creation transfers a non-null initialized native reference.
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(ticket.cast())) })
     }
@@ -90,7 +128,7 @@ impl Ticket {
     /// Observe ticket status without waiting for read claims or native GPU completion.
     ///
     /// The query may sleep while taking internal locks. It neither reserves an attempt nor
-    /// authenticates display scope. Cancellation or consumption can follow the observation;
+    /// validates output generations. Cancellation or consumption can follow the observation;
     /// even [`TicketStatus::Ready`] requires [`Self::reserve`] to recheck availability.
     pub fn status(&self) -> TicketStatus {
         // SAFETY: The shared reference retains the initialized ticket during the query.

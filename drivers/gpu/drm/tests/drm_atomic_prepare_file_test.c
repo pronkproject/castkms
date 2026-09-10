@@ -8,6 +8,7 @@
 #include <linux/poll.h>
 #include <linux/uaccess.h>
 #include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_file.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <uapi/drm/drm_prepare.h>
@@ -17,6 +18,7 @@ struct ticket_file_fixture {
 	struct drm_prepare_source *source;
 	struct drm_prepare_read_claim *read;
 	struct drm_prepare_ticket *ticket;
+	struct drm_prepare_output_generation output;
 };
 
 static void free_fixture(void *data)
@@ -40,7 +42,6 @@ static struct file *new_file(struct kunit *test, struct ticket_file_fixture **fi
 			     bool pending)
 {
 	struct ticket_file_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
-	struct drm_prepare_retirement_set *set;
 	struct drm_prepare_ticket *ticket;
 	struct file *file;
 
@@ -54,10 +55,8 @@ static struct file *new_file(struct kunit *test, struct ticket_file_fixture **fi
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
 		f->read = read;
 	}
-	set = drm_prepare_retirement_set_create(&f->source, 1);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
-	ticket = drm_prepare_ticket_create(set);
-	drm_prepare_retirement_set_put(set);
+	f->output = (struct drm_prepare_output_generation) { .crtc_id = 1, .source = f->source };
+	ticket = drm_prepare_ticket_create(&f->output, 1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
 	f->ticket = ticket;
 	file = drm_prepare_ticket_file_create(ticket);
@@ -138,7 +137,7 @@ static void closing_consumed_file_preserves_accepted_guard(struct kunit *test)
 	int ret;
 
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, attempt);
-	ret = drm_prepare_attempt_commit(attempt, accept, NULL, &guard);
+	ret = drm_prepare_attempt_commit(attempt, &f->output, 1, accept, NULL, &guard);
 	drm_prepare_attempt_destroy(attempt);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLHUP);
@@ -212,7 +211,7 @@ static void query_observes_status_without_consumption(struct kunit *test)
 	attempt = drm_prepare_ticket_reserve(f->ticket);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, attempt);
 	expect_query(test, file, address, DRM_PREPARE_READY);
-	ret = drm_prepare_attempt_commit(attempt, accept, NULL, &guard);
+	ret = drm_prepare_attempt_commit(attempt, &f->output, 1, accept, NULL, &guard);
 	drm_prepare_attempt_destroy(attempt);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	drm_prepare_retirement_guard_destroy(guard);

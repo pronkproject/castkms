@@ -37,7 +37,7 @@ drm-y := \
 	drm_atomic_prepare.o \
 	drm_atomic_prepare_wait.o \
 	drm_atomic_prepare_set.o \
-	drm_atomic_prepare_scope.o \
+	drm_atomic_prepare_outputs.o \
 	drm_atomic_prepare_guard.o \
 	drm_atomic_prepare_ticket.o \
 	drm_atomic_prepare_owner.o \

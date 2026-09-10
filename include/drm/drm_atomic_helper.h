@@ -35,6 +35,7 @@
 #include <drm/drm_util.h>
 
 struct drm_prepare_attempt;
+struct drm_prepare_output_generation;
 struct drm_prepare_retirement_guard;
 
 /*
@@ -142,6 +143,8 @@ int __must_check drm_atomic_helper_swap_state(struct drm_atomic_commit *state,
 int __must_check
 drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool stall,
 				    struct drm_prepare_attempt *attempt,
+				    const struct drm_prepare_output_generation *outputs,
+				    unsigned int count,
 				    struct drm_prepare_retirement_guard **guard);
 
 /* nonblocking commit helpers */

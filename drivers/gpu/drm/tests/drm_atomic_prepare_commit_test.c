@@ -8,7 +8,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_commit.h>
-#include <drm/drm_atomic_prepare_scope.h>
+#include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_device.h>
 #include <kunit/test.h>
@@ -25,10 +25,13 @@ struct prepare_commit_fixture {
 	bool admission_held_at_clear;
 	bool completed_at_clear;
 	bool clear_in_worker;
-	struct drm_prepare_scope_entry observed;
+	struct drm_prepare_output_generation observed;
 	int observation_count;
 	unsigned int observations;
 };
+
+static int observe_outputs(struct drm_atomic_commit *state,
+			 struct drm_prepare_output_generation *entries, unsigned int capacity);
 
 static void clear_objects(struct drm_atomic_commit *state)
 {
@@ -72,7 +75,6 @@ static void free_fixture(void *data)
 static struct prepare_commit_fixture *new_fixture(struct kunit *test, bool submitted)
 {
 	struct prepare_commit_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
-	struct drm_prepare_retirement_set *set;
 	struct drm_prepare_read_claim *read;
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
@@ -92,10 +94,9 @@ static struct prepare_commit_fixture *new_fixture(struct kunit *test, bool submi
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
 		drm_prepare_read_release(read, f->fence);
 	}
-	set = drm_prepare_retirement_set_create(&f->source, 1);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
-	f->ticket = drm_prepare_ticket_create(set);
-	drm_prepare_retirement_set_put(set);
+	f->observed = (struct drm_prepare_output_generation) { .crtc_id = 1, .source = f->source };
+	f->observation_count = 1;
+	f->ticket = drm_prepare_ticket_create(&f->observed, 1);
 	if (IS_ERR(f->ticket)) {
 		int error = PTR_ERR(f->ticket);
 
@@ -119,12 +120,13 @@ static void clearing_unaccepted_transaction_allows_retry(struct kunit *test)
 	struct prepare_commit_fixture *f = new_fixture(test, false);
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), 0);
-	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), -EBUSY);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs), 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs),
+			-EBUSY);
 	drm_atomic_commit_clear(&f->state);
 	KUNIT_EXPECT_PTR_EQ(test, f->state.preparation, NULL);
 	KUNIT_EXPECT_TRUE(test, f->admission_held_at_clear);
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs), 0);
 	drm_prepare_ticket_cancel(f->ticket);
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ECANCELED);
 	drm_atomic_commit_clear(&f->state);
@@ -137,7 +139,7 @@ static void accepted_transaction_holds_admission_through_object_cleanup(struct k
 	struct prepare_commit_fixture *f = new_fixture(test, false);
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs), 0);
 	KUNIT_ASSERT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EALREADY);
 	drm_prepare_ticket_cancel(f->ticket);
@@ -177,7 +179,7 @@ static void check_native_wait(struct kunit *test, bool clear, bool error)
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	f->clear_in_worker = clear;
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs), 0);
 	KUNIT_ASSERT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
 	worker = kthread_run(wait_worker, f, "drm-prepare-commit");
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, worker);
@@ -216,10 +218,11 @@ static void async_update_does_not_bypass_preparation(struct kunit *test)
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	f->state.async_update = true;
-	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs),
+			-EOPNOTSUPP);
 	KUNIT_EXPECT_PTR_EQ(test, f->state.preparation, NULL);
 	f->state.async_update = false;
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs), 0);
 	f->state.async_update = true;
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_commit(&f->dev, &f->state, false), -EOPNOTSUPP);
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EOPNOTSUPP);
@@ -227,8 +230,8 @@ static void async_update_does_not_bypass_preparation(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
 }
 
-static int observe_scope(struct drm_atomic_commit *state,
-			 struct drm_prepare_scope_entry *entries,
+static int observe_outputs(struct drm_atomic_commit *state,
+			 struct drm_prepare_output_generation *entries,
 			 unsigned int capacity)
 {
 	struct prepare_commit_fixture *f = container_of(state, typeof(*f), state);
@@ -239,34 +242,34 @@ static int observe_scope(struct drm_atomic_commit *state,
 	return f->observation_count;
 }
 
-static void observe_final_scope_before_acceptance(struct kunit *test)
+static void observe_final_outputs_before_acceptance(struct kunit *test)
 {
 	struct prepare_commit_fixture *f = new_fixture(test, false);
-	struct drm_prepare_scope_entry entry;
+	struct drm_prepare_output_generation entry;
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	drm_prepare_ticket_put(f->ticket);
-	entry = (struct drm_prepare_scope_entry) { .crtc_id = 1, .source = f->source };
-	f->ticket = drm_prepare_ticket_create_scoped(&entry, 1);
+	entry = (struct drm_prepare_output_generation) { .crtc_id = 1, .source = f->source };
+	f->ticket = drm_prepare_ticket_create(&entry, 1);
 	if (IS_ERR(f->ticket)) {
 		f->ticket = NULL;
-		KUNIT_FAIL(test, "scoped ticket allocation failed");
+		KUNIT_FAIL(test, "ticket allocation failed");
 		return;
 	}
 	f->observed = entry;
 	f->observation_count = 1;
-	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare_scoped(&f->state, f->ticket, NULL),
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, NULL),
 			-EINVAL);
 	KUNIT_EXPECT_PTR_EQ(test, f->state.preparation, NULL);
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare_scoped(&f->state, f->ticket,
-							    observe_scope), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket,
+							    observe_outputs), 0);
 	KUNIT_EXPECT_EQ(test, f->observations, 0);
 	f->observed.crtc_id = 2;
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ESTALE);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_READY);
 	f->observation_count = -EACCES;
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EACCES);
-	f->observation_count = DRM_PREPARE_SCOPE_MAX_OUTPUTS + 1;
+	f->observation_count = DRM_PREPARE_MAX_OUTPUTS + 1;
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -E2BIG);
 	f->observation_count = 0;
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ESTALE);
@@ -282,16 +285,18 @@ static void observe_final_scope_before_acceptance(struct kunit *test)
 	expect_open(test, f);
 }
 
-static void scope_observer_does_not_authorize_unscoped_ticket(struct kunit *test)
+static void missing_outputs_prevent_installation(struct kunit *test)
 {
 	struct prepare_commit_fixture *f = new_fixture(test, false);
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare_scoped(&f->state, f->ticket,
-							    observe_scope), 0);
-	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EINVAL);
+	f->observation_count = 0;
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket,
+							    observe_outputs), 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -ESTALE);
 	drm_atomic_commit_clear(&f->state);
-	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket), 0);
+	f->observation_count = 1;
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(&f->state, f->ticket, observe_outputs), 0);
 	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), 0);
 }
 
@@ -301,8 +306,8 @@ static struct kunit_case prepare_commit_cases[] = {
 	KUNIT_CASE(commit_dependencies_wait_for_submitted_readers),
 	KUNIT_CASE(object_cleanup_waits_for_failed_native_completion),
 	KUNIT_CASE(async_update_does_not_bypass_preparation),
-	KUNIT_CASE(observe_final_scope_before_acceptance),
-	KUNIT_CASE(scope_observer_does_not_authorize_unscoped_ticket),
+	KUNIT_CASE(observe_final_outputs_before_acceptance),
+	KUNIT_CASE(missing_outputs_prevent_installation),
 	{}
 };
 
