@@ -153,8 +153,24 @@ static void client_commit_waits_for_reader(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 1);
 }
 
+static void client_check_leaves_reader_pending(struct kunit *test)
+{
+	struct client_fixture *f = new_client(test);
+	struct drm_crtc_state *before = f->crtc->state;
+	struct drm_prepare_read_claim *another;
+
+	KUNIT_EXPECT_EQ(test, drm_client_modeset_check(&f->client), 0);
+	KUNIT_EXPECT_EQ(test, f->checks, 1);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+	another = drm_prepare_source_claim(f->source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, another);
+	drm_prepare_read_release(another, NULL);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(client_commit_waits_for_reader),
+	KUNIT_CASE(client_check_leaves_reader_pending),
 	{}
 };
 
