@@ -125,6 +125,24 @@ int drm_prepare_ticket_ready(struct drm_prepare_ticket *ticket)
 }
 EXPORT_SYMBOL_GPL(drm_prepare_ticket_ready);
 
+enum drm_prepare_ticket_status
+drm_prepare_ticket_status(struct drm_prepare_ticket *ticket)
+{
+	switch (drm_prepare_ticket_ready(ticket)) {
+	case 0:
+		return DRM_PREPARE_TICKET_READY;
+	case -EAGAIN:
+		return DRM_PREPARE_TICKET_PENDING;
+	case -EALREADY:
+		return DRM_PREPARE_TICKET_CONSUMED;
+	case -ECANCELED:
+		return DRM_PREPARE_TICKET_CANCELED;
+	default:
+		return DRM_PREPARE_TICKET_FAILED;
+	}
+}
+EXPORT_SYMBOL_GPL(drm_prepare_ticket_status);
+
 struct ticket_wait {
 	struct drm_prepare_ticket *ticket;
 	struct drm_prepare_retirement_set *set;
