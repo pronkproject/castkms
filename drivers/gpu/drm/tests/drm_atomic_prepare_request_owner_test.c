@@ -10,6 +10,7 @@
 #include <kunit/test.h>
 #include <linux/completion.h>
 #include <linux/kthread.h>
+#include <linux/sched/signal.h>
 
 struct owner_request_fixture {
 	struct drm_device *dev;
@@ -241,6 +242,69 @@ static void owned_request_requires_an_issuer(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
+struct locked_request {
+	struct owner_request_fixture *display;
+	struct task_struct *worker;
+	struct completion locked;
+	struct completion release;
+	int lock_error;
+};
+
+static int hold_request_lock(void *data)
+{
+	struct locked_request *f = data;
+
+	f->lock_error = drm_modeset_lock(&f->display->crtc->mutex, NULL);
+	complete(&f->locked);
+	/* Bound the wait so an uninterruptible request reports a test failure. */
+	wait_for_completion_timeout(&f->release, HZ);
+	if (!f->lock_error)
+		drm_modeset_unlock(&f->display->crtc->mutex);
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	__set_current_state(TASK_RUNNING);
+	return 0;
+}
+
+static void stop_lock_holder(void *data)
+{
+	struct locked_request *f = data;
+
+	complete_all(&f->release);
+	kthread_stop(f->worker);
+}
+
+static void owned_request_lock_wait_is_interruptible(struct kunit *test)
+{
+	struct owner_request_fixture *display = new_request(test, true);
+	struct locked_request *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
+	int signal_error, ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	f->display = display;
+	init_completion(&f->locked);
+	init_completion(&f->release);
+	f->worker = kthread_run(hold_request_lock, f, "drm-request-lock");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->worker);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, stop_lock_holder, f), 0);
+	KUNIT_ASSERT_NE(test, wait_for_completion_timeout(&f->locked, HZ), 0);
+	KUNIT_ASSERT_EQ(test, f->lock_error, 0);
+	allow_signal(SIGUSR1);
+	signal_error = send_sig(SIGUSR1, current, 0);
+	ret = drm_atomic_commit_request_owned(display->dev, display->owner,
+					      build_request, display);
+	flush_signals(current);
+	disallow_signal(SIGUSR1);
+	complete_all(&f->release);
+	KUNIT_EXPECT_EQ(test, signal_error, 0);
+	KUNIT_EXPECT_EQ(test, ret, -EINTR);
+	KUNIT_EXPECT_EQ(test, display->checks, 0);
+	KUNIT_EXPECT_EQ(test, display->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(owned_request_rebuilds_after_reader_release),
 	KUNIT_CASE(revoked_issuer_cannot_install_request),
@@ -248,6 +312,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(issuer_revocation_excludes_reserved_installation),
 	KUNIT_CASE(owned_request_requires_preparation_support),
 	KUNIT_CASE(owned_request_requires_an_issuer),
+	KUNIT_CASE(owned_request_lock_wait_is_interruptible),
 	{}
 };
 
