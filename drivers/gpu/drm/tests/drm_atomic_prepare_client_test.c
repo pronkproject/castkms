@@ -22,6 +22,7 @@ struct client_fixture {
 	unsigned int checks;
 	unsigned int installs;
 	int worker_error;
+	bool abandon;
 };
 
 static int check_client(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -114,7 +115,10 @@ static int release_reader(void *data)
 	wait_for_completion(&f->checked);
 	drm_modeset_acquire_init(&ctx, 0);
 	f->worker_error = drm_modeset_lock(&f->crtc->mutex, &ctx);
-	drm_prepare_read_release(f->read, NULL);
+	if (f->abandon)
+		drm_prepare_read_abandon(f->read);
+	else
+		drm_prepare_read_release(f->read, NULL);
 	f->read = NULL;
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
@@ -181,10 +185,25 @@ static void client_power_off_waits_for_reader(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
 }
 
+static void client_commit_rejects_failed_preparation(struct kunit *test)
+{
+	struct client_fixture *f = new_client(test);
+	struct drm_crtc_state *before = f->crtc->state;
+
+	f->abandon = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_client_modeset_commit(&f->client), -EIO);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(client_commit_waits_for_reader),
 	KUNIT_CASE(client_check_leaves_reader_pending),
 	KUNIT_CASE(client_power_off_waits_for_reader),
+	KUNIT_CASE(client_commit_rejects_failed_preparation),
 	{}
 };
 
