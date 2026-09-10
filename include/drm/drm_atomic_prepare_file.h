@@ -19,7 +19,7 @@ struct file;
  * DRM_IOCTL_PREPARE_QUERY returns the native ticket status as a UAPI value.
  * No pixel, modesetting or descriptor-installation API is exposed.
  * The eventual issuer must reserve descriptors with O_CLOEXEC and finish fallible
- * setup before publication. Issuing a file does not validate the ticket's scope.
+ * setup before publication. Issuing a file does not validate output generations.
  */
 struct file *drm_prepare_ticket_file_create(struct drm_prepare_ticket *ticket);
 

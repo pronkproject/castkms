@@ -4,7 +4,7 @@
 
 struct drm_atomic_commit;
 struct drm_prepare_ticket;
-struct drm_prepare_scope_entry;
+struct drm_prepare_output_generation;
 
 /*
  * Observe every output retired by the final transaction, including outputs added
@@ -14,28 +14,23 @@ struct drm_prepare_scope_entry;
  * Observation runs at installation, not reservation, and must not change state.
  */
 typedef int (*drm_atomic_prepare_observe_fn)(struct drm_atomic_commit *state,
-					   struct drm_prepare_scope_entry *entries,
+					   struct drm_prepare_output_generation *entries,
 					   unsigned int capacity);
 
 /*
  * Reserve preparation for an exclusively owned, unaccepted atomic transaction.
- * The caller validates complete source scope and authority and stabilizes them
+ * The caller stabilizes all retiring output generations and current authority
  * through installation, as required by drm_atomic_helper_swap_state_prepared().
- * Reservation does not authenticate scope or freeze the transaction contents.
+ * Reservation does not validate output generations or freeze transaction contents.
  * Failure leaves the transaction unchanged. Async plane updates are unsupported.
  * Clearing the transaction abandons its reservation without canceling the ticket.
- */
-int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
-			     struct drm_prepare_ticket *ticket);
-
-/*
- * Reserve a scoped ticket using a provider's observation of the final transaction.
- * A scoped ticket requires this entry point; the unscoped path cannot accept it.
+ *
+ * Every ticket requires a provider's observation of the final output generations.
  * The caller separately authenticates the device and continuous caller authority
  * and holds the required display locks through installation. The callback has
  * static lifetime. Clearing the transaction drops it along with the reservation.
  */
-int drm_atomic_commit_prepare_scoped(struct drm_atomic_commit *state,
+int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
 				    struct drm_prepare_ticket *ticket,
 				    drm_atomic_prepare_observe_fn observe);
 

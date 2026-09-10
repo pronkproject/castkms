@@ -7,7 +7,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_commit.h>
-#include <drm/drm_atomic_prepare_scope.h>
+#include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 
 struct drm_atomic_preparation {
@@ -16,13 +16,15 @@ struct drm_atomic_preparation {
 	drm_atomic_prepare_observe_fn observe;
 };
 
-static int commit_prepare(struct drm_atomic_commit *state,
-			  struct drm_prepare_ticket *ticket,
-			  drm_atomic_prepare_observe_fn observe)
+int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
+			     struct drm_prepare_ticket *ticket,
+			     drm_atomic_prepare_observe_fn observe)
 {
 	struct drm_atomic_preparation *preparation;
 	struct drm_prepare_attempt *attempt;
 
+	if (!observe)
+		return -EINVAL;
 	if (state->preparation)
 		return -EBUSY;
 	if (state->async_update)
@@ -41,29 +43,13 @@ static int commit_prepare(struct drm_atomic_commit *state,
 	state->preparation = preparation;
 	return 0;
 }
-
-int drm_atomic_commit_prepare(struct drm_atomic_commit *state,
-			     struct drm_prepare_ticket *ticket)
-{
-	return commit_prepare(state, ticket, NULL);
-}
 EXPORT_SYMBOL_GPL(drm_atomic_commit_prepare);
 
-int drm_atomic_commit_prepare_scoped(struct drm_atomic_commit *state,
-				    struct drm_prepare_ticket *ticket,
-				    drm_atomic_prepare_observe_fn observe)
-{
-	if (!observe)
-		return -EINVAL;
-	return commit_prepare(state, ticket, observe);
-}
-EXPORT_SYMBOL_GPL(drm_atomic_commit_prepare_scoped);
-
-static int install_scoped(struct drm_atomic_commit *state,
-			  int (*install)(void *data))
+static int install_matching_outputs(struct drm_atomic_commit *state,
+				    int (*install)(void *data))
 {
 	struct drm_atomic_preparation *preparation = state->preparation;
-	struct drm_prepare_scope_entry entries[DRM_PREPARE_SCOPE_MAX_OUTPUTS];
+	struct drm_prepare_output_generation entries[DRM_PREPARE_MAX_OUTPUTS];
 	int count;
 
 	count = preparation->observe(state, entries, ARRAY_SIZE(entries));
@@ -71,8 +57,8 @@ static int install_scoped(struct drm_atomic_commit *state,
 		return count;
 	if (count > ARRAY_SIZE(entries))
 		return -E2BIG;
-	return drm_prepare_attempt_commit_scoped(preparation->attempt, entries, count,
-						install, state, &preparation->guard);
+	return drm_prepare_attempt_commit(preparation->attempt, entries, count,
+					  install, state, &preparation->guard);
 }
 
 int drm_atomic_commit_preparation_install(struct drm_atomic_commit *state,
@@ -88,11 +74,7 @@ int drm_atomic_commit_preparation_install(struct drm_atomic_commit *state,
 	if (state->async_update)
 		return -EOPNOTSUPP;
 
-	if (preparation->observe)
-		ret = install_scoped(state, install);
-	else
-		ret = drm_prepare_attempt_commit(preparation->attempt, install, state,
-						 &preparation->guard);
+	ret = install_matching_outputs(state, install);
 	if (ret)
 		return ret;
 	drm_prepare_attempt_destroy(preparation->attempt);

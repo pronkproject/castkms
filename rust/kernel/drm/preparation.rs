@@ -29,6 +29,7 @@ pub use self::{
     },
     ticket::{
         Attempt,
+        OutputGeneration,
         Ticket,
         TicketStatus, //
     }, //

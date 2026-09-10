@@ -3385,8 +3385,9 @@ static int install_prepared_state(void *data)
  * don't pass the right state structures to the callbacks.
  *
  * Attached preparation is consumed at installation under its cancellation lock.
- * The caller must stabilize the complete source scope and authority according to
- * drm_atomic_commit_prepare(). The transaction retains the accepted guard.
+ * The caller must stabilize all retiring output generations and authority as
+ * required by drm_atomic_commit_prepare(). The transaction retains the accepted
+ * guard.
  *
  * Returns:
  * Returns 0 on success. Can return -ERESTARTSYS when @stall is true and the
@@ -3411,15 +3412,18 @@ EXPORT_SYMBOL(drm_atomic_helper_swap_state);
  * drm_atomic_helper_swap_state_prepared - install state with reserved preparation
  * @state: validated atomic state
  * @stall: stall for preceding commits, as in drm_atomic_helper_swap_state()
- * @attempt: exclusively owned reservation for the complete retiring scope
+ * @attempt: exclusively owned reservation for all retiring output generations
+ * @outputs: Complete observed output generations, stable through installation
+ * @count: Number of observed outputs
  * @guard: output for transferred retirement ownership; untouched on error
  *
- * The caller has validated the attempt's source generations and authority and
- * holds all modeset and provider locks needed to keep that scope stable through
- * installation. No caller-held lock may be needed by predecessor completion.
- * Those locks must precede the ticket mutex. Authority invalidation
+ * The caller supplies every retiring output generation, validates its authority,
+ * and holds all modeset and provider locks needed to keep the observed generations
+ * stable through installation. No caller-held lock may be needed by predecessor
+ * completion. Those locks must precede the ticket mutex. Authority invalidation
  * must cancel the ticket or use the same caller-held serialization. The helper
- * does not infer scope from framebuffer identity or authenticate the caller.
+ * compares the supplied generations with the ticket's captured list; it does not
+ * derive them from framebuffer identity or authenticate the caller.
  *
  * Predecessor waits happen before acquiring the ticket mutex. Cancellation then
  * rejects the update before any object state is installed. Success installs all
@@ -3439,6 +3443,8 @@ EXPORT_SYMBOL(drm_atomic_helper_swap_state);
  */
 int drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool stall,
 					struct drm_prepare_attempt *attempt,
+					const struct drm_prepare_output_generation *outputs,
+					unsigned int count,
 					struct drm_prepare_retirement_guard **guard)
 {
 	int ret;
@@ -3452,7 +3458,8 @@ int drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool 
 		if (ret)
 			return ret;
 	}
-	return drm_prepare_attempt_commit(attempt, install_prepared_state, state, guard);
+	return drm_prepare_attempt_commit(attempt, outputs, count, install_prepared_state,
+					  state, guard);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_helper_swap_state_prepared);
 

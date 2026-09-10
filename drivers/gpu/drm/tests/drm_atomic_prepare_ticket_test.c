@@ -7,6 +7,7 @@
 #include <linux/sched.h>
 #include <linux/sched/signal.h>
 #include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <kunit/test.h>
 
@@ -14,6 +15,7 @@ struct ticket_fixture {
 	struct drm_prepare_source *source;
 	struct drm_prepare_ticket *ticket;
 	struct drm_prepare_read_claim *read;
+	struct drm_prepare_output_generation output;
 };
 
 static void free_fixture(void *data)
@@ -31,7 +33,6 @@ static void free_fixture(void *data)
 static struct ticket_fixture *new_fixture_full(struct kunit *test, bool pending)
 {
 	struct ticket_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
-	struct drm_prepare_retirement_set *set;
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	f->source = drm_prepare_source_create(1);
@@ -43,10 +44,8 @@ static struct ticket_fixture *new_fixture_full(struct kunit *test, bool pending)
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
 		f->read = read;
 	}
-	set = drm_prepare_retirement_set_create(&f->source, 1);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
-	f->ticket = drm_prepare_ticket_create(set);
-	drm_prepare_retirement_set_put(set);
+	f->output = (struct drm_prepare_output_generation) { .crtc_id = 1, .source = f->source };
+	f->ticket = drm_prepare_ticket_create(&f->output, 1);
 	if (IS_ERR(f->ticket)) {
 		int error = PTR_ERR(f->ticket);
 
@@ -108,13 +107,15 @@ static void failed_attempt_leaves_ticket_retryable(struct kunit *test)
 	unsigned int installed = 0;
 
 	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_ticket_reserve(f->ticket)), -EBUSY);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, reject_install, NULL, &guard),
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, &f->output, 1,
+						 reject_install, NULL, &guard),
 			-ESTALE);
 	KUNIT_EXPECT_PTR_EQ(test, guard, ERR_PTR(-ENOENT));
 	kunit_release_action(test, destroy_attempt, attempt);
 	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_source_claim(f->source)), -EBUSY);
 	attempt = reserve(test, f);
-	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit(attempt, count_install, &installed,
+	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit(attempt, &f->output, 1,
+						 count_install, &installed,
 						       &guard), 0);
 	KUNIT_EXPECT_EQ(test, installed, 1);
 	kunit_release_action(test, destroy_attempt, attempt);
@@ -133,7 +134,8 @@ static void cancellation_preserves_attempt_admission(struct kunit *test)
 
 	drm_prepare_ticket_cancel(f->ticket);
 	drm_prepare_ticket_cancel(f->ticket);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, count_install, &installed,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, &f->output, 1,
+						 count_install, &installed,
 						       &guard), -ECANCELED);
 	KUNIT_EXPECT_EQ(test, installed, 0);
 	KUNIT_EXPECT_PTR_EQ(test, guard, ERR_PTR(-ENOENT));
@@ -150,10 +152,12 @@ static void acceptance_consumes_once(struct kunit *test)
 	struct drm_prepare_retirement_guard *guard, *untouched = ERR_PTR(-ENOENT);
 	unsigned int installed = 0;
 
-	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit(attempt, count_install, &installed,
+	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit(attempt, &f->output, 1,
+						 count_install, &installed,
 						       &guard), 0);
 	drm_prepare_ticket_cancel(f->ticket);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, count_install, &installed,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, &f->output, 1,
+						 count_install, &installed,
 						       &untouched), -EALREADY);
 	KUNIT_EXPECT_PTR_EQ(test, untouched, ERR_PTR(-ENOENT));
 	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_ticket_reserve(f->ticket)), -EALREADY);
@@ -201,7 +205,9 @@ static void cancellation_races_one_installation_decision(struct kunit *test)
 		worker = kthread_run(cancel_worker, &race, "drm-ticket-cancel");
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, worker);
 		complete(&race.start);
-		result = drm_prepare_attempt_commit(attempt, count_install, &installed, &guard);
+		result = drm_prepare_attempt_commit(attempt, &f->output, 1,
+						 count_install, &installed,
+						    &guard);
 		canceled = wait_for_completion_timeout(&race.canceled, HZ);
 		kthread_stop(worker);
 		KUNIT_EXPECT_NE(test, canceled, 0);
@@ -320,20 +326,17 @@ static void interrupted_ticket_wait_keeps_request_live(struct kunit *test)
 static void ticket_wait_observes_consumption_and_empty_scope(struct kunit *test)
 {
 	struct ticket_fixture *f = new_fixture(test);
-	struct drm_prepare_retirement_set *empty;
 	struct drm_prepare_ticket *ticket;
 	struct drm_prepare_attempt *attempt = reserve(test, f);
 	struct drm_prepare_retirement_guard *guard;
 	unsigned int installed = 0;
 
-	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit(attempt, count_install, &installed,
+	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit(attempt, &f->output, 1,
+						 count_install, &installed,
 						       &guard), 0);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_wait(f->ticket), -EALREADY);
 	drm_prepare_retirement_guard_destroy(guard);
-	empty = drm_prepare_retirement_set_create(NULL, 0);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, empty);
-	ticket = drm_prepare_ticket_create(empty);
-	drm_prepare_retirement_set_put(empty);
+	ticket = drm_prepare_ticket_create(NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_wait(ticket), 0);
 	drm_prepare_ticket_cancel(ticket);
@@ -350,15 +353,11 @@ static void cancellation_does_not_cancel_another_ticket_in_the_domain(struct kun
 {
 	struct ticket_fixture *f = new_fixture_full(test, true);
 	struct ticket_fixture peer = {};
-	struct drm_prepare_retirement_set *set;
 	struct task_struct *worker;
 	struct ticket_wait wait;
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
-	set = drm_prepare_retirement_set_create(&f->source, 1);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
-	peer.ticket = drm_prepare_ticket_create(set);
-	drm_prepare_retirement_set_put(set);
+	peer.ticket = drm_prepare_ticket_create(&f->output, 1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, peer.ticket);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_ticket, peer.ticket), 0);
 	worker = start_ticket_wait(test, &peer, &wait);
@@ -421,15 +420,12 @@ static void registered_observer_receives_claim_release(struct kunit *test)
 
 static void empty_ticket_notifies_terminal_state(struct kunit *test)
 {
-	struct drm_prepare_retirement_set *set = drm_prepare_retirement_set_create(NULL, 0);
 	struct drm_prepare_ticket *ticket;
 	wait_queue_head_t *queue;
 	wait_queue_entry_t entry;
 	unsigned int notifications = 0;
 
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
-	ticket = drm_prepare_ticket_create(set);
-	drm_prepare_retirement_set_put(set);
+	ticket = drm_prepare_ticket_create(NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
 	queue = drm_prepare_ticket_waitqueue(ticket);
 	init_waitqueue_func_entry(&entry, record_notification);

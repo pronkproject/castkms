@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::drm::preparation::{
+    OutputGeneration,
     RetirementSet,
     Source, //
 };
@@ -20,7 +21,7 @@ mod cases {
     fn file_cancellation_is_independent_of_kernel_ticket_references() -> Result {
         let source = Source::new(1)?;
         let set = RetirementSet::new(&[source.clone()])?;
-        let ticket = Ticket::new(&set)?;
+        let ticket = Ticket::new(&[OutputGeneration::new(1, &source)?])?;
         drop(set);
         let file = ticket.create_file()?;
         let retained = Ticket::from_file(&file)?;
@@ -38,7 +39,7 @@ mod cases {
     fn file_close_does_not_release_an_active_attempt() -> Result {
         let source = Source::new(1)?;
         let set = RetirementSet::new(&[source.clone()])?;
-        let ticket = Ticket::new(&set)?;
+        let ticket = Ticket::new(&[OutputGeneration::new(1, &source)?])?;
         drop(set);
         let file = ticket.create_file()?;
         let attempt = ticket.reserve()?;

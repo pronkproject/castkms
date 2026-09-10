@@ -4,7 +4,7 @@
 #include <linux/module.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_owner.h>
-#include <drm/drm_atomic_prepare_scope.h>
+#include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <kunit/test.h>
 
@@ -39,7 +39,7 @@ static struct drm_prepare_owner *new_owner(struct kunit *test, unsigned int limi
 }
 
 static struct drm_prepare_ticket *new_ticket(struct kunit *test, struct drm_prepare_owner *owner,
-					    const struct drm_prepare_scope_entry *entry)
+					    const struct drm_prepare_output_generation *entry)
 {
 	struct drm_prepare_ticket *ticket = drm_prepare_ticket_create_owned(owner, entry, !!entry);
 
@@ -71,7 +71,7 @@ static void issuer_identity_cannot_be_substituted(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_prepare_ticket_reserve_owned(ticket, NULL)), -EINVAL);
 	attempt = drm_prepare_ticket_reserve_owned(ticket, owner);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, attempt);
-	ret = drm_prepare_attempt_commit_scoped(attempt, NULL, 0, install, &installed, &guard);
+	ret = drm_prepare_attempt_commit(attempt, NULL, 0, install, &installed, &guard);
 	drm_prepare_attempt_destroy(attempt);
 	KUNIT_ASSERT_EQ(test, ret, 0);
 	drm_prepare_owner_revoke(owner);
@@ -84,7 +84,7 @@ static void revocation_prevents_reserved_acceptance(struct kunit *test)
 {
 	struct drm_prepare_owner *owner = new_owner(test, 2);
 	struct drm_prepare_source *source = drm_prepare_source_create(1);
-	struct drm_prepare_scope_entry entry = { .crtc_id = 1, .source = source };
+	struct drm_prepare_output_generation entry = { .crtc_id = 1, .source = source };
 	struct drm_prepare_ticket *ticket, *pending;
 	struct drm_prepare_retirement_guard *guard = NULL;
 	struct drm_prepare_attempt *attempt;
@@ -102,7 +102,7 @@ static void revocation_prevents_reserved_acceptance(struct kunit *test)
 	drm_prepare_owner_revoke(owner);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_CANCELED);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(pending), DRM_PREPARE_TICKET_CANCELED);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit_scoped(attempt, &entry, 1, install,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, &entry, 1, install,
 							      &installed, &guard), -ECANCELED);
 	KUNIT_EXPECT_PTR_EQ(test, guard, NULL);
 	KUNIT_EXPECT_EQ(test, installed, 0);

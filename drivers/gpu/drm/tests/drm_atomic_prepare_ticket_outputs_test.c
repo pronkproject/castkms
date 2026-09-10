@@ -3,13 +3,13 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <drm/drm_atomic_prepare.h>
-#include <drm/drm_atomic_prepare_scope.h>
+#include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <kunit/test.h>
 
-struct scoped_fixture {
+struct outputs_fixture {
 	struct drm_prepare_domain *domain;
-	struct drm_prepare_scope_entry entries[2];
+	struct drm_prepare_output_generation entries[2];
 	struct drm_prepare_source *replacement;
 	struct drm_prepare_ticket *ticket;
 	struct drm_prepare_attempt *attempt;
@@ -19,7 +19,7 @@ struct scoped_fixture {
 
 static void free_fixture(void *data)
 {
-	struct scoped_fixture *f = data;
+	struct outputs_fixture *f = data;
 	unsigned int i;
 
 	if (f->attempt)
@@ -37,9 +37,9 @@ static void free_fixture(void *data)
 	drm_prepare_domain_put(f->domain);
 }
 
-static struct scoped_fixture *new_fixture(struct kunit *test)
+static struct outputs_fixture *new_fixture(struct kunit *test)
 {
-	struct scoped_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
+	struct outputs_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
 	struct drm_prepare_source *source;
 	unsigned int i;
 
@@ -59,12 +59,12 @@ static struct scoped_fixture *new_fixture(struct kunit *test)
 	return f;
 }
 
-static void prepare(struct kunit *test, struct scoped_fixture *f)
+static void prepare(struct kunit *test, struct outputs_fixture *f)
 {
 	struct drm_prepare_ticket *ticket;
 	struct drm_prepare_attempt *attempt;
 
-	ticket = drm_prepare_ticket_create_scoped(f->entries, ARRAY_SIZE(f->entries));
+	ticket = drm_prepare_ticket_create(f->entries, ARRAY_SIZE(f->entries));
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
 	f->ticket = ticket;
 	attempt = drm_prepare_ticket_reserve(ticket);
@@ -74,7 +74,7 @@ static void prepare(struct kunit *test, struct scoped_fixture *f)
 
 static int install(void *data)
 {
-	struct scoped_fixture *f = data;
+	struct outputs_fixture *f = data;
 
 	f->installed++;
 	return 0;
@@ -85,34 +85,34 @@ static int deny_install(void *data)
 	return -EACCES;
 }
 
-static void mismatched_scope_cannot_install_or_consume(struct kunit *test)
+static void mismatched_outputs_cannot_install_or_consume(struct kunit *test)
 {
-	struct scoped_fixture *f = new_fixture(test);
-	struct drm_prepare_scope_entry observed[] = { f->entries[1], f->entries[0] };
+	struct outputs_fixture *f = new_fixture(test);
+	struct drm_prepare_output_generation observed[] = { f->entries[1], f->entries[0] };
 	struct drm_prepare_read_claim *read;
 
 	prepare(test, f);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(f->attempt, install, f, &f->guard),
-			-EINVAL);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit_scoped(f->attempt, observed, 1,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(f->attempt, NULL, 0, install, f,
+						       &f->guard), -ESTALE);
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(f->attempt, observed, 1,
 							      install, f, &f->guard), -ESTALE);
 	observed[0].source = f->replacement;
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit_scoped(f->attempt, observed, 2,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(f->attempt, observed, 2,
 							      install, f, &f->guard), -ESTALE);
 	KUNIT_EXPECT_EQ(test, f->installed, 0);
 	KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_READY);
 	observed[0] = f->entries[1];
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit_scoped(f->attempt, observed, 2,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(f->attempt, observed, 2,
 							      deny_install, f, &f->guard), -EACCES);
 	KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_READY);
-	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit_scoped(f->attempt, observed, 2,
+	KUNIT_ASSERT_EQ(test, drm_prepare_attempt_commit(f->attempt, observed, 2,
 							      install, f, &f->guard), 0);
 	KUNIT_EXPECT_EQ(test, f->installed, 1);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_CONSUMED);
 	drm_prepare_ticket_cancel(f->ticket);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit_scoped(f->attempt, observed, 2,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(f->attempt, observed, 2,
 							      install, f, &f->guard), -EALREADY);
 	KUNIT_EXPECT_EQ(test, f->installed, 1);
 	drm_prepare_ticket_put(f->ticket);
@@ -130,14 +130,14 @@ static void mismatched_scope_cannot_install_or_consume(struct kunit *test)
 	drm_prepare_read_release(read, NULL);
 }
 
-static void canceled_scope_cannot_install(struct kunit *test)
+static void canceled_ticket_cannot_install(struct kunit *test)
 {
-	struct scoped_fixture *f = new_fixture(test);
+	struct outputs_fixture *f = new_fixture(test);
 	struct drm_prepare_read_claim *read;
 
 	prepare(test, f);
 	drm_prepare_ticket_cancel(f->ticket);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit_scoped(f->attempt, f->entries, 2,
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(f->attempt, f->entries, 2,
 							      install, f, &f->guard), -ECANCELED);
 	KUNIT_EXPECT_EQ(test, f->installed, 0);
 	KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
@@ -148,39 +148,35 @@ static void canceled_scope_cannot_install(struct kunit *test)
 	drm_prepare_read_release(read, NULL);
 }
 
-static void unscoped_ticket_cannot_borrow_an_observed_scope(struct kunit *test)
+static void empty_output_list_is_not_a_wildcard(struct kunit *test)
 {
-	struct scoped_fixture *f = new_fixture(test);
-	struct drm_prepare_retirement_set *set;
+	struct outputs_fixture *f = new_fixture(test);
 	struct drm_prepare_ticket *ticket;
 	struct drm_prepare_attempt *attempt;
 
-	set = drm_prepare_retirement_set_create(NULL, 0);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, set);
-	ticket = drm_prepare_ticket_create(set);
-	drm_prepare_retirement_set_put(set);
+	ticket = drm_prepare_ticket_create(NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
 	f->ticket = ticket;
 	attempt = drm_prepare_ticket_reserve(ticket);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, attempt);
 	f->attempt = attempt;
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit_scoped(attempt, f->entries, 2,
-							      install, f, &f->guard), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, f->entries, 2,
+							      install, f, &f->guard), -ESTALE);
 	KUNIT_EXPECT_EQ(test, f->installed, 0);
 	KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
-	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, install, f, &f->guard), 0);
+	KUNIT_EXPECT_EQ(test, drm_prepare_attempt_commit(attempt, NULL, 0, install, f, &f->guard), 0);
 	KUNIT_EXPECT_EQ(test, f->installed, 1);
 }
 
 static struct kunit_case cases[] = {
-	KUNIT_CASE(mismatched_scope_cannot_install_or_consume),
-	KUNIT_CASE(canceled_scope_cannot_install),
-	KUNIT_CASE(unscoped_ticket_cannot_borrow_an_observed_scope),
+	KUNIT_CASE(mismatched_outputs_cannot_install_or_consume),
+	KUNIT_CASE(canceled_ticket_cannot_install),
+	KUNIT_CASE(empty_output_list_is_not_a_wildcard),
 	{}
 };
 
 static struct kunit_suite suite = {
-	.name = "drm_atomic_prepare_scoped_ticket",
+	.name = "drm_atomic_prepare_ticket_outputs",
 	.test_cases = cases,
 };
 

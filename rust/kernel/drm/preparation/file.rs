@@ -15,7 +15,7 @@ use crate::{
 use core::ptr::NonNull;
 
 impl Ticket {
-    /// Create an owned, poll-only file whose final release cancels this ticket.
+    /// Create an owned observation file whose final release cancels this ticket.
     ///
     /// File references share one lifetime, independently of kernel ticket references. File
     /// release may be deferred, and closing one descriptor does not revoke copies or active
@@ -35,7 +35,7 @@ impl Ticket {
 
     /// Retain the ticket from a live preparation file, rejecting other file types.
     ///
-    /// Lookup does not reserve or validate source scope. The resulting ticket remains subject
+    /// Lookup does not reserve or validate output generations. The resulting ticket remains subject
     /// to cancellation when the file's final reference is released.
     pub fn from_file(file: &LocalFile) -> Result<ARef<Self>> {
         // SAFETY: The borrowed file remains live; native lookup checks its operations table

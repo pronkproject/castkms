@@ -43,6 +43,8 @@ struct Counts {
     plane_updates: AtomicU32,
     framebuffer_preparations: AtomicU32,
     fail_framebuffer_preparation: AtomicU32,
+    // Borrowed only by synchronous preparation callbacks while their source is retained.
+    preparation_source: AtomicPtr<bindings::drm_prepare_source>,
     enables: AtomicU32,
     disables: AtomicU32,
     crtc_states: AtomicU32,
