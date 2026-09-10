@@ -29,7 +29,8 @@ pub use self::{
     },
     ticket::{
         Attempt,
-        Ticket, //
+        Ticket,
+        TicketStatus, //
     }, //
 };
 
