@@ -14,7 +14,7 @@ struct drm_prepare_ticket;
  * Enable output-generation accounting during unregistered device setup.
  * The driver must use the atomic CRTC state duplication/destruction helpers
  * and the shared atomic installation path. Capacity limits admitted reads per
- * generation, not media queue depth. No source access or UAPI is enabled here.
+ * generation, not media queue depth. Enabling accounting grants no source access.
  */
 int drm_atomic_prepare_display_init(struct drm_device *dev, unsigned int capacity);
 void drm_atomic_prepare_display_fini(struct drm_device *dev);
