@@ -32,6 +32,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare_commit.h>
+#include <drm/drm_atomic_prepare_display.h>
 #include <drm/drm_atomic_prepare_submission.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_blend.h>
@@ -1859,6 +1860,9 @@ int drm_atomic_check_only(struct drm_atomic_commit *state)
 		     requested_crtc, affected_crtc);
 	}
 
+	ret = drm_atomic_prepare_display_check(state);
+	if (ret)
+		return ret;
 	state->checked = true;
 
 	return 0;
