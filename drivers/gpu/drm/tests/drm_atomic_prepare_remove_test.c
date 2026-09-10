@@ -23,15 +23,20 @@ struct remove_fixture {
 	struct completion checked;
 	unsigned int checks;
 	unsigned int installs;
+	bool require_disable;
 	int worker_error;
 };
 
 static int check_remove(struct drm_device *dev, struct drm_atomic_commit *state)
 {
 	struct remove_fixture *f = dev->dev_private;
+	struct drm_crtc_state *crtc = drm_atomic_get_new_crtc_state(state, f->crtc);
+	struct drm_plane_state *plane = drm_atomic_get_new_plane_state(state, f->plane);
 
 	f->checks++;
 	complete_all(&f->checked);
+	if (f->require_disable && plane && !plane->fb && crtc && crtc->enable)
+		return -EINVAL;
 	return 0;
 }
 
@@ -201,8 +206,22 @@ static void removal_waits_for_reader_before_disabling_plane(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, f->crtc->state->active);
 }
 
+static void removal_preserves_controller_disable_fallback(struct kunit *test)
+{
+	struct remove_fixture *f = new_remove(test);
+
+	f->require_disable = true;
+	drm_framebuffer_get(f->fb);
+	drm_framebuffer_remove(f->fb);
+	KUNIT_EXPECT_EQ(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(removal_waits_for_reader_before_disabling_plane),
+	KUNIT_CASE(removal_preserves_controller_disable_fallback),
 	{}
 };
 
