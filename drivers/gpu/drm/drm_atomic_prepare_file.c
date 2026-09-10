@@ -22,16 +22,18 @@ static __poll_t ticket_poll(struct file *file, poll_table *wait)
 	struct drm_prepare_ticket *ticket = file->private_data;
 
 	poll_wait(file, drm_prepare_ticket_waitqueue(ticket), wait);
-	switch (drm_prepare_ticket_ready(ticket)) {
-	case 0:
+	switch (drm_prepare_ticket_status(ticket)) {
+	case DRM_PREPARE_TICKET_READY:
 		return EPOLLIN | EPOLLRDNORM;
-	case -EAGAIN:
+	case DRM_PREPARE_TICKET_PENDING:
 		return 0;
-	case -EALREADY:
+	case DRM_PREPARE_TICKET_CONSUMED:
 		return EPOLLHUP;
-	default:
+	case DRM_PREPARE_TICKET_CANCELED:
+	case DRM_PREPARE_TICKET_FAILED:
 		return EPOLLERR | EPOLLHUP;
 	}
+	return EPOLLERR | EPOLLHUP;
 }
 
 static const struct file_operations ticket_fops = {
