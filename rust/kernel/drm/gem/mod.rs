@@ -223,6 +223,27 @@ impl<T: DriverObject, Ctx: DeviceContext> IntoGEMObject for Object<T, Ctx> {
 
 /// Base operations shared by all GEM object classes
 pub trait BaseObject: IntoGEMObject {
+    /// Retain the original DMA-BUF of a PRIME import, or return `None` for local storage.
+    ///
+    /// Same-device PRIME import may reuse a local object, which still returns `None` here.
+    /// The reference covers the whole allocation and is not a revocable or cropped pixel
+    /// capability. This operation neither exports local storage nor installs a descriptor;
+    /// callers must separately establish source authority and access synchronization.
+    fn imported_dma_buf(&self) -> Option<ARef<crate::dma_buf::DmaBuf>> {
+        // SAFETY: A live initialized GEM object retains its immutable import attachment.
+        let attachment = unsafe { (*self.as_raw()).import_attach };
+        if attachment.is_null() {
+            return None;
+        }
+        // SAFETY: The attachment retains a live DMA-BUF with an immutable file pointer.
+        // Acquire the native file reference before returning ownership independently of GEM.
+        Some(unsafe {
+            let buffer = (*attachment).dmabuf;
+            bindings::get_file((*buffer).file);
+            crate::dma_buf::DmaBuf::from_owned_raw(NonNull::new_unchecked(buffer))
+        })
+    }
+
     /// Borrow the object's native reservation for read-only dependency snapshots.
     ///
     /// The reservation may be shared with an importer or exporter. A snapshot retains only
