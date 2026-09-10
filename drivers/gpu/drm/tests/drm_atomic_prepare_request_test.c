@@ -335,6 +335,102 @@ static void interrupted_request_preserves_unreleased_reader(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 1);
 }
 
+struct contended_request {
+	struct request_fixture *display;
+	struct drm_crtc *other;
+	struct task_struct *worker;
+	struct completion locked;
+	struct completion first_locked;
+	int worker_error;
+	unsigned int attempts;
+	unsigned int deadlocks;
+};
+
+static int contend_request(void *data)
+{
+	struct contended_request *f = data;
+	struct drm_modeset_acquire_ctx ctx;
+
+	drm_modeset_acquire_init(&ctx, 0);
+	for (;;) {
+		f->worker_error = drm_modeset_lock(&f->other->mutex, &ctx);
+		complete_all(&f->locked);
+		if (!f->worker_error) {
+			wait_for_completion(&f->first_locked);
+			f->worker_error = drm_modeset_lock(&f->display->crtc->mutex, &ctx);
+		}
+		if (f->worker_error != -EDEADLK)
+			break;
+		f->worker_error = drm_modeset_backoff(&ctx);
+		if (f->worker_error)
+			break;
+	}
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	__set_current_state(TASK_RUNNING);
+	return 0;
+}
+
+static void stop_contender(void *data)
+{
+	struct contended_request *f = data;
+
+	complete_all(&f->first_locked);
+	kthread_stop(f->worker);
+}
+
+static int build_contended_request(struct drm_atomic_commit *state, void *data)
+{
+	struct contended_request *f = data;
+	struct drm_crtc_state *crtc_state;
+
+	f->attempts++;
+	crtc_state = drm_atomic_get_crtc_state(state, f->display->crtc);
+	if (IS_ERR(crtc_state))
+		return PTR_ERR(crtc_state);
+	complete_all(&f->first_locked);
+	crtc_state = drm_atomic_get_crtc_state(state, f->other);
+	if (IS_ERR(crtc_state)) {
+		if (PTR_ERR(crtc_state) == -EDEADLK)
+			f->deadlocks++;
+		return PTR_ERR(crtc_state);
+	}
+	return 0;
+}
+
+static void contended_request_rebuilds_after_real_deadlock(struct kunit *test)
+{
+	struct request_fixture *display = new_request(test, true);
+	struct contended_request *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
+	struct drm_plane *plane;
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	f->display = display;
+	plane = drm_kunit_helper_create_primary_plane(test, display->dev,
+						     NULL, NULL, NULL, 0, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, plane);
+	f->other = drm_kunit_helper_create_crtc(test, display->dev, plane, NULL, NULL, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->other);
+	drm_mode_config_reset(display->dev);
+	init_completion(&f->locked);
+	init_completion(&f->first_locked);
+	f->worker = kthread_run(contend_request, f, "drm-request-contender");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->worker);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, stop_contender, f), 0);
+	KUNIT_ASSERT_NE(test, wait_for_completion_timeout(&f->locked, HZ), 0);
+	KUNIT_ASSERT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request(display->dev,
+						       build_contended_request, f), 0);
+	KUNIT_EXPECT_GE(test, f->attempts, 2);
+	KUNIT_EXPECT_GE(test, f->deadlocks, 1);
+	KUNIT_EXPECT_EQ(test, display->installations, 1);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(ordinary_request_needs_no_accounting),
@@ -345,6 +441,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(rebuild_failure_releases_admission),
 	KUNIT_CASE(shutdown_waits_without_modeset_locks),
 	KUNIT_CASE(interrupted_request_preserves_unreleased_reader),
+	KUNIT_CASE(contended_request_rebuilds_after_real_deadlock),
 	{}
 };
 
