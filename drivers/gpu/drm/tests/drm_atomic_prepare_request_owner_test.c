@@ -73,7 +73,7 @@ static void finish_fixture(void *data)
 	drm_prepare_owner_put(f->owner);
 }
 
-static struct owner_request_fixture *new_request(struct kunit *test)
+static struct owner_request_fixture *new_request(struct kunit *test, bool enabled)
 {
 	struct owner_request_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
 	struct device *parent = drm_kunit_helper_alloc_device(test);
@@ -86,7 +86,8 @@ static struct owner_request_fixture *new_request(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->dev);
 	f->dev->mode_config.funcs = &request_funcs;
 	f->dev->dev_private = f;
-	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_display_init(f->dev, 8), 0);
+	if (enabled)
+		KUNIT_ASSERT_EQ(test, drm_atomic_prepare_display_init(f->dev, 8), 0);
 	plane = drm_kunit_helper_create_primary_plane(test, f->dev, NULL, NULL, NULL, 0, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, plane);
 	f->crtc = drm_kunit_helper_create_crtc(test, f->dev, plane, NULL, NULL, NULL);
@@ -162,7 +163,7 @@ static void join_reader(struct owner_request_fixture *f)
 
 static void owned_request_rebuilds_after_reader_release(struct kunit *test)
 {
-	struct owner_request_fixture *f = new_request(test);
+	struct owner_request_fixture *f = new_request(test, true);
 
 	start_reader(test, f);
 	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_owned(f->dev, f->owner,
@@ -175,7 +176,7 @@ static void owned_request_rebuilds_after_reader_release(struct kunit *test)
 
 static void revoked_issuer_cannot_install_request(struct kunit *test)
 {
-	struct owner_request_fixture *f = new_request(test);
+	struct owner_request_fixture *f = new_request(test, true);
 	struct drm_crtc_state *before = f->crtc->state;
 
 	drm_prepare_owner_revoke(f->owner);
@@ -187,7 +188,7 @@ static void revoked_issuer_cannot_install_request(struct kunit *test)
 
 static void issuer_revocation_wakes_pending_request(struct kunit *test)
 {
-	struct owner_request_fixture *f = new_request(test);
+	struct owner_request_fixture *f = new_request(test, true);
 	struct drm_crtc_state *before = f->crtc->state;
 	struct drm_prepare_read_claim *another;
 
@@ -208,7 +209,7 @@ static void issuer_revocation_wakes_pending_request(struct kunit *test)
 
 static void issuer_revocation_excludes_reserved_installation(struct kunit *test)
 {
-	struct owner_request_fixture *f = new_request(test);
+	struct owner_request_fixture *f = new_request(test, true);
 	struct drm_crtc_state *before = f->crtc->state;
 
 	f->revoke_installing = true;
@@ -220,11 +221,22 @@ static void issuer_revocation_excludes_reserved_installation(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
 }
 
+static void owned_request_requires_preparation_support(struct kunit *test)
+{
+	struct owner_request_fixture *f = new_request(test, false);
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_owned(f->dev, f->owner,
+							   build_request, f), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->builds, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(owned_request_rebuilds_after_reader_release),
 	KUNIT_CASE(revoked_issuer_cannot_install_request),
 	KUNIT_CASE(issuer_revocation_wakes_pending_request),
 	KUNIT_CASE(issuer_revocation_excludes_reserved_installation),
+	KUNIT_CASE(owned_request_requires_preparation_support),
 	{}
 };
 
