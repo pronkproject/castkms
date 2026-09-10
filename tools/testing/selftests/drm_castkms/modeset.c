@@ -19,8 +19,8 @@ int main(int argc, char **argv)
 	uint32_t crtc_id, connector_id, plane_id, mode_id;
 	int fd;
 
-	if (argc != 2) {
-		fprintf(stderr, "SKIP: supply a disposable Rust CastKMS DRM node\n");
+	if (argc != 2 && argc != 3) {
+		fprintf(stderr, "SKIP: supply a disposable Rust CastKMS DRM node [DMA heap]\n");
 		return 4;
 	}
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -43,7 +43,8 @@ int main(int argc, char **argv)
 	CHECK(planes && planes->count_planes == 1);
 	plane_id = planes->planes[0];
 	a = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x33);
-	b = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x88);
+	b = argc == 3 ? import_buffer(fd, argv[2], mode->hdisplay, mode->vdisplay) :
+			create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x88);
 	CHECK(drmModeCreatePropertyBlob(fd, mode, sizeof(*mode), &mode_id) == 0);
 	req = drmModeAtomicAlloc();
 	CHECK(req);
@@ -118,5 +119,7 @@ int main(int argc, char **argv)
 	drmModeFreeResources(resources);
 	CHECK(close(fd) == 0);
 	puts("PASS: CastKMS allocation, modeset, 48 flips, rejection, disable");
+	if (argc == 3)
+		puts("PASS: foreign heap storage after closing exporter descriptor and import handle");
 	return 0;
 }
