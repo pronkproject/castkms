@@ -111,11 +111,29 @@ static void null_blob_clears_destination(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
 }
 
+static void foreign_blob_is_rejected(struct kunit *test)
+{
+	struct blob_fixture *f = new_fixture(test);
+	struct drm_device *other = __drm_kunit_helper_alloc_drm_device(test, f->dev->dev,
+				 sizeof(*other), 0, DRIVER_MODESET | DRIVER_ATOMIC);
+	struct drm_property_blob *blob;
+	bool replaced = false;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, other);
+	blob = new_blob(test, other);
+	KUNIT_EXPECT_EQ(test, drm_property_replace_blob_checked(f->dev, &f->value, blob,
+							      -1, -1, -1, &replaced), -EINVAL);
+	KUNIT_EXPECT_FALSE(test, replaced);
+	KUNIT_EXPECT_PTR_EQ(test, f->value, NULL);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+}
+
 static struct kunit_case blob_tests[] = {
 	KUNIT_CASE(destination_retains_resolved_blob),
 	KUNIT_CASE(size_failure_preserves_destination),
 	KUNIT_CASE(same_blob_preserves_change_flag),
 	KUNIT_CASE(null_blob_clears_destination),
+	KUNIT_CASE(foreign_blob_is_rejected),
 	{ }
 };
 
