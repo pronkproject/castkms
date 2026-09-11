@@ -85,8 +85,29 @@ static void pending_position_does_not_change_current_position(struct kunit *test
 	KUNIT_EXPECT_EQ(test, entry->cursor_y, 29);
 }
 
+static int accept_position(struct cursor_fixture *f)
+{
+	int ret = set_position(f);
+
+	if (!ret)
+		ret = drm_atomic_check_only(f->state);
+	if (!ret)
+		ret = drm_atomic_helper_swap_state(f->state, false);
+	return ret;
+}
+
+static void accepted_position_changes_with_state(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_position), 0);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, -17);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 29);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_position_does_not_change_current_position),
+	KUNIT_CASE(accepted_position_changes_with_state),
 	{}
 };
 
