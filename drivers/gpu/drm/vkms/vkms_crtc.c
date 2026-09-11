@@ -101,6 +101,7 @@ static void vkms_atomic_crtc_reset(struct drm_crtc *crtc)
 static const struct drm_crtc_funcs vkms_crtc_funcs = {
 	.set_config             = drm_atomic_helper_set_config,
 	.set_config_request     = drm_atomic_helper_set_config_request,
+	.cursor_request         = drm_atomic_helper_cursor_request,
 	.page_flip              = drm_atomic_helper_page_flip,
 	.reset                  = vkms_atomic_crtc_reset,
 	.atomic_duplicate_state = vkms_atomic_crtc_duplicate_state,
