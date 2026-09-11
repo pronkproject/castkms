@@ -328,6 +328,32 @@ static void controller_assignment_updates_plane_membership(struct kunit *test)
 			drm_plane_mask(f->plane));
 }
 
+static void put_blob(void *data)
+{
+	drm_property_blob_put(data);
+}
+
+static void damage_blob_is_applied_by_reference(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_mode_rect rect = { .x2 = 16, .y2 = 16 };
+	struct drm_property_blob *blob = drm_property_create_blob(f->dev, sizeof(rect), &rect);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_fb_damage_clips,
+		.type = DRM_ATOMIC_REQUEST_BLOB, .blob = blob,
+	};
+	struct drm_atomic_request *request;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, blob);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_blob, blob), 0);
+	request = new_request(test, f, &entry, 1);
+	kunit_release_action(test, put_blob, blob);
+	KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane)->fb_damage_clips,
+			    blob);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 2);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -338,6 +364,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(fence_is_reapplied_after_clear),
 	KUNIT_CASE(duplicate_fence_assignment_is_rejected),
 	KUNIT_CASE(controller_assignment_updates_plane_membership),
+	KUNIT_CASE(damage_blob_is_applied_by_reference),
 	{ }
 };
 
