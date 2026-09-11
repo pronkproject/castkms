@@ -40,6 +40,12 @@ struct drm_prepare_output_generation;
 struct drm_prepare_retirement_guard;
 struct drm_plane_update;
 
+int drm_atomic_helper_cursor_request(const struct drm_cursor_update *update,
+				     struct drm_prepare_owner *owner,
+				     int (*validate)(const struct drm_cursor_update *update,
+						     void *data),
+				     void *data);
+
 int drm_atomic_helper_update_plane_request(const struct drm_plane_update *update,
 					   struct drm_prepare_owner *owner,
 					   int (*validate)(const struct drm_plane_update *update,
