@@ -13,6 +13,7 @@ struct drm_property;
 struct drm_connector;
 struct drm_crtc;
 struct drm_mode_crtc_lut;
+struct drm_mode_crtc_page_flip_target;
 
 /*
  * Commit copied property assignments using implicit preparation. The caller keeps
@@ -44,5 +45,10 @@ int drm_atomic_commit_user_power(struct drm_connector *connector, u64 mode, stru
 /* Copy component arrays once under the original issuer, then prepare the command. */
 int drm_atomic_commit_user_gamma(struct drm_crtc *crtc, const struct drm_mode_crtc_lut *input,
 				  struct drm_file *file);
+
+/* Wait for preparation, then submit an ordinary legacy flip without waiting for completion. */
+int drm_atomic_submit_user_flip(struct drm_crtc *crtc,
+				const struct drm_mode_crtc_page_flip_target *input,
+				struct drm_file *file);
 
 #endif

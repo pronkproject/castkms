@@ -607,6 +607,23 @@ struct drm_crtc_funcs {
 			      void *data);
 
 	/**
+	 * @build_page_flip:
+	 *
+	 * Build an ordinary legacy flip in an unchecked atomic attempt, with all
+	 * modeset locks held. The framebuffer is retained by the caller across
+	 * preparation waits. Do not install state, allocate a completion event or
+	 * retain the attempt. Rebuilding must use current accepted state. Return
+	 * zero or a negative error; complete atomic checking follows separately.
+	 *
+	 * Atomic drivers may use drm_atomic_set_legacy_flip(). Preparation-enabled
+	 * devices without this operation reject legacy flips. Other devices use
+	 * @page_flip or @page_flip_target. Async and target-vblank requests are not
+	 * supported by this builder interface.
+	 */
+	int (*build_page_flip)(struct drm_atomic_commit *state, struct drm_crtc *crtc,
+			       struct drm_framebuffer *fb);
+
+	/**
 	 * @page_flip:
 	 *
 	 * Legacy entry point to schedule a flip to the given framebuffer.
