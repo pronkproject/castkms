@@ -2,6 +2,8 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_request.h>
+#include <drm/drm_atomic_state_helper.h>
+#include <drm/drm_connector.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_kunit_helpers.h>
@@ -13,6 +15,7 @@ struct apply_fixture {
 	struct drm_device *dev;
 	struct drm_plane *plane;
 	struct drm_crtc *crtc;
+	struct drm_connector connector;
 	struct drm_atomic_commit *state;
 	unsigned int validations;
 	int validation_error;
@@ -428,6 +431,49 @@ static void repeated_size_assignments_keep_order(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane)->crtc_w, 20);
 }
 
+static const struct drm_connector_funcs connector_funcs = {
+	.reset = drm_atomic_helper_connector_reset,
+	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
+};
+
+static struct drm_connector *new_connector(struct kunit *test, struct apply_fixture *f)
+{
+	struct drm_connector *connector = &f->connector;
+
+	KUNIT_ASSERT_EQ(test, drmm_connector_init(f->dev, connector, &connector_funcs,
+						DRM_MODE_CONNECTOR_VIRTUAL, NULL), 0);
+	drm_atomic_helper_connector_reset(connector);
+	KUNIT_ASSERT_NOT_NULL(test, connector->state);
+	return connector;
+}
+
+static void connector_is_reconnected_after_clear(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_connector *connector = new_connector(test, f);
+	struct drm_atomic_request_entry entry = {
+		.object = &connector->base, .property = f->dev->mode_config.prop_crtc_id,
+		.type = DRM_ATOMIC_REQUEST_OBJECT, .reference = &f->crtc->base,
+	};
+	struct drm_atomic_request *request = new_request(test, f, &entry, 1);
+	unsigned int refs = kref_read(&connector->base.refcount);
+	unsigned int i;
+
+	for (i = 0; i < 2; i++) {
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		KUNIT_EXPECT_PTR_EQ(test,
+				drm_atomic_get_new_connector_state(f->state, connector)->crtc,
+				f->crtc);
+		KUNIT_EXPECT_EQ(test, drm_atomic_get_new_crtc_state(f->state, f->crtc)->connector_mask,
+				drm_connector_mask(connector));
+		KUNIT_EXPECT_EQ(test, kref_read(&connector->base.refcount), refs + 2);
+		drm_atomic_commit_clear(f->state);
+		KUNIT_EXPECT_EQ(test, kref_read(&connector->base.refcount), refs);
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -442,6 +488,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(mode_blob_is_applied_by_reference),
 	KUNIT_CASE(geometry_is_reapplied_to_current_state),
 	KUNIT_CASE(repeated_size_assignments_keep_order),
+	KUNIT_CASE(connector_is_reconnected_after_clear),
 	{ }
 };
 
