@@ -576,6 +576,9 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 	bool replaced = false;
 	int ret;
 
+	if (drm_atomic_is_plane_geometry_property(plane, property))
+		return drm_atomic_set_geometry_property_for_plane(state, property, val);
+
 	if (property == config->prop_fb_id) {
 		struct drm_framebuffer *fb;
 
@@ -608,22 +611,6 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 			return -EACCES;
 		}
 		return drm_atomic_set_crtc_for_plane(state, crtc);
-	} else if (property == config->prop_crtc_x) {
-		state->crtc_x = U642I64(val);
-	} else if (property == config->prop_crtc_y) {
-		state->crtc_y = U642I64(val);
-	} else if (property == config->prop_crtc_w) {
-		state->crtc_w = val;
-	} else if (property == config->prop_crtc_h) {
-		state->crtc_h = val;
-	} else if (property == config->prop_src_x) {
-		state->src_x = val;
-	} else if (property == config->prop_src_y) {
-		state->src_y = val;
-	} else if (property == config->prop_src_w) {
-		state->src_w = val;
-	} else if (property == config->prop_src_h) {
-		state->src_h = val;
 	} else if (property == plane->alpha_property) {
 		state->alpha = val;
 	} else if (property == plane->blend_mode_property) {
