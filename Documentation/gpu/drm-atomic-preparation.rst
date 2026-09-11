@@ -646,6 +646,21 @@ each attempt. Unsupported properties are rejected rather than falling back to
 an unprepared commit. The legacy connector power property, ``DPMS``, has separate
 semantics and is not handled by that adapter.
 
+Connector power preferences need their own attempted state. Several connectors
+may share a controller, and that controller remains active while any attached
+connector requests power. ``drm_atomic_set_connector_power()`` records a pending
+preference and calculates the controller's activity from pending and current
+preferences. It does not publish the preference. Rejection or clearing leaves
+accepted preferences unchanged, and checked attempts cannot be edited.
+
+On preparation-enabled devices, normal atomic installation publishes those
+preferences under the connection mutex. Explicit preferences remain distinct:
+turning one connector on does not change another connector's off preference.
+Ordinary atomic power changes, which do not express individual preferences,
+still update the legacy power values to reflect controller activity. Later
+legacy bookkeeping does not write those values again. The setter is a kernel
+building block; it does not itself adapt the DPMS ioctl or perform authorization.
+
 The ordinary input-fence property adapter uses that setter after descriptor
 lookup. The blocking adapter retains the resolved fence separately and uses
 the same setter on each attempt. Framebuffer and blob references, selected
