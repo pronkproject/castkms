@@ -129,10 +129,21 @@ static void event_requires_a_controller(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
 }
 
+static void inactive_controller_rejects_event(struct kunit *test)
+{
+	struct signaling_fixture *f = new_fixture(test);
+
+	KUNIT_EXPECT_EQ(test, run_attempt(f, DRM_MODE_PAGE_FLIP_EVENT, true, false, false, false),
+			-EINVAL);
+	KUNIT_EXPECT_FALSE(test, f->had_event);
+	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(rejected_commit_returns_event_space),
 	KUNIT_CASE(test_only_allocates_no_signaling),
 	KUNIT_CASE(event_requires_a_controller),
+	KUNIT_CASE(inactive_controller_rejects_event),
 	{}
 };
 
