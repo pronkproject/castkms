@@ -486,6 +486,22 @@ remain separate groups and repeated assignments remain ordered. Once assembly
 succeeds, changing or freeing the copied arrays does not change the request.
 Failure releases all references acquired for the incomplete request.
 
+Controller output-fence destinations are saved separately from that collection
+of display values. Each saved destination keeps its controller, attached
+property and address; the request's target references keep the controller
+available. Copying addresses does not pin userspace memory. A separate helper
+initializes every nonnull address to minus one before building attempts and
+without holding modeset locks. An inaccessible address rejects the request.
+
+When rebuilding, another private helper checks attachment and includes each
+destination's controller in the attempted state. It assigns the last nonnull
+address for that controller, preserving the ordinary ioctl's treatment of a
+null address as no change to an earlier destination. No userspace memory is
+accessed while applying those saved pointers, and no event or descriptor is
+allocated. Signaling setup later writes the actual descriptor and still has
+to handle a destination that has become inaccessible. Writeback destinations
+and preparation descriptors are not accepted by the retained request adapter.
+
 Retaining targets with no assignments matters for permission checks: an empty
 group must not become a way to skip checking the caller's lease after waiting.
 The private file-authority validator checks that the file is still a current
