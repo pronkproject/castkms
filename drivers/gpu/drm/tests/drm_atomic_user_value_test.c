@@ -117,12 +117,51 @@ static void resolved_blob_has_independent_ownership(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
 }
 
+static void destroy_fb(struct drm_framebuffer *fb)
+{
+	drm_framebuffer_cleanup(fb);
+	kfree(fb);
+}
+
+static const struct drm_framebuffer_funcs fb_funcs = { .destroy = destroy_fb };
+
+static void put_fb(void *data)
+{
+	drm_framebuffer_put(data);
+}
+
+static void resolved_framebuffer_has_independent_ownership(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	struct drm_framebuffer *fb = kzalloc_obj(*fb);
+	struct drm_atomic_request_entry *entry;
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, fb);
+	fb->dev = f->dev;
+	fb->format = drm_format_info(DRM_FORMAT_XRGB8888);
+	fb->width = 64;
+	ret = drm_framebuffer_init(f->dev, fb, &fb_funcs);
+	if (ret)
+		kfree(fb);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_fb, fb), 0);
+	entry = resolve_value(test, &f->plane->base, f->dev->mode_config.prop_fb_id, fb->base.id);
+	KUNIT_EXPECT_EQ(test, entry->type, DRM_ATOMIC_REQUEST_FRAMEBUFFER);
+	KUNIT_EXPECT_PTR_EQ(test, entry->framebuffer, fb);
+	KUNIT_EXPECT_EQ(test, kref_read(&fb->base.refcount), 2);
+	kunit_release_action(test, put_fb, fb);
+	KUNIT_EXPECT_EQ(test, entry->framebuffer->width, 64);
+	KUNIT_EXPECT_EQ(test, kref_read(&fb->base.refcount), 1);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
 	KUNIT_CASE(invalid_value_preserves_destination),
 	KUNIT_CASE(private_scalar_is_not_resolved),
 	KUNIT_CASE(unattached_property_is_not_resolved),
 	KUNIT_CASE(resolved_blob_has_independent_ownership),
+	KUNIT_CASE(resolved_framebuffer_has_independent_ownership),
 	{}
 };
 
