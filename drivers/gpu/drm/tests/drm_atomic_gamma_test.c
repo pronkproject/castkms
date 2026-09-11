@@ -123,9 +123,22 @@ static void accepted_table_changes_readback(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->gamma_lut, f->table);
 }
 
+static void clearing_discards_pending_table(struct kunit *test)
+{
+	struct gamma_fixture *f = new_fixture(test, true);
+	u16 before[6];
+
+	memcpy(before, f->crtc->gamma_store, sizeof(before));
+	KUNIT_ASSERT_EQ(test, run_update(f, set_table), 0);
+	drm_atomic_commit_clear(f->state);
+	KUNIT_EXPECT_NULL(test, f->state->crtcs[drm_crtc_index(f->crtc)].legacy_gamma);
+	KUNIT_EXPECT_MEMEQ(test, before, f->crtc->gamma_store, sizeof(before));
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
 	KUNIT_CASE(accepted_table_changes_readback),
+	KUNIT_CASE(clearing_discards_pending_table),
 	{}
 };
 
