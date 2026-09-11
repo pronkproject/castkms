@@ -1,18 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <linux/completion.h>
+#include <linux/file.h>
 #include <linux/kthread.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_atomic_prepare_display.h>
 #include <drm/drm_atomic_prepare_owner.h>
 #include <drm/drm_atomic_uapi.h>
+#include <drm/drm_auth.h>
 #include <drm/drm_connector.h>
+#include <drm/drm_file.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_kunit_helpers.h>
 #include <kunit/test.h>
+
+#include "../drm_crtc_internal.h"
 
 struct cursor_fixture {
 	struct drm_device *dev;
@@ -66,6 +72,23 @@ static const struct drm_connector_funcs connector_funcs = {
 	.reset = drm_atomic_helper_connector_reset,
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
+};
+
+static const struct drm_crtc_funcs crtc_funcs = {
+	.reset = drm_atomic_helper_crtc_reset,
+	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
+	.cursor_request = drm_atomic_helper_cursor_request,
+};
+
+static const struct file_operations file_ops = {
+	.owner = THIS_MODULE,
+	.release = drm_release_noglobal,
+};
+
+static const struct drm_driver driver = {
+	.driver_features = DRIVER_MODESET | DRIVER_ATOMIC | DRIVER_CURSOR_HOTSPOT,
+	.fops = &file_ops,
 };
 
 static void destroy_fb(struct drm_framebuffer *fb)
@@ -124,9 +147,8 @@ static struct cursor_fixture *new_fixture(struct kunit *test)
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
-	f->dev = __drm_kunit_helper_alloc_drm_device(test, parent, sizeof(*f->dev), 0,
-						  DRIVER_MODESET | DRIVER_ATOMIC |
-						  DRIVER_CURSOR_HOTSPOT);
+	f->dev = __drm_kunit_helper_alloc_drm_device_with_driver(test, parent,
+							   sizeof(*f->dev), 0, &driver);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->dev);
 	f->dev->dev_private = f;
 	f->dev->mode_config.funcs = &config_funcs;
@@ -140,7 +162,7 @@ static struct cursor_fixture *new_fixture(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->cursor);
 	drm_plane_helper_add(f->cursor, &plane_helper_funcs);
 	f->crtc = drm_kunit_helper_create_crtc(test, f->dev, primary, f->cursor,
-					      NULL, NULL);
+					      &crtc_funcs, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->crtc);
 	KUNIT_ASSERT_EQ(test, drmm_connector_init(f->dev, &f->connector, &connector_funcs,
 						DRM_MODE_CONNECTOR_VIRTUAL, NULL), 0);
@@ -364,6 +386,63 @@ static void cursor_uses_normal_acceptance_on_async_capable_plane(struct kunit *t
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 43);
 }
 
+static void close_file(void *data)
+{
+	__fput_sync(data);
+}
+
+static struct drm_file *open_master(struct kunit *test, struct cursor_fixture *f)
+{
+	struct file *handle = mock_drm_getfile(f->dev->primary, O_RDWR);
+	struct drm_master *master;
+	struct drm_file *file;
+	struct drm_prepare_owner *owner;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, handle);
+	atomic_inc(&f->dev->open_count);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, close_file, handle), 0);
+	file = handle->private_data;
+	master = kzalloc_obj(*master);
+	KUNIT_ASSERT_NOT_NULL(test, master);
+	kref_init(&master->refcount);
+	master->dev = f->dev;
+	idr_init_base(&master->magic_map, 1);
+	idr_init(&master->leases);
+	idr_init_base(&master->lessee_idr, 1);
+	INIT_LIST_HEAD(&master->lessees);
+	INIT_LIST_HEAD(&master->lessee_list);
+	file->master = master;
+	file->is_master = file->was_master = true;
+	mutex_lock(&f->dev->master_mutex);
+	f->dev->master = drm_master_get(master);
+	mutex_unlock(&f->dev->master_mutex);
+	owner = drm_file_prepare_owner(file);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, owner);
+	drm_prepare_owner_put(f->owner);
+	f->owner = owner;
+	return file;
+}
+
+static void cursor_ioctl_waits_before_moving(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+	struct drm_file *file = open_master(test, f);
+	struct drm_mode_cursor2 args = {
+		.crtc_id = f->crtc->base.id, .flags = DRM_MODE_CURSOR_MOVE,
+		.x = 41, .y = 43,
+	};
+	int ret;
+
+	start_reader(test, f);
+	ret = drm_mode_cursor2_ioctl(f->dev, &args, file);
+	join_reader(test, f);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_GE(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 41);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 43);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(move_uses_current_image_after_wait),
 	KUNIT_CASE(image_uses_current_position_after_wait),
@@ -371,6 +450,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(hidden_cursor_remembers_position),
 	KUNIT_CASE(rejected_image_preserves_hotspot),
 	KUNIT_CASE(cursor_uses_normal_acceptance_on_async_capable_plane),
+	KUNIT_CASE(cursor_ioctl_waits_before_moving),
 	{}
 };
 
@@ -381,3 +461,4 @@ static struct kunit_suite suite = {
 
 kunit_test_suite(suite);
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS("EXPORTED_FOR_KUNIT_TESTING");
