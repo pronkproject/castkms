@@ -44,6 +44,7 @@ struct input_fixture {
 	int fd;
 	uint32_t crtc;
 	uint32_t active;
+	uint32_t out_fence;
 };
 
 struct input_request {
@@ -122,6 +123,26 @@ static void repeated_targets(const struct input_fixture *f)
 	expect_result(f->fd, &request.arg, 0, "Repeated targets keep both property segments");
 }
 
+static void values_survive_output_write(const struct input_fixture *f)
+{
+	struct input_request request;
+	uint64_t overwritten = 0;
+	int ret;
+
+	if (!f->out_fence) {
+		ksft_test_result_skip("Controller has no output fence property\n");
+		return;
+	}
+	init_request(&request, f);
+	request.counts[0] = 2;
+	request.properties[0] = f->out_fence;
+	request.values[0] = (uintptr_t)&request.values[1];
+	memset(&overwritten, 0xff, sizeof(int32_t));
+	ret = drmIoctl(f->fd, DRM_IOCTL_MODE_ATOMIC, &request.arg);
+	ksft_test_result(ret == 0 && request.values[1] == overwritten,
+			"Output pointer write does not change copied ACTIVE value\n");
+}
+
 int main(int argc, char **argv)
 {
 	const char *path = argc > 1 ? argv[1] : "/dev/dri/card0";
@@ -140,13 +161,15 @@ int main(int argc, char **argv)
 	f.crtc = resources->crtcs[0];
 	drmModeFreeResources(resources);
 	f.active = find_property(f.fd, f.crtc, "ACTIVE");
+	f.out_fence = find_property(f.fd, f.crtc, "OUT_FENCE_PTR");
 	if (!f.active)
 		ksft_exit_fail_msg("Atomic controller has no ACTIVE property\n");
-	ksft_set_plan(8);
+	ksft_set_plan(9);
 	empty_arrays(&f);
 	count_overflow(&f);
 	unreadable_arrays(&f);
 	repeated_targets(&f);
+	values_survive_output_write(&f);
 	close(f.fd);
 	ksft_finished();
 }
