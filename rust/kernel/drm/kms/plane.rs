@@ -179,6 +179,7 @@ impl<T: DriverPlane> Plane<T> {
             atomic_create_state: Some(atomic_create_state_callback::<T::State>),
             update_plane: Some(bindings::drm_atomic_helper_update_plane),
             disable_plane: Some(bindings::drm_atomic_helper_disable_plane),
+            update_plane_request: None,
             destroy: Some(plane_destroy_callback::<T>),
             reset: None,
             set_property: None,

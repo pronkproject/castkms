@@ -390,6 +390,26 @@ struct drm_plane_funcs {
 			     struct drm_modeset_acquire_ctx *ctx);
 
 	/**
+	 * @update_plane_request:
+	 *
+	 * Execute a resolved legacy plane update on a preparation-enabled device.
+	 * A NULL framebuffer disables the plane. The caller retains every input
+	 * until return and holds no modeset locks. The implementation validates
+	 * selected-object access through @validate on each rebuilt attempt and
+	 * binds installation to @owner. Inputs and callback data are borrowed only
+	 * until return. Returns zero or a negative error.
+	 *
+	 * Atomic helper drivers may use drm_atomic_helper_update_plane_request().
+	 * Other devices keep using @update_plane and @disable_plane. SETPLANE on
+	 * a preparation-enabled device requires this callback.
+	 */
+	int (*update_plane_request)(const struct drm_plane_update *update,
+				    struct drm_prepare_owner *owner,
+				    int (*validate)(const struct drm_plane_update *update,
+						    void *data),
+				    void *data);
+
+	/**
 	 * @destroy:
 	 *
 	 * Clean up plane resources. This is only called at driver unload time
