@@ -15,6 +15,8 @@
 
 struct drm_atomic_user_request {
 	struct drm_atomic_request *values;
+	struct drm_atomic_user_fence_destination *fences;
+	unsigned int fence_count;
 	unsigned int target_count;
 	struct drm_mode_object *targets[] __counted_by(target_count);
 };
@@ -26,6 +28,7 @@ void drm_atomic_free_user_request(struct drm_atomic_user_request *request)
 	if (!request)
 		return;
 	drm_atomic_request_destroy(request->values);
+	kvfree(request->fences);
 	for (i = 0; i < request->target_count; i++) {
 		if (request->targets[i])
 			drm_mode_object_put(request->targets[i]);
@@ -40,7 +43,7 @@ drm_atomic_resolve_user_request(struct drm_device *dev, struct drm_file *file,
 {
 	struct drm_atomic_user_request *request;
 	struct drm_atomic_request_entry *entries;
-	unsigned int i, j, resolved = 0;
+	unsigned int i, j, processed = 0, resolved = 0;
 	int ret;
 
 	drm_modeset_lock_assert_held(&dev->mode_config.connection_mutex);
@@ -48,6 +51,11 @@ drm_atomic_resolve_user_request(struct drm_device *dev, struct drm_file *file,
 	if (!request)
 		return ERR_PTR(-ENOMEM);
 	request->target_count = input->object_count;
+	request->fences = kvcalloc(input->property_count, sizeof(*request->fences), GFP_KERNEL);
+	if (!request->fences) {
+		ret = -ENOMEM;
+		goto fail;
+	}
 	entries = kvcalloc(input->property_count, sizeof(*entries), GFP_KERNEL);
 	if (!entries) {
 		ret = -ENOMEM;
@@ -63,26 +71,35 @@ drm_atomic_resolve_user_request(struct drm_device *dev, struct drm_file *file,
 			goto release_values;
 		}
 		/* The count check also protects kernel-constructed input descriptors. */
-		if (input->counts[i] > input->property_count - resolved) {
+		if (input->counts[i] > input->property_count - processed) {
 			ret = -EINVAL;
 			goto release_values;
 		}
-		for (j = 0; j < input->counts[i]; j++) {
+		for (j = 0; j < input->counts[i]; j++, processed++) {
 			struct drm_property *property;
 
-			property = drm_mode_obj_find_prop_id(object, input->properties[resolved]);
+			property = drm_mode_obj_find_prop_id(object, input->properties[processed]);
 			if (!property) {
 				ret = -ENOENT;
 				goto release_values;
 			}
+			if (object->type == DRM_MODE_OBJECT_CRTC &&
+			    property == dev->mode_config.prop_out_fence_ptr) {
+				request->fences[request->fence_count++] =
+					(struct drm_atomic_user_fence_destination) {
+						.crtc = obj_to_crtc(object), .property = property,
+						.address = input->values[processed],
+					};
+				continue;
+			}
 			ret = drm_atomic_resolve_user_value(object, property, file,
-							    input->values[resolved], &entries[resolved]);
+							    input->values[processed], &entries[resolved]);
 			if (ret)
 				goto release_values;
 			resolved++;
 		}
 	}
-	if (resolved != input->property_count) {
+	if (processed != input->property_count) {
 		ret = -EINVAL;
 		goto release_values;
 	}
@@ -124,3 +141,17 @@ drm_atomic_user_request_target(const struct drm_atomic_user_request *request, un
 	return index < request->target_count ? request->targets[index] : NULL;
 }
 EXPORT_SYMBOL_IF_KUNIT(drm_atomic_user_request_target);
+
+unsigned int drm_atomic_user_request_fence_count(const struct drm_atomic_user_request *request)
+{
+	return request->fence_count;
+}
+EXPORT_SYMBOL_IF_KUNIT(drm_atomic_user_request_fence_count);
+
+const struct drm_atomic_user_fence_destination *
+drm_atomic_user_request_fence_destination(const struct drm_atomic_user_request *request,
+					 unsigned int index)
+{
+	return index < request->fence_count ? &request->fences[index] : NULL;
+}
+EXPORT_SYMBOL_IF_KUNIT(drm_atomic_user_request_fence_destination);
