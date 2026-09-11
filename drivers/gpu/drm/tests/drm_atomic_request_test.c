@@ -107,6 +107,22 @@ static void framebuffer_survives_creator_release(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&fb->base.refcount), 1);
 }
 
+static void wrong_value_kind_is_rejected(struct kunit *test)
+{
+	struct request_fixture *f = new_fixture(test, NULL);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_fb_id,
+		.type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 0,
+	};
+	struct drm_atomic_request *request = drm_atomic_request_create(f->dev, &entry, 1);
+
+	KUNIT_EXPECT_TRUE(test, IS_ERR(request));
+	if (IS_ERR(request))
+		KUNIT_EXPECT_EQ(test, PTR_ERR(request), -EINVAL);
+	else
+		drm_atomic_request_destroy(request);
+}
+
 static void foreign_target_is_rejected(struct kunit *test)
 {
 	struct request_fixture *a = new_fixture(test, NULL);
@@ -148,6 +164,7 @@ static void output_pointer_is_not_a_retained_value(struct kunit *test)
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_entries_are_copied_in_order),
 	KUNIT_CASE(framebuffer_survives_creator_release),
+	KUNIT_CASE(wrong_value_kind_is_rejected),
 	KUNIT_CASE(foreign_target_is_rejected),
 	KUNIT_CASE(output_pointer_is_not_a_retained_value),
 	{}
