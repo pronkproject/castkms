@@ -10,4 +10,7 @@ struct drm_connector;
 int __must_check drm_atomic_set_connector_power(struct drm_atomic_commit *state,
 					       struct drm_connector *connector, bool on);
 
+/* Called during accepted state installation under the connection mutex. */
+void drm_atomic_install_connector_power(struct drm_atomic_commit *state);
+
 #endif
