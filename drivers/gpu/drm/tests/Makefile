@@ -9,6 +9,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_request_test.o \
 	drm_atomic_request_apply_test.o \
 	drm_atomic_user_value_test.o \
+	drm_atomic_user_request_test.o \
 	drm_atomic_geometry_test.o \
 	drm_atomic_color_test.o \
 	drm_atomic_fence_test.o \
