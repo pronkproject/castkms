@@ -111,8 +111,28 @@ static void pending_preference_does_not_change_current_power(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, drm_atomic_get_new_crtc_state(f->state, f->crtc)->active);
 }
 
+static int both_off(struct power_fixture *f)
+{
+	int ret = first_off(f);
+
+	if (!ret)
+		ret = drm_atomic_set_connector_power(f->state, &f->connectors[1], false);
+	return ret;
+}
+
+static void pending_preferences_combine_for_shared_controller(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, both_off), 0);
+	KUNIT_EXPECT_FALSE(test, drm_atomic_get_new_crtc_state(f->state, f->crtc)->active);
+	KUNIT_EXPECT_EQ(test, f->connectors[0].dpms, DRM_MODE_DPMS_ON);
+	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_ON);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
+	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
 	{}
 };
 
