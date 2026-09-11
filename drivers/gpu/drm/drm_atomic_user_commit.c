@@ -84,7 +84,7 @@ int drm_atomic_commit_user_request(struct drm_device *dev, struct drm_file *file
 	struct drm_modeset_acquire_ctx ctx;
 	int ret;
 
-	if (!file || !file->atomic || !owner || file->minor->dev != dev ||
+	if (!file || !owner || file->minor->dev != dev ||
 	    flags & ~(DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_PAGE_FLIP_EVENT))
 		return -EINVAL;
 	if (!dev->mode_config.preparation)
