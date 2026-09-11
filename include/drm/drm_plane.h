@@ -36,6 +36,34 @@ struct drm_crtc;
 struct drm_plane_size_hint;
 struct drm_printer;
 struct drm_modeset_acquire_ctx;
+struct drm_prepare_owner;
+
+/**
+ * struct drm_plane_update - resolved legacy plane update
+ * @plane: plane to update
+ * @crtc: selected controller, NULL when disabling
+ * @fb: retained framebuffer, NULL when disabling
+ * @crtc_x: signed destination x coordinate
+ * @crtc_y: signed destination y coordinate
+ * @crtc_w: destination width in pixels
+ * @crtc_h: destination height in pixels
+ * @src_x: unsigned 16.16 source x coordinate
+ * @src_y: unsigned 16.16 source y coordinate
+ * @src_w: unsigned 16.16 source width
+ * @src_h: unsigned 16.16 source height
+ *
+ * The caller keeps the device, objects and framebuffer alive and the description
+ * unchanged until the operation returns. No identifiers or descriptor numbers
+ * are resolved while rebuilding an update. A disable ignores all geometry.
+ */
+struct drm_plane_update {
+	struct drm_plane *plane;
+	struct drm_crtc *crtc;
+	struct drm_framebuffer *fb;
+	s32 crtc_x, crtc_y;
+	u32 crtc_w, crtc_h;
+	u32 src_x, src_y, src_w, src_h;
+};
 
 enum drm_scaling_filter {
 	DRM_SCALING_FILTER_DEFAULT,
