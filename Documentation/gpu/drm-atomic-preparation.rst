@@ -593,6 +593,14 @@ preparation keep their existing plane callbacks. Kernel callers may use the same
 resolved helper without a DRM file. Universal cursor ioctls are separate legacy
 entry points and are not routed through this SETPLANE adapter.
 
+The remembered position used by legacy cursor commands is separate from the
+visible cursor plane's rectangle: moving an invisible cursor still affects
+where a later image appears. Kernel builders may record that position with
+``drm_atomic_set_legacy_cursor_position()``. The atomic helper publishes it
+only when installing accepted state under the controller's lock. Discarding or
+clearing an attempt leaves the accepted position unchanged. Recording a position
+does not update the plane's geometry or by itself adapt a legacy cursor ioctl.
+
 Rebuilding an ordinary atomic ioctl needs additional input retention. In
 particular, an input-fence descriptor number is not a stable identity: another
 thread may close it and reuse the number while preparation waits. A request
