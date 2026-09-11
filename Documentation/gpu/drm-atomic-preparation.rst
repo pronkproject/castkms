@@ -490,23 +490,30 @@ removed output available again. The callback must check targets as well as
 objects named by property values, and the caller must keep that authority
 valid through submission.
 
-The initial setters accept a plane's framebuffer, input fence, controller
-association and damage blob, plus a controller's mode blob. They use the
-retained pointers directly and take independent references for the attempted
-state where needed. Explicit framebuffer assignments still count as explicit
-updates, including same-framebuffer assignments. The order of assignments is
-preserved: assigning a framebuffer twice selects the last value, whereas
+The setters accept a plane's framebuffer, input fence, controller association,
+damage blob, position and size, plus a controller's mode blob. Setters for
+resource values use the retained pointers and take independent references for
+the attempted state where needed. Explicitly assigning a framebuffer still
+counts as an update, even when selecting the same framebuffer. Assignments keep
+their order: assigning a framebuffer twice selects the last value, whereas
 assigning an input fence after a non-null fence remains an error.
+
+Plane position and size use the same setter as ordinary atomic ioctls. Display
+positions may be negative; source positions and sizes preserve their fractional
+coordinates. Each value must fit the property's range. Checking that the full
+rectangle fits the framebuffer and the driver's capabilities remains part of
+checking the complete update. Rebuilding applies only the requested fields to
+current state, rather than restoring an earlier copy of the plane's geometry.
 
 Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
-driver-private property callback is called. Scalar properties, other resource
-properties and asynchronous-flip validation still need their own application
-support. Ordinary atomic ioctl input copying and output signaling are not
-connected to the retained collection yet.
+driver-private property callback is called. Other properties are not supported
+yet, nor are the checks required for asynchronous flips. The ordinary atomic
+ioctl does not yet copy its inputs into the retained collection or manage
+output events and fences for it.
 
-Application does not check or commit the complete display update. It also does
-not roll back a prefix of assignments when a later setter fails. The caller
+Applying a request does not check or commit the complete display update. If a
+setter fails, preceding assignments are not rolled back. The caller
 must discard or clear the attempted state on error. Locks stay in the caller's
 acquire context, including on failure; a deadlock retry clears state and backs
 off those locks before reapplying the request. Every invocation repeats the
