@@ -239,6 +239,8 @@ struct __drm_crtcs_state {
 	s32 cursor_x, cursor_y;
 	/* Preserve individual connector preferences when they determine ACTIVE. */
 	bool power_from_connectors;
+	/* Retained legacy readback, published only with accepted state. */
+	struct drm_property_blob *legacy_gamma;
 };
 
 struct __drm_connnectors_state {
