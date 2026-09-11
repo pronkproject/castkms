@@ -128,12 +128,31 @@ static void foreign_blob_is_rejected(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
 }
 
+static void identifier_adapter_releases_lookup_reference(struct kunit *test)
+{
+	struct blob_fixture *f = new_fixture(test);
+	struct drm_property_blob *blob = new_blob(test, f->dev);
+	bool replaced = false;
+
+	KUNIT_ASSERT_EQ(test, drm_property_replace_blob_from_id(f->dev, &f->value,
+						  blob->base.id, 8, -1, -1, &replaced), -EINVAL);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->value, NULL);
+	KUNIT_EXPECT_FALSE(test, replaced);
+	KUNIT_ASSERT_EQ(test, drm_property_replace_blob_from_id(f->dev, &f->value,
+						  blob->base.id, 16, 16, 4, &replaced), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->value, blob);
+	KUNIT_EXPECT_TRUE(test, replaced);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 2);
+}
+
 static struct kunit_case blob_tests[] = {
 	KUNIT_CASE(destination_retains_resolved_blob),
 	KUNIT_CASE(size_failure_preserves_destination),
 	KUNIT_CASE(same_blob_preserves_change_flag),
 	KUNIT_CASE(null_blob_clears_destination),
 	KUNIT_CASE(foreign_blob_is_rejected),
+	KUNIT_CASE(identifier_adapter_releases_lookup_reference),
 	{ }
 };
 
