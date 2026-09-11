@@ -637,6 +637,15 @@ reference alive when an attempt is discarded. It rejects replacing an existing
 fence, including replacing it with no dependency. Passing no fence to an empty
 state leaves it available for a subsequent assignment.
 
+On preparation-enabled devices, the older single-property ioctl uses the same
+copied-assignment and blocking-commit machinery for supported properties. It
+does not require the caller to negotiate the atomic ioctl capability. That
+capability is still checked at the atomic ioctl entry point. The adapter retains
+the original issuer, resolves resource values once, and rechecks access before
+each attempt. Unsupported properties are rejected rather than falling back to
+an unprepared commit. The legacy connector power property, ``DPMS``, has separate
+semantics and is not handled by that adapter.
+
 The ordinary input-fence property adapter uses that setter after descriptor
 lookup. The blocking adapter retains the resolved fence separately and uses
 the same setter on each attempt. Framebuffer and blob references, selected
