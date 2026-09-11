@@ -418,6 +418,33 @@ userspace adapter must obtain the issuer through the file's authority policy,
 retain resolved input objects and revalidate the selected display objects. The
 request helper alone does not make legacy ioctls preparation-aware.
 
+Preparing completion metadata
+----------------------------
+
+``drm_atomic_commit_request_with_callbacks()`` also accepts a pair of callbacks
+for completion metadata, such as events and output fences. Its build callback
+has the same rules as the other request entries. An optional issuer selects the
+same revocable authority contract as the owned entry.
+
+The first signaling callback runs only after the attempted state has passed
+checking and preparation is ready. It may attach completion metadata, but must
+not change the checked display configuration or wait for readers. The driver's
+blocking commit runs next if setup succeeds. The second callback then receives
+whether that commit succeeded, allowing the caller to publish its prepared
+resources or release them on failure. Publishing an output fence does not mean
+that the work represented by the fence has finished.
+
+Every signaling setup call has exactly one matching completion call, including
+setup that fails after allocating only some resources. Both callbacks run before
+the attempted state and its modeset locks are released. A preparation wait does
+not invoke either callback; rebuilding does not keep unused events or output
+descriptors alive across that wait. An unchanged request or an earlier error
+also invokes neither callback. The runner requires the pair together so callers
+cannot provide resource setup without the corresponding completion path.
+
+Retaining inputs from userspace
+------------------------------
+
 SETCRTC resolves its requested framebuffer, mode and connectors under the initial
 display locks. On a preparation-enabled device, it retains those inputs after
 dropping the locks and calls the provider's ``set_config_request`` operation.
