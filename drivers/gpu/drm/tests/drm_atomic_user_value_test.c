@@ -165,6 +165,16 @@ static void controller_value_is_resolved_to_identity(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, entry->reference, &f->crtc->base);
 }
 
+static void null_fence_does_not_require_a_descriptor(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry *entry = resolve_value(test, &f->plane->base,
+							f->dev->mode_config.prop_in_fence_fd, U64_MAX);
+
+	KUNIT_EXPECT_EQ(test, entry->type, DRM_ATOMIC_REQUEST_FENCE);
+	KUNIT_EXPECT_PTR_EQ(test, entry->fence, NULL);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
 	KUNIT_CASE(invalid_value_preserves_destination),
@@ -173,6 +183,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(resolved_blob_has_independent_ownership),
 	KUNIT_CASE(resolved_framebuffer_has_independent_ownership),
 	KUNIT_CASE(controller_value_is_resolved_to_identity),
+	KUNIT_CASE(null_fence_does_not_require_a_descriptor),
 	{}
 };
 
