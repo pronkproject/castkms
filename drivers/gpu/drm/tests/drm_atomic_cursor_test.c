@@ -130,10 +130,30 @@ static void clearing_discards_pending_position(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 5);
 }
 
+static int reject_update(struct cursor_fixture *f)
+{
+	int ret = set_position(f);
+
+	if (ret)
+		return ret;
+	drm_atomic_get_new_crtc_state(f->state, f->crtc)->active = true;
+	return drm_atomic_check_only(f->state);
+}
+
+static void failed_check_preserves_current_position(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+
+	KUNIT_EXPECT_EQ(test, run_update(f, reject_update), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 3);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 5);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_position_does_not_change_current_position),
 	KUNIT_CASE(accepted_position_changes_with_state),
 	KUNIT_CASE(clearing_discards_pending_position),
+	KUNIT_CASE(failed_check_preserves_current_position),
 	{}
 };
 
