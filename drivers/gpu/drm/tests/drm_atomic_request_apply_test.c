@@ -3,6 +3,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_request.h>
 #include <drm/drm_atomic_state_helper.h>
+#include <drm/drm_color_mgmt.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
@@ -535,6 +536,52 @@ static void repeated_active_assignments_keep_order(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, drm_atomic_get_new_crtc_state(f->state, f->crtc)->active);
 }
 
+static void color_blobs_are_reapplied_by_reference(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_mode_config *config = &f->dev->mode_config;
+	struct drm_atomic_request_entry entries[] = {
+		{ .object = &f->crtc->base, .property = config->degamma_lut_property,
+		  .type = DRM_ATOMIC_REQUEST_BLOB },
+		{ .object = &f->crtc->base, .property = config->ctm_property,
+		  .type = DRM_ATOMIC_REQUEST_BLOB },
+		{ .object = &f->crtc->base, .property = config->gamma_lut_property,
+		  .type = DRM_ATOMIC_REQUEST_BLOB },
+	};
+	size_t sizes[] = {
+		sizeof(struct drm_color_lut), sizeof(struct drm_color_ctm),
+		sizeof(struct drm_color_lut),
+	};
+	struct drm_atomic_request *request;
+	unsigned int i, attempt;
+
+	drm_crtc_enable_color_mgmt(f->crtc, 2, true, 4);
+	for (i = 0; i < ARRAY_SIZE(entries); i++) {
+		entries[i].blob = drm_property_create_blob(f->dev, sizes[i], NULL);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entries[i].blob);
+		KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_blob, entries[i].blob), 0);
+	}
+	request = new_request(test, f, entries, ARRAY_SIZE(entries));
+	for (i = 0; i < ARRAY_SIZE(entries); i++)
+		kunit_release_action(test, put_blob, entries[i].blob);
+	for (attempt = 0; attempt < 2; attempt++) {
+		struct drm_crtc_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_crtc_state(f->state, f->crtc);
+		KUNIT_EXPECT_PTR_EQ(test, state->degamma_lut, entries[0].blob);
+		KUNIT_EXPECT_PTR_EQ(test, state->ctm, entries[1].blob);
+		KUNIT_EXPECT_PTR_EQ(test, state->gamma_lut, entries[2].blob);
+		KUNIT_EXPECT_TRUE(test, state->color_mgmt_changed);
+		for (i = 0; i < ARRAY_SIZE(entries); i++)
+			KUNIT_EXPECT_EQ(test, kref_read(&entries[i].blob->base.refcount), 2);
+		drm_atomic_commit_clear(f->state);
+		for (i = 0; i < ARRAY_SIZE(entries); i++)
+			KUNIT_EXPECT_EQ(test, kref_read(&entries[i].blob->base.refcount), 1);
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -553,6 +600,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(null_controller_disconnects_connector),
 	KUNIT_CASE(active_is_reapplied_to_current_state),
 	KUNIT_CASE(repeated_active_assignments_keep_order),
+	KUNIT_CASE(color_blobs_are_reapplied_by_reference),
 	{ }
 };
 
