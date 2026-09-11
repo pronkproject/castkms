@@ -603,6 +603,15 @@ operation reject SETPLANE while preparation is enabled; devices without
 preparation keep their existing plane callbacks. Kernel callers may use the same
 resolved helper without a DRM file.
 
+``drm_atomic_set_legacy_flip()`` records a primary framebuffer replacement
+without changing the accepted image. It requires an active controller and a
+current primary image, preserves geometry and other plane properties, and
+rejects pixel-format changes or a replacement too small for the source
+rectangle. Full driver checks still validate modifiers and the rest of the
+configuration. The attempt forbids modesetting. The caller retains the image
+and establishes authorization, preparation and completion signaling separately;
+the setter alone does not adapt the legacy page-flip ioctl.
+
 The remembered position used by legacy cursor commands is separate from the
 visible cursor plane's rectangle: moving an invisible cursor still affects
 where a later image appears. Kernel builders may record that position with
