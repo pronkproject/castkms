@@ -8,6 +8,7 @@
 #include <drm/drm_plane.h>
 #include <drm/drm_property.h>
 #include <kunit/test.h>
+#include <linux/dma-fence.h>
 
 struct request_fixture {
 	struct drm_device *dev;
@@ -138,6 +139,40 @@ static void blob_survives_creator_release(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
 }
 
+static const char *fence_name(struct dma_fence *fence)
+{
+	return "drm-request-test";
+}
+
+static const struct dma_fence_ops fence_ops = {
+	.get_driver_name = fence_name,
+	.get_timeline_name = fence_name,
+};
+
+static void put_fence(void *data)
+{
+	dma_fence_put(data);
+}
+
+static void fence_survives_creator_release(struct kunit *test)
+{
+	struct request_fixture *f = new_fixture(test, NULL);
+	struct dma_fence *fence = kzalloc_obj(*fence);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_in_fence_fd,
+		.type = DRM_ATOMIC_REQUEST_FENCE, .fence = fence,
+	};
+	struct drm_atomic_request *request;
+
+	KUNIT_ASSERT_NOT_NULL(test, fence);
+	dma_fence_init(fence, &fence_ops, NULL, dma_fence_context_alloc(1), 1);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_fence, fence), 0);
+	request = new_request(test, f->dev, &entry, 1);
+	kunit_release_action(test, put_fence, fence);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_request_entry(request, 0)->fence, fence);
+	KUNIT_EXPECT_EQ(test, kref_read(&fence->refcount), 1);
+}
+
 static void wrong_value_kind_is_rejected(struct kunit *test)
 {
 	struct request_fixture *f = new_fixture(test, NULL);
@@ -215,6 +250,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_entries_are_copied_in_order),
 	KUNIT_CASE(framebuffer_survives_creator_release),
 	KUNIT_CASE(blob_survives_creator_release),
+	KUNIT_CASE(fence_survives_creator_release),
 	KUNIT_CASE(wrong_value_kind_is_rejected),
 	KUNIT_CASE(foreign_target_is_rejected),
 	KUNIT_CASE(resolved_controller_identity_is_copied),
