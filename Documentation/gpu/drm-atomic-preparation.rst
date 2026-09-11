@@ -491,12 +491,20 @@ objects named by property values, and the caller must keep that authority
 valid through submission.
 
 The setters accept a plane's framebuffer, input fence, controller association,
-damage blob, position and size, plus a controller's mode blob. Setters for
-resource values use the retained pointers and take independent references for
-the attempted state where needed. Explicitly assigning a framebuffer still
-counts as an update, even when selecting the same framebuffer. Assignments keep
-their order: assigning a framebuffer twice selects the last value, whereas
+damage blob, position and size, a controller's mode blob, and the controller
+selected by a connector. Resource values use retained pointers. Where needed,
+the attempted state takes its own references. Explicitly assigning a framebuffer
+still counts as an update, even when selecting the same framebuffer. Assignments
+keep their order: assigning a framebuffer twice selects the last value, whereas
 assigning an input fence after a non-null fence remains an error.
+
+A connector represents an output. Its retained controller value is applied
+through the existing kernel setter, which updates both the connector's choice
+and the controller's record of connected outputs. A null value disconnects the
+output. Clearing a failed attempt releases the references acquired for that
+attempt; the request keeps its references for another attempt. The caller must
+still validate the connector's availability and permission to use the selected
+controller. Keeping a connector alive does not undo its removal or grant access.
 
 Plane position and size use the same setter as ordinary atomic ioctls. Display
 positions may be negative; source positions and sizes preserve their fractional
