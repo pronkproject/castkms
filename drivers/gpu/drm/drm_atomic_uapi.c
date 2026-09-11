@@ -33,22 +33,22 @@
 #include <drm/drm_atomic_prepare_owner.h>
 #include <drm/drm_atomic_prepare_submission.h>
 #include <drm/drm_atomic_uapi.h>
+#include <drm/drm_file.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_print.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_writeback.h>
-#include <drm/drm_vblank.h>
 #include <drm/drm_colorop.h>
 
 #include <linux/export.h>
 #include <linux/dma-fence.h>
 #include <linux/uaccess.h>
 #include <linux/sync_file.h>
-#include <linux/file.h>
 
 #include "drm_crtc_internal.h"
 #include "drm_atomic_prepare_uapi.h"
 #include "drm_atomic_user_input.h"
+#include "drm_atomic_user_signaling.h"
 
 /**
  * DOC: overview
@@ -370,17 +370,6 @@ static void set_out_fence_for_crtc(struct drm_atomic_commit *state,
 	state->crtcs[drm_crtc_index(crtc)].out_fence_ptr = fence_ptr;
 }
 
-static s32 __user *get_out_fence_for_crtc(struct drm_atomic_commit *state,
-					  struct drm_crtc *crtc)
-{
-	s32 __user *fence_ptr;
-
-	fence_ptr = state->crtcs[drm_crtc_index(crtc)].out_fence_ptr;
-	state->crtcs[drm_crtc_index(crtc)].out_fence_ptr = NULL;
-
-	return fence_ptr;
-}
-
 static int set_out_fence_for_connector(struct drm_atomic_commit *state,
 					struct drm_connector *connector,
 					s32 __user *fence_ptr)
@@ -396,18 +385,6 @@ static int set_out_fence_for_connector(struct drm_atomic_commit *state,
 	state->connectors[index].out_fence_ptr = fence_ptr;
 
 	return 0;
-}
-
-static s32 __user *get_out_fence_for_connector(struct drm_atomic_commit *state,
-					       struct drm_connector *connector)
-{
-	unsigned int index = drm_connector_index(connector);
-	s32 __user *fence_ptr;
-
-	fence_ptr = state->connectors[index].out_fence_ptr;
-	state->connectors[index].out_fence_ptr = NULL;
-
-	return fence_ptr;
 }
 
 static int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
@@ -1105,23 +1082,6 @@ int drm_atomic_get_property(struct drm_mode_object *obj,
  * The big monster ioctl
  */
 
-static struct drm_pending_vblank_event *create_vblank_event(
-		struct drm_crtc *crtc, uint64_t user_data)
-{
-	struct drm_pending_vblank_event *e = NULL;
-
-	e = kzalloc_obj(*e);
-	if (!e)
-		return NULL;
-
-	e->event.base.type = DRM_EVENT_FLIP_COMPLETE;
-	e->event.base.length = sizeof(e->event);
-	e->event.vbl.crtc_id = crtc->base.id;
-	e->event.vbl.user_data = user_data;
-
-	return e;
-}
-
 int drm_atomic_connector_commit_dpms(struct drm_atomic_commit *state,
 				     struct drm_connector *connector,
 				     int mode)
@@ -1385,204 +1345,6 @@ int drm_atomic_set_property(struct drm_atomic_commit *state,
  *	helpers and for the DRM event handling for existing userspace.
  */
 
-struct drm_out_fence_state {
-	s32 __user *out_fence_ptr;
-	struct sync_file *sync_file;
-	int fd;
-};
-
-static int setup_out_fence(struct drm_out_fence_state *fence_state,
-			   struct dma_fence *fence)
-{
-	fence_state->fd = get_unused_fd_flags(O_CLOEXEC);
-	if (fence_state->fd < 0)
-		return fence_state->fd;
-
-	if (put_user(fence_state->fd, fence_state->out_fence_ptr))
-		return -EFAULT;
-
-	fence_state->sync_file = sync_file_create(fence);
-	if (!fence_state->sync_file)
-		return -ENOMEM;
-
-	return 0;
-}
-
-static int prepare_signaling(struct drm_device *dev,
-				  struct drm_atomic_commit *state,
-				  struct drm_mode_atomic *arg,
-				  struct drm_file *file_priv,
-				  struct drm_out_fence_state **fence_state,
-				  unsigned int *num_fences)
-{
-	struct drm_crtc *crtc;
-	struct drm_crtc_state *crtc_state;
-	struct drm_connector *conn;
-	struct drm_connector_state *conn_state;
-	int i, c = 0, ret;
-
-	if (arg->flags & DRM_MODE_ATOMIC_TEST_ONLY)
-		return 0;
-
-	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
-		s32 __user *fence_ptr;
-
-		fence_ptr = get_out_fence_for_crtc(crtc_state->state, crtc);
-
-		if (arg->flags & DRM_MODE_PAGE_FLIP_EVENT || fence_ptr) {
-			struct drm_pending_vblank_event *e;
-
-			e = create_vblank_event(crtc, arg->user_data);
-			if (!e)
-				return -ENOMEM;
-
-			crtc_state->event = e;
-		}
-
-		if (arg->flags & DRM_MODE_PAGE_FLIP_EVENT) {
-			struct drm_pending_vblank_event *e = crtc_state->event;
-
-			if (!file_priv)
-				continue;
-
-			ret = drm_event_reserve_init(dev, file_priv, &e->base,
-						     &e->event.base);
-			if (ret) {
-				kfree(e);
-				crtc_state->event = NULL;
-				return ret;
-			}
-		}
-
-		if (fence_ptr) {
-			struct dma_fence *fence;
-			struct drm_out_fence_state *f;
-
-			f = krealloc(*fence_state, sizeof(**fence_state) *
-				     (*num_fences + 1), GFP_KERNEL);
-			if (!f)
-				return -ENOMEM;
-
-			memset(&f[*num_fences], 0, sizeof(*f));
-
-			f[*num_fences].out_fence_ptr = fence_ptr;
-			*fence_state = f;
-
-			fence = drm_crtc_create_fence(crtc);
-			if (!fence)
-				return -ENOMEM;
-
-			ret = setup_out_fence(&f[(*num_fences)++], fence);
-			if (ret) {
-				dma_fence_put(fence);
-				return ret;
-			}
-
-			crtc_state->event->base.fence = fence;
-		}
-
-		c++;
-	}
-
-	for_each_new_connector_in_state(state, conn, conn_state, i) {
-		struct drm_writeback_connector *wb_conn;
-		struct drm_out_fence_state *f;
-		struct dma_fence *fence;
-		s32 __user *fence_ptr;
-
-		if (!conn_state->writeback_job)
-			continue;
-
-		fence_ptr = get_out_fence_for_connector(state, conn);
-		if (!fence_ptr)
-			continue;
-
-		f = krealloc(*fence_state, sizeof(**fence_state) *
-			     (*num_fences + 1), GFP_KERNEL);
-		if (!f)
-			return -ENOMEM;
-
-		memset(&f[*num_fences], 0, sizeof(*f));
-
-		f[*num_fences].out_fence_ptr = fence_ptr;
-		*fence_state = f;
-
-		wb_conn = drm_connector_to_writeback(conn);
-		fence = drm_writeback_get_out_fence(wb_conn);
-		if (!fence)
-			return -ENOMEM;
-
-		ret = setup_out_fence(&f[(*num_fences)++], fence);
-		if (ret) {
-			dma_fence_put(fence);
-			return ret;
-		}
-
-		conn_state->writeback_job->out_fence = fence;
-	}
-
-	/*
-	 * Having this flag means user mode pends on event which will never
-	 * reach due to lack of at least one CRTC for signaling
-	 */
-	if (c == 0 && (arg->flags & DRM_MODE_PAGE_FLIP_EVENT)) {
-		drm_dbg_atomic(dev, "need at least one CRTC for DRM_MODE_PAGE_FLIP_EVENT");
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-static void complete_signaling(struct drm_device *dev,
-			       struct drm_atomic_commit *state,
-			       struct drm_out_fence_state *fence_state,
-			       unsigned int num_fences,
-			       bool install_fds)
-{
-	struct drm_crtc *crtc;
-	struct drm_crtc_state *crtc_state;
-	int i;
-
-	if (install_fds) {
-		for (i = 0; i < num_fences; i++)
-			fd_install(fence_state[i].fd,
-				   fence_state[i].sync_file->file);
-
-		kfree(fence_state);
-		return;
-	}
-
-	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
-		struct drm_pending_vblank_event *event = crtc_state->event;
-		/*
-		 * Free the allocated event. drm_atomic_helper_setup_commit
-		 * can allocate an event too, so only free it if it's ours
-		 * to prevent a double free in drm_atomic_commit_clear.
-		 */
-		if (event && (event->base.fence || event->base.file_priv)) {
-			drm_event_cancel_free(dev, &event->base);
-			crtc_state->event = NULL;
-		}
-	}
-
-	if (!fence_state)
-		return;
-
-	for (i = 0; i < num_fences; i++) {
-		if (fence_state[i].sync_file)
-			fput(fence_state[i].sync_file->file);
-		if (fence_state[i].fd >= 0)
-			put_unused_fd(fence_state[i].fd);
-
-		/* If this fails log error to the user */
-		if (fence_state[i].out_fence_ptr &&
-		    put_user(-1, fence_state[i].out_fence_ptr))
-			drm_dbg_atomic(dev, "Couldn't clear out_fence_ptr\n");
-	}
-
-	kfree(fence_state);
-}
-
 static void
 set_async_flip(struct drm_atomic_commit *state)
 {
@@ -1603,10 +1365,10 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 	unsigned int copied_objs, copied_props;
 	struct drm_atomic_commit *state;
 	struct drm_modeset_acquire_ctx ctx;
-	struct drm_out_fence_state *fence_state;
+	struct drm_atomic_user_signaling *signaling;
 	struct drm_prepare_owner *prepare_owner = NULL;
 	int ret = 0;
-	unsigned int i, j, num_fences;
+	unsigned int i, j;
 	bool async_flip = false;
 
 	/* disallow for drivers not supporting atomic: */
@@ -1679,8 +1441,7 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 retry:
 	copied_objs = 0;
 	copied_props = 0;
-	fence_state = NULL;
-	num_fences = 0;
+	signaling = NULL;
 	if (prepare_owner) {
 		ret = drm_atomic_prepare_submission_init(state, prepare_owner);
 		if (ret)
@@ -1743,8 +1504,8 @@ retry:
 		drm_mode_object_put(obj);
 	}
 
-	ret = prepare_signaling(dev, state, arg, file_priv, &fence_state,
-				&num_fences);
+	ret = drm_atomic_prepare_user_signaling(state, file_priv, arg->flags,
+						arg->user_data, &signaling);
 	if (ret)
 		goto out;
 
@@ -1765,7 +1526,7 @@ retry:
 	}
 
 out:
-	complete_signaling(dev, state, fence_state, num_fences, !ret);
+	drm_atomic_complete_user_signaling(state, signaling, !ret);
 
 	if (ret == -EDEADLK) {
 		drm_atomic_commit_clear(state);
