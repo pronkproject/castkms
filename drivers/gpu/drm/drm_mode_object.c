@@ -32,6 +32,7 @@
 #include <drm/drm_print.h>
 
 #include "drm_crtc_internal.h"
+#include "drm_atomic_user_commit.h"
 
 /*
  * Internal function to assign a slot in the object idr and optionally
@@ -565,6 +566,9 @@ static int set_property_atomic(struct drm_mode_object *obj,
 	struct drm_modeset_acquire_ctx ctx;
 	int ret;
 
+	if (dev->mode_config.preparation && prop != dev->mode_config.dpms_property)
+		return drm_atomic_commit_user_property(obj, prop, prop_value, file_priv);
+
 	state = drm_atomic_commit_alloc(dev);
 	if (!state)
 		return -ENOMEM;
@@ -634,3 +638,4 @@ out_unref:
 	drm_mode_object_put(arg_obj);
 	return ret;
 }
+EXPORT_SYMBOL_FOR_TESTS_ONLY(drm_mode_obj_set_property_ioctl);
