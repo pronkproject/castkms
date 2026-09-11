@@ -131,6 +131,18 @@ static void accepted_color_property(struct fixture *f)
 	ksft_test_result(matches, "Legacy gamma also installs the requested atomic color table\n");
 }
 
+static void wrong_size_preserves_readback(struct fixture *f)
+{
+	int ret, error;
+
+	errno = 0;
+	ret = drmModeCrtcSetGamma(f->fd, f->crtc, f->count - 1, f->values,
+				 f->values + f->count, f->values + 2 * f->count);
+	error = errno;
+	ksft_test_result(ret < 0 && error == EINVAL && readback_matches(f),
+			"Wrong table size leaves accepted legacy gamma unchanged\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -139,10 +151,11 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(3);
+	ksft_set_plan(4);
 	accepted_gamma(&f);
 	accepted_color_property(&f);
 	failed_copy_preserves_readback(&f);
+	wrong_size_preserves_readback(&f);
 	free(f.values);
 	free(f.readback);
 	close(f.fd);
