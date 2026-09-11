@@ -450,6 +450,22 @@ static void unchanged_request_does_not_prepare_signaling(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 0);
 }
 
+static void failed_preparation_does_not_prepare_signaling(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	f->abandon = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_with_callbacks(f->dev, NULL,
+								     &signaling_callbacks, f), -EIO);
+	kthread_stop(f->worker);
+	f->worker = NULL;
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->signals_prepared, 0);
+	KUNIT_EXPECT_EQ(test, f->signals_completed, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+}
+
 struct contended_request {
 	struct request_fixture *display;
 	struct drm_crtc *other;
@@ -609,6 +625,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(failed_signaling_is_completed_without_installation),
 	KUNIT_CASE(rejected_commit_does_not_publish_signaling),
 	KUNIT_CASE(unchanged_request_does_not_prepare_signaling),
+	KUNIT_CASE(failed_preparation_does_not_prepare_signaling),
 	{}
 };
 
