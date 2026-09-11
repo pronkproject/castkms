@@ -160,6 +160,14 @@ static void closed_handle_keeps_image_alive(struct fixture *f)
 			"The accepted cursor image outlives its buffer handle\n");
 }
 
+static void hide_image(struct fixture *f)
+{
+	int ret = drmModeSetCursor(f->fd, f->crtc, 0, 0, 0);
+
+	ksft_test_result(!ret && !property(f->fd, f->cursor, "FB_ID") &&
+			!property(f->fd, f->cursor, "CRTC_ID"), "Hiding removes the cursor image\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -169,11 +177,12 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(4);
+	ksft_set_plan(5);
 	show_after_hidden_move(&f);
 	move_visible_image(&f);
 	rejected_image_preserves_cursor(&f);
 	closed_handle_keeps_image_alive(&f);
+	hide_image(&f);
 	if (drmModeSetCursor(f.fd, f.crtc, 0, 0, 0))
 		ksft_exit_fail_msg("Cannot hide cursor during cleanup: %m\n");
 	if (drmModeSetCrtc(f.fd, f.crtc, 0, 0, 0, NULL, 0, NULL))
