@@ -26,7 +26,7 @@ struct cursor_fixture {
 	struct completion checked;
 	unsigned int checks, installs;
 	int worker_error;
-	bool change_image, change_position, revoke;
+	bool change_image, change_position, revoke, reject;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -36,7 +36,7 @@ static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
 
 	f->checks++;
 	complete_all(&f->checked);
-	return ret;
+	return f->reject ? -EINVAL : ret;
 }
 
 static int install_update(struct drm_device *dev, struct drm_atomic_commit *state, bool nonblock)
@@ -316,11 +316,32 @@ static void hidden_cursor_remembers_position(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 43);
 }
 
+static void rejected_image_preserves_hotspot(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+	struct drm_cursor_update update = {
+		.crtc = f->crtc, .update_image = true, .fb = f->replacement,
+		.hot_x = 7, .hot_y = 11,
+	};
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, f->cursor->hotspot_x_property);
+	KUNIT_ASSERT_NOT_NULL(test, f->cursor->hotspot_y_property);
+	f->reject = true;
+	ret = drm_atomic_helper_cursor_request(&update, f->owner, NULL, NULL);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->cursor->state->fb, f->fb);
+	KUNIT_EXPECT_EQ(test, f->cursor->state->hotspot_x, 0);
+	KUNIT_EXPECT_EQ(test, f->cursor->state->hotspot_y, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(move_uses_current_image_after_wait),
 	KUNIT_CASE(image_uses_current_position_after_wait),
 	KUNIT_CASE(revoked_move_preserves_position),
 	KUNIT_CASE(hidden_cursor_remembers_position),
+	KUNIT_CASE(rejected_image_preserves_hotspot),
 	{}
 };
 
