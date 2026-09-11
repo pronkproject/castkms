@@ -42,6 +42,7 @@ drm-y := \
 	drm_atomic_user_value.o \
 	drm_atomic_user_request.o \
 	drm_atomic_user_request_auth.o \
+	drm_atomic_user_signaling.o \
 	drm_atomic_prepare.o \
 	drm_atomic_prepare_wait.o \
 	drm_atomic_prepare_set.o \
