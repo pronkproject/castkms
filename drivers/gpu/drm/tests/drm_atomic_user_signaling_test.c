@@ -152,12 +152,23 @@ static void reservation_failure_releases_unreserved_event(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, list_empty(&f->file.pending_event_list));
 }
 
+static void existing_event_is_not_owned_by_signaling(struct kunit *test)
+{
+	struct signaling_fixture *f = new_fixture(test);
+
+	KUNIT_EXPECT_EQ(test, run_attempt(f, DRM_MODE_PAGE_FLIP_EVENT, true, true, true, false),
+			-EBUSY);
+	KUNIT_EXPECT_TRUE(test, f->kept_foreign_event);
+	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(rejected_commit_returns_event_space),
 	KUNIT_CASE(test_only_allocates_no_signaling),
 	KUNIT_CASE(event_requires_a_controller),
 	KUNIT_CASE(inactive_controller_rejects_event),
 	KUNIT_CASE(reservation_failure_releases_unreserved_event),
+	KUNIT_CASE(existing_event_is_not_owned_by_signaling),
 	{}
 };
 
