@@ -10,13 +10,22 @@ struct drm_atomic_user_request;
 struct drm_device;
 struct drm_file;
 struct drm_mode_object;
+struct drm_crtc;
+struct drm_property;
+
+struct drm_atomic_user_fence_destination {
+	struct drm_crtc *crtc;
+	struct drm_property *property;
+	u64 address;
+};
 
 /*
  * Resolve a copied ioctl under the caller's modeset locks. The caller keeps
  * the configuration alive until destruction. Values and every target group,
  * including groups without properties, retain their own references. No state
- * is applied, checked or committed. Output pointers and preparation descriptors
- * are not accepted. The caller must revalidate authority before each attempt.
+ * is applied, checked or committed. Controller output destinations are kept
+ * separately from values; preparation descriptors are not accepted. The caller
+ * must revalidate authority before each attempt.
  */
 struct drm_atomic_user_request *
 drm_atomic_resolve_user_request(struct drm_device *dev, struct drm_file *file,
@@ -29,6 +38,11 @@ drm_atomic_user_request_values(const struct drm_atomic_user_request *request);
 unsigned int drm_atomic_user_request_target_count(const struct drm_atomic_user_request *request);
 struct drm_mode_object *
 drm_atomic_user_request_target(const struct drm_atomic_user_request *request, unsigned int index);
+
+unsigned int drm_atomic_user_request_fence_count(const struct drm_atomic_user_request *request);
+const struct drm_atomic_user_fence_destination *
+drm_atomic_user_request_fence_destination(const struct drm_atomic_user_request *request,
+					 unsigned int index);
 
 /*
  * Recheck file authority under modeset locks without resolving any resource
