@@ -97,10 +97,25 @@ static void same_blob_preserves_change_flag(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 2);
 }
 
+static void null_blob_clears_destination(struct kunit *test)
+{
+	struct blob_fixture *f = new_fixture(test);
+	struct drm_property_blob *blob = new_blob(test, f->dev);
+	bool replaced = false;
+
+	drm_property_replace_blob(&f->value, blob);
+	KUNIT_ASSERT_EQ(test, drm_property_replace_blob_checked(f->dev, &f->value, NULL,
+							      16, 16, 4, &replaced), 0);
+	KUNIT_EXPECT_TRUE(test, replaced);
+	KUNIT_EXPECT_PTR_EQ(test, f->value, NULL);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+}
+
 static struct kunit_case blob_tests[] = {
 	KUNIT_CASE(destination_retains_resolved_blob),
 	KUNIT_CASE(size_failure_preserves_destination),
 	KUNIT_CASE(same_blob_preserves_change_flag),
+	KUNIT_CASE(null_blob_clears_destination),
 	{ }
 };
 
