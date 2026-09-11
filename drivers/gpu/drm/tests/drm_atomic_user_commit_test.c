@@ -171,6 +171,63 @@ static struct commit_fixture *new_fixture(struct kunit *test)
 	return f;
 }
 
+static int finish_reader(void *data)
+{
+	struct commit_fixture *f = data;
+	struct drm_file *file = f->file->private_data;
+
+	wait_for_completion(&f->checked);
+	f->worker_error = drm_modeset_lock(&f->crtc->mutex, NULL);
+	if (!f->worker_error) {
+		WRITE_ONCE(f->value, 1);
+		drm_modeset_unlock(&f->crtc->mutex);
+		if (f->lose_master) {
+			mutex_lock(&f->dev->master_mutex);
+			file->is_master = false;
+			mutex_unlock(&f->dev->master_mutex);
+		}
+		if (f->revoke)
+			drm_prepare_owner_revoke(f->owner);
+	}
+	if (f->abandon)
+		drm_prepare_read_abandon(f->read);
+	else
+		drm_prepare_read_release(f->read, NULL);
+	f->read = NULL;
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	__set_current_state(TASK_RUNNING);
+	return 0;
+}
+
+static void start_reader(struct kunit *test, struct commit_fixture *f)
+{
+	struct drm_prepare_source *source;
+	struct task_struct *worker;
+	int ret = drm_modeset_lock(&f->crtc->mutex, NULL);
+
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	source = drm_atomic_prepare_crtc_source(f->crtc);
+	if (!IS_ERR(source)) {
+		f->source = drm_prepare_source_get(source);
+		f->read = drm_prepare_source_claim(source);
+	}
+	drm_modeset_unlock(&f->crtc->mutex);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, source);
+	if (IS_ERR(f->read)) {
+		ret = PTR_ERR(f->read);
+		f->read = NULL;
+		KUNIT_FAIL(test, "Cannot claim source: %d", ret);
+		return;
+	}
+	worker = kthread_run(finish_reader, f, "drm-user-reader");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, worker);
+	f->worker = worker;
+}
+
 static int commit_request(struct commit_fixture *f, u32 flags)
 {
 	return drm_atomic_commit_user_request(f->dev, f->file->private_data,
@@ -183,6 +240,19 @@ static void ready_request_installs_once(struct kunit *test)
 
 	KUNIT_EXPECT_EQ(test, commit_request(f, 0), 0);
 	KUNIT_EXPECT_EQ(test, f->checks, 1);
+	KUNIT_EXPECT_EQ(test, f->installations, 1);
+}
+
+static void waiting_request_does_not_reread_input(struct kunit *test)
+{
+	struct commit_fixture *f = new_fixture(test);
+
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, commit_request(f, 0), 0);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_GE(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->value, 1);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
 	KUNIT_EXPECT_EQ(test, f->installations, 1);
 }
 
@@ -218,6 +288,7 @@ static void driver_added_controller_does_not_request_an_event(struct kunit *test
 static struct kunit_case cases[] = {
 	KUNIT_CASE(driver_added_controller_does_not_request_an_event),
 	KUNIT_CASE(ready_request_installs_once),
+	KUNIT_CASE(waiting_request_does_not_reread_input),
 	{}
 };
 
