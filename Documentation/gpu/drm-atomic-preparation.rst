@@ -467,10 +467,21 @@ are independent. A failed resolution leaves its destination untouched.
 
 The adapter accepts only properties understood by retained-request replay.
 It does not guess whether a private numeric property hides a resource handle.
-It also does not resolve preparation descriptors or output pointers. The caller
-must retain the target object, assemble the complete ordered request, and
-recheck authority before each attempt. The ordinary ioctl does not yet use
-that adapter, so its copied arrays alone still do not authorize waiting.
+It also does not resolve preparation descriptors or output pointers.
+
+The private request adapter assembles those values under the display locks.
+It retains every target group, including targets supplied with no properties,
+as well as an ordered collection of resolved assignments. Repeated targets
+remain separate groups and repeated assignments remain ordered. Once assembly
+succeeds, changing or freeing the copied arrays does not change the request.
+Failure releases all references acquired for the incomplete request.
+
+Retaining targets with no assignments matters for permission checks: an empty
+group must not become a way to skip checking the caller's lease after waiting.
+The caller must still recheck authority and availability before each attempt.
+The ordinary ioctl does not yet use the request adapter, so its copied arrays
+alone still do not authorize waiting. Preparation descriptors and completion
+metadata remain separate from the retained values.
 
 SETCRTC resolves its requested framebuffer, mode and connectors under the initial
 display locks. On a preparation-enabled device, it retains those inputs after
