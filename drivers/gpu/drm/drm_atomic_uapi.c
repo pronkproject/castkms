@@ -566,10 +566,8 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 		return drm_atomic_set_rotation_for_plane(state, val);
 	} else if (property == plane->zpos_property) {
 		state->zpos = val;
-	} else if (property == plane->color_encoding_property) {
-		state->color_encoding = val;
-	} else if (property == plane->color_range_property) {
-		state->color_range = val;
+	} else if (drm_atomic_is_plane_color_property(plane, property)) {
+		return drm_atomic_set_color_property_for_plane(state, property, val);
 	} else if (property == plane->color_pipeline_property) {
 		/* find DRM colorop object */
 		struct drm_colorop *colorop = NULL;
