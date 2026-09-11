@@ -33,6 +33,7 @@
 #include <linux/gpu_buddy.h>
 #include <drm/display/drm_hdcp.h>
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_flip.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_outputs.h>

@@ -242,6 +242,7 @@ impl<T: DriverCrtc> Crtc<T> {
             get_vblank_timestamp: <T::VblankImpl as VblankImpl>::VBLANK_OPS.get_vblank_timestamp,
             late_register: None,
             page_flip: Some(bindings::drm_atomic_helper_page_flip),
+            build_page_flip: Some(bindings::drm_atomic_set_legacy_flip),
             page_flip_target: None,
             reset: None,
             set_config: Some(bindings::drm_atomic_helper_set_config),
