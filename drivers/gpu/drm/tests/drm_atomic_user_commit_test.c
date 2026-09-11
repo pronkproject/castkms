@@ -319,6 +319,23 @@ static void legacy_property_waits_without_atomic_capability(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
 }
 
+static void legacy_property_rechecks_master_after_wait(struct kunit *test)
+{
+	struct commit_fixture *f = new_fixture(test);
+	struct drm_file *file = f->file->private_data;
+	struct drm_mode_obj_set_property args = {
+		.obj_id = f->object, .obj_type = DRM_MODE_OBJECT_CRTC,
+		.prop_id = f->property, .value = 0,
+	};
+
+	file->atomic = false;
+	f->lose_master = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_mode_obj_set_property_ioctl(f->dev, &args, file), -EACCES);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+}
+
 static struct commit_fixture *new_event_fixture(struct kunit *test)
 {
 	struct commit_fixture *f = new_fixture(test);
@@ -371,6 +388,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(abandoned_source_prevents_acceptance),
 	KUNIT_CASE(only_blocking_commit_flags_are_accepted),
 	KUNIT_CASE(legacy_property_waits_without_atomic_capability),
+	KUNIT_CASE(legacy_property_rechecks_master_after_wait),
 	{}
 };
 
