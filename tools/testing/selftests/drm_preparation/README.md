@@ -7,6 +7,12 @@ desktop session. The test checks installed output fences, cleanup after invalid
 geometry, test-only requests and rejection on an inactive output. It does not
 qualify writeback or delayed preparation. Build it with `make atomic-signaling`
 in this directory and pass the device path as its optional first argument.
+Pass `--preparation-client` after that path to negotiate explicit preparation
+while still submitting blocking updates without tickets. With preparation
+enabled on VKMS, both forms exercise the kernel's internal preparation path.
+`atomic-ticket` separately checks that nonblocking updates still require a
+ticket, an explicit null ticket does not select internal preparation, and
+explicit tickets still require negotiation.
 
 CastKMS wants to show a virtual monitor, capture what appears on it, and send
 that image somewhere else. The proposed design composes pixels in userspace,
