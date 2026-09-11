@@ -294,10 +294,21 @@ static void kernel_power_command_revalidates_after_wait(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->connector.dpms, DRM_MODE_DPMS_ON);
 }
 
+static void invalid_power_modes_do_not_truncate(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+
+	KUNIT_EXPECT_EQ(test, set_power(f, 1ULL << 32), -EINVAL);
+	KUNIT_EXPECT_EQ(test, set_power(f, DRM_MODE_DPMS_OFF + 1), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(power_ioctl_waits_without_publishing_preference),
 	KUNIT_CASE(master_loss_cancels_power_change),
 	KUNIT_CASE(kernel_power_command_revalidates_after_wait),
+	KUNIT_CASE(invalid_power_modes_do_not_truncate),
 	{}
 };
 
