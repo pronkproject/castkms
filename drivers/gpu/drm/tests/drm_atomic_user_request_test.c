@@ -163,12 +163,44 @@ static void failed_property_releases_preceding_values(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
 }
 
+static void output_destinations_are_separate_from_display_values(struct kunit *test)
+{
+	struct user_request_fixture *f = new_fixture(test);
+	u32 objects[] = { f->crtc->base.id };
+	u32 counts[] = { 4 };
+	u32 properties[] = { f->dev->mode_config.prop_active->base.id,
+			     f->dev->mode_config.prop_out_fence_ptr->base.id,
+			     f->dev->mode_config.prop_active->base.id,
+			     f->dev->mode_config.prop_out_fence_ptr->base.id };
+	u64 values[] = { 1, 0x1000, 0, 0 };
+	struct drm_atomic_user_input input = {
+		.object_count = 1, .property_count = 4,
+		.objects = objects, .counts = counts, .properties = properties, .values = values,
+	};
+	struct drm_atomic_user_request *request = new_request(test, f->dev, &input);
+	const struct drm_atomic_request *retained = drm_atomic_user_request_values(request);
+	const struct drm_atomic_user_fence_destination *destination;
+
+	values[1] = 0x2000;
+	KUNIT_EXPECT_EQ(test, drm_atomic_request_count(retained), 2);
+	KUNIT_EXPECT_EQ(test, drm_atomic_request_entry(retained, 0)->scalar, 1);
+	KUNIT_EXPECT_EQ(test, drm_atomic_request_entry(retained, 1)->scalar, 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_user_request_fence_count(request), 2);
+	destination = drm_atomic_user_request_fence_destination(request, 0);
+	KUNIT_EXPECT_PTR_EQ(test, destination->crtc, f->crtc);
+	KUNIT_EXPECT_PTR_EQ(test, destination->property, f->dev->mode_config.prop_out_fence_ptr);
+	KUNIT_EXPECT_EQ(test, destination->address, 0x1000);
+	KUNIT_EXPECT_EQ(test, drm_atomic_user_request_fence_destination(request, 1)->address, 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_user_request_fence_destination(request, 2), NULL);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(empty_request_has_no_targets_or_values),
 	KUNIT_CASE(repeated_targets_keep_ordered_independent_values),
 	KUNIT_CASE(zero_property_group_retains_its_target),
 	KUNIT_CASE(inconsistent_counts_are_rejected),
 	KUNIT_CASE(failed_property_releases_preceding_values),
+	KUNIT_CASE(output_destinations_are_separate_from_display_values),
 	{}
 };
 
