@@ -496,6 +496,30 @@ static void null_controller_disconnects_connector(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&connector->base.refcount), refs);
 }
 
+static void active_is_reapplied_to_current_state(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->crtc->base, .property = f->dev->mode_config.prop_active,
+		.type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 1,
+	};
+	struct drm_atomic_request *request = new_request(test, f, &entry, 1);
+	unsigned int i;
+
+	for (i = 0; i < 2; i++) {
+		struct drm_crtc_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_crtc_state(f->state, f->crtc);
+		KUNIT_EXPECT_TRUE(test, state->active);
+		KUNIT_EXPECT_EQ(test, state->vrr_enabled, !!i);
+		KUNIT_EXPECT_FALSE(test, state->enable);
+		drm_atomic_commit_clear(f->state);
+		f->crtc->state->vrr_enabled = true;
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -512,6 +536,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(repeated_size_assignments_keep_order),
 	KUNIT_CASE(connector_is_reconnected_after_clear),
 	KUNIT_CASE(null_controller_disconnects_connector),
+	KUNIT_CASE(active_is_reapplied_to_current_state),
 	{ }
 };
 
