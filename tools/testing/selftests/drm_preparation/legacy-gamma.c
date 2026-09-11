@@ -75,6 +75,23 @@ static void accepted_gamma(struct fixture *f)
 			"Accepted legacy gamma returns all three requested component arrays\n");
 }
 
+static void failed_copy_preserves_readback(struct fixture *f)
+{
+	struct drm_mode_crtc_lut args = {
+		.crtc_id = f->crtc, .gamma_size = f->count,
+		.red = (uintptr_t)f->readback,
+		.green = (uintptr_t)(f->readback + f->count), .blue = 1,
+	};
+	int ret, error;
+
+	memset(f->readback, 0xff, 3 * f->count * sizeof(*f->readback));
+	errno = 0;
+	ret = drmIoctl(f->fd, DRM_IOCTL_MODE_SETGAMMA, &args);
+	error = errno;
+	ksft_test_result(ret < 0 && error == EFAULT && readback_matches(f),
+			"Faulting on the blue array leaves every accepted component unchanged\n");
+}
+
 static void accepted_color_property(struct fixture *f)
 {
 	drmModeObjectProperties *properties;
@@ -122,9 +139,10 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(2);
+	ksft_set_plan(3);
 	accepted_gamma(&f);
 	accepted_color_property(&f);
+	failed_copy_preserves_readback(&f);
 	free(f.values);
 	free(f.readback);
 	close(f.fd);
