@@ -17,6 +17,8 @@ static bool supported_entry(const struct drm_atomic_request_entry *entry)
 		       entry->property == config->prop_in_fence_fd ||
 		       entry->property == config->prop_crtc_id ||
 		       entry->property == config->prop_fb_damage_clips;
+	if (entry->object->type == DRM_MODE_OBJECT_CRTC)
+		return entry->property == config->prop_mode_id;
 	return false;
 }
 
@@ -49,9 +51,16 @@ static int apply_plane(struct drm_atomic_commit *state,
 static int apply_entry(struct drm_atomic_commit *state,
 		       const struct drm_atomic_request_entry *entry)
 {
+	struct drm_crtc_state *crtc_state;
+
 	switch (entry->object->type) {
 	case DRM_MODE_OBJECT_PLANE:
 		return apply_plane(state, entry);
+	case DRM_MODE_OBJECT_CRTC:
+		crtc_state = drm_atomic_get_crtc_state(state, obj_to_crtc(entry->object));
+		if (IS_ERR(crtc_state))
+			return PTR_ERR(crtc_state);
+		return drm_atomic_set_mode_prop_for_crtc(crtc_state, entry->blob);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -73,7 +82,7 @@ static int apply_entry(struct drm_atomic_commit *state,
  *
  * Entries are applied in order using kernel references, without identifier or
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
- * CRTC_ID and FB_DAMAGE_CLIPS.
+ * CRTC_ID and FB_DAMAGE_CLIPS, and controller MODE_ID.
  * Driver-private properties and asynchronous-flip validation are not supported.
  * No check or commit runs.
  *
