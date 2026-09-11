@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
+#include <linux/dma-fence.h>
 #include <linux/export.h>
 #include <linux/slab.h>
 #include <drm/drm_atomic_request.h>
@@ -48,7 +49,8 @@ static int validate_entry(struct drm_device *dev,
 	    prop == dev->mode_config.writeback_out_fence_ptr_property)
 		return -EOPNOTSUPP;
 	if (prop == dev->mode_config.prop_in_fence_fd)
-		return -EINVAL;
+		return entry->object->type == DRM_MODE_OBJECT_PLANE &&
+		       entry->type == DRM_ATOMIC_REQUEST_FENCE ? 0 : -EINVAL;
 	if (drm_property_type_is(prop, DRM_MODE_PROP_BLOB))
 		return entry->type == DRM_ATOMIC_REQUEST_BLOB &&
 		       (!entry->blob || entry->blob->dev == dev) ? 0 : -EINVAL;
@@ -82,6 +84,9 @@ static void retain_entry(const struct drm_atomic_request_entry *entry)
 	case DRM_ATOMIC_REQUEST_OBJECT:
 		if (entry->reference)
 			drm_mode_object_get(entry->reference);
+		break;
+	case DRM_ATOMIC_REQUEST_FENCE:
+		dma_fence_get(entry->fence);
 		break;
 	case DRM_ATOMIC_REQUEST_SCALAR:
 		break;
@@ -136,6 +141,9 @@ void drm_atomic_request_destroy(struct drm_atomic_request *request)
 		case DRM_ATOMIC_REQUEST_OBJECT:
 			if (entry->reference)
 				drm_mode_object_put(entry->reference);
+			break;
+		case DRM_ATOMIC_REQUEST_FENCE:
+			dma_fence_put(entry->fence);
 			break;
 		case DRM_ATOMIC_REQUEST_SCALAR:
 			break;
