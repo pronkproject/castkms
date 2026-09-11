@@ -39,7 +39,7 @@ static int prepare_request(struct drm_atomic_commit *state,
 
 static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owner,
 			  const struct drm_atomic_request_callbacks *callbacks,
-			  void *data)
+			  void *data, bool nonblock)
 {
 	struct drm_prepare_ticket *ticket = NULL;
 	struct drm_modeset_acquire_ctx ctx;
@@ -96,7 +96,7 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 				ret = -EINVAL;
 		}
 		if (!ret)
-			ret = dev->mode_config.funcs->atomic_commit(dev, state, false);
+			ret = dev->mode_config.funcs->atomic_commit(dev, state, nonblock);
 		if (callbacks->complete_signaling)
 			callbacks->complete_signaling(state, !ret, data);
 retry_lock:
@@ -124,7 +124,7 @@ int drm_atomic_commit_request(struct drm_device *dev,
 {
 	const struct drm_atomic_request_callbacks callbacks = { .build = build };
 
-	return commit_request(dev, NULL, &callbacks, data);
+	return commit_request(dev, NULL, &callbacks, data, false);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_commit_request);
 
@@ -139,7 +139,7 @@ int drm_atomic_commit_request_owned(struct drm_device *dev,
 		return -EINVAL;
 	if (!dev->mode_config.preparation)
 		return -EOPNOTSUPP;
-	return commit_request(dev, owner, &callbacks, data);
+	return commit_request(dev, owner, &callbacks, data, false);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_commit_request_owned);
 
@@ -148,6 +148,15 @@ int drm_atomic_commit_request_with_callbacks(struct drm_device *dev,
 					     const struct drm_atomic_request_callbacks *callbacks,
 					     void *data)
 {
-	return commit_request(dev, owner, callbacks, data);
+	return commit_request(dev, owner, callbacks, data, false);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_commit_request_with_callbacks);
+
+int drm_atomic_submit_request_with_callbacks(struct drm_device *dev,
+					     struct drm_prepare_owner *owner,
+					     const struct drm_atomic_request_callbacks *callbacks,
+					     void *data)
+{
+	return commit_request(dev, owner, callbacks, data, true);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_submit_request_with_callbacks);
