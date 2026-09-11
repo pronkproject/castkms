@@ -609,7 +609,41 @@ static void rotation_is_reapplied_to_current_state(struct kunit *test)
 	}
 }
 
+static void plane_color_is_reapplied_to_current_state(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entries[2] = {
+		{ .object = &f->plane->base, .type = DRM_ATOMIC_REQUEST_SCALAR,
+		  .scalar = DRM_COLOR_YCBCR_BT709 },
+		{ .object = &f->plane->base, .type = DRM_ATOMIC_REQUEST_SCALAR,
+		  .scalar = DRM_COLOR_YCBCR_FULL_RANGE },
+	};
+	struct drm_atomic_request *request;
+	unsigned int i;
+
+	KUNIT_ASSERT_EQ(test, drm_plane_create_color_properties(f->plane,
+		BIT(DRM_COLOR_YCBCR_BT601) | BIT(DRM_COLOR_YCBCR_BT709),
+		BIT(DRM_COLOR_YCBCR_LIMITED_RANGE) | BIT(DRM_COLOR_YCBCR_FULL_RANGE),
+		DRM_COLOR_YCBCR_BT601, DRM_COLOR_YCBCR_LIMITED_RANGE), 0);
+	entries[0].property = f->plane->color_encoding_property;
+	entries[1].property = f->plane->color_range_property;
+	request = new_request(test, f, entries, ARRAY_SIZE(entries));
+	for (i = 0; i < 2; i++) {
+		struct drm_plane_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_plane_state(f->state, f->plane);
+		KUNIT_EXPECT_EQ(test, state->color_encoding, DRM_COLOR_YCBCR_BT709);
+		KUNIT_EXPECT_EQ(test, state->color_range, DRM_COLOR_YCBCR_FULL_RANGE);
+		KUNIT_EXPECT_EQ(test, state->crtc_h, i ? 99 : 0);
+		drm_atomic_commit_clear(f->state);
+		f->plane->state->crtc_h = 99;
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static struct kunit_case apply_tests[] = {
+	KUNIT_CASE(plane_color_is_reapplied_to_current_state),
 	KUNIT_CASE(rotation_is_reapplied_to_current_state),
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
