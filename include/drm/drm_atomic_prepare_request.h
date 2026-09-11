@@ -66,7 +66,7 @@ int drm_atomic_commit_request_owned(struct drm_device *dev,
 				    void *data);
 
 /**
- * struct drm_atomic_request_callbacks - build and signal a blocking request
+ * struct drm_atomic_request_callbacks - build and signal a prepared request
  * @build: populate fresh state, following drm_atomic_commit_request() rules
  * @prepare_signaling: optional setup of completion metadata after readiness
  * @complete_signaling: cleanup or publish that metadata after acceptance
@@ -80,7 +80,7 @@ int drm_atomic_commit_request_owned(struct drm_device *dev,
  * It may attach events and completion fences, returning zero or a negative
  * error. complete_signaling runs exactly once for each invocation, including
  * a failed setup, before state or locks are released. Its accepted argument
- * is true only after the driver's blocking commit has succeeded. It must release
+ * is true only after the driver's commit has succeeded. It must release
  * incomplete resources on failure and publish successful completion resources
  * on acceptance. An unchanged build, failed check or preparation wait invokes
  * neither signaling callback.
@@ -99,6 +99,26 @@ struct drm_atomic_request_callbacks {
  * above apply. Signaling setup never runs while preparation remains pending.
  */
 int drm_atomic_commit_request_with_callbacks(struct drm_device *dev,
+					     struct drm_prepare_owner *owner,
+					     const struct drm_atomic_request_callbacks *callbacks,
+					     void *data);
+
+/*
+ * Prepare and submit a request without waiting for native commit completion.
+ * Preparation itself may block: attempted state and modeset locks are dropped
+ * while waiting for readers, exactly as for the blocking command above.
+ * After readiness, the driver receives a nonblocking atomic commit. An earlier
+ * pending commit may still cause -EBUSY; the caller decides whether to retry.
+ *
+ * Success means accepted, not presented or completed. Driver-owned state and
+ * completion events outlive the call, but callbacks and request data must not
+ * be retained. Signaling cleanup runs under modeset locks after acceptance or
+ * failure. The same issuer, validation and input-retention rules apply.
+ * This is not the nonblocking atomic ioctl path: it is intended for kernel
+ * commands and legacy adapters that need internal preparation before submitting
+ * a flip whose eventual completion is reported separately.
+ */
+int drm_atomic_submit_request_with_callbacks(struct drm_device *dev,
 					     struct drm_prepare_owner *owner,
 					     const struct drm_atomic_request_callbacks *callbacks,
 					     void *data);
