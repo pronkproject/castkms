@@ -98,9 +98,10 @@ static int prepare_crtc(struct drm_atomic_commit *state, struct drm_crtc *crtc,
 	return 0;
 }
 
-int drm_atomic_prepare_user_signaling(struct drm_atomic_commit *state,
-				      struct drm_file *file, u32 flags, u64 user_data,
-				      struct drm_atomic_user_signaling **result)
+int drm_atomic_prepare_user_signaling_for_crtcs(struct drm_atomic_commit *state,
+						struct drm_file *file, u32 flags, u64 user_data,
+						u32 event_crtcs,
+						struct drm_atomic_user_signaling **result)
 {
 	struct drm_atomic_user_signaling *signaling;
 	struct drm_crtc *crtc;
@@ -121,10 +122,15 @@ int drm_atomic_prepare_user_signaling(struct drm_atomic_commit *state,
 	signaling->event_count = state->dev->mode_config.num_crtc;
 	*result = signaling;
 	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
-		ret = prepare_crtc(state, crtc, crtc_state, file, flags, user_data, signaling);
+		u32 crtc_flags = flags;
+
+		if (event_crtcs & drm_crtc_mask(crtc))
+			crtc_count++;
+		else
+			crtc_flags &= ~DRM_MODE_PAGE_FLIP_EVENT;
+		ret = prepare_crtc(state, crtc, crtc_state, file, crtc_flags, user_data, signaling);
 		if (ret)
 			return ret;
-		crtc_count++;
 	}
 	if (!crtc_count && (flags & DRM_MODE_PAGE_FLIP_EVENT))
 		return -EINVAL;
@@ -147,6 +153,21 @@ int drm_atomic_prepare_user_signaling(struct drm_atomic_commit *state,
 		connector_state->writeback_job->out_fence = fence;
 	}
 	return 0;
+}
+
+int drm_atomic_prepare_user_signaling(struct drm_atomic_commit *state,
+				      struct drm_file *file, u32 flags, u64 user_data,
+				      struct drm_atomic_user_signaling **result)
+{
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
+	u32 event_crtcs = 0;
+	int i;
+
+	for_each_new_crtc_in_state(state, crtc, crtc_state, i)
+		event_crtcs |= drm_crtc_mask(crtc);
+	return drm_atomic_prepare_user_signaling_for_crtcs(state, file, flags, user_data,
+							  event_crtcs, result);
 }
 EXPORT_SYMBOL_IF_KUNIT(drm_atomic_prepare_user_signaling);
 

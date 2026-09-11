@@ -20,6 +20,11 @@ struct drm_file;
 int drm_atomic_prepare_user_signaling(struct drm_atomic_commit *state,
 				      struct drm_file *file, u32 flags, u64 user_data,
 				      struct drm_atomic_user_signaling **signaling);
+/* Preserve event recipients selected before driver checking adds more state. */
+int drm_atomic_prepare_user_signaling_for_crtcs(struct drm_atomic_commit *state,
+						struct drm_file *file, u32 flags, u64 user_data,
+						u32 event_crtcs,
+						struct drm_atomic_user_signaling **signaling);
 void drm_atomic_complete_user_signaling(struct drm_atomic_commit *state,
 					struct drm_atomic_user_signaling *signaling,
 					bool accepted);
