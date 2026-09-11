@@ -2276,14 +2276,14 @@ static void drm_test_check_hdmi_color_format(struct kunit *test)
 				test_edid_hdmi_4k_rgb_yuv420_dc_max_340mhz);
 	KUNIT_ASSERT_NOT_NULL(test, priv);
 
-	drm_modeset_acquire_init(&ctx, 0);
-
 	KUNIT_ASSERT_TRUE(test, priv->connector.ycbcr_420_allowed);
 
 	info = &priv->connector.display_info;
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, info);
 	preferred = find_preferred_mode(&priv->connector);
 	KUNIT_ASSERT_TRUE(test, drm_mode_is_420(info, preferred));
+
+	drm_modeset_acquire_init(&ctx, 0);
 
 	state = drm_kunit_helper_atomic_state_alloc(test, &priv->drm, &ctx);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
