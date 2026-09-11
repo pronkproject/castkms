@@ -258,6 +258,10 @@ void drm_atomic_print_new_state(const struct drm_atomic_commit *state,
 bool drm_atomic_is_plane_geometry_property(struct drm_plane *plane,
 					   struct drm_property *property);
 
+/* drm_atomic_color.c */
+bool drm_atomic_is_crtc_color_property(struct drm_crtc *crtc,
+				       struct drm_property *property);
+
 /* drm_atomic_uapi.c */
 int drm_atomic_connector_commit_dpms(struct drm_atomic_commit *state,
 				     struct drm_connector *connector,
