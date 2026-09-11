@@ -445,6 +445,20 @@ cannot provide resource setup without the corresponding completion path.
 Retaining inputs from userspace
 ------------------------------
 
+The ordinary atomic ioctl copies its object identifiers, per-object property
+counts, property identifiers and values before applying any assignments.
+Lock retries use those copies rather than reading the arrays again. Counts must
+fit without wrapping, empty arrays are not read, and repeated objects keep their
+separate ordered groups of assignments. Userspace must keep its inputs stable
+while they are being copied; copying separate arrays is not a simultaneous
+snapshot of memory that another thread is modifying.
+
+Those copies still contain identifiers and descriptor numbers, not owned
+resource references. The ioctl still resolves resources while building each
+attempt. Copying the arrays alone therefore does not enable preparation waits:
+the request must also retain the actual objects and fences, and revalidate
+authority when rebuilding. Completion metadata remains separate from both.
+
 SETCRTC resolves its requested framebuffer, mode and connectors under the initial
 display locks. On a preparation-enabled device, it retains those inputs after
 dropping the locks and calls the provider's ``set_config_request`` operation.
@@ -562,7 +576,7 @@ Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
 driver-private property callback is called. Other properties are not supported
 yet, nor are the checks required for asynchronous flips. The ordinary atomic
-ioctl does not yet copy its inputs into the retained collection or manage
+ioctl does not yet resolve its copied inputs into the retained collection or manage
 output events and fences for it.
 
 Applying a request does not check or commit the complete display update. If a
