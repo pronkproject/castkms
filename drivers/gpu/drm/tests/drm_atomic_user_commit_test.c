@@ -278,6 +278,17 @@ static void issuer_revocation_prevents_acceptance(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 0);
 }
 
+static void abandoned_source_prevents_acceptance(struct kunit *test)
+{
+	struct commit_fixture *f = new_fixture(test);
+
+	f->abandon = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, commit_request(f, 0), -EIO);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+}
+
 static struct commit_fixture *new_event_fixture(struct kunit *test)
 {
 	struct commit_fixture *f = new_fixture(test);
@@ -327,6 +338,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(waiting_request_does_not_reread_input),
 	KUNIT_CASE(master_loss_is_rechecked_after_wait),
 	KUNIT_CASE(issuer_revocation_prevents_acceptance),
+	KUNIT_CASE(abandoned_source_prevents_acceptance),
 	{}
 };
 
