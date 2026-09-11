@@ -6,11 +6,17 @@
 
 struct drm_atomic_commit;
 struct drm_connector;
+struct drm_prepare_owner;
 
 int __must_check drm_atomic_set_connector_power(struct drm_atomic_commit *state,
 					       struct drm_connector *connector, bool on);
 
 /* Called during accepted state installation under the connection mutex. */
 void drm_atomic_install_connector_power(struct drm_atomic_commit *state);
+
+int drm_atomic_commit_connector_power(struct drm_connector *connector, bool on,
+				      struct drm_prepare_owner *owner,
+				      int (*validate)(struct drm_connector *connector, void *data),
+				      void *data);
 
 #endif
