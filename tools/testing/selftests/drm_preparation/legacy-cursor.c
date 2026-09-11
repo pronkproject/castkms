@@ -127,6 +127,15 @@ static void show_after_hidden_move(struct fixture *f)
 			position_is(f, 13, 17), "An image appears at the remembered hidden position\n");
 }
 
+static void move_visible_image(struct fixture *f)
+{
+	uint64_t image = property(f->fd, f->cursor, "FB_ID");
+	int ret = drmModeMoveCursor(f->fd, f->crtc, -7, 23);
+
+	ksft_test_result(!ret && image && image == property(f->fd, f->cursor, "FB_ID") &&
+			position_is(f, -7, 23), "Moving a visible cursor preserves its image\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -136,8 +145,9 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(1);
+	ksft_set_plan(2);
 	show_after_hidden_move(&f);
+	move_visible_image(&f);
 	if (drmModeSetCursor(f.fd, f.crtc, 0, 0, 0))
 		ksft_exit_fail_msg("Cannot hide cursor during cleanup: %m\n");
 	if (drmModeSetCrtc(f.fd, f.crtc, 0, 0, 0, NULL, 0, NULL))
