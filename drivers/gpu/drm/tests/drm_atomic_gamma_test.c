@@ -135,10 +135,31 @@ static void clearing_discards_pending_table(struct kunit *test)
 	KUNIT_EXPECT_MEMEQ(test, before, f->crtc->gamma_store, sizeof(before));
 }
 
+static int reject_table(struct gamma_fixture *f)
+{
+	int ret = set_table(f);
+
+	if (ret)
+		return ret;
+	drm_atomic_get_new_crtc_state(f->state, f->crtc)->active = true;
+	return drm_atomic_check_only(f->state);
+}
+
+static void failed_check_preserves_readback(struct kunit *test)
+{
+	struct gamma_fixture *f = new_fixture(test, true);
+	u16 before[6];
+
+	memcpy(before, f->crtc->gamma_store, sizeof(before));
+	KUNIT_EXPECT_EQ(test, run_update(f, reject_table), -EINVAL);
+	KUNIT_EXPECT_MEMEQ(test, before, f->crtc->gamma_store, sizeof(before));
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
 	KUNIT_CASE(accepted_table_changes_readback),
 	KUNIT_CASE(clearing_discards_pending_table),
+	KUNIT_CASE(failed_check_preserves_readback),
 	{}
 };
 
