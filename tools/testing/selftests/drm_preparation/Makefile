@@ -9,4 +9,5 @@ TEST_GEN_PROGS := atomic-ticket
 TEST_GEN_PROGS += atomic-input
 TEST_GEN_PROGS += atomic-signaling
 TEST_GEN_PROGS += legacy-cursor
+TEST_GEN_PROGS += legacy-power
 include ../lib.mk
