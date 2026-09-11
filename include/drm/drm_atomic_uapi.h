@@ -34,6 +34,7 @@
 struct drm_crtc_state;
 struct drm_display_mode;
 struct drm_property_blob;
+struct drm_property;
 struct drm_plane_state;
 struct drm_crtc;
 struct drm_connector_state;
@@ -55,6 +56,9 @@ void drm_atomic_set_fb_for_plane(struct drm_plane_state *plane_state,
 int __must_check
 drm_atomic_set_fence_for_plane(struct drm_plane_state *plane_state,
 			       struct dma_fence *fence);
+int __must_check
+drm_atomic_set_geometry_property_for_plane(struct drm_plane_state *state,
+					  struct drm_property *property, u64 value);
 bool drm_atomic_set_colorop_for_plane(struct drm_plane_state *plane_state,
 				      struct drm_colorop *colorop);
 int __must_check
