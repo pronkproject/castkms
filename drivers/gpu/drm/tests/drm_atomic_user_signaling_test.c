@@ -208,8 +208,19 @@ static void legacy_event_ignores_other_controllers(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, list_empty(&f->file.pending_event_list));
 }
 
+static void legacy_event_requires_its_target_in_state(struct kunit *test)
+{
+	struct signaling_fixture *f = new_fixture(test);
+
+	f->targeted = true;
+	KUNIT_EXPECT_EQ(test, run_attempt(f, 0, false, false, false, false), -EINVAL);
+	KUNIT_EXPECT_FALSE(test, f->had_signaling);
+	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(legacy_event_ignores_other_controllers),
+	KUNIT_CASE(legacy_event_requires_its_target_in_state),
 	KUNIT_CASE(rejected_commit_returns_event_space),
 	KUNIT_CASE(test_only_allocates_no_signaling),
 	KUNIT_CASE(event_requires_a_controller),
