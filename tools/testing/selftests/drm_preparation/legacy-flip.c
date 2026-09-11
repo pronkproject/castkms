@@ -107,6 +107,20 @@ static void invalid_image_has_no_event(struct fixture *f)
 			poll(&pollfd, 1, 0) == 0, "An invalid image leaves no event or display change\n");
 }
 
+static void closed_handle_keeps_framebuffer(struct fixture *f)
+{
+	struct drm_mode_destroy_dumb destroy = { .handle = f->handle[0] };
+	int closed = drmIoctl(f->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+	int ret;
+
+	if (!closed)
+		f->handle[0] = 0;
+	ret = drmModePageFlip(f->fd, f->crtc, f->fb[0], DRM_MODE_PAGE_FLIP_EVENT,
+			      (void *)(uintptr_t)0x87654321);
+	ksft_test_result(!closed && !ret && event_is(f, 0x87654321) && image_is(f, f->fb[0]),
+			"A registered framebuffer survives closing its buffer handle\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -116,9 +130,10 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(2);
+	ksft_set_plan(3);
 	flip_with_event(&f);
 	invalid_image_has_no_event(&f);
+	closed_handle_keeps_framebuffer(&f);
 	if (drmModeSetCrtc(f.fd, f.crtc, 0, 0, 0, NULL, 0, NULL))
 		ksft_exit_fail_msg("Cannot disable output: %m\n");
 	for (i = 0; i < 2; i++) {
