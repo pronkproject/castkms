@@ -402,6 +402,21 @@ static void signaling_waits_for_preparation(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
 }
 
+static void failed_signaling_is_completed_without_installation(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	f->signaling_error = -ENOMEM;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_with_callbacks(f->dev, NULL,
+								     &signaling_callbacks, f), -ENOMEM);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_EXPECT_EQ(test, f->signals_prepared, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_completed, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_accepted, 0);
+	KUNIT_EXPECT_FALSE(test, f->signals_live);
+	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
+}
+
 struct contended_request {
 	struct request_fixture *display;
 	struct drm_crtc *other;
@@ -558,6 +573,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(suspend_saves_the_state_disabled_after_wait),
 	KUNIT_CASE(failed_suspend_returns_no_saved_state),
 	KUNIT_CASE(signaling_waits_for_preparation),
+	KUNIT_CASE(failed_signaling_is_completed_without_installation),
 	{}
 };
 
