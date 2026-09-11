@@ -65,6 +65,31 @@ struct drm_crtc_helper_funcs;
 struct drm_plane_helper_funcs;
 
 /**
+ * struct drm_cursor_update - resolved legacy cursor command
+ * @crtc: controller whose universal cursor is updated
+ * @fb: caller-retained replacement image, or NULL to hide it
+ * @update_image: replace the image rather than preserve the current image
+ * @update_position: replace the remembered position
+ * @x: requested horizontal position
+ * @y: requested vertical position
+ * @hot_x: horizontal hotspot for a replacement image
+ * @hot_y: vertical hotspot for a replacement image
+ *
+ * The caller keeps the description, framebuffer and device alive until the
+ * operation returns. A move without an image replacement uses the image current
+ * on each attempt. An image replacement without a move uses the current
+ * remembered position. Hotspots apply only when replacing a non-NULL image.
+ */
+struct drm_cursor_update {
+	struct drm_crtc *crtc;
+	struct drm_framebuffer *fb;
+	bool update_image;
+	bool update_position;
+	s32 x, y;
+	s32 hot_x, hot_y;
+};
+
+/**
  * struct drm_crtc_state - mutable CRTC state
  *
  * Note that the distinction between @enable and @active is rather subtle:
