@@ -35,7 +35,7 @@ struct plane_fixture {
 	struct completion checked;
 	unsigned int checks, installs, validations;
 	int worker_error;
-	bool drop_master;
+	bool drop_master, change_alpha;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -200,6 +200,16 @@ static int finish_reader(void *data)
 	f->worker_error = drm_modeset_lock(&f->crtc->mutex, NULL);
 	if (!f->worker_error)
 		drm_modeset_unlock(&f->crtc->mutex);
+	if (f->change_alpha) {
+		int ret = drm_modeset_lock(&f->plane->mutex, NULL);
+
+		if (!ret) {
+			f->plane->state->alpha = 0x1234;
+			drm_modeset_unlock(&f->plane->mutex);
+		}
+		if (!f->worker_error)
+			f->worker_error = ret;
+	}
 	if (f->drop_master) {
 		int ret = drm_ioctl(f->file, DRM_IOCTL_DROP_MASTER, 0);
 
@@ -325,11 +335,38 @@ static void plane_request_revalidates_after_wait(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
+static void plane_update_preserves_unrequested_current_state(struct kunit *test)
+{
+	struct plane_fixture *f = new_fixture(test);
+	struct drm_plane_update update = {
+		.plane = f->plane, .crtc = f->crtc, .fb = f->fb,
+		.crtc_w = 32, .crtc_h = 32, .src_w = 32 << 16, .src_h = 32 << 16,
+	};
+	struct drm_prepare_owner *owner = drm_file_prepare_owner(f->file->private_data);
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, owner);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_owner, owner), 0);
+	f->change_alpha = true;
+	start_reader(test, f);
+	ret = drm_atomic_helper_update_plane_request(&update, owner, NULL, NULL);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_GE(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, f->fb);
+	KUNIT_EXPECT_EQ(test, f->plane->state->crtc_w, 32);
+	KUNIT_EXPECT_EQ(test, f->plane->state->src_w, 32 << 16);
+	KUNIT_EXPECT_EQ(test, f->plane->state->alpha, 0x1234);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setplane_disable_waits_for_reader),
 	KUNIT_CASE(master_loss_cancels_setplane),
 	KUNIT_CASE(setplane_requires_request_callback),
 	KUNIT_CASE(plane_request_revalidates_after_wait),
+	KUNIT_CASE(plane_update_preserves_unrequested_current_state),
 	{}
 };
 
