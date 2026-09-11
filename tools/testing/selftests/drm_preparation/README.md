@@ -1,5 +1,13 @@
 # Display preparation models and interface tests
 
+`atomic-signaling` checks ordinary atomic completion on an isolated,
+single-output VKMS device. It refuses other drivers because it modesets the
+output and leaves it disabled. Run it in a disposable guest, not against a
+desktop session. The test checks installed output fences, cleanup after invalid
+geometry, test-only requests and rejection on an inactive output. It does not
+qualify writeback or delayed preparation. Build it with `make atomic-signaling`
+in this directory and pass the device path as its optional first argument.
+
 CastKMS wants to show a virtual monitor, capture what appears on it, and send
 that image somewhere else. The proposed design composes pixels in userspace,
 outside the kernel, using a graphics processing unit (GPU). The kernel keeps
