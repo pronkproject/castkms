@@ -8,6 +8,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_blob_test.o \
 	drm_atomic_request_test.o \
 	drm_atomic_request_apply_test.o \
+	drm_atomic_geometry_test.o \
 	drm_atomic_fence_test.o \
 	drm_atomic_prepare_test.o \
 	drm_atomic_prepare_set_test.o \
