@@ -75,10 +75,24 @@ static void unadvertised_values_leave_color_unchanged(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state->color_range, DRM_COLOR_YCBCR_LIMITED_RANGE);
 }
 
+static void color_requires_property_identity(struct kunit *test)
+{
+	struct drm_plane_state *state = new_state(test);
+	struct drm_property *property = drm_property_create_range(state->plane->dev, 0,
+								"COLOR_ENCODING", 0, U32_MAX);
+
+	KUNIT_ASSERT_NOT_NULL(test, property);
+	drm_object_attach_property(&state->plane->base, property, 0);
+	KUNIT_EXPECT_EQ(test, set_color(state, property, DRM_COLOR_YCBCR_BT709), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, set_color(state, NULL, DRM_COLOR_YCBCR_BT709), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, state->color_encoding, DRM_COLOR_YCBCR_BT601);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(encoding_changes_only_the_selected_field),
 	KUNIT_CASE(range_changes_only_the_selected_field),
 	KUNIT_CASE(unadvertised_values_leave_color_unchanged),
+	KUNIT_CASE(color_requires_property_identity),
 	{}
 };
 
