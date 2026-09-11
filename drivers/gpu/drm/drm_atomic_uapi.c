@@ -415,7 +415,6 @@ static int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 {
 	struct drm_device *dev = crtc->dev;
 	struct drm_mode_config *config = &dev->mode_config;
-	bool replaced = false;
 	int ret;
 
 	if (property == config->prop_active)
@@ -428,47 +427,16 @@ static int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 		return ret;
 	} else if (property == config->prop_vrr_enabled) {
 		state->vrr_enabled = val;
-	} else if (property == config->degamma_lut_property) {
-		const size_t elem_size = sizeof(struct drm_color_lut);
-		u64 lut_size;
+	} else if (drm_atomic_is_crtc_color_property(crtc, property)) {
+		struct drm_property_blob *blob = NULL;
 
-		ret = drm_object_immutable_property_get_value(&crtc->base,
-							      config->degamma_lut_size_property,
-							      &lut_size);
-		if (ret)
-			return ret;
-
-		ret = drm_property_replace_blob_from_id(dev,
-					&state->degamma_lut,
-					val,
-					elem_size * lut_size, -1, elem_size,
-					&replaced);
-		state->color_mgmt_changed |= replaced;
-		return ret;
-	} else if (property == config->ctm_property) {
-		ret = drm_property_replace_blob_from_id(dev,
-					&state->ctm,
-					val,
-					-1, sizeof(struct drm_color_ctm), -1,
-					&replaced);
-		state->color_mgmt_changed |= replaced;
-		return ret;
-	} else if (property == config->gamma_lut_property) {
-		const size_t elem_size = sizeof(struct drm_color_lut);
-		u64 lut_size;
-
-		ret = drm_object_immutable_property_get_value(&crtc->base,
-							      config->gamma_lut_size_property,
-							      &lut_size);
-		if (ret)
-			return ret;
-
-		ret = drm_property_replace_blob_from_id(dev,
-					&state->gamma_lut,
-					val,
-					elem_size * lut_size, -1, elem_size,
-					&replaced);
-		state->color_mgmt_changed |= replaced;
+		if (val) {
+			blob = drm_property_lookup_blob(dev, val);
+			if (!blob)
+				return -EINVAL;
+		}
+		ret = drm_atomic_set_color_property_for_crtc(state, property, blob);
+		drm_property_blob_put(blob);
 		return ret;
 	} else if (property == config->background_color_property) {
 		state->background_color = val;
