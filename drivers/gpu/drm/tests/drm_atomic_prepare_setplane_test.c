@@ -361,12 +361,31 @@ static void plane_update_preserves_unrequested_current_state(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->plane->state->alpha, 0x1234);
 }
 
+static void plane_update_rejects_source_outside_framebuffer(struct kunit *test)
+{
+	struct plane_fixture *f = new_fixture(test);
+	struct drm_plane_update update = {
+		.plane = f->plane, .crtc = f->crtc, .fb = f->fb,
+		.crtc_w = 64, .crtc_h = 64, .src_w = 65 << 16, .src_h = 64 << 16,
+	};
+	struct drm_prepare_owner *owner = drm_file_prepare_owner(f->file->private_data);
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, owner);
+	ret = drm_atomic_helper_update_plane_request(&update, owner, NULL, NULL);
+	drm_prepare_owner_put(owner);
+	KUNIT_EXPECT_EQ(test, ret, -ENOSPC);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_EQ(test, f->plane->state->src_w, 64 << 16);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setplane_disable_waits_for_reader),
 	KUNIT_CASE(master_loss_cancels_setplane),
 	KUNIT_CASE(setplane_requires_request_callback),
 	KUNIT_CASE(plane_request_revalidates_after_wait),
 	KUNIT_CASE(plane_update_preserves_unrequested_current_state),
+	KUNIT_CASE(plane_update_rejects_source_outside_framebuffer),
 	{}
 };
 
