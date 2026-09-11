@@ -159,11 +159,30 @@ static void color_property_must_be_attached(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->state.color_mgmt_changed);
 }
 
+static void advertised_table_size_must_bound_bytes(struct kunit *test)
+{
+	struct color_fixture *f = new_fixture(test);
+	struct drm_mode_config *config = &f->dev->mode_config;
+	struct drm_property_blob *blob = new_blob(test, f->dev, sizeof(struct drm_color_lut));
+
+	KUNIT_ASSERT_EQ(test, drm_object_property_set_value(&f->state.crtc->base,
+							  config->gamma_lut_size_property, U64_MAX), 0);
+	KUNIT_EXPECT_EQ(test, set_color(&f->state, config->gamma_lut_property, blob),
+			-EOVERFLOW);
+	KUNIT_ASSERT_EQ(test, drm_object_property_set_value(&f->state.crtc->base,
+							  config->gamma_lut_size_property, 0), 0);
+	KUNIT_EXPECT_EQ(test, set_color(&f->state, config->gamma_lut_property, blob), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, f->state.gamma_lut, NULL);
+	KUNIT_EXPECT_FALSE(test, f->state.color_mgmt_changed);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+}
+
 static struct kunit_case color_tests[] = {
 	KUNIT_CASE(color_stages_retain_their_blobs),
 	KUNIT_CASE(invalid_color_sizes_preserve_state),
 	KUNIT_CASE(color_change_records_replacement),
 	KUNIT_CASE(color_property_must_be_attached),
+	KUNIT_CASE(advertised_table_size_must_bound_bytes),
 	{ }
 };
 
