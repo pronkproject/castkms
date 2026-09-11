@@ -81,8 +81,34 @@ static void empty_request_has_no_targets_or_values(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_atomic_request_count(drm_atomic_user_request_values(request)), 0);
 }
 
+static void repeated_targets_keep_ordered_independent_values(struct kunit *test)
+{
+	struct user_request_fixture *f = new_fixture(test);
+	u32 objects[] = { f->plane->base.id, f->plane->base.id };
+	u32 counts[] = { 1, 1 };
+	u32 properties[] = { f->dev->mode_config.prop_crtc_w->base.id,
+			     f->dev->mode_config.prop_crtc_w->base.id };
+	u64 values[] = { 10, 20 };
+	struct drm_atomic_user_input input = {
+		.object_count = 2, .property_count = 2,
+		.objects = objects, .counts = counts, .properties = properties, .values = values,
+	};
+	struct drm_atomic_user_request *request = new_request(test, f->dev, &input);
+	const struct drm_atomic_request *retained = drm_atomic_user_request_values(request);
+
+	values[0] = values[1] = 99;
+	objects[0] = objects[1] = 0;
+	KUNIT_EXPECT_EQ(test, drm_atomic_user_request_target_count(request), 2);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_user_request_target(request, 0), &f->plane->base);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_user_request_target(request, 1), &f->plane->base);
+	KUNIT_EXPECT_EQ(test, drm_atomic_request_count(retained), 2);
+	KUNIT_EXPECT_EQ(test, drm_atomic_request_entry(retained, 0)->scalar, 10);
+	KUNIT_EXPECT_EQ(test, drm_atomic_request_entry(retained, 1)->scalar, 20);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(empty_request_has_no_targets_or_values),
+	KUNIT_CASE(repeated_targets_keep_ordered_independent_values),
 	{}
 };
 
