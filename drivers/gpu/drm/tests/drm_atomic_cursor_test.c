@@ -105,9 +105,35 @@ static void accepted_position_changes_with_state(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 29);
 }
 
+static int accept_without_position(struct cursor_fixture *f)
+{
+	struct drm_crtc_state *crtc_state = drm_atomic_get_crtc_state(f->state, f->crtc);
+	int ret;
+
+	if (IS_ERR(crtc_state))
+		return PTR_ERR(crtc_state);
+	ret = drm_atomic_check_only(f->state);
+	if (!ret)
+		ret = drm_atomic_helper_swap_state(f->state, false);
+	return ret;
+}
+
+static void clearing_discards_pending_position(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, set_position), 0);
+	drm_atomic_commit_clear(f->state);
+	KUNIT_EXPECT_FALSE(test, f->state->crtcs[drm_crtc_index(f->crtc)].update_cursor_position);
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_without_position), 0);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 3);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 5);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_position_does_not_change_current_position),
 	KUNIT_CASE(accepted_position_changes_with_state),
+	KUNIT_CASE(clearing_discards_pending_position),
 	{}
 };
 
