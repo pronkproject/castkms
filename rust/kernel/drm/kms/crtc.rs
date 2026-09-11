@@ -229,7 +229,7 @@ impl<T: DriverCrtc> Crtc<T> {
             atomic_print_state: None,
             atomic_set_property: None,
             cursor_move: None,
-            cursor_request: None,
+            cursor_request: Some(bindings::drm_atomic_helper_cursor_request),
             cursor_set2: None,
             cursor_set: None,
             destroy: Some(crtc_destroy_callback::<T>),
