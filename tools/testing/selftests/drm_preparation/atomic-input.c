@@ -95,6 +95,24 @@ static void count_overflow(const struct input_fixture *f)
 	expect_result(f->fd, &request.arg, EOVERFLOW, "Property count addition cannot wrap");
 }
 
+static void unreadable_arrays(const struct input_fixture *f)
+{
+	struct input_request request;
+
+	init_request(&request, f);
+	request.arg.objs_ptr = 1;
+	expect_result(f->fd, &request.arg, EFAULT, "Unreadable object array is rejected");
+	init_request(&request, f);
+	request.arg.count_props_ptr = 1;
+	expect_result(f->fd, &request.arg, EFAULT, "Unreadable count array is rejected");
+	init_request(&request, f);
+	request.arg.props_ptr = 1;
+	expect_result(f->fd, &request.arg, EFAULT, "Unreadable property array is rejected");
+	init_request(&request, f);
+	request.arg.prop_values_ptr = 1;
+	expect_result(f->fd, &request.arg, EFAULT, "Unreadable value array is rejected");
+}
+
 int main(int argc, char **argv)
 {
 	const char *path = argc > 1 ? argv[1] : "/dev/dri/card0";
@@ -115,9 +133,10 @@ int main(int argc, char **argv)
 	f.active = find_property(f.fd, f.crtc, "ACTIVE");
 	if (!f.active)
 		ksft_exit_fail_msg("Atomic controller has no ACTIVE property\n");
-	ksft_set_plan(3);
+	ksft_set_plan(7);
 	empty_arrays(&f);
 	count_overflow(&f);
+	unreadable_arrays(&f);
 	close(f.fd);
 	ksft_finished();
 }
