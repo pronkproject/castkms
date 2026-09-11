@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -148,6 +149,21 @@ static void setup(struct fixture *f, const char *path)
 	modeset(f, true);
 }
 
+static int descriptor_count(void)
+{
+	DIR *directory = opendir("/proc/self/fd");
+	struct dirent *entry;
+	int count = 0;
+
+	if (!directory)
+		ksft_exit_fail_msg("Cannot inspect descriptors: %m\n");
+	while ((entry = readdir(directory)))
+		if (entry->d_name[0] != '.')
+			count++;
+	closedir(directory);
+	return count;
+}
+
 static void output_fence(struct fixture *f)
 {
 	drmModeAtomicReq *request = new_request();
@@ -165,6 +181,19 @@ static void output_fence(struct fixture *f)
 	drmModeAtomicFree(request);
 }
 
+static void failed_update(struct fixture *f)
+{
+	drmModeAtomicReq *request = new_request();
+	int before = descriptor_count(), fence = -1, ret;
+
+	add(f, request, f->crtc, DRM_MODE_OBJECT_CRTC, "OUT_FENCE_PTR", (uintptr_t)&fence);
+	add(f, request, f->plane, DRM_MODE_OBJECT_PLANE, "SRC_W", 0);
+	ret = drmModeAtomicCommit(f->fd, request, 0, NULL);
+	ksft_test_result(ret < 0 && fence == -1 && descriptor_count() == before,
+			"Rejected geometry returns no fence and leaks no descriptor\n");
+	drmModeAtomicFree(request);
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -172,8 +201,9 @@ int main(int argc, char **argv)
 
 	ksft_print_header();
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(1);
+	ksft_set_plan(2);
 	output_fence(&f);
+	failed_update(&f);
 	modeset(&f, false);
 	drmModeRmFB(f.fd, f.framebuffer);
 	drmModeDestroyPropertyBlob(f.fd, f.mode);
