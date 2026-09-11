@@ -15,7 +15,8 @@ static bool supported_entry(const struct drm_atomic_request_entry *entry)
 	if (entry->object->type == DRM_MODE_OBJECT_PLANE)
 		return entry->property == config->prop_fb_id ||
 		       entry->property == config->prop_in_fence_fd ||
-		       entry->property == config->prop_crtc_id;
+		       entry->property == config->prop_crtc_id ||
+		       entry->property == config->prop_fb_damage_clips;
 	return false;
 }
 
@@ -24,6 +25,7 @@ static int apply_plane(struct drm_atomic_commit *state,
 {
 	struct drm_mode_config *config = &state->dev->mode_config;
 	struct drm_plane_state *plane_state;
+	bool replaced = false;
 
 	plane_state = drm_atomic_get_plane_state(state, obj_to_plane(entry->object));
 	if (IS_ERR(plane_state))
@@ -37,6 +39,10 @@ static int apply_plane(struct drm_atomic_commit *state,
 	if (entry->property == config->prop_crtc_id)
 		return drm_atomic_set_crtc_for_plane(plane_state,
 				entry->reference ? obj_to_crtc(entry->reference) : NULL);
+	if (entry->property == config->prop_fb_damage_clips)
+		return drm_property_replace_blob_checked(state->dev,
+				&plane_state->fb_damage_clips, entry->blob,
+				-1, -1, sizeof(struct drm_mode_rect), &replaced);
 	return -EOPNOTSUPP;
 }
 
@@ -67,7 +73,7 @@ static int apply_entry(struct drm_atomic_commit *state,
  *
  * Entries are applied in order using kernel references, without identifier or
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
- * CRTC_ID.
+ * CRTC_ID and FB_DAMAGE_CLIPS.
  * Driver-private properties and asynchronous-flip validation are not supported.
  * No check or commit runs.
  *
