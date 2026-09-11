@@ -233,10 +233,23 @@ static void legacy_event_does_not_consume_output_pointers(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
 }
 
+static void accepted_legacy_event_outlives_signaling_cleanup(struct kunit *test)
+{
+	struct signaling_fixture *f = new_fixture(test);
+
+	f->targeted = true;
+	KUNIT_ASSERT_EQ(test, run_attempt(f, 0, true, true, false, true), 0);
+	KUNIT_EXPECT_TRUE(test, f->had_event);
+	KUNIT_EXPECT_TRUE(test, f->event_remained_after_completion);
+	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
+	KUNIT_EXPECT_TRUE(test, list_empty(&f->file.pending_event_list));
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(legacy_event_ignores_other_controllers),
 	KUNIT_CASE(legacy_event_requires_its_target_in_state),
 	KUNIT_CASE(legacy_event_does_not_consume_output_pointers),
+	KUNIT_CASE(accepted_legacy_event_outlives_signaling_cleanup),
 	KUNIT_CASE(rejected_commit_returns_event_space),
 	KUNIT_CASE(test_only_allocates_no_signaling),
 	KUNIT_CASE(event_requires_a_controller),
