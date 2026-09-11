@@ -1133,7 +1133,8 @@ int drm_atomic_helper_check(struct drm_device *dev,
 		return ret;
 
 	if (state->legacy_cursor_update)
-		state->async_update = !drm_atomic_helper_async_check(dev, state);
+		state->async_update = !dev->mode_config.preparation &&
+			!drm_atomic_helper_async_check(dev, state);
 
 	drm_self_refresh_helper_alter_state(state);
 
