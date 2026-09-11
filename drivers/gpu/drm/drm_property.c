@@ -753,6 +753,58 @@ bool drm_property_replace_blob(struct drm_property_blob **blob,
 EXPORT_SYMBOL(drm_property_replace_blob);
 
 /**
+ * drm_property_replace_blob_checked - replace a resolved blob after size checks
+ * @dev: DRM device owning the property
+ * @blob: caller-protected pointer holding the old blob reference
+ * @new_blob: caller-owned new blob reference, or NULL to clear the property
+ * @max_size: maximum length, or a nonpositive value for no limit
+ * @expected_size: exact length, or a nonpositive value for no exact requirement
+ * @expected_elem_size: element length, or a nonpositive value for no alignment
+ * @replaced: accumulates whether a replacement occurred
+ *
+ * On success the destination owns a reference independently of the caller.
+ * Errors leave both the destination and @replaced unchanged. A NULL @new_blob
+ * clears the destination regardless of the size requirements.
+ *
+ * Return: 0 on success, or -EINVAL for a foreign device or a size mismatch.
+ */
+int drm_property_replace_blob_checked(struct drm_device *dev,
+				      struct drm_property_blob **blob,
+				      struct drm_property_blob *new_blob,
+				      ssize_t max_size,
+				      ssize_t expected_size,
+				      ssize_t expected_elem_size,
+				      bool *replaced)
+{
+	if (new_blob) {
+		if (new_blob->dev != dev)
+			return -EINVAL;
+		if (max_size > 0 && new_blob->length > max_size) {
+			drm_dbg_atomic(dev,
+				       "[BLOB:%d] length %zu greater than max %zu\n",
+				       new_blob->base.id, new_blob->length, max_size);
+			return -EINVAL;
+		}
+		if (expected_size > 0 && new_blob->length != expected_size) {
+			drm_dbg_atomic(dev,
+				       "[BLOB:%d] length %zu different from expected %zu\n",
+				       new_blob->base.id, new_blob->length, expected_size);
+			return -EINVAL;
+		}
+		if (expected_elem_size > 0 && new_blob->length % expected_elem_size) {
+			drm_dbg_atomic(dev,
+				       "[BLOB:%d] length %zu not divisible by element size %zu\n",
+				       new_blob->base.id, new_blob->length, expected_elem_size);
+			return -EINVAL;
+		}
+	}
+
+	*replaced |= drm_property_replace_blob(blob, new_blob);
+	return 0;
+}
+EXPORT_SYMBOL(drm_property_replace_blob_checked);
+
+/**
  * drm_property_replace_blob_from_id - replace a blob property taking a reference
  * @dev: DRM device
  * @blob: a pointer to the member blob to be replaced
