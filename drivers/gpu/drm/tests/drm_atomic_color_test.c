@@ -125,9 +125,30 @@ static void invalid_color_sizes_preserve_state(struct kunit *test)
 	}
 }
 
+static void color_change_records_replacement(struct kunit *test)
+{
+	struct color_fixture *f = new_fixture(test);
+	struct drm_property *property = f->dev->mode_config.gamma_lut_property;
+	struct drm_property_blob *blob = new_blob(test, f->dev, sizeof(struct drm_color_lut));
+
+	KUNIT_ASSERT_EQ(test, set_color(&f->state, property, blob), 0);
+	f->state.color_mgmt_changed = false;
+	KUNIT_ASSERT_EQ(test, set_color(&f->state, property, blob), 0);
+	KUNIT_EXPECT_FALSE(test, f->state.color_mgmt_changed);
+	f->state.color_mgmt_changed = true;
+	KUNIT_ASSERT_EQ(test, set_color(&f->state, property, blob), 0);
+	KUNIT_EXPECT_TRUE(test, f->state.color_mgmt_changed);
+	f->state.color_mgmt_changed = false;
+	KUNIT_ASSERT_EQ(test, set_color(&f->state, property, NULL), 0);
+	KUNIT_EXPECT_TRUE(test, f->state.color_mgmt_changed);
+	KUNIT_EXPECT_PTR_EQ(test, f->state.gamma_lut, NULL);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+}
+
 static struct kunit_case color_tests[] = {
 	KUNIT_CASE(color_stages_retain_their_blobs),
 	KUNIT_CASE(invalid_color_sizes_preserve_state),
+	KUNIT_CASE(color_change_records_replacement),
 	{ }
 };
 
