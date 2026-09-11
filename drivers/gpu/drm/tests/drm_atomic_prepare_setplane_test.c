@@ -19,6 +19,7 @@
 #include <drm/drm_kunit_helpers.h>
 #include <drm/drm_plane.h>
 #include <kunit/test.h>
+#include <kunit/device.h>
 
 #include "../drm_crtc_internal.h"
 
@@ -379,6 +380,32 @@ static void plane_update_rejects_source_outside_framebuffer(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->plane->state->src_w, 64 << 16);
 }
 
+static void plane_update_rejects_foreign_inputs(struct kunit *test)
+{
+	struct plane_fixture *f = new_fixture(test);
+	struct device *parent = kunit_device_register(test, "drm-plane-foreign");
+	struct drm_device *other;
+	struct drm_framebuffer foreign = {};
+	struct drm_plane_update update = {
+		.plane = f->plane, .crtc = f->crtc, .fb = &foreign,
+	};
+	struct drm_prepare_owner *owner;
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
+	other = __drm_kunit_helper_alloc_drm_device(test, parent, sizeof(*other), 0,
+						 DRIVER_MODESET | DRIVER_ATOMIC);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, other);
+	foreign.dev = other;
+	owner = drm_file_prepare_owner(f->file->private_data);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, owner);
+	ret = drm_atomic_helper_update_plane_request(&update, owner, NULL, NULL);
+	drm_prepare_owner_put(owner);
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setplane_disable_waits_for_reader),
 	KUNIT_CASE(master_loss_cancels_setplane),
@@ -386,6 +413,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(plane_request_revalidates_after_wait),
 	KUNIT_CASE(plane_update_preserves_unrequested_current_state),
 	KUNIT_CASE(plane_update_rejects_source_outside_framebuffer),
+	KUNIT_CASE(plane_update_rejects_foreign_inputs),
 	{}
 };
 
