@@ -16,6 +16,7 @@ enum drm_atomic_request_value_type {
 	DRM_ATOMIC_REQUEST_SCALAR,
 	DRM_ATOMIC_REQUEST_FRAMEBUFFER,
 	DRM_ATOMIC_REQUEST_BLOB,
+	DRM_ATOMIC_REQUEST_OBJECT,
 };
 
 /**
@@ -26,6 +27,7 @@ enum drm_atomic_request_value_type {
  * @scalar: copied numeric value, not a resource identifier
  * @framebuffer: resolved framebuffer, or NULL
  * @blob: immutable property blob, or NULL
+ * @reference: resolved modeset object, or NULL
  *
  * The caller keeps the entries unchanged and owns all supplied references until
  * request creation returns.
@@ -41,6 +43,7 @@ struct drm_atomic_request_entry {
 		u64 scalar;
 		struct drm_framebuffer *framebuffer;
 		struct drm_property_blob *blob;
+		struct drm_mode_object *reference;
 	};
 };
 
