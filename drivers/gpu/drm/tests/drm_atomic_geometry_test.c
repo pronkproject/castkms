@@ -62,8 +62,27 @@ static void coordinates_keep_their_representation(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state->src_h, 480 << 16);
 }
 
+static void invalid_values_leave_geometry_unchanged(struct kunit *test)
+{
+	struct geometry_fixture *f = new_fixture(test);
+	struct drm_mode_config *config = &f->dev->mode_config;
+	struct drm_plane_state *state = &f->state;
+
+	state->crtc_x = 17;
+	state->crtc_w = 19;
+	state->src_x = 23;
+	KUNIT_EXPECT_EQ(test, set_geometry(state, config->prop_crtc_x, (u64)INT_MAX + 1), -EINVAL);
+	KUNIT_EXPECT_EQ(test, set_geometry(state, config->prop_crtc_x, (u64)((s64)INT_MIN - 1)), -EINVAL);
+	KUNIT_EXPECT_EQ(test, set_geometry(state, config->prop_crtc_w, U64_MAX), -EINVAL);
+	KUNIT_EXPECT_EQ(test, set_geometry(state, config->prop_src_x, (u64)U32_MAX + 1), -EINVAL);
+	KUNIT_EXPECT_EQ(test, state->crtc_x, 17);
+	KUNIT_EXPECT_EQ(test, state->crtc_w, 19);
+	KUNIT_EXPECT_EQ(test, state->src_x, 23);
+}
+
 static struct kunit_case geometry_tests[] = {
 	KUNIT_CASE(coordinates_keep_their_representation),
+	KUNIT_CASE(invalid_values_leave_geometry_unchanged),
 	{ }
 };
 
