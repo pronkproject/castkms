@@ -215,12 +215,34 @@ static void clearing_discards_power_preferences(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->connectors[0].dpms, DRM_MODE_DPMS_ON);
 }
 
+static int change_checked_preference(struct power_fixture *f)
+{
+	int ret = first_off(f);
+
+	if (!ret)
+		ret = drm_atomic_check_only(f->state);
+	if (!ret)
+		ret = drm_atomic_set_connector_power(f->state, &f->connectors[0], true);
+	return ret;
+}
+
+static void checked_preferences_cannot_be_replaced(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+	unsigned int index = drm_connector_index(&f->connectors[0]);
+
+	KUNIT_EXPECT_EQ(test, run_update(f, change_checked_preference), -EINVAL);
+	KUNIT_EXPECT_TRUE(test, f->state->connectors[index].update_power);
+	KUNIT_EXPECT_FALSE(test, f->state->connectors[index].power_on);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
 	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
 	KUNIT_CASE(acceptance_preserves_other_connector_preference),
 	KUNIT_CASE(rejected_update_preserves_power_preferences),
 	KUNIT_CASE(clearing_discards_power_preferences),
+	KUNIT_CASE(checked_preferences_cannot_be_replaced),
 	{}
 };
 
