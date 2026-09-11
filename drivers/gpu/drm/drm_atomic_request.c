@@ -6,6 +6,7 @@
 #include <drm/drm_colorop.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_property.h>
 
 #include "drm_crtc_internal.h"
@@ -51,6 +52,10 @@ static int validate_entry(struct drm_device *dev,
 	if (drm_property_type_is(prop, DRM_MODE_PROP_BLOB))
 		return -EINVAL;
 	if (drm_property_type_is(prop, DRM_MODE_PROP_OBJECT)) {
+		if (prop->values[0] == DRM_MODE_OBJECT_FB)
+			return entry->type == DRM_ATOMIC_REQUEST_FRAMEBUFFER &&
+			       (!entry->framebuffer || entry->framebuffer->dev == dev) ?
+			       0 : -EINVAL;
 		return -EINVAL;
 	}
 	if (entry->type != DRM_ATOMIC_REQUEST_SCALAR)
@@ -61,6 +66,14 @@ static int validate_entry(struct drm_device *dev,
 static void retain_entry(const struct drm_atomic_request_entry *entry)
 {
 	drm_mode_object_get(entry->object);
+	switch (entry->type) {
+	case DRM_ATOMIC_REQUEST_FRAMEBUFFER:
+		if (entry->framebuffer)
+			drm_framebuffer_get(entry->framebuffer);
+		break;
+	case DRM_ATOMIC_REQUEST_SCALAR:
+		break;
+	}
 }
 
 struct drm_atomic_request *
@@ -100,6 +113,14 @@ void drm_atomic_request_destroy(struct drm_atomic_request *request)
 	for (i = 0; i < request->count; i++) {
 		const struct drm_atomic_request_entry *entry = &request->entries[i];
 
+		switch (entry->type) {
+		case DRM_ATOMIC_REQUEST_FRAMEBUFFER:
+			if (entry->framebuffer)
+				drm_framebuffer_put(entry->framebuffer);
+			break;
+		case DRM_ATOMIC_REQUEST_SCALAR:
+			break;
+		}
 		drm_mode_object_put(entry->object);
 	}
 	kvfree(request);
