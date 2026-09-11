@@ -1297,6 +1297,9 @@ static int drm_mode_cursor_common(struct drm_device *dev,
 		return -ENOENT;
 	}
 
+	if (dev->mode_config.preparation)
+		return drm_mode_cursor_with_preparation(crtc, req, file_priv);
+
 	drm_modeset_acquire_init(&ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE);
 retry:
 	ret = drm_modeset_lock(&crtc->mutex, &ctx);
@@ -1381,6 +1384,7 @@ int drm_mode_cursor2_ioctl(struct drm_device *dev,
 
 	return drm_mode_cursor_common(dev, req, file_priv);
 }
+EXPORT_SYMBOL_FOR_TESTS_ONLY(drm_mode_cursor2_ioctl);
 
 int drm_mode_page_flip_ioctl(struct drm_device *dev,
 			     void *data, struct drm_file *file_priv)
