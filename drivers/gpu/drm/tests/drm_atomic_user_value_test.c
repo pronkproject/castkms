@@ -70,9 +70,24 @@ static void invalid_value_preserves_destination(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, entry.scalar, 23);
 }
 
+static void private_scalar_is_not_resolved(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	struct drm_property *property = drm_property_create_range(f->dev, DRM_MODE_PROP_ATOMIC,
+									"private_handle", 0, U32_MAX);
+	struct drm_atomic_request_entry entry = { .scalar = 23 };
+
+	KUNIT_ASSERT_NOT_NULL(test, property);
+	drm_object_attach_property(&f->plane->base, property, 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_resolve_user_value(&f->plane->base, property,
+								 NULL, 42, &entry), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, entry.scalar, 23);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
 	KUNIT_CASE(invalid_value_preserves_destination),
+	KUNIT_CASE(private_scalar_is_not_resolved),
 	{}
 };
 
