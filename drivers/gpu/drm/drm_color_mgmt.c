@@ -32,6 +32,7 @@
 #include <kunit/visibility.h>
 
 #include "drm_crtc_internal.h"
+#include "drm_atomic_user_commit.h"
 
 /**
  * DOC: overview
@@ -381,6 +382,9 @@ int drm_mode_gamma_set_ioctl(struct drm_device *dev,
 	/* memcpy into gamma store */
 	if (crtc_lut->gamma_size != crtc->gamma_size)
 		return -EINVAL;
+
+	if (dev->mode_config.preparation)
+		return drm_atomic_commit_user_gamma(crtc, crtc_lut, file_priv);
 
 	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, 0, ret);
 
