@@ -99,3 +99,43 @@ int drm_atomic_set_rotation_for_plane(struct drm_plane_state *state, u64 rotatio
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_set_rotation_for_plane);
+
+bool drm_atomic_is_plane_color_property(struct drm_plane *plane,
+					struct drm_property *property)
+{
+	return property && (property == plane->color_encoding_property ||
+			    property == plane->color_range_property);
+}
+
+/**
+ * drm_atomic_set_color_property_for_plane - set a plane's encoding or range
+ * @state: uncommitted plane state protected by its modeset lock
+ * @property: the plane's COLOR_ENCODING or COLOR_RANGE property
+ * @value: one of the property's advertised enum values
+ *
+ * Checks property identity, attachment and the advertised values before changing
+ * the selected field. Errors leave both color fields unchanged. The caller must
+ * still check the complete atomic update for driver and framebuffer constraints.
+ * No file, identifier lookup or driver property callback is involved.
+ *
+ * Return: 0 on success, -EOPNOTSUPP for another property, or -EINVAL for a
+ * detached property or an unadvertised value.
+ */
+int drm_atomic_set_color_property_for_plane(struct drm_plane_state *state,
+					    struct drm_property *property, u64 value)
+{
+	struct drm_plane *plane = state->plane;
+	struct drm_mode_object *unused;
+
+	if (!drm_atomic_is_plane_color_property(plane, property))
+		return -EOPNOTSUPP;
+	if (drm_mode_obj_find_prop_id(&plane->base, property->base.id) != property ||
+	    !drm_property_change_valid_get(property, value, &unused))
+		return -EINVAL;
+	if (property == plane->color_encoding_property)
+		state->color_encoding = value;
+	else
+		state->color_range = value;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(drm_atomic_set_color_property_for_plane);

@@ -257,6 +257,8 @@ void drm_atomic_print_new_state(const struct drm_atomic_commit *state,
 /* drm_atomic_plane.c */
 bool drm_atomic_is_plane_geometry_property(struct drm_plane *plane,
 					   struct drm_property *property);
+bool drm_atomic_is_plane_color_property(struct drm_plane *plane,
+					struct drm_property *property);
 
 /* drm_atomic_color.c */
 bool drm_atomic_is_crtc_color_property(struct drm_crtc *crtc,
