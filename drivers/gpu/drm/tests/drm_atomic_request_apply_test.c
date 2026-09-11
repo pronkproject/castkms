@@ -388,6 +388,31 @@ static void mode_blob_is_applied_by_reference(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 2);
 }
 
+static void geometry_is_reapplied_to_current_state(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entries[2] = {
+		{ .object = &f->plane->base, .property = f->dev->mode_config.prop_crtc_x,
+		  .type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = (u64)-7 },
+		{ .object = &f->plane->base, .property = f->dev->mode_config.prop_src_x,
+		  .type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 0x18000 },
+	};
+	struct drm_atomic_request *request = new_request(test, f, entries, 2);
+	struct drm_plane_state *state;
+	unsigned int i;
+
+	for (i = 0; i < 2; i++) {
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_plane_state(f->state, f->plane);
+		KUNIT_EXPECT_EQ(test, state->crtc_x, -7);
+		KUNIT_EXPECT_EQ(test, state->src_x, 0x18000);
+		KUNIT_EXPECT_EQ(test, state->crtc_h, i ? 99 : 0);
+		drm_atomic_commit_clear(f->state);
+		f->plane->state->crtc_h = 99;
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -400,6 +425,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(controller_assignment_updates_plane_membership),
 	KUNIT_CASE(damage_blob_is_applied_by_reference),
 	KUNIT_CASE(mode_blob_is_applied_by_reference),
+	KUNIT_CASE(geometry_is_reapplied_to_current_state),
 	{ }
 };
 
