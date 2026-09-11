@@ -492,7 +492,8 @@ valid through submission.
 
 The setters accept a plane's framebuffer, input fence, controller association,
 damage blob, position and size, a controller's mode blob and active state, and
-the controller selected by a connector. Resource values use retained pointers.
+the controller selected by a connector. Controller color tables and matrices
+are also supported. Resource values use retained pointers.
 Where needed, the attempted state takes its own references. Explicitly assigning
 a framebuffer still counts as an update, even when selecting the same
 framebuffer. Assignments keep their order: assigning a framebuffer twice selects
@@ -520,6 +521,15 @@ a missing mode nor checks that the output can run. Repeated assignments take
 effect in order, including a final zero that turns the controller off. As with
 geometry, the remaining fields come from current state and the complete update
 must pass the driver's atomic checks before submission.
+
+Color tables before and after the controller's color matrix, and the matrix
+itself, use the same kernel setter as ordinary atomic ioctls. The setter takes
+a resolved blob rather than looking up its identifier again. Tables contain
+whole color entries up to the advertised size, and a matrix must have the exact
+matrix structure size. Selecting a different blob or clearing one records a
+color change; selecting the same blob does not erase a change recorded earlier
+in the attempt. The driver's checks still decide which color transformations
+the complete configuration supports.
 
 Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
