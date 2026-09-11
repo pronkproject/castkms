@@ -34,6 +34,7 @@ subdir-ccflags-$(CONFIG_DRM_WERROR) += -Werror
 
 drm-y := \
 	drm_atomic.o \
+	drm_atomic_request.o \
 	drm_atomic_prepare.o \
 	drm_atomic_prepare_wait.o \
 	drm_atomic_prepare_set.o \
