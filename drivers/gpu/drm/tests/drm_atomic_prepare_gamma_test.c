@@ -24,6 +24,7 @@ struct gamma_fixture {
 	unsigned int checks, installations;
 	u16 before[6], during[6];
 	int worker_error;
+	bool revoke;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -114,6 +115,8 @@ static int finish_reader(void *data)
 		drm_modeset_unlock(&f->crtc->mutex);
 	}
 	f->worker_error = ret;
+	if (f->revoke)
+		drm_prepare_owner_revoke(f->owner);
 	drm_prepare_read_release(f->read, NULL);
 	f->read = NULL;
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -171,8 +174,23 @@ static void gamma_command_waits_without_changing_readback(struct kunit *test)
 	KUNIT_EXPECT_MEMEQ(test, expected, f->crtc->gamma_store, sizeof(expected));
 }
 
+static void revoked_gamma_command_preserves_readback(struct kunit *test)
+{
+	struct gamma_fixture *f = new_fixture(test);
+	int ret;
+
+	f->revoke = true;
+	start_reader(test, f);
+	ret = drm_atomic_commit_legacy_gamma(f->crtc, f->table, f->owner, NULL, NULL);
+	join_reader(test, f);
+	KUNIT_EXPECT_EQ(test, ret, -ECANCELED);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_EXPECT_MEMEQ(test, f->before, f->crtc->gamma_store, sizeof(f->before));
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(gamma_command_waits_without_changing_readback),
+	KUNIT_CASE(revoked_gamma_command_preserves_readback),
 	{}
 };
 
