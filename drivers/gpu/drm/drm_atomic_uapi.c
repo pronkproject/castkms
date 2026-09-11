@@ -585,13 +585,7 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 	} else if (property == plane->blend_mode_property) {
 		state->pixel_blend_mode = val;
 	} else if (property == plane->rotation_property) {
-		if (!is_power_of_2(val & DRM_MODE_ROTATE_MASK)) {
-			drm_dbg_atomic(plane->dev,
-				       "[PLANE:%d:%s] bad rotation bitmask: 0x%llx\n",
-				       plane->base.id, plane->name, val);
-			return -EINVAL;
-		}
-		state->rotation = val;
+		return drm_atomic_set_rotation_for_plane(state, val);
 	} else if (property == plane->zpos_property) {
 		state->zpos = val;
 	} else if (property == plane->color_encoding_property) {
