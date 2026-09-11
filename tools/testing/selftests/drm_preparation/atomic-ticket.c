@@ -91,7 +91,7 @@ int main(int argc, char **argv)
 	if (!property)
 		ksft_exit_fail_msg("Preparation capability has no CRTC property\n");
 
-	ksft_set_plan(10);
+	ksft_set_plan(11);
 	errno = 0;
 	ksft_test_result(drmIoctl(fd, DRM_IOCTL_MODE_PREPARE_REPLACE, &malformed) == -1 &&
 			 errno == EINVAL, "Empty output set rejected\n");
@@ -125,6 +125,8 @@ int main(int argc, char **argv)
 	ksft_test_result(submit(fd, crtc, find_property(fd, crtc, "OUT_FENCE_PTR"), 0,
 			 DRM_MODE_ATOMIC_NONBLOCK) == -EINVAL,
 			 "Nonblocking update without a ticket still needs preparation\n");
+	ksft_test_result(submit(fd, crtc, property, -1, 0) == -EINVAL,
+			 "Explicit null preparation is not replaced by an implicit ticket\n");
 	close(fd);
 	ksft_finished();
 }
