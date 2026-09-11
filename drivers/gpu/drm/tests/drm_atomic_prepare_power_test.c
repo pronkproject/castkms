@@ -304,11 +304,21 @@ static void invalid_power_modes_do_not_truncate(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
+static void standby_is_normalized_to_off(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+
+	KUNIT_ASSERT_EQ(test, set_power(f, DRM_MODE_DPMS_STANDBY), 0);
+	KUNIT_EXPECT_EQ(test, f->connector.dpms, DRM_MODE_DPMS_OFF);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(power_ioctl_waits_without_publishing_preference),
 	KUNIT_CASE(master_loss_cancels_power_change),
 	KUNIT_CASE(kernel_power_command_revalidates_after_wait),
 	KUNIT_CASE(invalid_power_modes_do_not_truncate),
+	KUNIT_CASE(standby_is_normalized_to_off),
 	{}
 };
 
