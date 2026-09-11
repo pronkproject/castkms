@@ -466,6 +466,23 @@ static void failed_preparation_does_not_prepare_signaling(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 0);
 }
 
+static void signaling_callbacks_must_be_paired(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+	struct drm_atomic_request_callbacks callbacks = signaling_callbacks;
+
+	callbacks.complete_signaling = NULL;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_with_callbacks(f->dev, NULL, &callbacks, f),
+			-EINVAL);
+	callbacks = signaling_callbacks;
+	callbacks.prepare_signaling = NULL;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_with_callbacks(f->dev, NULL, &callbacks, f),
+			-EINVAL);
+	KUNIT_EXPECT_EQ(test, f->builds, 0);
+	KUNIT_EXPECT_EQ(test, f->signals_prepared, 0);
+	KUNIT_EXPECT_EQ(test, f->signals_completed, 0);
+}
+
 struct contended_request {
 	struct request_fixture *display;
 	struct drm_crtc *other;
@@ -626,6 +643,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(rejected_commit_does_not_publish_signaling),
 	KUNIT_CASE(unchanged_request_does_not_prepare_signaling),
 	KUNIT_CASE(failed_preparation_does_not_prepare_signaling),
+	KUNIT_CASE(signaling_callbacks_must_be_paired),
 	{}
 };
 
