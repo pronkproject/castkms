@@ -59,8 +59,20 @@ static void scalar_value_preserves_signed_bits(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, entry->scalar, (u64)-7);
 }
 
+static void invalid_value_preserves_destination(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = { .scalar = 23 };
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_resolve_user_value(&f->crtc->base,
+			f->dev->mode_config.prop_active, NULL, 2, &entry), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, entry.object, NULL);
+	KUNIT_EXPECT_EQ(test, entry.scalar, 23);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
+	KUNIT_CASE(invalid_value_preserves_destination),
 	{}
 };
 
