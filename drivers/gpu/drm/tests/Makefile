@@ -11,6 +11,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_user_value_test.o \
 	drm_atomic_user_request_test.o \
 	drm_atomic_user_request_auth_test.o \
+	drm_atomic_user_signaling_test.o \
 	drm_atomic_geometry_test.o \
 	drm_atomic_rotation_test.o \
 	drm_atomic_color_test.o \
