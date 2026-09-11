@@ -505,6 +505,23 @@ static void submitted_request_waits_for_preparation(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
 }
 
+static void busy_submission_releases_signaling(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	f->install_error = -EBUSY;
+	KUNIT_EXPECT_EQ(test, drm_atomic_submit_request_with_callbacks(f->dev, NULL,
+								     &signaling_callbacks, f), -EBUSY);
+	KUNIT_EXPECT_EQ(test, f->builds, 1);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_EXPECT_TRUE(test, f->nonblock);
+	KUNIT_EXPECT_EQ(test, f->signals_prepared, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_completed, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_accepted, 0);
+	KUNIT_EXPECT_FALSE(test, f->signals_live);
+	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
+}
+
 struct contended_request {
 	struct request_fixture *display;
 	struct drm_crtc *other;
@@ -667,6 +684,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(failed_preparation_does_not_prepare_signaling),
 	KUNIT_CASE(signaling_callbacks_must_be_paired),
 	KUNIT_CASE(submitted_request_waits_for_preparation),
+	KUNIT_CASE(busy_submission_releases_signaling),
 	{}
 };
 
