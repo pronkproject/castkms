@@ -163,8 +163,39 @@ static void master_loss_rejects_retained_request(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, validate_request(f, request, NULL), -EACCES);
 }
 
+static struct file *new_lessee(struct kunit *test, struct auth_fixture *f)
+{
+	struct drm_file *root = f->root->private_data;
+
+	return new_master_file(test, f->dev, root->master);
+}
+
+static void allow_object(struct kunit *test, struct file *file, struct drm_mode_object *object)
+{
+	struct drm_file *priv = file->private_data;
+	int ret;
+
+	mutex_lock(&priv->minor->dev->mode_config.idr_mutex);
+	ret = idr_alloc(&priv->master->leases, object, object->id, object->id + 1, GFP_KERNEL);
+	mutex_unlock(&priv->minor->dev->mode_config.idr_mutex);
+	KUNIT_ASSERT_EQ(test, ret, object->id);
+}
+
+static void empty_group_still_requires_a_lease(struct kunit *test)
+{
+	struct auth_fixture *f = new_fixture(test);
+	struct drm_atomic_user_request *request = new_request(test, f, &f->crtc->base, NULL, 0);
+	struct file *child = new_lessee(test, f);
+
+	allow_object(test, child, &f->crtc->base);
+	KUNIT_ASSERT_EQ(test, validate_request(f, request, child), 0);
+	drm_lease_revoke(((struct drm_file *)child->private_data)->master);
+	KUNIT_EXPECT_EQ(test, validate_request(f, request, child), -EACCES);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(master_loss_rejects_retained_request),
+	KUNIT_CASE(empty_group_still_requires_a_lease),
 	{}
 };
 
