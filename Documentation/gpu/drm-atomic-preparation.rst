@@ -565,8 +565,8 @@ objects named by property values, and the caller must keep that authority
 valid through submission.
 
 The setters accept a plane's framebuffer, input fence, controller association,
-damage blob, position and size, a controller's mode blob and active state, and
-the controller selected by a connector. Controller color tables and matrices
+damage blob, position, size and rotation, a controller's mode blob and active
+state, and the controller selected by a connector. Controller color tables and matrices
 are also supported. Resource values use retained pointers.
 Where needed, the attempted state takes its own references. Explicitly assigning
 a framebuffer still counts as an update, even when selecting the same
@@ -588,6 +588,13 @@ coordinates. Each value must fit the property's range. Checking that the full
 rectangle fits the framebuffer and the driver's capabilities remains part of
 checking the complete update. Rebuilding applies only the requested fields to
 current state, rather than restoring an earlier copy of the plane's geometry.
+
+Plane rotation also uses a shared kernel setter. A request must select exactly
+one rotation angle, optionally combined with reflections advertised by that
+plane. Unsupported bits and detached properties are rejected without changing
+the state. Rotation is reapplied to each fresh attempt; it does not restore
+other plane fields from an earlier attempt. The driver still checks whether
+the complete combination of geometry, format and transformation is supported.
 
 The controller's ACTIVE property chooses whether to display its configured
 mode. Applying the saved boolean changes only that field; it neither supplies
