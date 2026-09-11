@@ -353,6 +353,18 @@ static void legacy_property_keeps_original_issuer(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 0);
 }
 
+static void atomic_ioctl_still_requires_capability(struct kunit *test)
+{
+	struct commit_fixture *f = new_fixture(test);
+	struct drm_file *file = f->file->private_data;
+	struct drm_mode_atomic args = {};
+
+	file->atomic = false;
+	KUNIT_EXPECT_EQ(test, drm_mode_atomic_ioctl(f->dev, &args, file), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+}
+
 static struct commit_fixture *new_event_fixture(struct kunit *test)
 {
 	struct commit_fixture *f = new_fixture(test);
@@ -407,6 +419,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(legacy_property_waits_without_atomic_capability),
 	KUNIT_CASE(legacy_property_rechecks_master_after_wait),
 	KUNIT_CASE(legacy_property_keeps_original_issuer),
+	KUNIT_CASE(atomic_ioctl_still_requires_capability),
 	{}
 };
 
