@@ -478,10 +478,19 @@ Failure releases all references acquired for the incomplete request.
 
 Retaining targets with no assignments matters for permission checks: an empty
 group must not become a way to skip checking the caller's lease after waiting.
-The caller must still recheck authority and availability before each attempt.
-The ordinary ioctl does not yet use the request adapter, so its copied arrays
-alone still do not authorize waiting. Preparation descriptors and completion
-metadata remain separate from the retained values.
+The private file-authority validator checks that the file is still a current
+master, that every retained controller, plane and connector is covered by its
+lease, and that retained connectors have not been unregistered. Referenced
+controllers are checked separately from assignment targets. It uses retained
+objects, not another lookup of the supplied identifiers.
+
+Those checks do not freeze authority. The caller must keep its original issuer
+through final acceptance so that master loss or lease revocation after a check
+still prevents installation. Applying the request checks property attachment;
+the full driver check remains necessary before committing. The ordinary ioctl
+does not yet use the request adapter, so its copied arrays alone still do not
+authorize waiting. Preparation descriptors and completion metadata remain
+separate from the retained values.
 
 SETCRTC resolves its requested framebuffer, mode and connectors under the initial
 display locks. On a preparation-enabled device, it retains those inputs after
