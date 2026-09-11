@@ -23,7 +23,13 @@ struct power_fixture {
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
 {
 	struct power_fixture *f = dev->dev_private;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old, *new;
+	int i;
 
+	/* The fixture models power changes without encoders or hardware checks. */
+	for_each_oldnew_crtc_in_state(state, crtc, old, new, i)
+		new->active_changed = old->active != new->active;
 	return f->reject ? -EINVAL : 0;
 }
 
@@ -236,6 +242,25 @@ static void checked_preferences_cannot_be_replaced(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->state->connectors[index].power_on);
 }
 
+static int accept_first_on(struct power_fixture *f)
+{
+	int ret = drm_atomic_set_connector_power(f->state, &f->connectors[0], true);
+
+	return ret ?: accept_update(f);
+}
+
+static void enabling_one_connector_preserves_other_off_preference(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+
+	f->connectors[0].dpms = f->connectors[1].dpms = DRM_MODE_DPMS_OFF;
+	f->crtc->state->active = false;
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_first_on), 0);
+	KUNIT_EXPECT_TRUE(test, f->crtc->state->active);
+	KUNIT_EXPECT_EQ(test, f->connectors[0].dpms, DRM_MODE_DPMS_ON);
+	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_OFF);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
 	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
@@ -243,6 +268,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(rejected_update_preserves_power_preferences),
 	KUNIT_CASE(clearing_discards_power_preferences),
 	KUNIT_CASE(checked_preferences_cannot_be_replaced),
+	KUNIT_CASE(enabling_one_connector_preserves_other_off_preference),
 	{}
 };
 
