@@ -8,4 +8,5 @@ LDLIBS += $(shell pkg-config --libs libdrm)
 TEST_GEN_PROGS := atomic-ticket
 TEST_GEN_PROGS += atomic-input
 TEST_GEN_PROGS += atomic-signaling
+TEST_GEN_PROGS += legacy-cursor
 include ../lib.mk
