@@ -637,6 +637,12 @@ reference alive when an attempt is discarded. It rejects replacing an existing
 fence, including replacing it with no dependency. Passing no fence to an empty
 state leaves it available for a subsequent assignment.
 
+The ordinary input-fence property adapter uses that setter after descriptor
+lookup. The blocking adapter retains the resolved fence separately and uses
+the same setter on each attempt. Framebuffer and blob references, selected
+objects and output destinations have their own retention and validation rules;
+the fence setter alone does not establish them.
+
 On preparation-enabled devices, the older single-property ioctl uses the same
 copied-assignment and blocking-commit machinery for supported properties. It
 does not require the caller to negotiate the atomic ioctl capability. That
@@ -659,13 +665,22 @@ turning one connector on does not change another connector's off preference.
 Ordinary atomic power changes, which do not express individual preferences,
 still update the legacy power values to reflect controller activity. Later
 legacy bookkeeping does not write those values again. The setter is a kernel
-building block; it does not itself adapt the DPMS ioctl or perform authorization.
+building block; it does not itself perform authorization.
 
-The ordinary input-fence property adapter uses that setter after descriptor
-lookup. The blocking adapter retains the resolved fence separately and uses
-the same setter on each attempt. Framebuffer and blob references, selected
-objects and output destinations have their own retention and validation rules;
-the fence setter alone does not establish them.
+Kernel callers use ``drm_atomic_commit_connector_power()`` for a blocking power
+command. They retain the connector and issuer, optionally supply a validation
+callback, and call without modeset locks. Each attempt checks authority and
+recalculates controller activity from the current routing and other connectors'
+preferences. The requested preference remains unchanged across preparation
+waits. Rejection leaves the accepted preference unchanged.
+
+On preparation-enabled devices, the legacy DPMS property uses that command.
+The file adapter retains the original issuer and rechecks ownership of the
+display and leases for the connector and its current controller after every
+wait. Standby and suspend requests are normalized to off, as with the ordinary
+atomic DPMS helper. Turning an unregistered connector on is rejected; turning
+it off remains possible while the caller retains authority. Neither the kernel
+command nor the file adapter requires a new driver callback.
 
 ``drm_atomic_request_create()`` stores an ordered copy of resolved assignments
 independently of any attempted display state. Each entry names its target and
