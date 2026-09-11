@@ -31,6 +31,7 @@ struct power_fixture {
 	struct completion checked;
 	unsigned int checks, installs;
 	int worker_error, power_while_waiting;
+	bool drop_master;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -186,6 +187,8 @@ static int finish_reader(void *data)
 		f->power_while_waiting = f->connector.dpms;
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
+	if (!ret && f->drop_master)
+		ret = drm_ioctl(f->file, DRM_IOCTL_DROP_MASTER, 0);
 	f->worker_error = ret;
 	drm_prepare_read_release(f->read, NULL);
 	f->read = NULL;
@@ -254,8 +257,24 @@ static void power_ioctl_waits_without_publishing_preference(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
 }
 
+static void master_loss_cancels_power_change(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+	int ret;
+
+	f->drop_master = true;
+	start_reader(test, f);
+	ret = set_power(f, DRM_MODE_DPMS_OFF);
+	join_reader(test, f);
+	KUNIT_EXPECT_EQ(test, ret, -ECANCELED);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_EQ(test, f->connector.dpms, DRM_MODE_DPMS_ON);
+	KUNIT_EXPECT_TRUE(test, f->crtc->state->active);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(power_ioctl_waits_without_publishing_preference),
+	KUNIT_CASE(master_loss_cancels_power_change),
 	{}
 };
 
