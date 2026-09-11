@@ -63,6 +63,8 @@ drm_atomic_set_fence_for_plane(struct drm_plane_state *plane_state,
 int __must_check
 drm_atomic_set_geometry_property_for_plane(struct drm_plane_state *state,
 					  struct drm_property *property, u64 value);
+int __must_check
+drm_atomic_set_rotation_for_plane(struct drm_plane_state *state, u64 rotation);
 bool drm_atomic_set_colorop_for_plane(struct drm_plane_state *plane_state,
 				      struct drm_colorop *colorop);
 int __must_check
