@@ -71,3 +71,45 @@ int drm_atomic_set_connector_power(struct drm_atomic_commit *state,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_set_connector_power);
+
+/**
+ * drm_atomic_install_connector_power - publish accepted connector preferences
+ * @state: accepted update whose connector and controller states are installed
+ *
+ * Call under the connection mutex during state installation, before dropping
+ * modeset locks. Explicit connector preferences take precedence. Ordinary
+ * atomic power changes and detachments update the legacy power value when no
+ * connector preferences determined the controller's activity. Devices without
+ * preparation retain their existing bookkeeping path.
+ */
+void drm_atomic_install_connector_power(struct drm_atomic_commit *state)
+{
+	struct drm_connector *connector;
+	struct drm_connector_state *old_state, *new_state;
+	int i;
+
+	if (!state->dev->mode_config.preparation)
+		return;
+	for_each_oldnew_connector_in_state(state, connector, old_state, new_state, i) {
+		struct drm_crtc *crtc = new_state->crtc;
+		struct drm_crtc_state *crtc_state;
+
+		drm_modeset_lock_assert_held(&state->dev->mode_config.connection_mutex);
+		if (state->connectors[i].update_power) {
+			connector->dpms = state->connectors[i].power_on ?
+				DRM_MODE_DPMS_ON : DRM_MODE_DPMS_OFF;
+			continue;
+		}
+		if (!crtc) {
+			if (old_state->crtc)
+				connector->dpms = DRM_MODE_DPMS_OFF;
+			continue;
+		}
+		if (state->crtcs[drm_crtc_index(crtc)].power_from_connectors)
+			continue;
+		crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+		if (crtc_state && drm_atomic_crtc_needs_modeset(crtc_state))
+			connector->dpms = crtc_state->active ? DRM_MODE_DPMS_ON : DRM_MODE_DPMS_OFF;
+	}
+}
+EXPORT_SYMBOL_GPL(drm_atomic_install_connector_power);
