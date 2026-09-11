@@ -38,7 +38,7 @@ static int prepare_request(struct drm_atomic_commit *state,
 }
 
 static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owner,
-			  int (*build)(struct drm_atomic_commit *state, void *data),
+			  const struct drm_atomic_request_callbacks *callbacks,
 			  void *data)
 {
 	struct drm_prepare_ticket *ticket = NULL;
@@ -46,8 +46,12 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 	struct drm_atomic_commit *state = NULL;
 	int ret;
 
-	if (!build || !drm_core_check_feature(dev, DRIVER_ATOMIC))
+	if (!callbacks || !callbacks->build ||
+	    (!!callbacks->prepare_signaling != !!callbacks->complete_signaling) ||
+	    !drm_core_check_feature(dev, DRIVER_ATOMIC))
 		return -EINVAL;
+	if (owner && !dev->mode_config.preparation)
+		return -EOPNOTSUPP;
 	drm_modeset_acquire_init(&ctx, owner ? DRM_MODESET_ACQUIRE_INTERRUPTIBLE : 0);
 
 	for (;;) {
@@ -57,7 +61,7 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 			break;
 		}
 		state->acquire_ctx = &ctx;
-		ret = build(state, data);
+		ret = callbacks->build(state, data);
 		if (ret == DRM_ATOMIC_REQUEST_UNCHANGED) {
 			ret = 0;
 			break;
@@ -86,7 +90,15 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 		}
 
 		/* Checking and ticket capture used the same still-locked state. */
-		ret = dev->mode_config.funcs->atomic_commit(dev, state, false);
+		if (callbacks->prepare_signaling) {
+			ret = callbacks->prepare_signaling(state, data);
+			if (ret > 0)
+				ret = -EINVAL;
+		}
+		if (!ret)
+			ret = dev->mode_config.funcs->atomic_commit(dev, state, false);
+		if (callbacks->complete_signaling)
+			callbacks->complete_signaling(state, !ret, data);
 retry_lock:
 		if (ret != -EDEADLK)
 			break;
@@ -110,7 +122,9 @@ int drm_atomic_commit_request(struct drm_device *dev,
 			      int (*build)(struct drm_atomic_commit *state, void *data),
 			      void *data)
 {
-	return commit_request(dev, NULL, build, data);
+	const struct drm_atomic_request_callbacks callbacks = { .build = build };
+
+	return commit_request(dev, NULL, &callbacks, data);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_commit_request);
 
@@ -119,10 +133,21 @@ int drm_atomic_commit_request_owned(struct drm_device *dev,
 				    int (*build)(struct drm_atomic_commit *state, void *data),
 				    void *data)
 {
+	const struct drm_atomic_request_callbacks callbacks = { .build = build };
+
 	if (!owner)
 		return -EINVAL;
 	if (!dev->mode_config.preparation)
 		return -EOPNOTSUPP;
-	return commit_request(dev, owner, build, data);
+	return commit_request(dev, owner, &callbacks, data);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_commit_request_owned);
+
+int drm_atomic_commit_request_with_callbacks(struct drm_device *dev,
+					     struct drm_prepare_owner *owner,
+					     const struct drm_atomic_request_callbacks *callbacks,
+					     void *data)
+{
+	return commit_request(dev, owner, callbacks, data);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_commit_request_with_callbacks);
