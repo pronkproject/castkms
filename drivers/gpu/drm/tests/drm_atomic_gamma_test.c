@@ -184,6 +184,20 @@ static void degamma_property_accepts_legacy_table(struct kunit *test)
 	KUNIT_EXPECT_MEMEQ(test, expected, f->crtc->gamma_store, sizeof(expected));
 }
 
+static void short_table_is_rejected_before_assignment(struct kunit *test)
+{
+	struct gamma_fixture *f = new_fixture(test, true);
+	struct drm_property_blob *short_table;
+
+	short_table = drm_property_create_blob(f->dev, sizeof(struct drm_color_lut), NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, short_table);
+	drm_property_blob_put(f->table);
+	f->table = short_table;
+	KUNIT_EXPECT_EQ(test, run_update(f, set_table), -EINVAL);
+	KUNIT_EXPECT_NULL(test, drm_atomic_get_new_crtc_state(f->state, f->crtc));
+	KUNIT_EXPECT_NULL(test, f->state->crtcs[drm_crtc_index(f->crtc)].legacy_gamma);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
 	KUNIT_CASE(accepted_table_changes_readback),
@@ -191,6 +205,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(failed_check_preserves_readback),
 	KUNIT_CASE(checked_table_cannot_be_replaced),
 	KUNIT_CASE(degamma_property_accepts_legacy_table),
+	KUNIT_CASE(short_table_is_rejected_before_assignment),
 	{}
 };
 
