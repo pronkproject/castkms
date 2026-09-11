@@ -475,8 +475,45 @@ must not conceal resource handles that the request has failed to retain.
 
 Preparation descriptors and output-fence pointers are rejected by this storage
 interface. They require separate handling by the transaction or ioctl adapter.
-The resolved collection is not yet connected to ordinary atomic ioctl copying
-or replay, and creating one does not acquire admission holds or submit work.
+Creating the resolved collection does not acquire admission holds or submit work.
+
+Applying retained assignments
+----------------------------
+
+``drm_atomic_request_apply()`` applies the supported retained assignments to a
+fresh or cleared atomic update. It first acquires the device's modeset locks
+and checks that every property is still attached and has a supported setter.
+The caller's required validation callback then checks current authority and
+object availability before any assignment is applied. A retained reference
+keeps an allocation alive; it does not keep a display lease valid or make a
+removed output available again. The callback must check targets as well as
+objects named by property values, and the caller must keep that authority
+valid through submission.
+
+The initial setters accept a plane's framebuffer, input fence, controller
+association and damage blob, plus a controller's mode blob. They use the
+retained pointers directly and take independent references for the attempted
+state where needed. Explicit framebuffer assignments still count as explicit
+updates, including same-framebuffer assignments. The order of assignments is
+preserved: assigning a framebuffer twice selects the last value, whereas
+assigning an input fence after a non-null fence remains an error.
+
+Unsupported properties are rejected before any assignments are applied. There
+is no fallback that converts references back to numeric identifiers, and no
+driver-private property callback is called. Scalar properties, other resource
+properties and asynchronous-flip validation still need their own application
+support. Ordinary atomic ioctl input copying and output signaling are not
+connected to the retained collection yet.
+
+Application does not check or commit the complete display update. It also does
+not roll back a prefix of assignments when a later setter fails. The caller
+must discard or clear the attempted state on error. Locks stay in the caller's
+acquire context, including on failure; a deadlock retry clears state and backs
+off those locks before reapplying the request. Every invocation repeats the
+authority callback. The immutable request remains available for another attempt.
+
+Shutdown and suspend
+--------------------
 
 ``drm_atomic_helper_shutdown()`` uses ``drm_atomic_commit_request()`` on
 participating devices.
