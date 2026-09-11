@@ -57,7 +57,10 @@ static int validate_entry(struct drm_device *dev,
 			return entry->type == DRM_ATOMIC_REQUEST_FRAMEBUFFER &&
 			       (!entry->framebuffer || entry->framebuffer->dev == dev) ?
 			       0 : -EINVAL;
-		return -EINVAL;
+		return entry->type == DRM_ATOMIC_REQUEST_OBJECT &&
+		       (!entry->reference ||
+			(entry->reference->type == prop->values[0] &&
+			 object_device(entry->reference) == dev)) ? 0 : -EINVAL;
 	}
 	if (entry->type != DRM_ATOMIC_REQUEST_SCALAR)
 		return -EINVAL;
@@ -75,6 +78,10 @@ static void retain_entry(const struct drm_atomic_request_entry *entry)
 	case DRM_ATOMIC_REQUEST_BLOB:
 		if (entry->blob)
 			drm_property_blob_get(entry->blob);
+		break;
+	case DRM_ATOMIC_REQUEST_OBJECT:
+		if (entry->reference)
+			drm_mode_object_get(entry->reference);
 		break;
 	case DRM_ATOMIC_REQUEST_SCALAR:
 		break;
@@ -125,6 +132,10 @@ void drm_atomic_request_destroy(struct drm_atomic_request *request)
 			break;
 		case DRM_ATOMIC_REQUEST_BLOB:
 			drm_property_blob_put(entry->blob);
+			break;
+		case DRM_ATOMIC_REQUEST_OBJECT:
+			if (entry->reference)
+				drm_mode_object_put(entry->reference);
 			break;
 		case DRM_ATOMIC_REQUEST_SCALAR:
 			break;
