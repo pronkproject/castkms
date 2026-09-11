@@ -442,6 +442,16 @@ descriptors alive across that wait. An unchanged request or an earlier error
 also invokes neither callback. The runner requires the pair together so callers
 cannot provide resource setup without the corresponding completion path.
 
+The ordinary ioctl's private signaling helper owns each event it creates,
+including an event whose reservation or output fence setup fails. Rejection
+returns reserved event space and unused descriptors, while acceptance leaves
+events with the display commit and installs the reserved output descriptors.
+An output that was off and remains off cannot request an event or output fence;
+that condition is checked when preparing the metadata as well as by the normal
+atomic checks. The helper does not alter the checked display configuration.
+The retained-request adapter still needs to arrange the userspace destinations
+and call signaling setup only after preparation is ready.
+
 Retaining inputs from userspace
 ------------------------------
 
