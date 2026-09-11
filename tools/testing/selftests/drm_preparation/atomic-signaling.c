@@ -206,6 +206,20 @@ static void test_only(struct fixture *f)
 	drmModeAtomicFree(request);
 }
 
+static void inactive_output(struct fixture *f)
+{
+	drmModeAtomicReq *request = new_request();
+	int fence = 77, ret;
+
+	modeset(f, false);
+	add(f, request, f->crtc, DRM_MODE_OBJECT_CRTC, "OUT_FENCE_PTR", (uintptr_t)&fence);
+	errno = 0;
+	ret = drmModeAtomicCommit(f->fd, request, 0, NULL);
+	ksft_test_result(ret < 0 && errno == EINVAL && fence == -1,
+			"Inactive output rejects a completion fence\n");
+	drmModeAtomicFree(request);
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -213,11 +227,11 @@ int main(int argc, char **argv)
 
 	ksft_print_header();
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(3);
+	ksft_set_plan(4);
 	output_fence(&f);
 	failed_update(&f);
 	test_only(&f);
-	modeset(&f, false);
+	inactive_output(&f);
 	drmModeRmFB(f.fd, f.framebuffer);
 	drmModeDestroyPropertyBlob(f.fd, f.mode);
 	destroy = (struct drm_mode_destroy_dumb) { .handle = f.handle };
