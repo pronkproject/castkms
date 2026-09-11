@@ -91,7 +91,7 @@ int main(int argc, char **argv)
 	if (!property)
 		ksft_exit_fail_msg("Preparation capability has no CRTC property\n");
 
-	ksft_set_plan(12);
+	ksft_set_plan(13);
 	errno = 0;
 	ksft_test_result(drmIoctl(fd, DRM_IOCTL_MODE_PREPARE_REPLACE, &malformed) == -1 &&
 			 errno == EINVAL, "Empty output set rejected\n");
@@ -129,6 +129,12 @@ int main(int argc, char **argv)
 			 "Explicit null preparation is not replaced by an implicit ticket\n");
 	ksft_test_result(submit(fd, crtc, find_property(fd, crtc, "OUT_FENCE_PTR"), 0, 0) == 0,
 			 "Blocking update without a ticket prepares internally\n");
+	ticket = issue(fd, crtc);
+	if (drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC_PREPARATION, 0))
+		ksft_exit_fail_msg("Cannot disable explicit preparation: %m\n");
+	ksft_test_result(submit(fd, crtc, property, ticket, 0) == -EOPNOTSUPP,
+			 "Explicit tickets still require client negotiation\n");
+	close(ticket);
 	close(fd);
 	ksft_finished();
 }
