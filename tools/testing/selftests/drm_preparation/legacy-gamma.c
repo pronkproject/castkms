@@ -75,6 +75,45 @@ static void accepted_gamma(struct fixture *f)
 			"Accepted legacy gamma returns all three requested component arrays\n");
 }
 
+static void accepted_color_property(struct fixture *f)
+{
+	drmModeObjectProperties *properties;
+	drmModePropertyBlobRes *blob = NULL;
+	const struct drm_color_lut *entries;
+	bool matches = false;
+	unsigned int i;
+
+	if (drmSetClientCap(f->fd, DRM_CLIENT_CAP_ATOMIC, 1))
+		ksft_exit_fail_msg("Cannot inspect atomic color state: %m\n");
+	properties = drmModeObjectGetProperties(f->fd, f->crtc, DRM_MODE_OBJECT_CRTC);
+	if (!properties)
+		ksft_exit_fail_msg("Cannot inspect controller properties: %m\n");
+	for (i = 0; i < properties->count_props; i++) {
+		drmModePropertyRes *p = drmModeGetProperty(f->fd, properties->props[i]);
+
+		if (!p)
+			ksft_exit_fail_msg("Cannot inspect color property: %m\n");
+		if (!strcmp(p->name, "GAMMA_LUT"))
+			blob = drmModeGetPropertyBlob(f->fd, properties->prop_values[i]);
+		drmModeFreeProperty(p);
+	}
+	drmModeFreeObjectProperties(properties);
+	if (blob && blob->length == f->count * sizeof(*entries)) {
+		entries = blob->data;
+		matches = true;
+		for (i = 0; i < f->count; i++)
+			if (entries[i].red != f->values[i] ||
+			    entries[i].green != f->values[i + f->count] ||
+			    entries[i].blue != f->values[i + 2 * f->count])
+				matches = false;
+	}
+	if (blob)
+		drmModeFreePropertyBlob(blob);
+	if (drmSetClientCap(f->fd, DRM_CLIENT_CAP_ATOMIC, 0))
+		ksft_exit_fail_msg("Cannot restore legacy-only client: %m\n");
+	ksft_test_result(matches, "Legacy gamma also installs the requested atomic color table\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -83,8 +122,9 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(1);
+	ksft_set_plan(2);
 	accepted_gamma(&f);
+	accepted_color_property(&f);
 	free(f.values);
 	free(f.readback);
 	close(f.fd);
