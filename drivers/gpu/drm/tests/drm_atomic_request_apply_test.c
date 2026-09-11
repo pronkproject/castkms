@@ -354,6 +354,40 @@ static void damage_blob_is_applied_by_reference(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 2);
 }
 
+static void mode_blob_is_applied_by_reference(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	const struct drm_mode_modeinfo umode = {
+		.clock = 148500,
+		.hdisplay = 1920, .hsync_start = 2008, .hsync_end = 2052, .htotal = 2200,
+		.vdisplay = 1080, .vsync_start = 1084, .vsync_end = 1089, .vtotal = 1125,
+		.vrefresh = 60,
+		.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
+		.type = DRM_MODE_TYPE_DRIVER,
+		.name = "1920x1080",
+	};
+	struct drm_property_blob *blob;
+	struct drm_atomic_request_entry entry = {
+		.object = &f->crtc->base, .property = f->dev->mode_config.prop_mode_id,
+		.type = DRM_ATOMIC_REQUEST_BLOB,
+	};
+	struct drm_atomic_request *request;
+	struct drm_crtc_state *crtc_state;
+
+	blob = drm_property_create_blob(f->dev, sizeof(umode), &umode);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, blob);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_blob, blob), 0);
+	entry.blob = blob;
+	request = new_request(test, f, &entry, 1);
+	kunit_release_action(test, put_blob, blob);
+	KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+	crtc_state = drm_atomic_get_new_crtc_state(f->state, f->crtc);
+	KUNIT_EXPECT_PTR_EQ(test, crtc_state->mode_blob, blob);
+	KUNIT_EXPECT_EQ(test, crtc_state->mode.hdisplay, umode.hdisplay);
+	KUNIT_EXPECT_TRUE(test, crtc_state->enable);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 2);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -365,6 +399,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(duplicate_fence_assignment_is_rejected),
 	KUNIT_CASE(controller_assignment_updates_plane_membership),
 	KUNIT_CASE(damage_blob_is_applied_by_reference),
+	KUNIT_CASE(mode_blob_is_applied_by_reference),
 	{ }
 };
 
