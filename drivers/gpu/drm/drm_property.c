@@ -818,8 +818,8 @@ EXPORT_SYMBOL(drm_property_replace_blob_checked);
  * the blob and its element and replace the old blob by the new one. Advertise
  * if the replacement operation was successful.
  *
- * Return: true if the blob was in fact replaced. -EINVAL if the new blob was
- * not found or sizes don't match.
+ * Return: 0 on success, or -EINVAL if the new blob was not found or sizes
+ * don't match. @replaced accumulates whether the destination changed.
  */
 int drm_property_replace_blob_from_id(struct drm_device *dev,
 					 struct drm_property_blob **blob,
@@ -830,6 +830,7 @@ int drm_property_replace_blob_from_id(struct drm_device *dev,
 					 bool *replaced)
 {
 	struct drm_property_blob *new_blob = NULL;
+	int ret;
 
 	if (blob_id != 0) {
 		new_blob = drm_property_lookup_blob(dev, blob_id);
@@ -838,38 +839,13 @@ int drm_property_replace_blob_from_id(struct drm_device *dev,
 				       "cannot find blob ID %llu\n", blob_id);
 			return -EINVAL;
 		}
-
-		if (max_size > 0 &&
-		    new_blob->length > max_size) {
-			drm_dbg_atomic(dev,
-				       "[BLOB:%d] length %zu greater than max %zu\n",
-				       new_blob->base.id, new_blob->length, max_size);
-			drm_property_blob_put(new_blob);
-			return -EINVAL;
-		}
-
-		if (expected_size > 0 &&
-		    new_blob->length != expected_size) {
-			drm_dbg_atomic(dev,
-				       "[BLOB:%d] length %zu different from expected %zu\n",
-				       new_blob->base.id, new_blob->length, expected_size);
-			drm_property_blob_put(new_blob);
-			return -EINVAL;
-		}
-		if (expected_elem_size > 0 &&
-		    new_blob->length % expected_elem_size != 0) {
-			drm_dbg_atomic(dev,
-				       "[BLOB:%d] length %zu not divisible by element size %zu\n",
-				       new_blob->base.id, new_blob->length, expected_elem_size);
-			drm_property_blob_put(new_blob);
-			return -EINVAL;
-		}
 	}
 
-	*replaced |= drm_property_replace_blob(blob, new_blob);
+	ret = drm_property_replace_blob_checked(dev, blob, new_blob, max_size,
+						expected_size, expected_elem_size, replaced);
 	drm_property_blob_put(new_blob);
 
-	return 0;
+	return ret;
 }
 EXPORT_SYMBOL(drm_property_replace_blob_from_id);
 
