@@ -32,6 +32,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_gamma.h>
 #include <drm/drm_atomic_power.h>
 #include <drm/drm_atomic_prepare_commit.h>
 #include <drm/drm_atomic_prepare_request.h>
@@ -3324,6 +3325,7 @@ static void install_state(struct drm_atomic_commit *state)
 	}
 
 	drm_atomic_install_connector_power(state);
+	drm_atomic_install_legacy_gamma(state);
 
 	for_each_oldnew_colorop_in_state(state, colorop, old_colorop_state, new_colorop_state, i) {
 		WARN_ON(colorop->state != old_colorop_state);
