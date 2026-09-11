@@ -145,8 +145,23 @@ static void flip_preserves_geometry_and_accepted_image(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, new->src_h, 32 << 16);
 }
 
+static int flip_disabled(struct flip_fixture *f)
+{
+	f->crtc->state->active = false;
+	return set_flip(f);
+}
+
+static void disabled_controller_rejects_flip(struct kunit *test)
+{
+	struct flip_fixture *f = new_fixture(test);
+
+	KUNIT_EXPECT_EQ(test, run_update(f, flip_disabled), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, f->old);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(flip_preserves_geometry_and_accepted_image),
+	KUNIT_CASE(disabled_controller_rejects_flip),
 	{}
 };
 
