@@ -790,8 +790,21 @@ The normal atomic helper publishes the cached legacy table during acceptance,
 while the controller lock is held. Failed checks and discarded attempts leave
 the cache unchanged. Ordinary atomic color updates do not change the legacy
 cache, and later color assignments within an attempt do not rewrite the
-retained legacy command. The setter is groundwork for a blocking legacy ioctl;
-it does not copy userspace arrays, wait for preparation or establish authority.
+retained legacy command. The setter does not copy userspace arrays, wait for
+preparation or establish authority.
+
+``drm_atomic_commit_legacy_gamma()`` supplies a blocking kernel command over that
+setter. Its caller retains the immutable table and issuer, holds no modeset
+locks and supplies any additional authorization callback. Each attempt validates
+authority and applies the same table to current state before ordinary driver
+checking. Waiting discards attempted state, not the requested table.
+
+On preparation-enabled devices, the legacy gamma ioctl captures the original
+file issuer before copying any component arrays. All three arrays must copy
+successfully before a table is submitted. Attempts use the retained table and
+recheck display ownership and the controller lease. A failed copy, check or
+preparation leaves accepted readback unchanged. Devices without preparation
+retain their ordinary gamma path; custom gamma callbacks are not adapted.
 
 Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
