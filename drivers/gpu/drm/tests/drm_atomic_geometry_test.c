@@ -80,9 +80,24 @@ static void invalid_values_leave_geometry_unchanged(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state->src_x, 23);
 }
 
+static void property_names_do_not_select_geometry(struct kunit *test)
+{
+	struct geometry_fixture *f = new_fixture(test);
+	struct drm_property *property = drm_property_create_range(f->dev, DRM_MODE_PROP_ATOMIC,
+									"CRTC_X", 0, 100);
+
+	KUNIT_ASSERT_NOT_NULL(test, property);
+	drm_object_attach_property(&f->state.plane->base, property, 0);
+	f->state.crtc_x = 17;
+	KUNIT_EXPECT_EQ(test, set_geometry(&f->state, property, 42),
+			-EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->state.crtc_x, 17);
+}
+
 static struct kunit_case geometry_tests[] = {
 	KUNIT_CASE(coordinates_keep_their_representation),
 	KUNIT_CASE(invalid_values_leave_geometry_unchanged),
+	KUNIT_CASE(property_names_do_not_select_geometry),
 	{ }
 };
 
