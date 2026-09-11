@@ -566,8 +566,15 @@ static int set_property_atomic(struct drm_mode_object *obj,
 	struct drm_modeset_acquire_ctx ctx;
 	int ret;
 
-	if (dev->mode_config.preparation && prop != dev->mode_config.dpms_property)
+	if (dev->mode_config.preparation) {
+		if (prop == dev->mode_config.dpms_property) {
+			if (obj->type != DRM_MODE_OBJECT_CONNECTOR)
+				return -EINVAL;
+			return drm_atomic_commit_user_power(obj_to_connector(obj),
+						    prop_value, file_priv);
+		}
 		return drm_atomic_commit_user_property(obj, prop, prop_value, file_priv);
+	}
 
 	state = drm_atomic_commit_alloc(dev);
 	if (!state)
