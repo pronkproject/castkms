@@ -26,7 +26,7 @@ struct cursor_fixture {
 	struct completion checked;
 	unsigned int checks, installs;
 	int worker_error;
-	bool change_image;
+	bool change_image, change_position;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -189,6 +189,10 @@ static int finish_reader(void *data)
 	if (!ret) {
 		if (f->change_image)
 			drm_framebuffer_assign(&f->cursor->state->fb, f->replacement);
+		if (f->change_position) {
+			f->crtc->cursor_x = 31;
+			f->crtc->cursor_y = 37;
+		}
 	}
 	f->worker_error = ret;
 	drm_modeset_drop_locks(&ctx);
@@ -254,8 +258,29 @@ static void move_uses_current_image_after_wait(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 29);
 }
 
+static void image_uses_current_position_after_wait(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+	struct drm_cursor_update update = {
+		.crtc = f->crtc, .update_image = true, .fb = f->replacement,
+	};
+	int ret;
+
+	f->change_position = true;
+	start_reader(test, f);
+	ret = drm_atomic_helper_cursor_request(&update, f->owner, NULL, NULL);
+	join_reader(test, f);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_GE(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->cursor->state->fb, f->replacement);
+	KUNIT_EXPECT_EQ(test, f->cursor->state->crtc_x, 31);
+	KUNIT_EXPECT_EQ(test, f->cursor->state->crtc_y, 37);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(move_uses_current_image_after_wait),
+	KUNIT_CASE(image_uses_current_position_after_wait),
 	{}
 };
 
