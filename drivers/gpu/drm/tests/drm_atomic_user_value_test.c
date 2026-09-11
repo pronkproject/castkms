@@ -94,11 +94,35 @@ static void unattached_property_is_not_resolved(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, entry.scalar, 23);
 }
 
+static void put_blob(void *data)
+{
+	drm_property_blob_put(data);
+}
+
+static void resolved_blob_has_independent_ownership(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	u32 contents = 42;
+	struct drm_property_blob *blob = drm_property_create_blob(f->dev, sizeof(contents), &contents);
+	struct drm_atomic_request_entry *entry;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, blob);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_blob, blob), 0);
+	entry = resolve_value(test, &f->crtc->base, f->dev->mode_config.prop_mode_id, blob->base.id);
+	KUNIT_EXPECT_EQ(test, entry->type, DRM_ATOMIC_REQUEST_BLOB);
+	KUNIT_EXPECT_PTR_EQ(test, entry->blob, blob);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 2);
+	kunit_release_action(test, put_blob, blob);
+	KUNIT_EXPECT_EQ(test, *(u32 *)entry->blob->data, contents);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
 	KUNIT_CASE(invalid_value_preserves_destination),
 	KUNIT_CASE(private_scalar_is_not_resolved),
 	KUNIT_CASE(unattached_property_is_not_resolved),
+	KUNIT_CASE(resolved_blob_has_independent_ownership),
 	{}
 };
 
