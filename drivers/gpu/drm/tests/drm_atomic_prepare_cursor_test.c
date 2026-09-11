@@ -464,6 +464,26 @@ static void cursor_ioctl_rejects_missing_provider(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 3);
 }
 
+static void cursor_ioctl_revocation_cancels_move(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+	struct drm_file *file = open_master(test, f);
+	struct drm_mode_cursor2 args = {
+		.crtc_id = f->crtc->base.id, .flags = DRM_MODE_CURSOR_MOVE,
+		.x = 41, .y = 43,
+	};
+	int ret;
+
+	f->revoke = true;
+	start_reader(test, f);
+	ret = drm_mode_cursor2_ioctl(f->dev, &args, file);
+	join_reader(test, f);
+	KUNIT_EXPECT_EQ(test, ret, -ECANCELED);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 3);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 5);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(move_uses_current_image_after_wait),
 	KUNIT_CASE(image_uses_current_position_after_wait),
@@ -473,6 +493,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(cursor_uses_normal_acceptance_on_async_capable_plane),
 	KUNIT_CASE(cursor_ioctl_waits_before_moving),
 	KUNIT_CASE(cursor_ioctl_rejects_missing_provider),
+	KUNIT_CASE(cursor_ioctl_revocation_cancels_move),
 	{}
 };
 
