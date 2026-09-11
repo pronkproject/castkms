@@ -625,9 +625,10 @@ objects named by property values, and the caller must keep that authority
 valid through submission.
 
 The setters accept a plane's framebuffer, input fence, controller association,
-damage blob, position, size and rotation, a controller's mode blob and active
-state, and the controller selected by a connector. Controller color tables and matrices
-are also supported. Resource values use retained pointers.
+damage blob, position, size, rotation, color encoding and range, a controller's
+mode blob and active state, and the controller selected by a connector.
+Controller color tables and matrices are also supported. Resource values use
+retained pointers.
 Where needed, the attempted state takes its own references. Explicitly assigning
 a framebuffer still counts as an update, even when selecting the same
 framebuffer. Assignments keep their order: assigning a framebuffer twice selects
@@ -655,6 +656,13 @@ plane. Unsupported bits and detached properties are rejected without changing
 the state. Rotation is reapplied to each fresh attempt; it does not restore
 other plane fields from an earlier attempt. The driver still checks whether
 the complete combination of geometry, format and transformation is supported.
+
+Plane COLOR_ENCODING and COLOR_RANGE use a shared setter as well. Each value
+must be advertised by that plane's attached property; a similarly named private
+property does not acquire the standard property's meaning. Rebuilding changes
+only the requested fields in current state. This does not select a framebuffer
+format or establish that the driver's complete color pipeline supports the
+combination; those checks still belong to validation of the atomic update.
 
 The controller's ACTIVE property chooses whether to display its configured
 mode. Applying the saved boolean changes only that field; it neither supplies
