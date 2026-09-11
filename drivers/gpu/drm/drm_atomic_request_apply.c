@@ -8,24 +8,25 @@
 #include <drm/drm_property.h>
 
 #include "drm_crtc_internal.h"
+#include "drm_atomic_request_internal.h"
 
-static bool supported_entry(const struct drm_atomic_request_entry *entry)
+bool drm_atomic_request_supports_property(struct drm_mode_object *object,
+					 struct drm_property *property)
 {
-	struct drm_mode_config *config = &entry->property->dev->mode_config;
+	struct drm_mode_config *config = &property->dev->mode_config;
 
-	if (entry->object->type == DRM_MODE_OBJECT_PLANE)
-		return entry->property == config->prop_fb_id ||
-		       entry->property == config->prop_in_fence_fd ||
-		       entry->property == config->prop_crtc_id ||
-		       entry->property == config->prop_fb_damage_clips ||
-		       drm_atomic_is_plane_geometry_property(obj_to_plane(entry->object),
-						      entry->property);
-	if (entry->object->type == DRM_MODE_OBJECT_CRTC)
-		return entry->property == config->prop_mode_id ||
-		       entry->property == config->prop_active ||
-		       drm_atomic_is_crtc_color_property(obj_to_crtc(entry->object), entry->property);
-	if (entry->object->type == DRM_MODE_OBJECT_CONNECTOR)
-		return entry->property == config->prop_crtc_id;
+	if (object->type == DRM_MODE_OBJECT_PLANE)
+		return property == config->prop_fb_id ||
+		       property == config->prop_in_fence_fd ||
+		       property == config->prop_crtc_id ||
+		       property == config->prop_fb_damage_clips ||
+		       drm_atomic_is_plane_geometry_property(obj_to_plane(object), property);
+	if (object->type == DRM_MODE_OBJECT_CRTC)
+		return property == config->prop_mode_id ||
+		       property == config->prop_active ||
+		       drm_atomic_is_crtc_color_property(obj_to_crtc(object), property);
+	if (object->type == DRM_MODE_OBJECT_CONNECTOR)
+		return property == config->prop_crtc_id;
 	return false;
 }
 
@@ -142,7 +143,7 @@ int drm_atomic_request_apply(const struct drm_atomic_request *request,
 		    drm_mode_obj_find_prop_id(entry->object, entry->property->base.id) !=
 			entry->property)
 			return -EINVAL;
-		if (!supported_entry(entry))
+		if (!drm_atomic_request_supports_property(entry->object, entry->property))
 			return -EOPNOTSUPP;
 	}
 	ret = validate(state, request, data);
