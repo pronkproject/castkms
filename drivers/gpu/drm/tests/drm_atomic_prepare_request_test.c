@@ -36,6 +36,7 @@ struct request_fixture {
 	bool signals_live;
 	bool signaling_order_error;
 	int signaling_error;
+	int install_error;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -52,7 +53,11 @@ static int install_request(struct drm_device *dev, struct drm_atomic_commit *sta
 			   bool nonblock)
 {
 	struct request_fixture *f = dev->dev_private;
-	int ret = drm_atomic_helper_swap_state(state, false);
+	int ret;
+
+	if (f->install_error)
+		return f->install_error;
+	ret = drm_atomic_helper_swap_state(state, false);
 
 	if (!ret)
 		f->installations++;
@@ -417,6 +422,21 @@ static void failed_signaling_is_completed_without_installation(struct kunit *tes
 	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
 }
 
+static void rejected_commit_does_not_publish_signaling(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	f->install_error = -EBUSY;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_with_callbacks(f->dev, NULL,
+								     &signaling_callbacks, f), -EBUSY);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_EXPECT_EQ(test, f->signals_prepared, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_completed, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_accepted, 0);
+	KUNIT_EXPECT_FALSE(test, f->signals_live);
+	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
+}
+
 struct contended_request {
 	struct request_fixture *display;
 	struct drm_crtc *other;
@@ -574,6 +594,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(failed_suspend_returns_no_saved_state),
 	KUNIT_CASE(signaling_waits_for_preparation),
 	KUNIT_CASE(failed_signaling_is_completed_without_installation),
+	KUNIT_CASE(rejected_commit_does_not_publish_signaling),
 	{}
 };
 
