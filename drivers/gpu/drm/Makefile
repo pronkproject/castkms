@@ -170,6 +170,7 @@ obj-$(CONFIG_DRM_TTM_HELPER) += drm_ttm_helper.o
 
 drm_kms_helper-y := \
 	drm_atomic_helper.o \
+	drm_atomic_helper_plane.o \
 	drm_atomic_state_helper.o \
 	drm_bridge_helper.o \
 	drm_crtc_helper.o \
