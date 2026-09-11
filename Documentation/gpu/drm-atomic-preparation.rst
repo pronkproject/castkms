@@ -307,9 +307,11 @@ Issuing tickets for atomic updates
 A participating device advertises ``DRM_CAP_ATOMIC_PREPARATION``. A client
 first enables ordinary atomic modesetting, then enables
 ``DRM_CLIENT_CAP_ATOMIC_PREPARATION`` on the same DRM file. The negotiated
-interface requires a ticket for each non-test atomic update, including blocking
-updates. Its capability and ioctl numbers are experimental, not an assigned
-upstream ABI.
+interface requires a ticket for nonblocking atomic updates. Blocking updates
+without any ``PREPARE_FD`` assignment prepare internally, whether or not the
+client negotiated explicit tickets. A supplied ticket keeps the explicit
+protocol described below. Capability and ioctl numbers are experimental, not
+an assigned upstream ABI.
 
 ``DRM_IOCTL_MODE_PREPARE_REPLACE`` accepts one to 32 unique CRTC IDs belonging
 to that file's modesetting authority. It captures their current accepted
@@ -332,7 +334,8 @@ after driver validation has expanded the atomic update. An incomplete or stale
 set returns ``ESTALE`` without installing new state. The client must discard
 the old ticket and prepare the intended output set again. Pending preparation
 returns ``EAGAIN``; a competing ordinary update may still produce ``EBUSY``.
-Neither error means that display state was accepted. Closing or revoking a
+A required but absent ticket returns ``EINVAL`` rather than a readiness error.
+None of those errors means that display state was accepted. Closing or revoking a
 ticket cancels an unaccepted request, while an accepted transaction retains
 its own retirement obligations.
 
@@ -357,7 +360,36 @@ yet. Kernel shutdown, suspend, framebuffer removal and kernel display clients
 use the request entry described below. The legacy SETCRTC ioctl uses a resolved
 request callback on participating providers. Other legacy userspace updates and
 internal callers still need preparation integration before delegated reading
-can be enabled. Testing explicit blocking tickets does not establish those paths.
+can be enabled. Neither explicit nor implicit atomic commits establish those
+remaining legacy paths.
+
+Blocking atomic updates from userspace
+-------------------------------------
+
+On a participating provider, a blocking atomic ioctl without any ``PREPARE_FD``
+assignment uses the retained request adapter. It captures the original issuer
+before copying userspace arrays, resolves the copied values once under display
+locks, and initializes output destinations after dropping those locks. Each
+attempt is built from the retained references and current display state, with
+file authority and property attachment checked again. The complete driver check
+then determines all affected outputs, including any added by the driver.
+
+If readers still need to finish submitting work, the attempted state is
+discarded and display locks are released before waiting. Rebuilding never looks
+up a framebuffer identifier, blob identifier or input-fence descriptor again.
+The original issuer remains responsible for excluding acceptance after lost
+authority. Events and output descriptors are prepared only for a checked attempt
+whose preparation is ready; signaling failure unwinds those resources before
+discarding the attempt. The ordinary blocking driver commit still waits for
+its normal native execution dependencies.
+
+The adapter accepts only the supported properties listed below, plus controller
+output-fence destinations. Other properties, including writeback and private
+properties, return an unsupported-operation error rather than using an unsafe
+fallback. Nonblocking, TEST_ONLY and explicitly ticketed requests keep the
+ordinary ioctl path. An explicit null ``PREPARE_FD`` is still an explicit
+protocol request and is not replaced with an internally created ticket.
+Devices without preparation retain their ordinary atomic behavior.
 
 Rebuilding a blocking kernel request
 -----------------------------------
@@ -449,8 +481,8 @@ events with the display commit and installs the reserved output descriptors.
 An output that was off and remains off cannot request an event or output fence;
 that condition is checked when preparing the metadata as well as by the normal
 atomic checks. The helper does not alter the checked display configuration.
-The retained-request adapter still needs to arrange the userspace destinations
-and call signaling setup only after preparation is ready.
+The blocking retained-request adapter arranges the saved userspace destinations
+and calls signaling setup only after preparation is ready.
 
 Retaining inputs from userspace
 ------------------------------
@@ -464,10 +496,12 @@ while they are being copied; copying separate arrays is not a simultaneous
 snapshot of memory that another thread is modifying.
 
 Those copies still contain identifiers and descriptor numbers, not owned
-resource references. The ioctl still resolves resources while building each
-attempt. Copying the arrays alone therefore does not enable preparation waits:
-the request must also retain the actual objects and fences, and revalidate
-authority when rebuilding. Completion metadata remains separate from both.
+resource references. Nonblocking, test-only and explicitly ticketed ioctls
+resolve resources while building each attempt. Blocking requests that prepare
+internally instead retain the actual objects and fences through the private
+adapter described below, and revalidate authority when rebuilding. Copying the
+arrays alone does not establish that lifetime. Completion metadata remains
+separate from both.
 
 The private ioctl value adapter resolves one supported assignment into the
 same typed entries used by kernel requests. It takes a reference to the actual
@@ -513,10 +547,10 @@ objects, not another lookup of the supplied identifiers.
 Those checks do not freeze authority. The caller must keep its original issuer
 through final acceptance so that master loss or lease revocation after a check
 still prevents installation. Applying the request checks property attachment;
-the full driver check remains necessary before committing. The ordinary ioctl
-does not yet use the request adapter, so its copied arrays alone still do not
-authorize waiting. Preparation descriptors and completion metadata remain
-separate from the retained values.
+the full driver check remains necessary before committing. The blocking ioctl
+uses the original issuer throughout those checks and final acceptance.
+Preparation descriptors and completion metadata remain separate from the
+retained values.
 
 SETCRTC resolves its requested framebuffer, mode and connectors under the initial
 display locks. On a preparation-enabled device, it retains those inputs after
@@ -552,10 +586,10 @@ fence, including replacing it with no dependency. Passing no fence to an empty
 state leaves it available for a subsequent assignment.
 
 The ordinary input-fence property adapter uses that setter after descriptor
-lookup. That shared assignment policy does not yet retain all atomic ioctl
-inputs across retries or enable implicit preparation of blocking atomic ioctls.
-Framebuffer and blob references, selected-object authorization, and output
-event and fence handling remain separate parts of that integration.
+lookup. The blocking adapter retains the resolved fence separately and uses
+the same setter on each attempt. Framebuffer and blob references, selected
+objects and output destinations have their own retention and validation rules;
+the fence setter alone does not establish them.
 
 ``drm_atomic_request_create()`` stores an ordered copy of resolved assignments
 independently of any attempted display state. Each entry names its target and
@@ -641,9 +675,9 @@ the complete configuration supports.
 Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
 driver-private property callback is called. Other properties are not supported
-yet, nor are the checks required for asynchronous flips. The ordinary atomic
-ioctl does not yet resolve its copied inputs into the retained collection or manage
-output events and fences for it.
+yet, nor are the checks required for asynchronous flips. The blocking ioctl
+uses the retained collection for supported display values and keeps its output
+events and destinations in private completion metadata.
 
 Applying a request does not check or commit the complete display update. If a
 setter fails, preceding assignments are not rolled back. The caller

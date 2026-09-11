@@ -26,6 +26,12 @@
  * and is not persistent display state. A missing or changed output generation
  * rejects acceptance with ESTALE; preparation must then be requested again.
  * Final file release cancels unused preparation. No pixel access is granted.
+ *
+ * A blocking atomic request with no PREPARE_FD assignment prepares internally
+ * on participating devices. Supplying PREPARE_FD, including -1, selects the
+ * explicit protocol instead. Nonblocking requests from a negotiated client
+ * require a ticket; an absent required ticket returns EINVAL. A supplied ticket
+ * that remains pending returns EAGAIN without accepting display state.
  */
 struct drm_mode_prepare_replace {
 	__u64 crtc_ids;
