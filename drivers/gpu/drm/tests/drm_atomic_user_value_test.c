@@ -84,10 +84,21 @@ static void private_scalar_is_not_resolved(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, entry.scalar, 23);
 }
 
+static void unattached_property_is_not_resolved(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = { .scalar = 23 };
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_resolve_user_value(&f->plane->base,
+			f->dev->mode_config.prop_active, NULL, 1, &entry), -EINVAL);
+	KUNIT_EXPECT_EQ(test, entry.scalar, 23);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
 	KUNIT_CASE(invalid_value_preserves_destination),
 	KUNIT_CASE(private_scalar_is_not_resolved),
+	KUNIT_CASE(unattached_property_is_not_resolved),
 	{}
 };
 
