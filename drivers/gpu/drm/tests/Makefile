@@ -32,6 +32,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_prepare_setplane_test.o \
 	drm_atomic_prepare_cursor_test.o \
 	drm_atomic_prepare_power_test.o \
+	drm_atomic_prepare_gamma_test.o \
 	drm_atomic_prepare_remove_test.o \
 	drm_atomic_prepare_ticket_outputs_test.o \
 	drm_atomic_prepare_guard_test.o \
