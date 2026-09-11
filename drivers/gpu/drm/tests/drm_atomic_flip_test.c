@@ -182,11 +182,21 @@ static void different_format_rejects_flip(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane)->fb, f->old);
 }
 
+static void smaller_image_rejects_source_rectangle(struct kunit *test)
+{
+	struct flip_fixture *f = new_fixture(test);
+
+	f->next = new_fb(test, f->dev, DRM_FORMAT_XRGB8888, 32);
+	KUNIT_EXPECT_EQ(test, run_update(f, set_flip), -ENOSPC);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane)->fb, f->old);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(flip_preserves_geometry_and_accepted_image),
 	KUNIT_CASE(disabled_controller_rejects_flip),
 	KUNIT_CASE(missing_current_image_rejects_flip),
 	KUNIT_CASE(different_format_rejects_flip),
+	KUNIT_CASE(smaller_image_rejects_source_rectangle),
 	{}
 };
 
