@@ -336,12 +336,41 @@ static void rejected_image_preserves_hotspot(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->cursor->state->hotspot_y, 0);
 }
 
+static int accept_async_update(struct drm_plane *plane, struct drm_atomic_commit *state,
+			       bool flip_async)
+{
+	return 0;
+}
+
+static void install_async_update(struct drm_plane *plane, struct drm_atomic_commit *state)
+{
+}
+
+static void cursor_uses_normal_acceptance_on_async_capable_plane(struct kunit *test)
+{
+	static const struct drm_plane_helper_funcs async_helpers = {
+		.atomic_async_check = accept_async_update,
+		.atomic_async_update = install_async_update,
+	};
+	struct cursor_fixture *f = new_fixture(test);
+	struct drm_cursor_update update = {
+		.crtc = f->crtc, .update_position = true, .x = 41, .y = 43,
+	};
+
+	drm_plane_helper_add(f->cursor, &async_helpers);
+	KUNIT_ASSERT_EQ(test, drm_atomic_helper_cursor_request(&update, f->owner, NULL, NULL), 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 41);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 43);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(move_uses_current_image_after_wait),
 	KUNIT_CASE(image_uses_current_position_after_wait),
 	KUNIT_CASE(revoked_move_preserves_position),
 	KUNIT_CASE(hidden_cursor_remembers_position),
 	KUNIT_CASE(rejected_image_preserves_hotspot),
+	KUNIT_CASE(cursor_uses_normal_acceptance_on_async_capable_plane),
 	{}
 };
 
