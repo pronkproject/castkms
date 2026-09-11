@@ -106,9 +106,25 @@ static void repeated_targets_keep_ordered_independent_values(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_atomic_request_entry(retained, 1)->scalar, 20);
 }
 
+static void zero_property_group_retains_its_target(struct kunit *test)
+{
+	struct user_request_fixture *f = new_fixture(test);
+	u32 objects[] = { f->crtc->base.id };
+	u32 counts[] = { 0 };
+	struct drm_atomic_user_input input = {
+		.object_count = 1, .objects = objects, .counts = counts,
+	};
+	struct drm_atomic_user_request *request = new_request(test, f->dev, &input);
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_user_request_target_count(request), 1);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_user_request_target(request, 0), &f->crtc->base);
+	KUNIT_EXPECT_EQ(test, drm_atomic_request_count(drm_atomic_user_request_values(request)), 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(empty_request_has_no_targets_or_values),
 	KUNIT_CASE(repeated_targets_keep_ordered_independent_values),
+	KUNIT_CASE(zero_property_group_retains_its_target),
 	{}
 };
 
