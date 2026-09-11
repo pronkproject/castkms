@@ -121,10 +121,26 @@ static void zero_property_group_retains_its_target(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_atomic_request_count(drm_atomic_user_request_values(request)), 0);
 }
 
+static void inconsistent_counts_are_rejected(struct kunit *test)
+{
+	struct user_request_fixture *f = new_fixture(test);
+	u32 objects[] = { f->crtc->base.id };
+	u32 counts[] = { 1 };
+	struct drm_atomic_user_input input = {
+		.object_count = 1, .objects = objects, .counts = counts,
+	};
+
+	KUNIT_EXPECT_EQ(test, PTR_ERR(resolve_request(f->dev, &input)), -EINVAL);
+	counts[0] = 0;
+	input.property_count = 1;
+	KUNIT_EXPECT_EQ(test, PTR_ERR(resolve_request(f->dev, &input)), -EINVAL);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(empty_request_has_no_targets_or_values),
 	KUNIT_CASE(repeated_targets_keep_ordered_independent_values),
 	KUNIT_CASE(zero_property_group_retains_its_target),
+	KUNIT_CASE(inconsistent_counts_are_rejected),
 	{}
 };
 
