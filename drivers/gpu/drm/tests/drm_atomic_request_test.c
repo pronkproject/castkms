@@ -171,6 +171,25 @@ static void foreign_target_is_rejected(struct kunit *test)
 		drm_atomic_request_destroy(request);
 }
 
+static void resolved_controller_identity_is_copied(struct kunit *test)
+{
+	struct request_fixture *f = new_fixture(test, NULL);
+	struct drm_crtc *crtc = drm_kunit_helper_create_crtc(test, f->dev, f->plane,
+								    NULL, NULL, NULL);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_crtc_id,
+		.type = DRM_ATOMIC_REQUEST_OBJECT,
+	};
+	struct drm_atomic_request *request;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, crtc);
+	entry.reference = &crtc->base;
+	request = new_request(test, f->dev, &entry, 1);
+	entry.reference = NULL;
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_request_entry(request, 0)->reference,
+			    &crtc->base);
+}
+
 static void output_pointer_is_not_a_retained_value(struct kunit *test)
 {
 	struct request_fixture *f = new_fixture(test, NULL);
@@ -198,6 +217,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(blob_survives_creator_release),
 	KUNIT_CASE(wrong_value_kind_is_rejected),
 	KUNIT_CASE(foreign_target_is_rejected),
+	KUNIT_CASE(resolved_controller_identity_is_copied),
 	KUNIT_CASE(output_pointer_is_not_a_retained_value),
 	{}
 };
