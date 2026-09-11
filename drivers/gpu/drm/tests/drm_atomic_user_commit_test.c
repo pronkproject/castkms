@@ -285,8 +285,22 @@ static void driver_added_controller_does_not_request_an_event(struct kunit *test
 	KUNIT_EXPECT_EQ(test, f->events, 1);
 }
 
+static void waiting_request_preserves_event_recipients(struct kunit *test)
+{
+	struct commit_fixture *f = new_event_fixture(test);
+
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, commit_request(f, DRM_MODE_PAGE_FLIP_EVENT |
+					      DRM_MODE_ATOMIC_ALLOW_MODESET), 0);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_GE(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installations, 1);
+	KUNIT_EXPECT_EQ(test, f->events, 1);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(driver_added_controller_does_not_request_an_event),
+	KUNIT_CASE(waiting_request_preserves_event_recipients),
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(waiting_request_does_not_reread_input),
 	{}
