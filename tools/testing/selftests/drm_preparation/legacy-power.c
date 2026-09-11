@@ -118,8 +118,10 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(2);
+	ksft_set_plan(4);
 	change_power(&f, DRM_MODE_DPMS_OFF, false);
+	change_power(&f, DRM_MODE_DPMS_ON, true);
+	change_power(&f, DRM_MODE_DPMS_SUSPEND, false);
 	change_power(&f, DRM_MODE_DPMS_ON, true);
 	if (drmModeSetCrtc(f.fd, f.crtc, 0, 0, 0, NULL, 0, NULL))
 		ksft_exit_fail_msg("Cannot disable output: %m\n");
