@@ -17,11 +17,14 @@ struct power_fixture {
 	struct drm_crtc *crtc;
 	struct drm_connector connectors[2];
 	struct drm_atomic_commit *state;
+	bool reject;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
 {
-	return 0;
+	struct power_fixture *f = dev->dev_private;
+
+	return f->reject ? -EINVAL : 0;
 }
 
 static const struct drm_mode_config_funcs config_funcs = { .atomic_check = check_update };
@@ -181,10 +184,21 @@ static void acceptance_preserves_other_connector_preference(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, f->crtc->state->active);
 }
 
+static void rejected_update_preserves_power_preferences(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+
+	f->reject = true;
+	KUNIT_EXPECT_EQ(test, run_update(f, accept_first_off), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->connectors[0].dpms, DRM_MODE_DPMS_ON);
+	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_ON);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
 	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
 	KUNIT_CASE(acceptance_preserves_other_connector_preference),
+	KUNIT_CASE(rejected_update_preserves_power_preferences),
 	{}
 };
 
