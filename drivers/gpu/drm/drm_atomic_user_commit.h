@@ -10,7 +10,7 @@ struct drm_file;
 struct drm_prepare_owner;
 
 /*
- * Commit a copied blocking ioctl using implicit preparation. The caller keeps
+ * Commit copied property assignments using implicit preparation. The caller keeps
  * the device configuration, file and original issuer alive until return and
  * holds no modeset locks. It must capture the issuer before copying faultable
  * userspace input; reacquired authority must not replace that issuer.
@@ -18,6 +18,8 @@ struct drm_prepare_owner;
  * Resolves resources once under modeset locks, then rebuilds with current file
  * authority on each attempt. Only ALLOW_MODESET and PAGE_FLIP_EVENT are accepted;
  * explicit preparation descriptors and unsupported properties are rejected.
+ * The atomic ioctl adapter checks client capability negotiation separately;
+ * legacy single-property commands do not require that negotiation.
  * Completion resources are prepared after readiness and released or installed
  * before the attempted state and locks are dropped. No input arrays or resource
  * identifiers are reread after resolving the request.
