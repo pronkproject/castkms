@@ -11,6 +11,7 @@
 #include <drm_fourcc.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
+#include "../../../../include/uapi/drm/drm_prepare.h"
 #include "../kselftest.h"
 
 struct fixture {
@@ -88,7 +89,7 @@ static void modeset(struct fixture *f, bool active)
 	drmModeAtomicFree(request);
 }
 
-static void setup(struct fixture *f, const char *path)
+static void setup(struct fixture *f, const char *path, bool preparation_client)
 {
 	drmVersionPtr version;
 	drmModeRes *resources;
@@ -107,6 +108,8 @@ static void setup(struct fixture *f, const char *path)
 	drmFreeVersion(version);
 	if (drmSetClientCap(f->fd, DRM_CLIENT_CAP_ATOMIC, 1) || drmSetMaster(f->fd))
 		ksft_exit_skip("Cannot become an atomic modesetting client: %m\n");
+	if (preparation_client && drmSetClientCap(f->fd, DRM_CLIENT_CAP_ATOMIC_PREPARATION, 1))
+		ksft_exit_skip("Cannot enable explicit preparation support: %m\n");
 	resources = drmModeGetResources(f->fd);
 	if (!resources || resources->count_crtcs != 1 || resources->count_connectors != 1)
 		ksft_exit_skip("Requires a single-output VKMS fixture\n");
@@ -226,7 +229,9 @@ int main(int argc, char **argv)
 	struct drm_mode_destroy_dumb destroy;
 
 	ksft_print_header();
-	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
+	if (argc > 3 || (argc == 3 && strcmp(argv[2], "--preparation-client")))
+		ksft_exit_fail_msg("Usage: %s [DEVICE [--preparation-client]]\n", argv[0]);
+	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0", argc == 3);
 	ksft_set_plan(4);
 	output_fence(&f);
 	failed_update(&f);
