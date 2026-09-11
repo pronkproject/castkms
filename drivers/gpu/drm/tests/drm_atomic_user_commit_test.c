@@ -256,6 +256,17 @@ static void waiting_request_does_not_reread_input(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 1);
 }
 
+static void master_loss_is_rechecked_after_wait(struct kunit *test)
+{
+	struct commit_fixture *f = new_fixture(test);
+
+	f->lose_master = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, commit_request(f, 0), -EACCES);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+}
+
 static struct commit_fixture *new_event_fixture(struct kunit *test)
 {
 	struct commit_fixture *f = new_fixture(test);
@@ -303,6 +314,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(waiting_request_preserves_event_recipients),
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(waiting_request_does_not_reread_input),
+	KUNIT_CASE(master_loss_is_rechecked_after_wait),
 	{}
 };
 
