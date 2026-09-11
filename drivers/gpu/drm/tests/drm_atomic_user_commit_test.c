@@ -14,6 +14,7 @@
 #include <drm/drm_ioctl.h>
 #include <drm/drm_kunit_helpers.h>
 #include <drm/drm_property.h>
+#include <drm/drm_vblank.h>
 #include <kunit/test.h>
 
 #include "../drm_atomic_user_commit.h"
@@ -34,6 +35,8 @@ struct commit_fixture {
 	unsigned int checks, installations;
 	int worker_error;
 	bool lose_master, revoke, abandon;
+	struct drm_crtc *added_crtc;
+	unsigned int events;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -41,6 +44,12 @@ static int check_request(struct drm_device *dev, struct drm_atomic_commit *state
 	struct commit_fixture *f = dev->dev_private;
 	int ret = drm_atomic_helper_check(dev, state);
 
+	if (!ret && f->added_crtc) {
+		struct drm_crtc_state *added = drm_atomic_get_crtc_state(state, f->added_crtc);
+
+		if (IS_ERR(added))
+			ret = PTR_ERR(added);
+	}
 	f->checks++;
 	complete_all(&f->checked);
 	return ret;
@@ -51,8 +60,20 @@ static int install_request(struct drm_device *dev, struct drm_atomic_commit *sta
 	struct commit_fixture *f = dev->dev_private;
 	int ret = drm_atomic_helper_swap_state(state, false);
 
-	if (!ret)
+	if (!ret) {
+		struct drm_crtc *crtc;
+		struct drm_crtc_state *new;
+		int i;
+
 		f->installations++;
+		for_each_new_crtc_in_state(state, crtc, new, i) {
+			if (!new->event)
+				continue;
+			f->events++;
+			drm_event_cancel_free(dev, &new->event->base);
+			new->event = NULL;
+		}
+	}
 	return ret;
 }
 
@@ -165,7 +186,37 @@ static void ready_request_installs_once(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 1);
 }
 
+static struct commit_fixture *new_event_fixture(struct kunit *test)
+{
+	struct commit_fixture *f = new_fixture(test);
+	struct drm_plane *plane;
+	int ret;
+
+	plane = drm_kunit_helper_create_primary_plane(test, f->dev, NULL, NULL, NULL, 0, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, plane);
+	f->added_crtc = drm_kunit_helper_create_crtc(test, f->dev, plane, NULL, NULL, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->added_crtc);
+	drm_mode_config_reset(f->dev);
+	ret = drm_modeset_lock(&f->crtc->mutex, NULL);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	/* The requested disable may report completion for its previously active output. */
+	f->crtc->state->active = true;
+	drm_modeset_unlock(&f->crtc->mutex);
+	return f;
+}
+
+static void driver_added_controller_does_not_request_an_event(struct kunit *test)
+{
+	struct commit_fixture *f = new_event_fixture(test);
+
+	KUNIT_EXPECT_EQ(test, commit_request(f, DRM_MODE_PAGE_FLIP_EVENT |
+					      DRM_MODE_ATOMIC_ALLOW_MODESET), 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 1);
+	KUNIT_EXPECT_EQ(test, f->events, 1);
+}
+
 static struct kunit_case cases[] = {
+	KUNIT_CASE(driver_added_controller_does_not_request_an_event),
 	KUNIT_CASE(ready_request_installs_once),
 	{}
 };
