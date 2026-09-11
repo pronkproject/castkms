@@ -145,10 +145,25 @@ static void color_change_records_replacement(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
 }
 
+static void color_property_must_be_attached(struct kunit *test)
+{
+	struct color_fixture *f = new_fixture(test);
+	struct drm_object_properties *properties = f->state.crtc->base.properties;
+	int count = properties->count;
+	int ret;
+
+	properties->count = 0;
+	ret = set_color(&f->state, f->dev->mode_config.ctm_property, NULL);
+	properties->count = count;
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+	KUNIT_EXPECT_FALSE(test, f->state.color_mgmt_changed);
+}
+
 static struct kunit_case color_tests[] = {
 	KUNIT_CASE(color_stages_retain_their_blobs),
 	KUNIT_CASE(invalid_color_sizes_preserve_state),
 	KUNIT_CASE(color_change_records_replacement),
+	KUNIT_CASE(color_property_must_be_attached),
 	{ }
 };
 
