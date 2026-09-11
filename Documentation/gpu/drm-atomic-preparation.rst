@@ -590,8 +590,7 @@ format and rectangles before preparation or acceptance.
 VKMS and the Rust plane wrapper register that helper. Providers without the
 operation reject SETPLANE while preparation is enabled; devices without
 preparation keep their existing plane callbacks. Kernel callers may use the same
-resolved helper without a DRM file. Universal cursor ioctls are separate legacy
-entry points and are not routed through this SETPLANE adapter.
+resolved helper without a DRM file.
 
 The remembered position used by legacy cursor commands is separate from the
 visible cursor plane's rectangle: moving an invisible cursor still affects
@@ -600,6 +599,26 @@ where a later image appears. Kernel builders may record that position with
 only when installing accepted state under the controller's lock. Discarding or
 clearing an attempt leaves the accepted position unchanged. Recording a position
 does not update the plane's geometry or by itself adapt a legacy cursor ioctl.
+
+Legacy cursor commands use a separate ``cursor_request`` controller operation.
+The core adapter resolves a requested image once, then calls
+``drm_atomic_helper_cursor_request()`` with a retained ``drm_cursor_update``.
+A move applies to the image current on each attempt; replacing the image without
+moving it uses the remembered position current on each attempt. Those implicit
+inputs are deliberately read again after a wait, while an explicitly requested
+image remains retained. Image hotspots change only in the attempted plane state.
+Hiding the image clears its rectangles without forgetting a requested move.
+
+The standard helper runs complete atomic validation and preparation before
+accepting the update. Preparation-enabled devices do not select the optional
+cursor optimization that changes accepted state in place: normal installation
+is needed to account for readers and publish the remembered position together.
+VKMS and the Rust controller wrapper register the helper. Devices without the
+operation, or without a universal cursor plane, reject legacy cursor commands
+while preparation is enabled. Devices without preparation retain their existing
+cursor path. Kernel callers use the resolved helper without a file or a buffer
+handle; the file adapter rechecks master and controller/plane leases on every
+attempt and binds acceptance to the original issuer.
 
 Rebuilding an ordinary atomic ioctl needs additional input retention. In
 particular, an input-fence descriptor number is not a stable identity: another
