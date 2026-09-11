@@ -2,6 +2,8 @@
 #ifndef __DRM_ATOMIC_PREPARE_REQUEST_H__
 #define __DRM_ATOMIC_PREPARE_REQUEST_H__
 
+#include <linux/types.h>
+
 struct drm_device;
 struct drm_atomic_commit;
 struct drm_prepare_owner;
@@ -62,5 +64,43 @@ int drm_atomic_commit_request_owned(struct drm_device *dev,
 				    struct drm_prepare_owner *owner,
 				    int (*build)(struct drm_atomic_commit *state, void *data),
 				    void *data);
+
+/**
+ * struct drm_atomic_request_callbacks - build and signal a blocking request
+ * @build: populate fresh state, following drm_atomic_commit_request() rules
+ * @prepare_signaling: optional setup of completion metadata after readiness
+ * @complete_signaling: cleanup or publish that metadata after acceptance
+ *
+ * The two signaling callbacks must either both be supplied or both be NULL.
+ * They run with the checked state's modeset locks still held. They must not
+ * change checked display configuration, acquire modeset locks, wait for readers,
+ * install state, or retain borrowed state pointers after return.
+ *
+ * prepare_signaling runs only after checking and preparation have succeeded.
+ * It may attach events and completion fences, returning zero or a negative
+ * error. complete_signaling runs exactly once for each invocation, including
+ * a failed setup, before state or locks are released. Its accepted argument
+ * is true only after the driver's blocking commit has succeeded. It must release
+ * incomplete resources on failure and publish successful completion resources
+ * on acceptance. An unchanged build, failed check or preparation wait invokes
+ * neither signaling callback.
+ */
+struct drm_atomic_request_callbacks {
+	int (*build)(struct drm_atomic_commit *state, void *data);
+	int (*prepare_signaling)(struct drm_atomic_commit *state, void *data);
+	void (*complete_signaling)(struct drm_atomic_commit *state, bool accepted, void *data);
+};
+
+/*
+ * Execute a request with per-attempt completion metadata. The caller retains
+ * callbacks and data until return. A non-NULL owner has the same revocation and
+ * device-support requirements as drm_atomic_commit_request_owned(); NULL uses
+ * the unowned kernel request path. All other request lifetime and locking rules
+ * above apply. Signaling setup never runs while preparation remains pending.
+ */
+int drm_atomic_commit_request_with_callbacks(struct drm_device *dev,
+					     struct drm_prepare_owner *owner,
+					     const struct drm_atomic_request_callbacks *callbacks,
+					     void *data);
 
 #endif
