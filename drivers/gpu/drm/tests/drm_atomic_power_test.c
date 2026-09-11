@@ -3,7 +3,10 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_power.h>
+#include <drm/drm_atomic_prepare_commit.h>
 #include <drm/drm_atomic_prepare_display.h>
+#include <drm/drm_atomic_prepare_outputs.h>
+#include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_kunit_helpers.h>
@@ -15,6 +18,13 @@ struct power_fixture {
 	struct drm_connector connectors[2];
 	struct drm_atomic_commit *state;
 };
+
+static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
+{
+	return 0;
+}
+
+static const struct drm_mode_config_funcs config_funcs = { .atomic_check = check_update };
 
 static const struct drm_connector_funcs connector_funcs = {
 	.reset = drm_atomic_helper_connector_reset,
@@ -44,6 +54,8 @@ static struct power_fixture *new_fixture(struct kunit *test)
 	f->dev = __drm_kunit_helper_alloc_drm_device(test, parent, sizeof(*f->dev), 0,
 						  DRIVER_MODESET | DRIVER_ATOMIC);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->dev);
+	f->dev->dev_private = f;
+	f->dev->mode_config.funcs = &config_funcs;
 	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_display_init(f->dev, 8), 0);
 	primary = drm_kunit_helper_create_primary_plane(test, f->dev, NULL, NULL, NULL, 0, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, primary);
@@ -130,9 +142,49 @@ static void pending_preferences_combine_for_shared_controller(struct kunit *test
 	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_ON);
 }
 
+static int accept_update(struct power_fixture *f)
+{
+	struct drm_prepare_output_generation entries[2];
+	struct drm_prepare_ticket *ticket;
+	int ret, count;
+
+	ret = drm_atomic_check_only(f->state);
+	if (ret)
+		return ret;
+	count = drm_atomic_prepare_display_observe(f->state, entries, ARRAY_SIZE(entries));
+	if (count < 0)
+		return count;
+	ticket = drm_prepare_ticket_create(entries, count);
+	if (IS_ERR(ticket))
+		return PTR_ERR(ticket);
+	ret = drm_atomic_commit_prepare(f->state, ticket, drm_atomic_prepare_display_observe);
+	drm_prepare_ticket_put(ticket);
+	if (!ret)
+		ret = drm_atomic_helper_swap_state(f->state, false);
+	return ret;
+}
+
+static int accept_first_off(struct power_fixture *f)
+{
+	int ret = first_off(f);
+
+	return ret ?: accept_update(f);
+}
+
+static void acceptance_preserves_other_connector_preference(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_first_off), 0);
+	KUNIT_EXPECT_EQ(test, f->connectors[0].dpms, DRM_MODE_DPMS_OFF);
+	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_ON);
+	KUNIT_EXPECT_TRUE(test, f->crtc->state->active);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
 	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
+	KUNIT_CASE(acceptance_preserves_other_connector_preference),
 	{}
 };
 
