@@ -609,8 +609,34 @@ current primary image, preserves geometry and other plane properties, and
 rejects pixel-format changes or a replacement too small for the source
 rectangle. Full driver checks still validate modifiers and the rest of the
 configuration. The attempt forbids modesetting. The caller retains the image
-and establishes authorization, preparation and completion signaling separately;
-the setter alone does not adapt the legacy page-flip ioctl.
+and establishes authorization, preparation and completion signaling separately.
+
+For legacy page flips on preparation-enabled devices, the file adapter resolves
+the requested framebuffer once and retains the original issuer. Each attempt
+rechecks current master authority and access to the controller and primary
+plane before calling the controller's ``build_page_flip`` operation. VKMS and
+the Rust controller wrapper use the setter above. A provider without that
+operation rejects the command instead of bypassing preparation through its
+ordinary legacy callback.
+
+Preparation may wait, but the native commit is submitted without waiting for
+display completion. A requested event is reserved only after preparation is
+ready, and belongs only to the requested controller even if checking includes
+other controllers. An accepted event remains owned by the display commit;
+rejection returns its reserved capacity. A pending native commit may still
+return ``EBUSY`` to the caller. Ordinary atomic nonblocking ioctls keep their
+separate behavior. The legacy adapter supports ordinary flips with optional
+events, not asynchronous flips or requests for a particular vertical blank.
+
+The ``legacy-flip`` selftest enables an isolated VKMS output and flips between
+registered images without negotiating the atomic client capability. It checks
+one event with the requested user data, invalid-image rejection, use of an image
+after closing its allocation handle, a flip without an event, and rejection
+after disabling the output. Kernel tests separately hold a source reader while
+the command waits and exercise loss of master authority. Their mock driver
+checks preparation and the nonblocking submission argument; the native test
+establishes real event delivery. Neither test establishes rendered pixel values
+or userspace executor behavior.
 
 The remembered position used by legacy cursor commands is separate from the
 visible cursor plane's rectangle: moving an invisible cursor still affects
