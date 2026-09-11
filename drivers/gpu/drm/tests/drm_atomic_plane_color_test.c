@@ -61,9 +61,24 @@ static void range_changes_only_the_selected_field(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state->color_encoding, DRM_COLOR_YCBCR_BT601);
 }
 
+static void unadvertised_values_leave_color_unchanged(struct kunit *test)
+{
+	struct drm_plane_state *state = new_state(test);
+
+	KUNIT_EXPECT_EQ(test, set_color(state, state->plane->color_encoding_property,
+				       DRM_COLOR_YCBCR_BT2020), -EINVAL);
+	KUNIT_EXPECT_EQ(test, set_color(state, state->plane->color_encoding_property,
+				       BIT_ULL(40) | DRM_COLOR_YCBCR_BT709), -EINVAL);
+	KUNIT_EXPECT_EQ(test, set_color(state, state->plane->color_range_property,
+				       DRM_COLOR_RANGE_MAX), -EINVAL);
+	KUNIT_EXPECT_EQ(test, state->color_encoding, DRM_COLOR_YCBCR_BT601);
+	KUNIT_EXPECT_EQ(test, state->color_range, DRM_COLOR_YCBCR_LIMITED_RANGE);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(encoding_changes_only_the_selected_field),
 	KUNIT_CASE(range_changes_only_the_selected_field),
+	KUNIT_CASE(unadvertised_values_leave_color_unchanged),
 	{}
 };
 
