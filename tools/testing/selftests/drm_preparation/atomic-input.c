@@ -113,6 +113,15 @@ static void unreadable_arrays(const struct input_fixture *f)
 	expect_result(f->fd, &request.arg, EFAULT, "Unreadable value array is rejected");
 }
 
+static void repeated_targets(const struct input_fixture *f)
+{
+	struct input_request request;
+
+	init_request(&request, f);
+	request.arg.count_objs = 2;
+	expect_result(f->fd, &request.arg, 0, "Repeated targets keep both property segments");
+}
+
 int main(int argc, char **argv)
 {
 	const char *path = argc > 1 ? argv[1] : "/dev/dri/card0";
@@ -133,10 +142,11 @@ int main(int argc, char **argv)
 	f.active = find_property(f.fd, f.crtc, "ACTIVE");
 	if (!f.active)
 		ksft_exit_fail_msg("Atomic controller has no ACTIVE property\n");
-	ksft_set_plan(7);
+	ksft_set_plan(8);
 	empty_arrays(&f);
 	count_overflow(&f);
 	unreadable_arrays(&f);
+	repeated_targets(&f);
 	close(f.fd);
 	ksft_finished();
 }
