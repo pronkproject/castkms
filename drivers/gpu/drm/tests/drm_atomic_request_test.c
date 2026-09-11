@@ -11,12 +11,13 @@ struct request_fixture {
 	struct drm_plane *plane;
 };
 
-static struct request_fixture *new_fixture(struct kunit *test)
+static struct request_fixture *new_fixture(struct kunit *test, struct device *parent)
 {
 	struct request_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
-	struct device *parent = drm_kunit_helper_alloc_device(test);
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
+	if (!parent)
+		parent = drm_kunit_helper_alloc_device(test);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
 	f->dev = __drm_kunit_helper_alloc_drm_device(test, parent, sizeof(*f->dev), 0,
 						  DRIVER_MODESET | DRIVER_ATOMIC);
@@ -45,7 +46,7 @@ static struct drm_atomic_request *new_request(struct kunit *test, struct drm_dev
 
 static void scalar_entries_are_copied_in_order(struct kunit *test)
 {
-	struct request_fixture *f = new_fixture(test);
+	struct request_fixture *f = new_fixture(test, NULL);
 	struct drm_atomic_request_entry entries[2] = {
 		{ .object = &f->plane->base, .property = f->dev->mode_config.prop_crtc_w,
 		  .type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 10 },
@@ -61,8 +62,26 @@ static void scalar_entries_are_copied_in_order(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_request_entry(request, 2), NULL);
 }
 
+static void foreign_target_is_rejected(struct kunit *test)
+{
+	struct request_fixture *a = new_fixture(test, NULL);
+	struct request_fixture *b = new_fixture(test, a->dev->dev);
+	struct drm_atomic_request_entry entry = {
+		.object = &b->plane->base, .property = a->dev->mode_config.prop_crtc_w,
+		.type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 10,
+	};
+	struct drm_atomic_request *request = drm_atomic_request_create(a->dev, &entry, 1);
+
+	KUNIT_EXPECT_TRUE(test, IS_ERR(request));
+	if (IS_ERR(request))
+		KUNIT_EXPECT_EQ(test, PTR_ERR(request), -EINVAL);
+	else
+		drm_atomic_request_destroy(request);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_entries_are_copied_in_order),
+	KUNIT_CASE(foreign_target_is_rejected),
 	{}
 };
 
