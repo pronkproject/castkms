@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -48,16 +49,18 @@ static int issue(int fd, uint32_t crtc)
 
 static int submit(int fd, uint32_t crtc, uint32_t property, int ticket, uint32_t flags)
 {
-	drmModeAtomicReq *req = drmModeAtomicAlloc();
+	uint32_t count = 1;
+	uint64_t value = ticket;
+	struct drm_mode_atomic request = {
+		.flags = flags, .count_objs = 1, .objs_ptr = (uintptr_t)&crtc,
+		.count_props_ptr = (uintptr_t)&count, .props_ptr = (uintptr_t)&property,
+		.prop_values_ptr = (uintptr_t)&value,
+	};
 	int ret;
 
-	if (!req)
-		ksft_exit_fail_msg("Cannot allocate atomic request\n");
-	if (drmModeAtomicAddProperty(req, crtc, property, ticket) < 0)
-		ksft_exit_fail_msg("Cannot add preparation property\n");
-	ret = drmModeAtomicCommit(fd, req, flags, NULL);
-	drmModeAtomicFree(req);
-	return ret;
+	/* Observe one submission, including EAGAIN, without library retries. */
+	ret = ioctl(fd, DRM_IOCTL_MODE_ATOMIC, &request);
+	return ret < 0 ? -errno : ret;
 }
 
 int main(int argc, char **argv)
@@ -88,7 +91,7 @@ int main(int argc, char **argv)
 	if (!property)
 		ksft_exit_fail_msg("Preparation capability has no CRTC property\n");
 
-	ksft_set_plan(9);
+	ksft_set_plan(10);
 	errno = 0;
 	ksft_test_result(drmIoctl(fd, DRM_IOCTL_MODE_PREPARE_REPLACE, &malformed) == -1 &&
 			 errno == EINVAL, "Empty output set rejected\n");
@@ -119,6 +122,9 @@ int main(int argc, char **argv)
 			 "Replacement invalidates earlier generation\n");
 	close(stale);
 	close(ticket);
+	ksft_test_result(submit(fd, crtc, find_property(fd, crtc, "OUT_FENCE_PTR"), 0,
+			 DRM_MODE_ATOMIC_NONBLOCK) == -EINVAL,
+			 "Nonblocking update without a ticket still needs preparation\n");
 	close(fd);
 	ksft_finished();
 }
