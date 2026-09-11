@@ -5,6 +5,7 @@
 #include <linux/types.h>
 
 struct dma_fence;
+struct drm_atomic_commit;
 struct drm_atomic_request;
 struct drm_device;
 struct drm_framebuffer;
@@ -67,5 +68,12 @@ void drm_atomic_request_destroy(struct drm_atomic_request *request);
 unsigned int drm_atomic_request_count(const struct drm_atomic_request *request);
 const struct drm_atomic_request_entry *
 drm_atomic_request_entry(const struct drm_atomic_request *request, unsigned int index);
+
+int drm_atomic_request_apply(const struct drm_atomic_request *request,
+			     struct drm_atomic_commit *state,
+			     int (*validate)(struct drm_atomic_commit *state,
+					     const struct drm_atomic_request *request,
+					     void *data),
+			     void *data);
 
 #endif
