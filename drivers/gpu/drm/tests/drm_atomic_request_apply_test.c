@@ -3,6 +3,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_request.h>
 #include <drm/drm_atomic_state_helper.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_color_mgmt.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_fourcc.h>
@@ -582,7 +583,34 @@ static void color_blobs_are_reapplied_by_reference(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->validations, 2);
 }
 
+static void rotation_is_reapplied_to_current_state(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .type = DRM_ATOMIC_REQUEST_SCALAR,
+		.scalar = DRM_MODE_ROTATE_90 | DRM_MODE_REFLECT_X,
+	};
+	struct drm_atomic_request *request;
+	unsigned int i;
+
+	KUNIT_ASSERT_EQ(test, drm_plane_create_rotation_property(f->plane, DRM_MODE_ROTATE_0,
+			DRM_MODE_ROTATE_MASK | DRM_MODE_REFLECT_MASK), 0);
+	entry.property = f->plane->rotation_property;
+	request = new_request(test, f, &entry, 1);
+	for (i = 0; i < 2; i++) {
+		struct drm_plane_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_plane_state(f->state, f->plane);
+		KUNIT_EXPECT_EQ(test, state->rotation, entry.scalar);
+		KUNIT_EXPECT_EQ(test, state->crtc_h, i ? 99 : 0);
+		drm_atomic_commit_clear(f->state);
+		f->plane->state->crtc_h = 99;
+	}
+}
+
 static struct kunit_case apply_tests[] = {
+	KUNIT_CASE(rotation_is_reapplied_to_current_state),
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
 	KUNIT_CASE(unsupported_property_prevents_application),
