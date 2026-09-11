@@ -168,9 +168,32 @@ static void authority_is_rechecked_on_rebuild(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane), NULL);
 }
 
+static void unsupported_property_prevents_application(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_property *prop = drm_property_create_range(f->dev, DRM_MODE_PROP_ATOMIC,
+							    "private-scalar", 0, 1);
+	struct drm_atomic_request_entry entries[2] = {
+		{ .object = &f->plane->base, .property = f->dev->mode_config.prop_fb_id,
+		  .type = DRM_ATOMIC_REQUEST_FRAMEBUFFER },
+		{ .object = &f->plane->base, .property = prop,
+		  .type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 1 },
+	};
+	struct drm_atomic_request *request;
+
+	KUNIT_ASSERT_NOT_NULL(test, prop);
+	drm_object_attach_property(&f->plane->base, prop, 0);
+	request = new_request(test, f, entries, 2);
+	KUNIT_EXPECT_EQ(test, apply_request(request, f->state, validate_request, f),
+			-EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->validations, 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane), NULL);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
+	KUNIT_CASE(unsupported_property_prevents_application),
 	{ }
 };
 
