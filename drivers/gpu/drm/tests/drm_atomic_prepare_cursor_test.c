@@ -443,6 +443,27 @@ static void cursor_ioctl_waits_before_moving(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 43);
 }
 
+static void cursor_ioctl_rejects_missing_provider(struct kunit *test)
+{
+	static const struct drm_crtc_funcs unsupported = {
+		.reset = drm_atomic_helper_crtc_reset,
+		.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
+		.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
+	};
+	struct cursor_fixture *f = new_fixture(test);
+	struct drm_file *file = open_master(test, f);
+	struct drm_mode_cursor2 args = {
+		.crtc_id = f->crtc->base.id, .flags = DRM_MODE_CURSOR_MOVE,
+		.x = 41, .y = 43,
+	};
+
+	f->crtc->funcs = &unsupported;
+	KUNIT_EXPECT_EQ(test, drm_mode_cursor2_ioctl(f->dev, &args, file), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 3);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(move_uses_current_image_after_wait),
 	KUNIT_CASE(image_uses_current_position_after_wait),
@@ -451,6 +472,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(rejected_image_preserves_hotspot),
 	KUNIT_CASE(cursor_uses_normal_acceptance_on_async_capable_plane),
 	KUNIT_CASE(cursor_ioctl_waits_before_moving),
+	KUNIT_CASE(cursor_ioctl_rejects_missing_provider),
 	{}
 };
 
