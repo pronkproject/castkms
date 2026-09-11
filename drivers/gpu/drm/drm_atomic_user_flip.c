@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
+#include <kunit/visibility.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_atomic_prepare_owner.h>
@@ -89,3 +90,4 @@ out:
 	drm_prepare_owner_put(owner);
 	return ret;
 }
+EXPORT_SYMBOL_IF_KUNIT(drm_atomic_submit_user_flip);
