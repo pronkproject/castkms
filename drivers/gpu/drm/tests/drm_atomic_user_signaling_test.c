@@ -19,6 +19,9 @@ struct signaling_fixture {
 	bool kept_foreign_event;
 	bool event_remained_after_completion;
 	u64 event_user_data;
+	bool targeted;
+	struct drm_crtc *other;
+	bool other_had_event;
 };
 
 static struct signaling_fixture *new_fixture(struct kunit *test)
@@ -76,8 +79,23 @@ static int run_attempt(struct signaling_fixture *f, u32 flags, bool include_crtc
 		if (foreign_event)
 			crtc_state->event = &f->foreign_event;
 	}
-	ret = drm_atomic_prepare_user_signaling(state, &f->file, flags, 0x123456789ULL,
-						&signaling);
+	if (f->other) {
+		struct drm_crtc_state *other = drm_atomic_get_crtc_state(state, f->other);
+
+		if (IS_ERR(other)) {
+			ret = PTR_ERR(other);
+			goto out;
+		}
+		other->active = true;
+	}
+	if (f->targeted)
+		ret = drm_atomic_prepare_user_flip_event(state, f->crtc, &f->file,
+						       0x123456789ULL, &signaling);
+	else
+		ret = drm_atomic_prepare_user_signaling(state, &f->file, flags, 0x123456789ULL,
+							&signaling);
+	if (f->other)
+		f->other_had_event = !!drm_atomic_get_new_crtc_state(state, f->other)->event;
 	f->had_signaling = !!signaling;
 	if (crtc_state) {
 		f->had_event = !!crtc_state->event;
@@ -171,7 +189,27 @@ static void accepted_commit_keeps_its_event(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->kept_foreign_event);
 }
 
+static void legacy_event_ignores_other_controllers(struct kunit *test)
+{
+	struct signaling_fixture *f = new_fixture(test);
+	struct drm_plane *plane;
+
+	plane = drm_kunit_helper_create_primary_plane(test, f->dev, NULL, NULL, NULL, 0, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, plane);
+	f->other = drm_kunit_helper_create_crtc(test, f->dev, plane, NULL, NULL, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->other);
+	drm_mode_config_reset(f->dev);
+	f->targeted = true;
+	KUNIT_ASSERT_EQ(test, run_attempt(f, 0, true, true, false, false), 0);
+	KUNIT_EXPECT_TRUE(test, f->had_event);
+	KUNIT_EXPECT_FALSE(test, f->other_had_event);
+	KUNIT_EXPECT_EQ(test, f->event_user_data, 0x123456789ULL);
+	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
+	KUNIT_EXPECT_TRUE(test, list_empty(&f->file.pending_event_list));
+}
+
 static struct kunit_case cases[] = {
+	KUNIT_CASE(legacy_event_ignores_other_controllers),
 	KUNIT_CASE(rejected_commit_returns_event_space),
 	KUNIT_CASE(test_only_allocates_no_signaling),
 	KUNIT_CASE(event_requires_a_controller),
