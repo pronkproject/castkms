@@ -173,12 +173,24 @@ static void checked_table_cannot_be_replaced(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, run_update(f, change_checked_table), -EINVAL);
 }
 
+static void degamma_property_accepts_legacy_table(struct kunit *test)
+{
+	const u16 expected[] = { 11, 19, 13, 23, 17, 29 };
+	struct gamma_fixture *f = new_fixture(test, false);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_table), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->degamma_lut, f->table);
+	KUNIT_EXPECT_NULL(test, f->crtc->state->gamma_lut);
+	KUNIT_EXPECT_MEMEQ(test, expected, f->crtc->gamma_store, sizeof(expected));
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
 	KUNIT_CASE(accepted_table_changes_readback),
 	KUNIT_CASE(clearing_discards_pending_table),
 	KUNIT_CASE(failed_check_preserves_readback),
 	KUNIT_CASE(checked_table_cannot_be_replaced),
+	KUNIT_CASE(degamma_property_accepts_legacy_table),
 	{}
 };
 
