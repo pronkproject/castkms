@@ -9,4 +9,7 @@ struct drm_property_blob;
 int drm_atomic_set_legacy_gamma(struct drm_atomic_commit *state,
 				struct drm_crtc *crtc, struct drm_property_blob *table);
 
+/* Publish the retained legacy table under the controller's modeset lock. */
+void drm_atomic_install_legacy_gamma(struct drm_atomic_commit *state);
+
 #endif

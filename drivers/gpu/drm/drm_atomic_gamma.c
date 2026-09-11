@@ -68,3 +68,38 @@ int drm_atomic_set_legacy_gamma(struct drm_atomic_commit *state,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_set_legacy_gamma);
+
+/**
+ * drm_atomic_install_legacy_gamma - publish accepted legacy readback
+ * @state: accepted update whose controller states have been installed
+ *
+ * Call before dropping modeset locks. Only explicit legacy assignments change
+ * the cached table; ordinary atomic color properties retain separate semantics.
+ */
+void drm_atomic_install_legacy_gamma(struct drm_atomic_commit *state)
+{
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *crtc_state;
+	int i;
+
+	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
+		struct drm_property_blob *table = state->crtcs[i].legacy_gamma;
+		const struct drm_color_lut *entries;
+		u16 *red, *green, *blue;
+		u32 j;
+
+		if (!table)
+			continue;
+		drm_modeset_lock_assert_held(&crtc->mutex);
+		entries = table->data;
+		red = crtc->gamma_store;
+		green = red + crtc->gamma_size;
+		blue = green + crtc->gamma_size;
+		for (j = 0; j < crtc->gamma_size; j++) {
+			red[j] = entries[j].red;
+			green[j] = entries[j].green;
+			blue[j] = entries[j].blue;
+		}
+	}
+}
+EXPORT_SYMBOL_GPL(drm_atomic_install_legacy_gamma);
