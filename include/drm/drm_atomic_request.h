@@ -17,6 +17,7 @@ enum drm_atomic_request_value_type {
 	DRM_ATOMIC_REQUEST_FRAMEBUFFER,
 	DRM_ATOMIC_REQUEST_BLOB,
 	DRM_ATOMIC_REQUEST_OBJECT,
+	DRM_ATOMIC_REQUEST_FENCE,
 };
 
 /**
@@ -28,6 +29,7 @@ enum drm_atomic_request_value_type {
  * @framebuffer: resolved framebuffer, or NULL
  * @blob: immutable property blob, or NULL
  * @reference: resolved modeset object, or NULL
+ * @fence: resolved plane input fence, or NULL
  *
  * The caller keeps the entries unchanged and owns all supplied references until
  * request creation returns.
@@ -44,6 +46,7 @@ struct drm_atomic_request_entry {
 		struct drm_framebuffer *framebuffer;
 		struct drm_property_blob *blob;
 		struct drm_mode_object *reference;
+		struct dma_fence *fence;
 	};
 };
 
