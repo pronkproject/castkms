@@ -121,6 +121,19 @@ static void closed_handle_keeps_framebuffer(struct fixture *f)
 			"A registered framebuffer survives closing its buffer handle\n");
 }
 
+static void flip_without_event(struct fixture *f)
+{
+	struct pollfd pollfd = { .fd = f->fd, .events = POLLIN };
+	int ret = drmModePageFlip(f->fd, f->crtc, f->fb[1], 0, NULL);
+	bool changed = !ret && image_is(f, f->fb[1]);
+	int stopped = drmModeSetCrtc(f->fd, f->crtc, 0, 0, 0, NULL, 0, NULL);
+
+	ksft_test_result(changed && !stopped && poll(&pollfd, 1, 0) == 0,
+			"A flip without an event remains silent through blocking disable\n");
+	if (stopped)
+		ksft_exit_fail_msg("Cannot disable output: %m\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -130,12 +143,11 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(3);
+	ksft_set_plan(4);
 	flip_with_event(&f);
 	invalid_image_has_no_event(&f);
 	closed_handle_keeps_framebuffer(&f);
-	if (drmModeSetCrtc(f.fd, f.crtc, 0, 0, 0, NULL, 0, NULL))
-		ksft_exit_fail_msg("Cannot disable output: %m\n");
+	flip_without_event(&f);
 	for (i = 0; i < 2; i++) {
 		struct drm_mode_destroy_dumb destroy = { .handle = f.handle[i] };
 
