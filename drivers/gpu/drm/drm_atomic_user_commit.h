@@ -8,6 +8,8 @@ struct drm_atomic_user_input;
 struct drm_device;
 struct drm_file;
 struct drm_prepare_owner;
+struct drm_mode_object;
+struct drm_property;
 
 /*
  * Commit copied property assignments using implicit preparation. The caller keeps
@@ -27,5 +29,10 @@ struct drm_prepare_owner;
 int drm_atomic_commit_user_request(struct drm_device *dev, struct drm_file *file,
 				   struct drm_prepare_owner *owner, u32 flags, u64 user_data,
 				   const struct drm_atomic_user_input *input);
+
+/* Retain one legacy property assignment and use the same blocking machinery. */
+int drm_atomic_commit_user_property(struct drm_mode_object *object,
+				    struct drm_property *property, u64 value,
+				    struct drm_file *file);
 
 #endif
