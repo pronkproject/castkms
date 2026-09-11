@@ -134,6 +134,15 @@ static void flip_without_event(struct fixture *f)
 		ksft_exit_fail_msg("Cannot disable output: %m\n");
 }
 
+static void inactive_output_rejects_flip(struct fixture *f)
+{
+	struct pollfd pollfd = { .fd = f->fd, .events = POLLIN };
+	int ret = drmModePageFlip(f->fd, f->crtc, f->fb[0], DRM_MODE_PAGE_FLIP_EVENT, NULL);
+
+	ksft_test_result(ret < 0 && errno == EINVAL && poll(&pollfd, 1, 0) == 0,
+			"An inactive controller rejects a flip without reporting completion\n");
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -143,11 +152,12 @@ int main(int argc, char **argv)
 	if (argc > 2)
 		ksft_exit_fail_msg("Usage: %s [DEVICE]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(4);
+	ksft_set_plan(5);
 	flip_with_event(&f);
 	invalid_image_has_no_event(&f);
 	closed_handle_keeps_framebuffer(&f);
 	flip_without_event(&f);
+	inactive_output_rejects_flip(&f);
 	for (i = 0; i < 2; i++) {
 		struct drm_mode_destroy_dumb destroy = { .handle = f.handle[i] };
 
