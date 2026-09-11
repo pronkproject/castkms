@@ -289,6 +289,17 @@ static void abandoned_source_prevents_acceptance(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 0);
 }
 
+static void only_blocking_commit_flags_are_accepted(struct kunit *test)
+{
+	struct commit_fixture *f = new_fixture(test);
+
+	KUNIT_EXPECT_EQ(test, commit_request(f, DRM_MODE_ATOMIC_NONBLOCK), -EINVAL);
+	KUNIT_EXPECT_EQ(test, commit_request(f, DRM_MODE_ATOMIC_TEST_ONLY), -EINVAL);
+	KUNIT_EXPECT_EQ(test, commit_request(f, DRM_MODE_PAGE_FLIP_ASYNC), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+}
+
 static struct commit_fixture *new_event_fixture(struct kunit *test)
 {
 	struct commit_fixture *f = new_fixture(test);
@@ -339,6 +350,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(master_loss_is_rechecked_after_wait),
 	KUNIT_CASE(issuer_revocation_prevents_acceptance),
 	KUNIT_CASE(abandoned_source_prevents_acceptance),
+	KUNIT_CASE(only_blocking_commit_flags_are_accepted),
 	{}
 };
 
