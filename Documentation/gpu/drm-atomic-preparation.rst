@@ -576,6 +576,23 @@ Devices without preparation continue using their existing ``set_config`` path.
 The new callback is also callable with resolved kernel inputs and a kernel
 authorization callback; it neither requires nor manufactures a userspace request.
 
+Legacy SETPLANE uses the corresponding ``update_plane_request`` operation on
+preparation-enabled devices. DRM core resolves the plane, controller and
+framebuffer once, retains the framebuffer, and passes a ``drm_plane_update``
+description without holding modeset locks. The standard
+``drm_atomic_helper_update_plane_request()`` helper rebuilds only the selected
+controller, framebuffer and geometry, preserving unrelated current plane state.
+A null framebuffer disables the plane and clears its rectangles. Every attempt
+checks current master and selected-object leases; the original issuer protects
+installation from later revocation. Full atomic validation checks the requested
+format and rectangles before preparation or acceptance.
+
+VKMS and the Rust plane wrapper register that helper. Providers without the
+operation reject SETPLANE while preparation is enabled; devices without
+preparation keep their existing plane callbacks. Kernel callers may use the same
+resolved helper without a DRM file. Universal cursor ioctls are separate legacy
+entry points and are not routed through this SETPLANE adapter.
+
 Rebuilding an ordinary atomic ioctl needs additional input retention. In
 particular, an input-fence descriptor number is not a stable identity: another
 thread may close it and reuse the number while preparation waits. A request
