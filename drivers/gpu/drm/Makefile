@@ -63,6 +63,7 @@ drm-y := \
 	drm_atomic_uapi.o \
 	drm_atomic_cursor.o \
 	drm_atomic_power.o \
+	drm_atomic_power_request.o \
 	drm_auth.o \
 	drm_blend.o \
 	drm_bridge.o \
