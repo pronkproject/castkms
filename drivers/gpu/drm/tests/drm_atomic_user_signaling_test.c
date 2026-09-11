@@ -111,8 +111,18 @@ static void rejected_commit_returns_event_space(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, list_empty(&f->file.pending_event_list));
 }
 
+static void test_only_allocates_no_signaling(struct kunit *test)
+{
+	struct signaling_fixture *f = new_fixture(test);
+
+	KUNIT_ASSERT_EQ(test, run_attempt(f, DRM_MODE_ATOMIC_TEST_ONLY, true, true, false, false), 0);
+	KUNIT_EXPECT_FALSE(test, f->had_signaling);
+	KUNIT_EXPECT_FALSE(test, f->had_event);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(rejected_commit_returns_event_space),
+	KUNIT_CASE(test_only_allocates_no_signaling),
 	{}
 };
 
