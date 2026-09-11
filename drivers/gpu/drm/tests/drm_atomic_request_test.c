@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <drm/drm_atomic_request.h>
+#include <drm/drm_crtc.h>
 #include <drm/drm_kunit_helpers.h>
 #include <drm/drm_plane.h>
 #include <drm/drm_property.h>
@@ -79,9 +80,31 @@ static void foreign_target_is_rejected(struct kunit *test)
 		drm_atomic_request_destroy(request);
 }
 
+static void output_pointer_is_not_a_retained_value(struct kunit *test)
+{
+	struct request_fixture *f = new_fixture(test, NULL);
+	struct drm_crtc *crtc = drm_kunit_helper_create_crtc(test, f->dev, f->plane,
+								    NULL, NULL, NULL);
+	struct drm_atomic_request_entry entry = {
+		.property = f->dev->mode_config.prop_out_fence_ptr,
+		.type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 0,
+	};
+	struct drm_atomic_request *request;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, crtc);
+	entry.object = &crtc->base;
+	request = drm_atomic_request_create(f->dev, &entry, 1);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(request));
+	if (IS_ERR(request))
+		KUNIT_EXPECT_EQ(test, PTR_ERR(request), -EOPNOTSUPP);
+	else
+		drm_atomic_request_destroy(request);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_entries_are_copied_in_order),
 	KUNIT_CASE(foreign_target_is_rejected),
+	KUNIT_CASE(output_pointer_is_not_a_retained_value),
 	{}
 };
 
