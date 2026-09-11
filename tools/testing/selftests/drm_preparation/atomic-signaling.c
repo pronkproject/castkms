@@ -184,6 +184,26 @@ static void output_fence(struct fixture *f)
 	drmModeAtomicFree(request);
 }
 
+static void legacy_output_fence(struct fixture *f)
+{
+	uint32_t id = property(f->fd, f->crtc, DRM_MODE_OBJECT_CRTC, "OUT_FENCE_PTR", NULL);
+	int fence = -1, ret;
+	struct pollfd pollfd;
+
+	if (drmSetClientCap(f->fd, DRM_CLIENT_CAP_ATOMIC, 0))
+		ksft_exit_fail_msg("Cannot disable atomic negotiation: %m\n");
+	ret = drmModeObjectSetProperty(f->fd, f->crtc, DRM_MODE_OBJECT_CRTC, id,
+				       (uintptr_t)&fence);
+	pollfd = (struct pollfd) { .fd = fence, .events = POLLIN };
+	ksft_test_result(!ret && fence >= 0 && (fcntl(fence, F_GETFD) & FD_CLOEXEC) &&
+			poll(&pollfd, 1, 3000) == 1 && (pollfd.revents & POLLIN),
+			"Legacy property returns a completion fence without atomic negotiation\n");
+	if (fence >= 0)
+		close(fence);
+	if (drmSetClientCap(f->fd, DRM_CLIENT_CAP_ATOMIC, 1))
+		ksft_exit_fail_msg("Cannot restore atomic negotiation: %m\n");
+}
+
 static void failed_update(struct fixture *f)
 {
 	drmModeAtomicReq *request = new_request();
@@ -232,8 +252,9 @@ int main(int argc, char **argv)
 	if (argc > 3 || (argc == 3 && strcmp(argv[2], "--preparation-client")))
 		ksft_exit_fail_msg("Usage: %s [DEVICE [--preparation-client]]\n", argv[0]);
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0", argc == 3);
-	ksft_set_plan(4);
+	ksft_set_plan(5);
 	output_fence(&f);
+	legacy_output_fence(&f);
 	failed_update(&f);
 	test_only(&f);
 	inactive_output(&f);
