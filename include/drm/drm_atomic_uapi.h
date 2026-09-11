@@ -32,6 +32,7 @@
 #include <linux/types.h>
 
 struct drm_crtc_state;
+struct drm_atomic_commit;
 struct drm_display_mode;
 struct drm_property_blob;
 struct drm_property;
@@ -41,6 +42,10 @@ struct drm_connector_state;
 struct dma_fence;
 struct drm_framebuffer;
 struct drm_colorop;
+
+int __must_check
+drm_atomic_set_legacy_cursor_position(struct drm_atomic_commit *state,
+				     struct drm_crtc *crtc, s32 x, s32 y);
 
 int __must_check
 drm_atomic_set_mode_for_crtc(struct drm_crtc_state *state,
