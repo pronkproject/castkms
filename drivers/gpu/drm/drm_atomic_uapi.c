@@ -44,6 +44,7 @@
 #include <linux/dma-fence.h>
 #include <linux/uaccess.h>
 #include <linux/sync_file.h>
+#include <kunit/visibility.h>
 
 #include "drm_crtc_internal.h"
 #include "drm_atomic_prepare_uapi.h"
@@ -1569,3 +1570,4 @@ out_input:
 
 	return ret;
 }
+EXPORT_SYMBOL_FOR_TESTS_ONLY(drm_mode_atomic_ioctl);
