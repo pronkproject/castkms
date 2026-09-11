@@ -21,6 +21,7 @@ bool drm_atomic_request_supports_property(struct drm_mode_object *object,
 		       property == config->prop_crtc_id ||
 		       property == config->prop_fb_damage_clips ||
 		       property == obj_to_plane(object)->rotation_property ||
+		       drm_atomic_is_plane_color_property(obj_to_plane(object), property) ||
 		       drm_atomic_is_plane_geometry_property(obj_to_plane(object), property);
 	if (object->type == DRM_MODE_OBJECT_CRTC)
 		return property == config->prop_mode_id ||
@@ -46,6 +47,9 @@ static int apply_plane(struct drm_atomic_commit *state,
 								 entry->scalar);
 	if (entry->property == plane_state->plane->rotation_property)
 		return drm_atomic_set_rotation_for_plane(plane_state, entry->scalar);
+	if (drm_atomic_is_plane_color_property(plane_state->plane, entry->property))
+		return drm_atomic_set_color_property_for_plane(plane_state, entry->property,
+							      entry->scalar);
 	if (entry->property == config->prop_fb_id) {
 		drm_atomic_set_fb_for_plane(plane_state, entry->framebuffer);
 		return 0;
@@ -111,7 +115,8 @@ static int apply_entry(struct drm_atomic_commit *state,
  *
  * Entries are applied in order using kernel references, without identifier or
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
- * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H, SRC_X/Y/W/H and rotation, controller
+ * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H, SRC_X/Y/W/H, rotation,
+ * COLOR_ENCODING and COLOR_RANGE, controller
  * MODE_ID/ACTIVE and DEGAMMA_LUT/CTM/GAMMA_LUT, and connector CRTC_ID.
  * Driver-private properties and asynchronous-flip validation are not supported.
  * No check or commit runs.
