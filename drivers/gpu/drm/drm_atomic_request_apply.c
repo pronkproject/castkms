@@ -14,7 +14,8 @@ static bool supported_entry(const struct drm_atomic_request_entry *entry)
 
 	if (entry->object->type == DRM_MODE_OBJECT_PLANE)
 		return entry->property == config->prop_fb_id ||
-		       entry->property == config->prop_in_fence_fd;
+		       entry->property == config->prop_in_fence_fd ||
+		       entry->property == config->prop_crtc_id;
 	return false;
 }
 
@@ -33,6 +34,9 @@ static int apply_plane(struct drm_atomic_commit *state,
 	}
 	if (entry->property == config->prop_in_fence_fd)
 		return drm_atomic_set_fence_for_plane(plane_state, entry->fence);
+	if (entry->property == config->prop_crtc_id)
+		return drm_atomic_set_crtc_for_plane(plane_state,
+				entry->reference ? obj_to_crtc(entry->reference) : NULL);
 	return -EOPNOTSUPP;
 }
 
@@ -62,7 +66,8 @@ static int apply_entry(struct drm_atomic_commit *state,
  * request or update. The caller keeps authority valid through submission.
  *
  * Entries are applied in order using kernel references, without identifier or
- * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD.
+ * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
+ * CRTC_ID.
  * Driver-private properties and asynchronous-flip validation are not supported.
  * No check or commit runs.
  *
