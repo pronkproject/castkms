@@ -806,6 +806,13 @@ recheck display ownership and the controller lease. A failed copy, check or
 preparation leaves accepted readback unchanged. Devices without preparation
 retain their ordinary gamma path; custom gamma callbacks are not adapted.
 
+The ``legacy-gamma`` selftest compares requested component arrays with both
+legacy readback and the accepted atomic color blob on isolated VKMS. It also
+checks that a fault on the third array and a mismatched table size leave the
+accepted cache unchanged. It does not enable an output or validate displayed
+colors. Pending readers and cancellation are exercised by the kernel tests;
+the native test covers actual ioctl copying and ordinary driver acceptance.
+
 Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
 driver-private property callback is called. Other properties are not supported
