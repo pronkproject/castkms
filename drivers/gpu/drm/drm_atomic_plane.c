@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <linux/export.h>
+#include <linux/log2.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
@@ -69,3 +70,32 @@ int drm_atomic_set_geometry_property_for_plane(struct drm_plane_state *state,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_set_geometry_property_for_plane);
+
+/**
+ * drm_atomic_set_rotation_for_plane - set one rotation with optional reflections
+ * @state: uncommitted plane state protected by its modeset lock
+ * @rotation: exactly one rotation bit, plus any advertised reflection bits
+ *
+ * Validates the plane's attached rotation property's advertised bits and requires
+ * exactly one rotation. Errors leave the state unchanged. The caller must still
+ * check the complete update for geometry and driver constraints.
+ *
+ * Return: 0 on success, -EOPNOTSUPP if the plane has no rotation property, or
+ * -EINVAL if the property is detached or the requested combination is invalid.
+ */
+int drm_atomic_set_rotation_for_plane(struct drm_plane_state *state, u64 rotation)
+{
+	struct drm_plane *plane = state->plane;
+	struct drm_property *property = plane->rotation_property;
+	struct drm_mode_object *unused;
+
+	if (!property)
+		return -EOPNOTSUPP;
+	if (drm_mode_obj_find_prop_id(&plane->base, property->base.id) != property ||
+	    !drm_property_change_valid_get(property, rotation, &unused) ||
+	    !is_power_of_2(rotation & DRM_MODE_ROTATE_MASK))
+		return -EINVAL;
+	state->rotation = rotation;
+	return 0;
+}
+EXPORT_SYMBOL_GPL(drm_atomic_set_rotation_for_plane);
