@@ -150,8 +150,27 @@ static void framebuffer_is_reapplied_after_clear(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->validations, 2);
 }
 
+static void authority_is_rechecked_on_rebuild(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_fb_id,
+		.type = DRM_ATOMIC_REQUEST_FRAMEBUFFER,
+	};
+	struct drm_atomic_request *request = new_request(test, f, &entry, 1);
+
+	KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+	drm_atomic_commit_clear(f->state);
+	f->validation_error = -EACCES;
+	KUNIT_EXPECT_EQ(test, apply_request(request, f->state, validate_request, f),
+			-EACCES);
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane), NULL);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
+	KUNIT_CASE(authority_is_rechecked_on_rebuild),
 	{ }
 };
 
