@@ -6,4 +6,5 @@ TEST_PROGS += reservation-model.py
 CFLAGS += $(shell pkg-config --cflags libdrm) -Wall -Wextra
 LDLIBS += $(shell pkg-config --libs libdrm)
 TEST_GEN_PROGS := atomic-ticket
+TEST_GEN_PROGS += atomic-input
 include ../lib.mk
