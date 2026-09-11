@@ -4,6 +4,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_request.h>
 #include <drm/drm_atomic_uapi.h>
+#include <drm/drm_connector.h>
 #include <drm/drm_property.h>
 
 #include "drm_crtc_internal.h"
@@ -21,6 +22,8 @@ static bool supported_entry(const struct drm_atomic_request_entry *entry)
 						      entry->property);
 	if (entry->object->type == DRM_MODE_OBJECT_CRTC)
 		return entry->property == config->prop_mode_id;
+	if (entry->object->type == DRM_MODE_OBJECT_CONNECTOR)
+		return entry->property == config->prop_crtc_id;
 	return false;
 }
 
@@ -57,6 +60,7 @@ static int apply_entry(struct drm_atomic_commit *state,
 		       const struct drm_atomic_request_entry *entry)
 {
 	struct drm_crtc_state *crtc_state;
+	struct drm_connector_state *connector_state;
 
 	switch (entry->object->type) {
 	case DRM_MODE_OBJECT_PLANE:
@@ -66,6 +70,13 @@ static int apply_entry(struct drm_atomic_commit *state,
 		if (IS_ERR(crtc_state))
 			return PTR_ERR(crtc_state);
 		return drm_atomic_set_mode_prop_for_crtc(crtc_state, entry->blob);
+	case DRM_MODE_OBJECT_CONNECTOR:
+		connector_state = drm_atomic_get_connector_state(state,
+								obj_to_connector(entry->object));
+		if (IS_ERR(connector_state))
+			return PTR_ERR(connector_state);
+		return drm_atomic_set_crtc_for_connector(connector_state,
+				entry->reference ? obj_to_crtc(entry->reference) : NULL);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -87,7 +98,8 @@ static int apply_entry(struct drm_atomic_commit *state,
  *
  * Entries are applied in order using kernel references, without identifier or
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
- * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H and SRC_X/Y/W/H, and controller MODE_ID.
+ * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H and SRC_X/Y/W/H, controller MODE_ID,
+ * and connector CRTC_ID.
  * Driver-private properties and asynchronous-flip validation are not supported.
  * No check or commit runs.
  *
