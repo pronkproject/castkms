@@ -173,10 +173,20 @@ static void missing_current_image_rejects_flip(struct kunit *test)
 	KUNIT_EXPECT_NULL(test, drm_atomic_get_new_plane_state(f->state, f->plane)->fb);
 }
 
+static void different_format_rejects_flip(struct kunit *test)
+{
+	struct flip_fixture *f = new_fixture(test);
+
+	f->next = new_fb(test, f->dev, DRM_FORMAT_ARGB8888, 64);
+	KUNIT_EXPECT_EQ(test, run_update(f, set_flip), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane)->fb, f->old);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(flip_preserves_geometry_and_accepted_image),
 	KUNIT_CASE(disabled_controller_rejects_flip),
 	KUNIT_CASE(missing_current_image_rejects_flip),
+	KUNIT_CASE(different_format_rejects_flip),
 	{}
 };
 
