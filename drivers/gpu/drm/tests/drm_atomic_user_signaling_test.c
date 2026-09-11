@@ -20,6 +20,7 @@ struct signaling_fixture {
 	bool event_remained_after_completion;
 	u64 event_user_data;
 	bool targeted;
+	bool target_fence;
 	struct drm_crtc *other;
 	bool other_had_event;
 };
@@ -78,6 +79,8 @@ static int run_attempt(struct signaling_fixture *f, u32 flags, bool include_crtc
 		crtc_state->active = active;
 		if (foreign_event)
 			crtc_state->event = &f->foreign_event;
+		if (f->target_fence)
+			state->crtcs[drm_crtc_index(f->crtc)].out_fence_ptr = (s32 __user *)1;
 	}
 	if (f->other) {
 		struct drm_crtc_state *other = drm_atomic_get_crtc_state(state, f->other);
@@ -218,9 +221,22 @@ static void legacy_event_requires_its_target_in_state(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
 }
 
+static void legacy_event_does_not_consume_output_pointers(struct kunit *test)
+{
+	struct signaling_fixture *f = new_fixture(test);
+
+	f->targeted = true;
+	f->target_fence = true;
+	KUNIT_EXPECT_EQ(test, run_attempt(f, 0, true, true, false, false), -EINVAL);
+	KUNIT_EXPECT_FALSE(test, f->had_signaling);
+	KUNIT_EXPECT_FALSE(test, f->had_event);
+	KUNIT_EXPECT_EQ(test, f->file.event_space, 4096);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(legacy_event_ignores_other_controllers),
 	KUNIT_CASE(legacy_event_requires_its_target_in_state),
+	KUNIT_CASE(legacy_event_does_not_consume_output_pointers),
 	KUNIT_CASE(rejected_commit_returns_event_space),
 	KUNIT_CASE(test_only_allocates_no_signaling),
 	KUNIT_CASE(event_requires_a_controller),
