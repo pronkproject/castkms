@@ -5,6 +5,7 @@
 #include <linux/types.h>
 
 struct drm_atomic_request;
+struct drm_atomic_commit;
 struct drm_atomic_user_input;
 struct drm_atomic_user_request;
 struct drm_device;
@@ -43,6 +44,24 @@ unsigned int drm_atomic_user_request_fence_count(const struct drm_atomic_user_re
 const struct drm_atomic_user_fence_destination *
 drm_atomic_user_request_fence_destination(const struct drm_atomic_user_request *request,
 					 unsigned int index);
+
+/*
+ * Initialize every nonnull destination to -1, in request order, before building
+ * attempts. This may fault; call without modeset locks. It installs no fd and
+ * does not modify the immutable request. Addresses remain userspace memory,
+ * not pinned storage, and may fault again when signaling writes the descriptor.
+ */
+int drm_atomic_initialize_user_fence_destinations(const struct drm_atomic_user_request *request);
+
+/*
+ * Apply saved addresses under the attempt's modeset locks, after revalidating
+ * file authority. Checks attachment before assigning any pointer. Acquires the
+ * referenced controller states; a null address includes the controller but
+ * leaves an earlier nonnull destination unchanged. No userspace memory is
+ * accessed and no event, native fence or descriptor is allocated.
+ */
+int drm_atomic_apply_user_fence_destinations(const struct drm_atomic_user_request *request,
+					    struct drm_atomic_commit *state);
 
 /*
  * Recheck file authority under modeset locks without resolving any resource
