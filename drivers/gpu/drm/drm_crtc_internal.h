@@ -58,6 +58,7 @@ struct drm_mode_fb_cmd2;
 struct drm_mode_fb_cmd;
 struct drm_mode_object;
 struct drm_mode_set;
+struct drm_mode_set_plane;
 struct drm_plane;
 struct drm_plane_state;
 struct drm_printer;
@@ -297,6 +298,9 @@ int drm_mode_getplane(struct drm_device *dev,
 		      void *data, struct drm_file *file_priv);
 int drm_mode_setplane(struct drm_device *dev,
 		      void *data, struct drm_file *file_priv);
+int drm_mode_setplane_with_preparation(struct drm_device *dev,
+				       const struct drm_mode_set_plane *args,
+				       struct drm_file *file);
 int drm_mode_cursor_ioctl(struct drm_device *dev,
 			  void *data, struct drm_file *file_priv);
 int drm_mode_cursor2_ioctl(struct drm_device *dev,
