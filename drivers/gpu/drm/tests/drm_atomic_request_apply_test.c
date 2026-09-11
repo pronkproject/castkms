@@ -190,10 +190,24 @@ static void unsupported_property_prevents_application(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane), NULL);
 }
 
+static void authority_callback_is_required(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_fb_id,
+		.type = DRM_ATOMIC_REQUEST_FRAMEBUFFER,
+	};
+	struct drm_atomic_request *request = new_request(test, f, &entry, 1);
+
+	KUNIT_EXPECT_EQ(test, apply_request(request, f->state, NULL, f), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane), NULL);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
 	KUNIT_CASE(unsupported_property_prevents_application),
+	KUNIT_CASE(authority_callback_is_required),
 	{ }
 };
 
