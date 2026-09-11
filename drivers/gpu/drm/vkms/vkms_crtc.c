@@ -3,6 +3,7 @@
 #include <linux/dma-fence.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_flip.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_managed.h>
@@ -102,6 +103,7 @@ static const struct drm_crtc_funcs vkms_crtc_funcs = {
 	.set_config             = drm_atomic_helper_set_config,
 	.set_config_request     = drm_atomic_helper_set_config_request,
 	.cursor_request         = drm_atomic_helper_cursor_request,
+	.build_page_flip        = drm_atomic_set_legacy_flip,
 	.page_flip              = drm_atomic_helper_page_flip,
 	.reset                  = vkms_atomic_crtc_reset,
 	.atomic_duplicate_state = vkms_atomic_crtc_duplicate_state,
