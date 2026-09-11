@@ -285,6 +285,21 @@ static void ordinary_power_change_updates_legacy_preferences(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_OFF);
 }
 
+static void detached_connector_records_preference_without_controller(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+	struct drm_connector *connector = &f->connectors[0];
+
+	f->crtc->state->connector_mask &= ~drm_connector_mask(connector);
+	connector->state->crtc = NULL;
+	drm_connector_put(connector);
+	connector->dpms = DRM_MODE_DPMS_OFF;
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_first_on), 0);
+	KUNIT_EXPECT_EQ(test, connector->dpms, DRM_MODE_DPMS_ON);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_crtc_state(f->state, f->crtc), NULL);
+	KUNIT_EXPECT_TRUE(test, f->crtc->state->active);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
 	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
@@ -294,6 +309,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(checked_preferences_cannot_be_replaced),
 	KUNIT_CASE(enabling_one_connector_preserves_other_off_preference),
 	KUNIT_CASE(ordinary_power_change_updates_legacy_preferences),
+	KUNIT_CASE(detached_connector_records_preference_without_controller),
 	{}
 };
 
