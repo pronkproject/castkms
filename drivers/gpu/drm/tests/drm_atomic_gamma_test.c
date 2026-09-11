@@ -198,6 +198,34 @@ static void short_table_is_rejected_before_assignment(struct kunit *test)
 	KUNIT_EXPECT_NULL(test, f->state->crtcs[drm_crtc_index(f->crtc)].legacy_gamma);
 }
 
+static int set_with_other_colors(struct gamma_fixture *f)
+{
+	struct drm_crtc_state *new = drm_atomic_get_crtc_state(f->state, f->crtc);
+	struct drm_property_blob *matrix;
+
+	if (IS_ERR(new))
+		return PTR_ERR(new);
+	matrix = drm_property_create_blob(f->dev, sizeof(struct drm_color_ctm), NULL);
+	if (IS_ERR(matrix))
+		return PTR_ERR(matrix);
+	drm_property_replace_blob(&new->ctm, matrix);
+	drm_property_blob_put(matrix);
+	drm_property_replace_blob(&new->degamma_lut, f->table);
+	return set_table(f);
+}
+
+static void legacy_table_clears_other_color_stages(struct kunit *test)
+{
+	struct gamma_fixture *f = new_fixture(test, true);
+	struct drm_crtc_state *new;
+
+	KUNIT_ASSERT_EQ(test, run_update(f, set_with_other_colors), 0);
+	new = drm_atomic_get_new_crtc_state(f->state, f->crtc);
+	KUNIT_EXPECT_PTR_EQ(test, new->gamma_lut, f->table);
+	KUNIT_EXPECT_NULL(test, new->degamma_lut);
+	KUNIT_EXPECT_NULL(test, new->ctm);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
 	KUNIT_CASE(accepted_table_changes_readback),
@@ -206,6 +234,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(checked_table_cannot_be_replaced),
 	KUNIT_CASE(degamma_property_accepts_legacy_table),
 	KUNIT_CASE(short_table_is_rejected_before_assignment),
+	KUNIT_CASE(legacy_table_clears_other_color_stages),
 	{}
 };
 
