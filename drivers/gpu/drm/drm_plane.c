@@ -1143,6 +1143,8 @@ int drm_mode_setplane(struct drm_device *dev, void *data,
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return -EOPNOTSUPP;
+	if (dev->mode_config.preparation)
+		return drm_mode_setplane_with_preparation(dev, plane_req, file_priv);
 
 	/*
 	 * First, find the plane, crtc, and fb objects.  If not available,
@@ -1183,6 +1185,8 @@ int drm_mode_setplane(struct drm_device *dev, void *data,
 
 	return ret;
 }
+
+EXPORT_SYMBOL_FOR_TESTS_ONLY(drm_mode_setplane);
 
 static int drm_mode_cursor_universal(struct drm_crtc *crtc,
 				     struct drm_mode_cursor2 *req,
