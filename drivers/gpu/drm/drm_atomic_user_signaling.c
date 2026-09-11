@@ -98,6 +98,29 @@ static int prepare_crtc(struct drm_atomic_commit *state, struct drm_crtc *crtc,
 	return 0;
 }
 
+int drm_atomic_prepare_user_flip_event(struct drm_atomic_commit *state,
+				       struct drm_crtc *crtc, struct drm_file *file,
+				       u64 user_data, struct drm_atomic_user_signaling **result)
+{
+	struct drm_atomic_user_signaling *signaling;
+	struct drm_crtc_state *new_state;
+
+	if (*result || !file || !crtc || crtc->dev != state->dev)
+		return -EINVAL;
+	new_state = drm_atomic_get_new_crtc_state(state, crtc);
+	if (!new_state || state->crtcs[drm_crtc_index(crtc)].out_fence_ptr)
+		return -EINVAL;
+	signaling = kzalloc(struct_size(signaling, events, state->dev->mode_config.num_crtc),
+			    GFP_KERNEL);
+	if (!signaling)
+		return -ENOMEM;
+	signaling->event_count = state->dev->mode_config.num_crtc;
+	*result = signaling;
+	return prepare_crtc(state, crtc, new_state, file, DRM_MODE_PAGE_FLIP_EVENT,
+			    user_data, signaling);
+}
+EXPORT_SYMBOL_IF_KUNIT(drm_atomic_prepare_user_flip_event);
+
 int drm_atomic_prepare_user_signaling_for_crtcs(struct drm_atomic_commit *state,
 						struct drm_file *file, u32 flags, u64 user_data,
 						u32 event_crtcs,

@@ -7,6 +7,7 @@
 struct drm_atomic_commit;
 struct drm_atomic_user_signaling;
 struct drm_file;
+struct drm_crtc;
 
 /*
  * Prepare completion resources for one attempted ioctl, under its modeset
@@ -28,5 +29,14 @@ int drm_atomic_prepare_user_signaling_for_crtcs(struct drm_atomic_commit *state,
 void drm_atomic_complete_user_signaling(struct drm_atomic_commit *state,
 					struct drm_atomic_user_signaling *signaling,
 					bool accepted);
+
+/*
+ * Prepare one legacy flip event for an included controller, ignoring additional
+ * controllers brought into the state by driver checks. No output-fence pointer
+ * is accepted on the target. The same exactly-once completion rule applies.
+ */
+int drm_atomic_prepare_user_flip_event(struct drm_atomic_commit *state,
+				       struct drm_crtc *crtc, struct drm_file *file,
+				       u64 user_data, struct drm_atomic_user_signaling **result);
 
 #endif
