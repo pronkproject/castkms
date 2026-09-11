@@ -203,11 +203,38 @@ static void authority_callback_is_required(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane), NULL);
 }
 
+static void put_state(void *data)
+{
+	drm_atomic_commit_put(data);
+}
+
+static void foreign_update_is_rejected(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_device *other = __drm_kunit_helper_alloc_drm_device(test, f->dev->dev,
+				 sizeof(*other), 0, DRIVER_MODESET | DRIVER_ATOMIC);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_fb_id,
+		.type = DRM_ATOMIC_REQUEST_FRAMEBUFFER,
+	};
+	struct drm_atomic_request *request = new_request(test, f, &entry, 1);
+	struct drm_atomic_commit *state;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, other);
+	state = drm_atomic_commit_alloc(other);
+	KUNIT_ASSERT_NOT_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_state, state), 0);
+	KUNIT_EXPECT_EQ(test, apply_request(request, state, validate_request, f),
+			-EINVAL);
+	KUNIT_EXPECT_EQ(test, f->validations, 0);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
 	KUNIT_CASE(unsupported_property_prevents_application),
 	KUNIT_CASE(authority_callback_is_required),
+	KUNIT_CASE(foreign_update_is_rejected),
 	{ }
 };
 
