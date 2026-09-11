@@ -474,6 +474,28 @@ static void connector_is_reconnected_after_clear(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->validations, 2);
 }
 
+static void null_controller_disconnects_connector(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_connector *connector = new_connector(test, f);
+	struct drm_atomic_request_entry entries[2] = {
+		{ .object = &connector->base, .property = f->dev->mode_config.prop_crtc_id,
+		  .type = DRM_ATOMIC_REQUEST_OBJECT, .reference = &f->crtc->base },
+		{ .object = &connector->base, .property = f->dev->mode_config.prop_crtc_id,
+		  .type = DRM_ATOMIC_REQUEST_OBJECT },
+	};
+	struct drm_atomic_request *request = new_request(test, f, entries, 2);
+	unsigned int refs = kref_read(&connector->base.refcount);
+
+	KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_connector_state(f->state, connector)->crtc,
+			    NULL);
+	KUNIT_EXPECT_EQ(test, drm_atomic_get_new_crtc_state(f->state, f->crtc)->connector_mask, 0);
+	KUNIT_EXPECT_EQ(test, kref_read(&connector->base.refcount), refs + 1);
+	drm_atomic_commit_clear(f->state);
+	KUNIT_EXPECT_EQ(test, kref_read(&connector->base.refcount), refs);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -489,6 +511,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(geometry_is_reapplied_to_current_state),
 	KUNIT_CASE(repeated_size_assignments_keep_order),
 	KUNIT_CASE(connector_is_reconnected_after_clear),
+	KUNIT_CASE(null_controller_disconnects_connector),
 	{ }
 };
 
