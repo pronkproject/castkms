@@ -51,8 +51,19 @@ static void encoding_changes_only_the_selected_field(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state->color_range, DRM_COLOR_YCBCR_LIMITED_RANGE);
 }
 
+static void range_changes_only_the_selected_field(struct kunit *test)
+{
+	struct drm_plane_state *state = new_state(test);
+
+	KUNIT_ASSERT_EQ(test, set_color(state, state->plane->color_range_property,
+				       DRM_COLOR_YCBCR_FULL_RANGE), 0);
+	KUNIT_EXPECT_EQ(test, state->color_range, DRM_COLOR_YCBCR_FULL_RANGE);
+	KUNIT_EXPECT_EQ(test, state->color_encoding, DRM_COLOR_YCBCR_BT601);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(encoding_changes_only_the_selected_field),
+	KUNIT_CASE(range_changes_only_the_selected_field),
 	{}
 };
 
