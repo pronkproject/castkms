@@ -48,6 +48,7 @@
 
 #include "drm_crtc_internal.h"
 #include "drm_atomic_prepare_uapi.h"
+#include "drm_atomic_user_input.h"
 
 /**
  * DOC: overview
@@ -1604,10 +1605,7 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 			  void *data, struct drm_file *file_priv)
 {
 	struct drm_mode_atomic *arg = data;
-	uint32_t __user *objs_ptr = (uint32_t __user *)(unsigned long)(arg->objs_ptr);
-	uint32_t __user *count_props_ptr = (uint32_t __user *)(unsigned long)(arg->count_props_ptr);
-	uint32_t __user *props_ptr = (uint32_t __user *)(unsigned long)(arg->props_ptr);
-	uint64_t __user *prop_values_ptr = (uint64_t __user *)(unsigned long)(arg->prop_values_ptr);
+	struct drm_atomic_user_input *input;
 	unsigned int copied_objs, copied_props;
 	struct drm_atomic_commit *state;
 	struct drm_modeset_acquire_ctx ctx;
@@ -1670,6 +1668,14 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 			return ret;
 		}
 	}
+	input = drm_atomic_copy_user_input(arg);
+	if (IS_ERR(input)) {
+		ret = PTR_ERR(input);
+		drm_atomic_commit_put(state);
+		if (prepare_owner)
+			drm_prepare_owner_put(prepare_owner);
+		return ret;
+	}
 
 	drm_modeset_acquire_init(&ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE);
 	state->acquire_ctx = &ctx;
@@ -1687,14 +1693,11 @@ retry:
 			goto out;
 	}
 
-	for (i = 0; i < arg->count_objs; i++) {
+	for (i = 0; i < input->object_count; i++) {
 		uint32_t obj_id, count_props;
 		struct drm_mode_object *obj;
 
-		if (get_user(obj_id, objs_ptr + copied_objs)) {
-			ret = -EFAULT;
-			goto out;
-		}
+		obj_id = input->objects[copied_objs];
 
 		obj = drm_mode_object_find(dev, file_priv, obj_id, DRM_MODE_OBJECT_ANY);
 		if (!obj) {
@@ -1710,11 +1713,7 @@ retry:
 			goto out;
 		}
 
-		if (get_user(count_props, count_props_ptr + copied_objs)) {
-			drm_mode_object_put(obj);
-			ret = -EFAULT;
-			goto out;
-		}
+		count_props = input->counts[copied_objs];
 
 		copied_objs++;
 
@@ -1723,11 +1722,7 @@ retry:
 			uint64_t prop_value;
 			struct drm_property *prop;
 
-			if (get_user(prop_id, props_ptr + copied_props)) {
-				drm_mode_object_put(obj);
-				ret = -EFAULT;
-				goto out;
-			}
+			prop_id = input->properties[copied_props];
 
 			prop = drm_mode_obj_find_prop_id(obj, prop_id);
 			if (!prop) {
@@ -1739,13 +1734,7 @@ retry:
 				goto out;
 			}
 
-			if (copy_from_user(&prop_value,
-					   prop_values_ptr + copied_props,
-					   sizeof(prop_value))) {
-				drm_mode_object_put(obj);
-				ret = -EFAULT;
-				goto out;
-			}
+			prop_value = input->values[copied_props];
 
 			ret = drm_atomic_set_property(state, file_priv, obj,
 						      prop, prop_value, async_flip);
@@ -1797,6 +1786,7 @@ out:
 	drm_modeset_acquire_fini(&ctx);
 	if (prepare_owner)
 		drm_prepare_owner_put(prepare_owner);
+	drm_atomic_free_user_input(input);
 
 	return ret;
 }
