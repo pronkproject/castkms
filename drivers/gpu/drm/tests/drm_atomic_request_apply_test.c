@@ -294,6 +294,25 @@ static void fence_is_reapplied_after_clear(struct kunit *test)
 	}
 }
 
+static void duplicate_fence_assignment_is_rejected(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct dma_fence *fence = new_fence(test);
+	struct drm_atomic_request_entry entries[2] = {
+		{ .object = &f->plane->base, .property = f->dev->mode_config.prop_in_fence_fd,
+		  .type = DRM_ATOMIC_REQUEST_FENCE, .fence = fence },
+		{ .object = &f->plane->base, .property = f->dev->mode_config.prop_in_fence_fd,
+		  .type = DRM_ATOMIC_REQUEST_FENCE },
+	};
+	struct drm_atomic_request *request = new_request(test, f, entries, 2);
+
+	KUNIT_EXPECT_EQ(test, apply_request(request, f->state, validate_request, f),
+			-EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane)->fence, fence);
+	drm_atomic_commit_clear(f->state);
+	KUNIT_EXPECT_EQ(test, kref_read(&fence->refcount), 2);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -302,6 +321,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(foreign_update_is_rejected),
 	KUNIT_CASE(duplicate_framebuffer_assignments_keep_order),
 	KUNIT_CASE(fence_is_reapplied_after_clear),
+	KUNIT_CASE(duplicate_fence_assignment_is_rejected),
 	{ }
 };
 
