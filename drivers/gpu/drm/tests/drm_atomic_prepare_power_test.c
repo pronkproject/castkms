@@ -29,7 +29,7 @@ struct power_fixture {
 	struct drm_prepare_read_claim *read;
 	struct task_struct *worker;
 	struct completion checked;
-	unsigned int checks, installs;
+	unsigned int checks, installs, validations;
 	int worker_error, power_while_waiting;
 	bool drop_master;
 };
@@ -272,9 +272,32 @@ static void master_loss_cancels_power_change(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, f->crtc->state->active);
 }
 
+static int validate_again(struct drm_connector *connector, void *data)
+{
+	struct power_fixture *f = data;
+
+	return ++f->validations == 1 ? 0 : -EACCES;
+}
+
+static void kernel_power_command_revalidates_after_wait(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+	int ret;
+
+	start_reader(test, f);
+	ret = drm_atomic_commit_connector_power(&f->connector, false, f->owner,
+					       validate_again, f);
+	join_reader(test, f);
+	KUNIT_EXPECT_EQ(test, ret, -EACCES);
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_EQ(test, f->connector.dpms, DRM_MODE_DPMS_ON);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(power_ioctl_waits_without_publishing_preference),
 	KUNIT_CASE(master_loss_cancels_power_change),
+	KUNIT_CASE(kernel_power_command_revalidates_after_wait),
 	{}
 };
 
