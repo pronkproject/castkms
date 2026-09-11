@@ -3305,6 +3305,10 @@ static void install_state(struct drm_atomic_commit *state)
 
 		state->crtcs[i].state_to_destroy = old_crtc_state;
 		crtc->state = new_crtc_state;
+		if (state->crtcs[i].update_cursor_position) {
+			crtc->cursor_x = state->crtcs[i].cursor_x;
+			crtc->cursor_y = state->crtcs[i].cursor_y;
+		}
 
 		if (new_crtc_state->commit) {
 			spin_lock(&crtc->commit_lock);
