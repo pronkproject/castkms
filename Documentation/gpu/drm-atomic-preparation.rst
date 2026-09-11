@@ -459,6 +459,19 @@ attempt. Copying the arrays alone therefore does not enable preparation waits:
 the request must also retain the actual objects and fences, and revalidate
 authority when rebuilding. Completion metadata remains separate from both.
 
+The private ioctl value adapter resolves one supported assignment into the
+same typed entries used by kernel requests. It takes a reference to the actual
+framebuffer, blob, selected display object or input fence, rather than retaining
+its numeric handle. Its temporary value reference and a request's reference
+are independent. A failed resolution leaves its destination untouched.
+
+The adapter accepts only properties understood by retained-request replay.
+It does not guess whether a private numeric property hides a resource handle.
+It also does not resolve preparation descriptors or output pointers. The caller
+must retain the target object, assemble the complete ordered request, and
+recheck authority before each attempt. The ordinary ioctl does not yet use
+that adapter, so its copied arrays alone still do not authorize waiting.
+
 SETCRTC resolves its requested framebuffer, mode and connectors under the initial
 display locks. On a preparation-enabled device, it retains those inputs after
 dropping the locks and calls the provider's ``set_config_request`` operation.
