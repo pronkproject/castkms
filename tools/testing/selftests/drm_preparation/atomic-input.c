@@ -85,6 +85,16 @@ static void empty_arrays(const struct input_fixture *f)
 	expect_result(f->fd, &request.arg, 0, "Zero properties do not read property arrays");
 }
 
+static void count_overflow(const struct input_fixture *f)
+{
+	struct input_request request;
+
+	init_request(&request, f);
+	request.counts[0] = UINT32_MAX;
+	request.arg.count_objs = 2;
+	expect_result(f->fd, &request.arg, EOVERFLOW, "Property count addition cannot wrap");
+}
+
 int main(int argc, char **argv)
 {
 	const char *path = argc > 1 ? argv[1] : "/dev/dri/card0";
@@ -105,8 +115,9 @@ int main(int argc, char **argv)
 	f.active = find_property(f.fd, f.crtc, "ACTIVE");
 	if (!f.active)
 		ksft_exit_fail_msg("Atomic controller has no ACTIVE property\n");
-	ksft_set_plan(2);
+	ksft_set_plan(3);
 	empty_arrays(&f);
+	count_overflow(&f);
 	close(f.fd);
 	ksft_finished();
 }
