@@ -32,6 +32,7 @@
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_power.h>
 #include <drm/drm_atomic_prepare_commit.h>
 #include <drm/drm_atomic_prepare_request.h>
 #include <drm/drm_atomic_prepare_ticket.h>
@@ -1423,8 +1424,9 @@ drm_atomic_helper_update_legacy_modeset_state(struct drm_device *dev,
 		}
 
 		crtc = new_conn_state->crtc;
-		if ((!crtc && old_conn_state->crtc) ||
-		    (crtc && drm_atomic_crtc_needs_modeset(crtc->state))) {
+		if (!dev->mode_config.preparation &&
+		    ((!crtc && old_conn_state->crtc) ||
+		     (crtc && drm_atomic_crtc_needs_modeset(crtc->state)))) {
 			int mode = DRM_MODE_DPMS_OFF;
 
 			if (crtc && crtc->state->active)
@@ -3320,6 +3322,8 @@ static void install_state(struct drm_atomic_commit *state)
 			new_crtc_state->commit->event = NULL;
 		}
 	}
+
+	drm_atomic_install_connector_power(state);
 
 	for_each_oldnew_colorop_in_state(state, colorop, old_colorop_state, new_colorop_state, i) {
 		WARN_ON(colorop->state != old_colorop_state);
