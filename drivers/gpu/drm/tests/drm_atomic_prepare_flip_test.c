@@ -29,7 +29,7 @@ struct flip_fixture {
 	struct completion checked;
 	unsigned int checks, installs;
 	int worker_error;
-	bool nonblock;
+	bool drop_master, nonblock;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -215,6 +215,8 @@ static int finish_reader(void *data)
 		f->during = f->crtc->primary->state->fb;
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
+	if (!ret && f->drop_master)
+		ret = drm_ioctl(f->file, DRM_IOCTL_DROP_MASTER, 0);
 	f->worker_error = ret;
 	drm_prepare_read_release(f->read, NULL);
 	f->read = NULL;
@@ -268,8 +270,20 @@ static void flip_waits_before_native_submission(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->primary->state->fb, f->next);
 }
 
+static void losing_master_cancels_pending_flip(struct kunit *test)
+{
+	struct flip_fixture *f = new_fixture(test);
+
+	f->drop_master = true;
+	KUNIT_EXPECT_EQ(test, submit_with_reader(test, f), -ECANCELED);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->during, f->old);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->primary->state->fb, f->old);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(flip_waits_before_native_submission),
+	KUNIT_CASE(losing_master_cancels_pending_flip),
 	{}
 };
 
