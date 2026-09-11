@@ -193,9 +193,23 @@ static void empty_group_still_requires_a_lease(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, validate_request(f, request, child), -EACCES);
 }
 
+static void referenced_controller_requires_its_own_lease(struct kunit *test)
+{
+	struct auth_fixture *f = new_fixture(test);
+	struct drm_atomic_user_request *request = new_request(test, f, &f->plane->base,
+						f->dev->mode_config.prop_crtc_id, f->crtc->base.id);
+	struct file *child = new_lessee(test, f);
+
+	allow_object(test, child, &f->plane->base);
+	KUNIT_EXPECT_EQ(test, validate_request(f, request, child), -EACCES);
+	allow_object(test, child, &f->crtc->base);
+	KUNIT_EXPECT_EQ(test, validate_request(f, request, child), 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(master_loss_rejects_retained_request),
 	KUNIT_CASE(empty_group_still_requires_a_lease),
+	KUNIT_CASE(referenced_controller_requires_its_own_lease),
 	{}
 };
 
