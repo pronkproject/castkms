@@ -491,12 +491,13 @@ objects named by property values, and the caller must keep that authority
 valid through submission.
 
 The setters accept a plane's framebuffer, input fence, controller association,
-damage blob, position and size, a controller's mode blob, and the controller
-selected by a connector. Resource values use retained pointers. Where needed,
-the attempted state takes its own references. Explicitly assigning a framebuffer
-still counts as an update, even when selecting the same framebuffer. Assignments
-keep their order: assigning a framebuffer twice selects the last value, whereas
-assigning an input fence after a non-null fence remains an error.
+damage blob, position and size, a controller's mode blob and active state, and
+the controller selected by a connector. Resource values use retained pointers.
+Where needed, the attempted state takes its own references. Explicitly assigning
+a framebuffer still counts as an update, even when selecting the same
+framebuffer. Assignments keep their order: assigning a framebuffer twice selects
+the last value, whereas assigning an input fence after a non-null fence remains
+an error.
 
 A connector represents an output. Its retained controller value is applied
 through the existing kernel setter, which updates both the connector's choice
@@ -512,6 +513,13 @@ coordinates. Each value must fit the property's range. Checking that the full
 rectangle fits the framebuffer and the driver's capabilities remains part of
 checking the complete update. Rebuilding applies only the requested fields to
 current state, rather than restoring an earlier copy of the plane's geometry.
+
+The controller's ACTIVE property chooses whether to display its configured
+mode. Applying the saved boolean changes only that field; it neither supplies
+a missing mode nor checks that the output can run. Repeated assignments take
+effect in order, including a final zero that turns the controller off. As with
+geometry, the remaining fields come from current state and the complete update
+must pass the driver's atomic checks before submission.
 
 Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
