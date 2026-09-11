@@ -106,8 +106,20 @@ static void last_nonnull_destination_is_reapplied(struct kunit *test)
 	}
 }
 
+static void null_destinations_still_include_the_controller(struct kunit *test)
+{
+	u64 addresses[] = { 0, 0, 0 };
+	struct fence_fixture *f = new_fixture(test, addresses);
+
+	KUNIT_ASSERT_EQ(test, drm_atomic_initialize_user_fence_destinations(f->request), 0);
+	KUNIT_ASSERT_EQ(test, apply_destinations(f), 0);
+	KUNIT_EXPECT_TRUE(test, f->included_crtc);
+	KUNIT_EXPECT_EQ(test, f->applied_address, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(last_nonnull_destination_is_reapplied),
+	KUNIT_CASE(null_destinations_still_include_the_controller),
 	{}
 };
 
