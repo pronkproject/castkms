@@ -466,6 +466,17 @@ whether that commit succeeded, allowing the caller to publish its prepared
 resources or release them on failure. Publishing an output fence does not mean
 that the work represented by the fence has finished.
 
+``drm_atomic_submit_request_with_callbacks()`` uses the same preparation and
+signaling rules, but asks the driver to finish the accepted commit
+asynchronously. It may still wait for preparation before submission, outside
+modeset locks. Success means that the driver accepted the update, not that it
+has been presented. A pending earlier commit may return ``EBUSY``; the runner
+releases unused signaling resources and leaves retry policy to its caller.
+That entry supports legacy flip adapters whose completion is reported by an
+event. It does not change the ordinary nonblocking atomic ioctl into a waiting
+operation, and the existing blocking command entries still wait for native
+commit completion.
+
 Every signaling setup call has exactly one matching completion call, including
 setup that fails after allocating only some resources. Both callbacks run before
 the attempted state and its modeset locks are released. A preparation wait does
