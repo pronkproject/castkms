@@ -97,8 +97,37 @@ static void color_stages_retain_their_blobs(struct kunit *test)
 	}
 }
 
+static void invalid_color_sizes_preserve_state(struct kunit *test)
+{
+	struct color_fixture *f = new_fixture(test);
+	struct drm_mode_config *config = &f->dev->mode_config;
+	struct drm_property *properties[] = {
+		config->degamma_lut_property, config->degamma_lut_property,
+		config->gamma_lut_property, config->gamma_lut_property,
+		config->ctm_property, config->ctm_property,
+	};
+	size_t sizes[] = {
+		3 * sizeof(struct drm_color_lut), sizeof(struct drm_color_lut) + 1,
+		5 * sizeof(struct drm_color_lut), sizeof(struct drm_color_lut) + 1,
+		sizeof(struct drm_color_ctm) - 1, sizeof(struct drm_color_ctm) + 1,
+	};
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(properties); i++) {
+		struct drm_property_blob *blob = new_blob(test, f->dev, sizes[i]);
+
+		KUNIT_EXPECT_EQ(test, set_color(&f->state, properties[i], blob), -EINVAL);
+		KUNIT_EXPECT_FALSE(test, f->state.color_mgmt_changed);
+		KUNIT_EXPECT_PTR_EQ(test, f->state.degamma_lut, NULL);
+		KUNIT_EXPECT_PTR_EQ(test, f->state.ctm, NULL);
+		KUNIT_EXPECT_PTR_EQ(test, f->state.gamma_lut, NULL);
+		KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+	}
+}
+
 static struct kunit_case color_tests[] = {
 	KUNIT_CASE(color_stages_retain_their_blobs),
+	KUNIT_CASE(invalid_color_sizes_preserve_state),
 	{ }
 };
 
