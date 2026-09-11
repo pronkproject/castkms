@@ -93,6 +93,7 @@ drm-y := \
 	drm_modeset_lock.o \
 	drm_plane.o \
 	drm_plane_user_request.o \
+	drm_cursor_user_request.o \
 	drm_prime.o \
 	drm_print.o \
 	drm_property.o \

@@ -54,6 +54,7 @@ struct drm_edid;
 struct drm_file;
 struct drm_framebuffer;
 struct drm_mode_create_dumb;
+struct drm_mode_cursor2;
 struct drm_mode_fb_cmd2;
 struct drm_mode_fb_cmd;
 struct drm_mode_object;
@@ -305,6 +306,9 @@ int drm_mode_cursor_ioctl(struct drm_device *dev,
 			  void *data, struct drm_file *file_priv);
 int drm_mode_cursor2_ioctl(struct drm_device *dev,
 			   void *data, struct drm_file *file_priv);
+int drm_mode_cursor_with_preparation(struct drm_crtc *crtc,
+				     const struct drm_mode_cursor2 *args,
+				     struct drm_file *file);
 int drm_mode_page_flip_ioctl(struct drm_device *dev,
 			     void *data, struct drm_file *file_priv);
 
