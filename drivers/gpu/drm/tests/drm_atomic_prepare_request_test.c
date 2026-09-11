@@ -522,6 +522,17 @@ static void busy_submission_releases_signaling(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
 }
 
+static void blocking_command_retains_completion_wait(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	f->nonblock = true;
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_with_callbacks(f->dev, NULL,
+								     &signaling_callbacks, f), 0);
+	KUNIT_EXPECT_FALSE(test, f->nonblock);
+	KUNIT_EXPECT_EQ(test, f->installations, 1);
+}
+
 struct contended_request {
 	struct request_fixture *display;
 	struct drm_crtc *other;
@@ -685,6 +696,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(signaling_callbacks_must_be_paired),
 	KUNIT_CASE(submitted_request_waits_for_preparation),
 	KUNIT_CASE(busy_submission_releases_signaling),
+	KUNIT_CASE(blocking_command_retains_completion_wait),
 	{}
 };
 
