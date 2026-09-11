@@ -133,10 +133,20 @@ static void detached_output_property_is_rejected_before_assignment(struct kunit 
 	KUNIT_EXPECT_EQ(test, f->applied_address, 0);
 }
 
+static void inaccessible_destination_fails_initialization(struct kunit *test)
+{
+	u64 addresses[] = { 0, 1, 0 };
+	struct fence_fixture *f = new_fixture(test, addresses);
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_initialize_user_fence_destinations(f->request), -EFAULT);
+	KUNIT_EXPECT_EQ(test, drm_atomic_user_request_fence_destination(f->request, 1)->address, 1);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(last_nonnull_destination_is_reapplied),
 	KUNIT_CASE(null_destinations_still_include_the_controller),
 	KUNIT_CASE(detached_output_property_is_rejected_before_assignment),
+	KUNIT_CASE(inaccessible_destination_fails_initialization),
 	{}
 };
 
