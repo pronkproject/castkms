@@ -194,11 +194,33 @@ static void rejected_update_preserves_power_preferences(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_ON);
 }
 
+static int include_first(struct power_fixture *f)
+{
+	struct drm_connector_state *state;
+
+	state = drm_atomic_get_connector_state(f->state, &f->connectors[0]);
+	return IS_ERR(state) ? PTR_ERR(state) : 0;
+}
+
+static void clearing_discards_power_preferences(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+	unsigned int index = drm_connector_index(&f->connectors[0]);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, first_off), 0);
+	drm_atomic_commit_clear(f->state);
+	KUNIT_ASSERT_EQ(test, run_update(f, include_first), 0);
+	KUNIT_EXPECT_FALSE(test, f->state->connectors[index].update_power);
+	KUNIT_EXPECT_FALSE(test, f->state->crtcs[drm_crtc_index(f->crtc)].power_from_connectors);
+	KUNIT_EXPECT_EQ(test, f->connectors[0].dpms, DRM_MODE_DPMS_ON);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
 	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
 	KUNIT_CASE(acceptance_preserves_other_connector_preference),
 	KUNIT_CASE(rejected_update_preserves_power_preferences),
+	KUNIT_CASE(clearing_discards_power_preferences),
 	{}
 };
 
