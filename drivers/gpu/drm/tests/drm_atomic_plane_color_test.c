@@ -88,11 +88,26 @@ static void color_requires_property_identity(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state->color_encoding, DRM_COLOR_YCBCR_BT601);
 }
 
+static void color_requires_property_attachment(struct kunit *test)
+{
+	struct drm_plane_state *state = new_state(test);
+	struct drm_object_properties *properties = state->plane->base.properties;
+	unsigned int count = properties->count;
+	int ret;
+
+	properties->count = 0;
+	ret = set_color(state, state->plane->color_range_property, DRM_COLOR_YCBCR_FULL_RANGE);
+	properties->count = count;
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+	KUNIT_EXPECT_EQ(test, state->color_range, DRM_COLOR_YCBCR_LIMITED_RANGE);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(encoding_changes_only_the_selected_field),
 	KUNIT_CASE(range_changes_only_the_selected_field),
 	KUNIT_CASE(unadvertised_values_leave_color_unchanged),
 	KUNIT_CASE(color_requires_property_identity),
+	KUNIT_CASE(color_requires_property_attachment),
 	{}
 };
 
