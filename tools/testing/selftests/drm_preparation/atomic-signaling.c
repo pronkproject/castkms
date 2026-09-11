@@ -194,6 +194,18 @@ static void failed_update(struct fixture *f)
 	drmModeAtomicFree(request);
 }
 
+static void test_only(struct fixture *f)
+{
+	drmModeAtomicReq *request = new_request();
+	int before = descriptor_count(), fence = 77, ret;
+
+	add(f, request, f->crtc, DRM_MODE_OBJECT_CRTC, "OUT_FENCE_PTR", (uintptr_t)&fence);
+	ret = drmModeAtomicCommit(f->fd, request, DRM_MODE_ATOMIC_TEST_ONLY, NULL);
+	ksft_test_result(!ret && fence == -1 && descriptor_count() == before,
+			"Test-only update initializes output without installing a fence\n");
+	drmModeAtomicFree(request);
+}
+
 int main(int argc, char **argv)
 {
 	struct fixture f = {};
@@ -201,9 +213,10 @@ int main(int argc, char **argv)
 
 	ksft_print_header();
 	setup(&f, argc > 1 ? argv[1] : "/dev/dri/card0");
-	ksft_set_plan(2);
+	ksft_set_plan(3);
 	output_fence(&f);
 	failed_update(&f);
+	test_only(&f);
 	modeset(&f, false);
 	drmModeRmFB(f.fd, f.framebuffer);
 	drmModeDestroyPropertyBlob(f.fd, f.mode);
