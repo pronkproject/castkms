@@ -22,7 +22,8 @@ static bool supported_entry(const struct drm_atomic_request_entry *entry)
 						      entry->property);
 	if (entry->object->type == DRM_MODE_OBJECT_CRTC)
 		return entry->property == config->prop_mode_id ||
-		       entry->property == config->prop_active;
+		       entry->property == config->prop_active ||
+		       drm_atomic_is_crtc_color_property(obj_to_crtc(entry->object), entry->property);
 	if (entry->object->type == DRM_MODE_OBJECT_CONNECTOR)
 		return entry->property == config->prop_crtc_id;
 	return false;
@@ -74,6 +75,9 @@ static int apply_entry(struct drm_atomic_commit *state,
 			crtc_state->active = entry->scalar;
 			return 0;
 		}
+		if (drm_atomic_is_crtc_color_property(crtc_state->crtc, entry->property))
+			return drm_atomic_set_color_property_for_crtc(crtc_state, entry->property,
+								     entry->blob);
 		return drm_atomic_set_mode_prop_for_crtc(crtc_state, entry->blob);
 	case DRM_MODE_OBJECT_CONNECTOR:
 		connector_state = drm_atomic_get_connector_state(state,
@@ -104,7 +108,7 @@ static int apply_entry(struct drm_atomic_commit *state,
  * Entries are applied in order using kernel references, without identifier or
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
  * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H and SRC_X/Y/W/H, controller MODE_ID/ACTIVE,
- * and connector CRTC_ID.
+ * DEGAMMA_LUT/CTM/GAMMA_LUT, and connector CRTC_ID.
  * Driver-private properties and asynchronous-flip validation are not supported.
  * No check or commit runs.
  *
