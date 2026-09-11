@@ -60,6 +60,30 @@ static struct drm_display_mode *find_preferred_mode(struct drm_connector *connec
 	return preferred;
 }
 
+static int acquire_modeset_state(struct drm_device *drm,
+				 struct drm_modeset_acquire_ctx *ctx)
+{
+	int ret;
+
+	drm_modeset_acquire_init(ctx, 0);
+	for (;;) {
+		ret = drm_modeset_lock_all_ctx(drm, ctx);
+		if (ret != -EDEADLK)
+			break;
+
+		ret = drm_modeset_backoff(ctx);
+		if (ret)
+			break;
+	}
+
+	if (ret) {
+		drm_modeset_drop_locks(ctx);
+		drm_modeset_acquire_fini(ctx);
+	}
+
+	return ret;
+}
+
 static struct drm_display_mode *find_420_only_mode(struct drm_connector *connector)
 {
 	struct drm_device *drm = connector->dev;
@@ -2199,7 +2223,8 @@ static void drm_test_check_disable_connector(struct kunit *test)
 	drm = &priv->drm;
 	crtc = priv->crtc;
 
-	drm_modeset_acquire_init(&ctx, 0);
+	ret = acquire_modeset_state(drm, &ctx);
+	KUNIT_ASSERT_EQ(test, ret, 0);
 
 retry_conn_enable:
 	ret = drm_kunit_helper_enable_crtc_connector(test, drm,
