@@ -300,10 +300,27 @@ static void revoked_move_preserves_position(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 5);
 }
 
+static void hidden_cursor_remembers_position(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+	struct drm_cursor_update update = {
+		.crtc = f->crtc, .update_image = true,
+		.update_position = true, .x = 41, .y = 43,
+	};
+
+	KUNIT_ASSERT_EQ(test, drm_atomic_helper_cursor_request(&update, f->owner, NULL, NULL), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->cursor->state->fb, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, f->cursor->state->crtc, NULL);
+	KUNIT_EXPECT_EQ(test, f->cursor->state->src_w, 0);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_x, 41);
+	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 43);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(move_uses_current_image_after_wait),
 	KUNIT_CASE(image_uses_current_position_after_wait),
 	KUNIT_CASE(revoked_move_preserves_position),
+	KUNIT_CASE(hidden_cursor_remembers_position),
 	{}
 };
 
