@@ -60,6 +60,7 @@ drm-y := \
 	drm_atomic_prepare_file.o \
 	drm_atomic_prepare_uapi.o \
 	drm_atomic_uapi.o \
+	drm_atomic_cursor.o \
 	drm_auth.o \
 	drm_blend.o \
 	drm_bridge.o \

@@ -322,6 +322,7 @@ void drm_atomic_commit_default_clear(struct drm_atomic_commit *state)
 		state->crtcs[i].state_to_destroy = NULL;
 		state->crtcs[i].old_state = NULL;
 		state->crtcs[i].new_state = NULL;
+		state->crtcs[i].update_cursor_position = false;
 
 		if (state->crtcs[i].commit) {
 			drm_crtc_commit_put(state->crtcs[i].commit);

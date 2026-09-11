@@ -233,6 +233,10 @@ struct __drm_crtcs_state {
 
 	s32 __user *out_fence_ptr;
 	u64 last_vblank_count;
+
+	/* Publish the remembered legacy cursor position only with accepted state. */
+	bool update_cursor_position;
+	s32 cursor_x, cursor_y;
 };
 
 struct __drm_connnectors_state {
