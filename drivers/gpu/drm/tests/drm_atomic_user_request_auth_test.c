@@ -206,10 +206,37 @@ static void referenced_controller_requires_its_own_lease(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, validate_request(f, request, child), 0);
 }
 
+static const struct drm_connector_funcs connector_funcs = {
+	.reset = drm_atomic_helper_connector_reset,
+	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
+};
+
+static void unregistered_connector_is_not_restored_by_retention(struct kunit *test)
+{
+	struct auth_fixture *f = new_fixture(test);
+	struct drm_atomic_user_request *request;
+	void *old;
+
+	KUNIT_ASSERT_EQ(test, drmm_connector_init(f->dev, &f->connector, &connector_funcs,
+						DRM_MODE_CONNECTOR_VIRTUAL, NULL), 0);
+	/* Publish only in the fixture's lookup table, without registering sysfs nodes. */
+	mutex_lock(&f->dev->mode_config.idr_mutex);
+	old = idr_replace(&f->dev->mode_config.object_idr, &f->connector.base,
+			  f->connector.base.id);
+	mutex_unlock(&f->dev->mode_config.idr_mutex);
+	KUNIT_ASSERT_NULL(test, old);
+	request = new_request(test, f, &f->connector.base, NULL, 0);
+	KUNIT_ASSERT_EQ(test, validate_request(f, request, f->root), 0);
+	WRITE_ONCE(f->connector.registration_state, DRM_CONNECTOR_UNREGISTERED);
+	KUNIT_EXPECT_EQ(test, validate_request(f, request, f->root), -ENOENT);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(master_loss_rejects_retained_request),
 	KUNIT_CASE(empty_group_still_requires_a_lease),
 	KUNIT_CASE(referenced_controller_requires_its_own_lease),
+	KUNIT_CASE(unregistered_connector_is_not_restored_by_retention),
 	{}
 };
 
