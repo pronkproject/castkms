@@ -237,10 +237,15 @@ struct __drm_crtcs_state {
 	/* Publish the remembered legacy cursor position only with accepted state. */
 	bool update_cursor_position;
 	s32 cursor_x, cursor_y;
+	/* Preserve individual connector preferences when they determine ACTIVE. */
+	bool power_from_connectors;
 };
 
 struct __drm_connnectors_state {
 	struct drm_connector *ptr;
+	/* Publish a legacy power preference only with accepted state. */
+	bool update_power;
+	bool power_on;
 
 	/**
 	 * @state_to_destroy:
