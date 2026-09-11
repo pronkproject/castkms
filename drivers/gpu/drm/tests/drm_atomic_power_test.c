@@ -261,6 +261,30 @@ static void enabling_one_connector_preserves_other_off_preference(struct kunit *
 	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_OFF);
 }
 
+static int ordinary_power_off(struct power_fixture *f)
+{
+	struct drm_crtc_state *crtc_state = drm_atomic_get_crtc_state(f->state, f->crtc);
+	int ret;
+
+	if (IS_ERR(crtc_state))
+		return PTR_ERR(crtc_state);
+	ret = drm_atomic_add_affected_connectors(f->state, f->crtc);
+	if (ret)
+		return ret;
+	crtc_state->active = false;
+	return accept_update(f);
+}
+
+static void ordinary_power_change_updates_legacy_preferences(struct kunit *test)
+{
+	struct power_fixture *f = new_fixture(test);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, ordinary_power_off), 0);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+	KUNIT_EXPECT_EQ(test, f->connectors[0].dpms, DRM_MODE_DPMS_OFF);
+	KUNIT_EXPECT_EQ(test, f->connectors[1].dpms, DRM_MODE_DPMS_OFF);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_preference_does_not_change_current_power),
 	KUNIT_CASE(pending_preferences_combine_for_shared_controller),
@@ -269,6 +293,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(clearing_discards_power_preferences),
 	KUNIT_CASE(checked_preferences_cannot_be_replaced),
 	KUNIT_CASE(enabling_one_connector_preserves_other_off_preference),
+	KUNIT_CASE(ordinary_power_change_updates_legacy_preferences),
 	{}
 };
 
