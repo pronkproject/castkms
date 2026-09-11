@@ -47,6 +47,7 @@
 
 #include "drm_crtc_internal.h"
 #include "drm_atomic_prepare_uapi.h"
+#include "drm_atomic_user_commit.h"
 #include "drm_atomic_user_input.h"
 #include "drm_atomic_user_signaling.h"
 
@@ -1357,6 +1358,17 @@ set_async_flip(struct drm_atomic_commit *state)
 	}
 }
 
+static bool has_prepare_descriptor(struct drm_device *dev,
+				   const struct drm_atomic_user_input *input)
+{
+	unsigned int i;
+
+	for (i = 0; i < input->property_count; i++)
+		if (input->properties[i] == dev->mode_config.prop_prepare_fd->base.id)
+			return true;
+	return false;
+}
+
 int drm_mode_atomic_ioctl(struct drm_device *dev,
 			  void *data, struct drm_file *file_priv)
 {
@@ -1370,6 +1382,8 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 	int ret = 0;
 	unsigned int i, j;
 	bool async_flip = false;
+	bool prepare_blocking;
+	bool explicit_preparation;
 
 	/* disallow for drivers not supporting atomic: */
 	if (!drm_core_check_feature(dev, DRIVER_ATOMIC))
@@ -1413,10 +1427,14 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 		return -EINVAL;
 	}
 
+	explicit_preparation = READ_ONCE(file_priv->atomic_preparation);
+	prepare_blocking = dev->mode_config.preparation &&
+		!(arg->flags & (DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_NONBLOCK |
+				DRM_MODE_PAGE_FLIP_ASYNC));
 	state = drm_atomic_commit_alloc(dev);
 	if (!state)
 		return -ENOMEM;
-	if (file_priv->atomic_preparation) {
+	if (explicit_preparation || prepare_blocking) {
 		prepare_owner = drm_file_prepare_owner(file_priv);
 		if (IS_ERR(prepare_owner)) {
 			ret = PTR_ERR(prepare_owner);
@@ -1433,6 +1451,13 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 		return ret;
 	}
 
+	if (prepare_blocking && !has_prepare_descriptor(dev, input)) {
+		drm_atomic_commit_put(state);
+		ret = drm_atomic_commit_user_request(dev, file_priv, prepare_owner,
+						     arg->flags, arg->user_data, input);
+		goto out_input;
+	}
+
 	drm_modeset_acquire_init(&ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE);
 	state->acquire_ctx = &ctx;
 	state->allow_modeset = !!(arg->flags & DRM_MODE_ATOMIC_ALLOW_MODESET);
@@ -1442,7 +1467,7 @@ retry:
 	copied_objs = 0;
 	copied_props = 0;
 	signaling = NULL;
-	if (prepare_owner) {
+	if (explicit_preparation) {
 		ret = drm_atomic_prepare_submission_init(state, prepare_owner);
 		if (ret)
 			goto out;
@@ -1539,6 +1564,7 @@ out:
 
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
+out_input:
 	if (prepare_owner)
 		drm_prepare_owner_put(prepare_owner);
 	drm_atomic_free_user_input(input);
