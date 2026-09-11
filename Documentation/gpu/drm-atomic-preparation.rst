@@ -682,6 +682,13 @@ atomic DPMS helper. Turning an unregistered connector on is rejected; turning
 it off remains possible while the caller retains authority. Neither the kernel
 command nor the file adapter requires a new driver callback.
 
+The ``legacy-power`` selftest exercises off, on and suspend through the legacy
+property ioctl on an isolated VKMS output. It inspects controller activity and
+connector routing after each command, without requiring atomic negotiation for
+the commands themselves. The kernel tests separately exercise pending readers,
+authority loss and rejection; the userspace test validates real driver checks
+and the normal commit helper rather than simulating those operations.
+
 ``drm_atomic_request_create()`` stores an ordered copy of resolved assignments
 independently of any attempted display state. Each entry names its target and
 attached property. Numeric values are copied; framebuffer, blob, modeset-object
