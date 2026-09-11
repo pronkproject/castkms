@@ -30,4 +30,14 @@ unsigned int drm_atomic_user_request_target_count(const struct drm_atomic_user_r
 struct drm_mode_object *
 drm_atomic_user_request_target(const struct drm_atomic_user_request *request, unsigned int index);
 
+/*
+ * Recheck file authority under modeset locks without resolving any resource
+ * identifier again. The caller separately preserves its issuer through final
+ * acceptance; a successful check does not exclude later master/lease changes.
+ * Applying the request checks property attachment. The caller must then run
+ * the full driver check before committing the update.
+ */
+int drm_atomic_validate_user_request(const struct drm_atomic_user_request *request,
+				     struct drm_file *file);
+
 #endif
