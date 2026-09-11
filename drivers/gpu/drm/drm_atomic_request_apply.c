@@ -21,7 +21,8 @@ static bool supported_entry(const struct drm_atomic_request_entry *entry)
 		       drm_atomic_is_plane_geometry_property(obj_to_plane(entry->object),
 						      entry->property);
 	if (entry->object->type == DRM_MODE_OBJECT_CRTC)
-		return entry->property == config->prop_mode_id;
+		return entry->property == config->prop_mode_id ||
+		       entry->property == config->prop_active;
 	if (entry->object->type == DRM_MODE_OBJECT_CONNECTOR)
 		return entry->property == config->prop_crtc_id;
 	return false;
@@ -69,6 +70,10 @@ static int apply_entry(struct drm_atomic_commit *state,
 		crtc_state = drm_atomic_get_crtc_state(state, obj_to_crtc(entry->object));
 		if (IS_ERR(crtc_state))
 			return PTR_ERR(crtc_state);
+		if (entry->property == state->dev->mode_config.prop_active) {
+			crtc_state->active = entry->scalar;
+			return 0;
+		}
 		return drm_atomic_set_mode_prop_for_crtc(crtc_state, entry->blob);
 	case DRM_MODE_OBJECT_CONNECTOR:
 		connector_state = drm_atomic_get_connector_state(state,
@@ -98,7 +103,7 @@ static int apply_entry(struct drm_atomic_commit *state,
  *
  * Entries are applied in order using kernel references, without identifier or
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
- * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H and SRC_X/Y/W/H, controller MODE_ID,
+ * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H and SRC_X/Y/W/H, controller MODE_ID/ACTIVE,
  * and connector CRTC_ID.
  * Driver-private properties and asynchronous-flip validation are not supported.
  * No check or commit runs.
