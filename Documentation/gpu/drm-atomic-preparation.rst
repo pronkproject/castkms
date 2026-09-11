@@ -778,6 +778,21 @@ color change; selecting the same blob does not erase a change recorded earlier
 in the attempt. The driver's checks still decide which color transformations
 the complete configuration supports.
 
+Legacy gamma commands also maintain a table returned by the legacy read ioctl.
+``drm_atomic_set_legacy_gamma()`` records both the pending color configuration
+and an independently retained table for that readback. It selects the standard
+gamma property, or the degamma property if gamma is absent, and clears the
+other table and color matrix. The input must contain exactly the controller's
+legacy table size. Driver-specific gamma callbacks are not supported by the
+setter.
+
+The normal atomic helper publishes the cached legacy table during acceptance,
+while the controller lock is held. Failed checks and discarded attempts leave
+the cache unchanged. Ordinary atomic color updates do not change the legacy
+cache, and later color assignments within an attempt do not rewrite the
+retained legacy command. The setter is groundwork for a blocking legacy ioctl;
+it does not copy userspace arrays, wait for preparation or establish authority.
+
 Unsupported properties are rejected before any assignments are applied. There
 is no fallback that converts references back to numeric identifiers, and no
 driver-private property callback is called. Other properties are not supported
