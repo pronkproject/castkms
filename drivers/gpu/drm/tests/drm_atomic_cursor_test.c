@@ -149,11 +149,33 @@ static void failed_check_preserves_current_position(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->crtc->cursor_y, 5);
 }
 
+static int change_checked_position(struct cursor_fixture *f)
+{
+	int ret = set_position(f);
+
+	if (!ret)
+		ret = drm_atomic_check_only(f->state);
+	if (!ret)
+		ret = drm_atomic_set_legacy_cursor_position(f->state, f->crtc, 101, 103);
+	return ret;
+}
+
+static void checked_position_cannot_be_replaced(struct kunit *test)
+{
+	struct cursor_fixture *f = new_fixture(test);
+	struct __drm_crtcs_state *entry = &f->state->crtcs[drm_crtc_index(f->crtc)];
+
+	KUNIT_EXPECT_EQ(test, run_update(f, change_checked_position), -EINVAL);
+	KUNIT_EXPECT_EQ(test, entry->cursor_x, -17);
+	KUNIT_EXPECT_EQ(test, entry->cursor_y, 29);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_position_does_not_change_current_position),
 	KUNIT_CASE(accepted_position_changes_with_state),
 	KUNIT_CASE(clearing_discards_pending_position),
 	KUNIT_CASE(failed_check_preserves_current_position),
+	KUNIT_CASE(checked_position_cannot_be_replaced),
 	{}
 };
 
