@@ -39,6 +39,7 @@ drm-y := \
 	drm_atomic_plane.o \
 	drm_atomic_color.o \
 	drm_atomic_user_input.o \
+	drm_atomic_user_value.o \
 	drm_atomic_prepare.o \
 	drm_atomic_prepare_wait.o \
 	drm_atomic_prepare_set.o \
