@@ -10,6 +10,7 @@ struct drm_file;
 struct drm_prepare_owner;
 struct drm_mode_object;
 struct drm_property;
+struct drm_connector;
 
 /*
  * Commit copied property assignments using implicit preparation. The caller keeps
@@ -34,5 +35,8 @@ int drm_atomic_commit_user_request(struct drm_device *dev, struct drm_file *file
 int drm_atomic_commit_user_property(struct drm_mode_object *object,
 				    struct drm_property *property, u64 value,
 				    struct drm_file *file);
+
+/* Validate a legacy DPMS mode and apply its normalized power preference. */
+int drm_atomic_commit_user_power(struct drm_connector *connector, u64 mode, struct drm_file *file);
 
 #endif
