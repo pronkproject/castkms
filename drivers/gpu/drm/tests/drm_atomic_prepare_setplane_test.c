@@ -35,6 +35,7 @@ struct plane_fixture {
 	struct completion checked;
 	unsigned int checks, installs;
 	int worker_error;
+	bool drop_master;
 };
 
 static int check_update(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -199,8 +200,15 @@ static int finish_reader(void *data)
 	f->worker_error = drm_modeset_lock(&f->crtc->mutex, NULL);
 	if (!f->worker_error)
 		drm_modeset_unlock(&f->crtc->mutex);
-	drm_prepare_read_release(f->read, NULL);
-	f->read = NULL;
+	if (f->drop_master) {
+		int ret = drm_ioctl(f->file, DRM_IOCTL_DROP_MASTER, 0);
+
+		if (!f->worker_error)
+			f->worker_error = ret;
+	} else {
+		drm_prepare_read_release(f->read, NULL);
+		f->read = NULL;
+	}
 	set_current_state(TASK_INTERRUPTIBLE);
 	while (!kthread_should_stop()) {
 		schedule();
@@ -256,8 +264,24 @@ static void setplane_disable_waits_for_reader(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->plane->state->src_w, 0);
 }
 
+static void master_loss_cancels_setplane(struct kunit *test)
+{
+	struct plane_fixture *f = new_fixture(test);
+	struct drm_mode_set_plane request = { .plane_id = f->plane->base.id };
+	struct drm_plane_state *before = f->plane->state;
+
+	f->drop_master = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_mode_setplane(f->dev, &request, f->file->private_data), -ECANCELED);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state, before);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setplane_disable_waits_for_reader),
+	KUNIT_CASE(master_loss_cancels_setplane),
 	{}
 };
 
