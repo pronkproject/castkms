@@ -457,6 +457,27 @@ inputs across retries or enable implicit preparation of blocking atomic ioctls.
 Framebuffer and blob references, selected-object authorization, and output
 event and fence handling remain separate parts of that integration.
 
+``drm_atomic_request_create()`` stores an ordered copy of resolved assignments
+independently of any attempted display state. Each entry names its target and
+attached property. Numeric values are copied; framebuffer, blob, modeset-object
+and input-fence values carry their own retained references. Changing the
+caller's array or releasing its references after creation does not change the
+stored assignments. Duplicate entries remain in order so that request storage
+does not silently change property-assignment semantics.
+
+The caller must keep the device's modeset configuration alive. Some display
+objects and property definitions have a configuration-wide lifetime rather than
+an individually counted reference. Request creation checks device membership,
+property attachment and value representation; it neither grants access nor
+validates a complete update. Each attempted update must still check authority,
+object availability and driver constraints. Driver-private numeric properties
+must not conceal resource handles that the request has failed to retain.
+
+Preparation descriptors and output-fence pointers are rejected by this storage
+interface. They require separate handling by the transaction or ioctl adapter.
+The resolved collection is not yet connected to ordinary atomic ioctl copying
+or replay, and creating one does not acquire admission holds or submit work.
+
 ``drm_atomic_helper_shutdown()`` uses ``drm_atomic_commit_request()`` on
 participating devices.
 Its operation is to disable every output, which it reconstructs from current
