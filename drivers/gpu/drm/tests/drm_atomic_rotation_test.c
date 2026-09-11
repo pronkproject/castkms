@@ -75,11 +75,26 @@ static void rotation_requires_an_advertised_property(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, state->rotation, DRM_MODE_ROTATE_0);
 }
 
+static void rotation_requires_property_attachment(struct kunit *test)
+{
+	struct drm_plane_state *state = new_state(test, true);
+	struct drm_object_properties *properties = state->plane->base.properties;
+	unsigned int count = properties->count;
+	int ret;
+
+	properties->count = 0;
+	ret = set_rotation(state, DRM_MODE_ROTATE_90);
+	properties->count = count;
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+	KUNIT_EXPECT_EQ(test, state->rotation, DRM_MODE_ROTATE_0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(rotation_accepts_advertised_reflection),
 	KUNIT_CASE(rotation_requires_exactly_one_angle),
 	KUNIT_CASE(rotation_rejects_unadvertised_bits),
 	KUNIT_CASE(rotation_requires_an_advertised_property),
+	KUNIT_CASE(rotation_requires_property_attachment),
 	{}
 };
 
