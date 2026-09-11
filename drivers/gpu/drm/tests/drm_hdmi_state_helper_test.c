@@ -2192,14 +2192,14 @@ static void drm_test_check_disable_connector(struct kunit *test)
 						    8);
 	KUNIT_ASSERT_NOT_NULL(test, priv);
 
-	drm_modeset_acquire_init(&ctx, 0);
-
 	conn = &priv->connector;
 	preferred = find_preferred_mode(conn);
 	KUNIT_ASSERT_NOT_NULL(test, preferred);
 
 	drm = &priv->drm;
 	crtc = priv->crtc;
+
+	drm_modeset_acquire_init(&ctx, 0);
 
 retry_conn_enable:
 	ret = drm_kunit_helper_enable_crtc_connector(test, drm,
