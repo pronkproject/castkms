@@ -520,6 +520,21 @@ static void active_is_reapplied_to_current_state(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->validations, 2);
 }
 
+static void repeated_active_assignments_keep_order(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entries[2] = {
+		{ .object = &f->crtc->base, .property = f->dev->mode_config.prop_active,
+		  .type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 1 },
+		{ .object = &f->crtc->base, .property = f->dev->mode_config.prop_active,
+		  .type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 0 },
+	};
+	struct drm_atomic_request *request = new_request(test, f, entries, 2);
+
+	KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+	KUNIT_EXPECT_FALSE(test, drm_atomic_get_new_crtc_state(f->state, f->crtc)->active);
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -537,6 +552,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(connector_is_reconnected_after_clear),
 	KUNIT_CASE(null_controller_disconnects_connector),
 	KUNIT_CASE(active_is_reapplied_to_current_state),
+	KUNIT_CASE(repeated_active_assignments_keep_order),
 	{ }
 };
 
