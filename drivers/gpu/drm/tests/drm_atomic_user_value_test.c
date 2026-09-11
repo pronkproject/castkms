@@ -155,6 +155,16 @@ static void resolved_framebuffer_has_independent_ownership(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&fb->base.refcount), 1);
 }
 
+static void controller_value_is_resolved_to_identity(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry *entry = resolve_value(test, &f->plane->base,
+						 f->dev->mode_config.prop_crtc_id, f->crtc->base.id);
+
+	KUNIT_EXPECT_EQ(test, entry->type, DRM_ATOMIC_REQUEST_OBJECT);
+	KUNIT_EXPECT_PTR_EQ(test, entry->reference, &f->crtc->base);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
 	KUNIT_CASE(invalid_value_preserves_destination),
@@ -162,6 +172,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(unattached_property_is_not_resolved),
 	KUNIT_CASE(resolved_blob_has_independent_ownership),
 	KUNIT_CASE(resolved_framebuffer_has_independent_ownership),
+	KUNIT_CASE(controller_value_is_resolved_to_identity),
 	{}
 };
 
