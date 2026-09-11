@@ -107,6 +107,37 @@ static void framebuffer_survives_creator_release(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&fb->base.refcount), 1);
 }
 
+static void put_blob(void *data)
+{
+	drm_property_blob_put(data);
+}
+
+static void blob_survives_creator_release(struct kunit *test)
+{
+	struct request_fixture *f = new_fixture(test, NULL);
+	u32 contents = 123;
+	struct drm_property *prop = drm_property_create(f->dev,
+				DRM_MODE_PROP_ATOMIC | DRM_MODE_PROP_BLOB, "payload", 0);
+	struct drm_property_blob *blob;
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = prop,
+		.type = DRM_ATOMIC_REQUEST_BLOB,
+	};
+	struct drm_atomic_request *request;
+
+	KUNIT_ASSERT_NOT_NULL(test, prop);
+	blob = drm_property_create_blob(f->dev, sizeof(contents), &contents);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, blob);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_blob, blob), 0);
+	entry.blob = blob;
+	drm_object_attach_property(&f->plane->base, prop, 0);
+	request = new_request(test, f->dev, &entry, 1);
+	kunit_release_action(test, put_blob, blob);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_request_entry(request, 0)->blob, blob);
+	KUNIT_EXPECT_EQ(test, *(u32 *)blob->data, contents);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+}
+
 static void wrong_value_kind_is_rejected(struct kunit *test)
 {
 	struct request_fixture *f = new_fixture(test, NULL);
@@ -164,6 +195,7 @@ static void output_pointer_is_not_a_retained_value(struct kunit *test)
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_entries_are_copied_in_order),
 	KUNIT_CASE(framebuffer_survives_creator_release),
+	KUNIT_CASE(blob_survives_creator_release),
 	KUNIT_CASE(wrong_value_kind_is_rejected),
 	KUNIT_CASE(foreign_target_is_rejected),
 	KUNIT_CASE(output_pointer_is_not_a_retained_value),
