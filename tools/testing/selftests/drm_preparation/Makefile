@@ -11,4 +11,5 @@ TEST_GEN_PROGS += atomic-signaling
 TEST_GEN_PROGS += legacy-cursor
 TEST_GEN_PROGS += legacy-power
 TEST_GEN_PROGS += legacy-gamma
+TEST_GEN_PROGS += legacy-flip
 include ../lib.mk
