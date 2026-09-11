@@ -47,6 +47,7 @@ drm-y := \
 	drm_atomic_user_commit.o \
 	drm_atomic_user_property.o \
 	drm_atomic_user_power.o \
+	drm_atomic_user_gamma.o \
 	drm_atomic_prepare.o \
 	drm_atomic_prepare_wait.o \
 	drm_atomic_prepare_set.o \
