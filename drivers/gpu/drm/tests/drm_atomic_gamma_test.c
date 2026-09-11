@@ -155,11 +155,30 @@ static void failed_check_preserves_readback(struct kunit *test)
 	KUNIT_EXPECT_MEMEQ(test, before, f->crtc->gamma_store, sizeof(before));
 }
 
+static int change_checked_table(struct gamma_fixture *f)
+{
+	int ret = set_table(f);
+
+	if (!ret)
+		ret = drm_atomic_check_only(f->state);
+	if (!ret)
+		ret = set_table(f);
+	return ret;
+}
+
+static void checked_table_cannot_be_replaced(struct kunit *test)
+{
+	struct gamma_fixture *f = new_fixture(test, true);
+
+	KUNIT_EXPECT_EQ(test, run_update(f, change_checked_table), -EINVAL);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
 	KUNIT_CASE(accepted_table_changes_readback),
 	KUNIT_CASE(clearing_discards_pending_table),
 	KUNIT_CASE(failed_check_preserves_readback),
+	KUNIT_CASE(checked_table_cannot_be_replaced),
 	{}
 };
 
