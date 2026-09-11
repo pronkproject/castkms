@@ -2,6 +2,8 @@
 
 #include <drm/drm_atomic_request.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_kunit_helpers.h>
 #include <drm/drm_plane.h>
 #include <drm/drm_property.h>
@@ -63,6 +65,48 @@ static void scalar_entries_are_copied_in_order(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_request_entry(request, 2), NULL);
 }
 
+static void destroy_fb(struct drm_framebuffer *fb)
+{
+	drm_framebuffer_cleanup(fb);
+	kfree(fb);
+}
+
+static const struct drm_framebuffer_funcs fb_funcs = {
+	.destroy = destroy_fb,
+};
+
+static void put_fb(void *data)
+{
+	drm_framebuffer_put(data);
+}
+
+static void framebuffer_survives_creator_release(struct kunit *test)
+{
+	struct request_fixture *f = new_fixture(test, NULL);
+	struct drm_framebuffer *fb = kzalloc_obj(*fb);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_fb_id,
+		.type = DRM_ATOMIC_REQUEST_FRAMEBUFFER, .framebuffer = fb,
+	};
+	struct drm_atomic_request *request;
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, fb);
+	fb->dev = f->dev;
+	fb->format = drm_format_info(DRM_FORMAT_XRGB8888);
+	fb->width = 64;
+	ret = drm_framebuffer_init(f->dev, fb, &fb_funcs);
+	if (ret)
+		kfree(fb);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_fb, fb), 0);
+	request = new_request(test, f->dev, &entry, 1);
+	kunit_release_action(test, put_fb, fb);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_request_entry(request, 0)->framebuffer, fb);
+	KUNIT_EXPECT_EQ(test, fb->width, 64);
+	KUNIT_EXPECT_EQ(test, kref_read(&fb->base.refcount), 1);
+}
+
 static void foreign_target_is_rejected(struct kunit *test)
 {
 	struct request_fixture *a = new_fixture(test, NULL);
@@ -103,6 +147,7 @@ static void output_pointer_is_not_a_retained_value(struct kunit *test)
 
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_entries_are_copied_in_order),
+	KUNIT_CASE(framebuffer_survives_creator_release),
 	KUNIT_CASE(foreign_target_is_rejected),
 	KUNIT_CASE(output_pointer_is_not_a_retained_value),
 	{}
