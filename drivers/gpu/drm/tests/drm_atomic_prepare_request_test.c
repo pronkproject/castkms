@@ -30,6 +30,12 @@ struct request_fixture {
 	bool fail_rebuild;
 	struct task_struct *interrupt;
 	u64 replacement_color;
+	unsigned int signals_prepared;
+	unsigned int signals_completed;
+	unsigned int signals_accepted;
+	bool signals_live;
+	bool signaling_order_error;
+	int signaling_error;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -351,6 +357,51 @@ static void interrupted_request_preserves_unreleased_reader(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 1);
 }
 
+static int prepare_request_signaling(struct drm_atomic_commit *state, void *data)
+{
+	struct request_fixture *f = data;
+
+	f->signaling_order_error |= f->signals_live || f->read ||
+		!drm_modeset_is_locked(&f->crtc->mutex) || f->checks != f->builds;
+	f->signals_prepared++;
+	f->signals_live = true;
+	return f->signaling_error;
+}
+
+static void complete_request_signaling(struct drm_atomic_commit *state, bool accepted, void *data)
+{
+	struct request_fixture *f = data;
+
+	f->signaling_order_error |= !f->signals_live || !drm_modeset_is_locked(&f->crtc->mutex);
+	f->signals_completed++;
+	f->signals_accepted += accepted;
+	f->signals_live = false;
+}
+
+static const struct drm_atomic_request_callbacks signaling_callbacks = {
+	.build = build_request,
+	.prepare_signaling = prepare_request_signaling,
+	.complete_signaling = complete_request_signaling,
+};
+
+static void signaling_waits_for_preparation(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request_with_callbacks(f->dev, NULL,
+								     &signaling_callbacks, f), 0);
+	kthread_stop(f->worker);
+	f->worker = NULL;
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->builds, 2);
+	KUNIT_EXPECT_EQ(test, f->signals_prepared, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_completed, 1);
+	KUNIT_EXPECT_EQ(test, f->signals_accepted, 1);
+	KUNIT_EXPECT_FALSE(test, f->signals_live);
+	KUNIT_EXPECT_FALSE(test, f->signaling_order_error);
+}
+
 struct contended_request {
 	struct request_fixture *display;
 	struct drm_crtc *other;
@@ -506,6 +557,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(contended_request_rebuilds_after_real_deadlock),
 	KUNIT_CASE(suspend_saves_the_state_disabled_after_wait),
 	KUNIT_CASE(failed_suspend_returns_no_saved_state),
+	KUNIT_CASE(signaling_waits_for_preparation),
 	{}
 };
 
