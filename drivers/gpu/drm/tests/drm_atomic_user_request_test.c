@@ -136,11 +136,39 @@ static void inconsistent_counts_are_rejected(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, PTR_ERR(resolve_request(f->dev, &input)), -EINVAL);
 }
 
+static void put_blob(void *data)
+{
+	drm_property_blob_put(data);
+}
+
+static void failed_property_releases_preceding_values(struct kunit *test)
+{
+	struct user_request_fixture *f = new_fixture(test);
+	u32 contents = 42;
+	struct drm_property_blob *blob = drm_property_create_blob(f->dev, sizeof(contents), &contents);
+	u32 objects[] = { f->crtc->base.id };
+	u32 counts[] = { 2 };
+	u32 properties[] = { f->dev->mode_config.prop_mode_id->base.id, 0 };
+	u64 values[2];
+	struct drm_atomic_user_input input = {
+		.object_count = 1, .property_count = 2,
+		.objects = objects, .counts = counts, .properties = properties, .values = values,
+	};
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, blob);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_blob, blob), 0);
+	values[0] = blob->base.id;
+	values[1] = 0;
+	KUNIT_EXPECT_EQ(test, PTR_ERR(resolve_request(f->dev, &input)), -ENOENT);
+	KUNIT_EXPECT_EQ(test, kref_read(&blob->base.refcount), 1);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(empty_request_has_no_targets_or_values),
 	KUNIT_CASE(repeated_targets_keep_ordered_independent_values),
 	KUNIT_CASE(zero_property_group_retains_its_target),
 	KUNIT_CASE(inconsistent_counts_are_rejected),
+	KUNIT_CASE(failed_property_releases_preceding_values),
 	{}
 };
 
