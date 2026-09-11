@@ -7,6 +7,7 @@
 #include <drm/drm_kunit_helpers.h>
 #include <drm/drm_property.h>
 #include <kunit/test.h>
+#include <linux/dma-fence.h>
 
 struct apply_fixture {
 	struct drm_device *dev;
@@ -246,6 +247,53 @@ static void duplicate_framebuffer_assignments_keep_order(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&fb->base.refcount), 2);
 }
 
+static const char *fence_name(struct dma_fence *fence)
+{
+	return "drm-request-apply-test";
+}
+
+static const struct dma_fence_ops fence_ops = {
+	.get_driver_name = fence_name,
+	.get_timeline_name = fence_name,
+};
+
+static void put_fence(void *data)
+{
+	dma_fence_put(data);
+}
+
+static struct dma_fence *new_fence(struct kunit *test)
+{
+	struct dma_fence *fence = kzalloc_obj(*fence);
+
+	KUNIT_ASSERT_NOT_NULL(test, fence);
+	dma_fence_init(fence, &fence_ops, NULL, dma_fence_context_alloc(1), 1);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_fence, fence), 0);
+	return fence;
+}
+
+static void fence_is_reapplied_after_clear(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct dma_fence *fence = new_fence(test);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .property = f->dev->mode_config.prop_in_fence_fd,
+		.type = DRM_ATOMIC_REQUEST_FENCE, .fence = fence,
+	};
+	struct drm_atomic_request *request = new_request(test, f, &entry, 1);
+	unsigned int i;
+
+	kunit_release_action(test, put_fence, fence);
+	for (i = 0; i < 2; i++) {
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_plane_state(f->state, f->plane)->fence,
+				    fence);
+		KUNIT_EXPECT_EQ(test, kref_read(&fence->refcount), 2);
+		drm_atomic_commit_clear(f->state);
+		KUNIT_EXPECT_EQ(test, kref_read(&fence->refcount), 1);
+	}
+}
+
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
@@ -253,6 +301,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(authority_callback_is_required),
 	KUNIT_CASE(foreign_update_is_rejected),
 	KUNIT_CASE(duplicate_framebuffer_assignments_keep_order),
+	KUNIT_CASE(fence_is_reapplied_after_clear),
 	{ }
 };
 
