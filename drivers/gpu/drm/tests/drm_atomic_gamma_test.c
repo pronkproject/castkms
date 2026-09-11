@@ -102,8 +102,30 @@ static void pending_table_does_not_change_readback(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, new->color_mgmt_changed);
 }
 
+static int accept_table(struct gamma_fixture *f)
+{
+	int ret = set_table(f);
+
+	if (!ret)
+		ret = drm_atomic_check_only(f->state);
+	if (!ret)
+		ret = drm_atomic_helper_swap_state(f->state, false);
+	return ret;
+}
+
+static void accepted_table_changes_readback(struct kunit *test)
+{
+	const u16 expected[] = { 11, 19, 13, 23, 17, 29 };
+	struct gamma_fixture *f = new_fixture(test, true);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_table), 0);
+	KUNIT_EXPECT_MEMEQ(test, expected, f->crtc->gamma_store, sizeof(expected));
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->gamma_lut, f->table);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
+	KUNIT_CASE(accepted_table_changes_readback),
 	{}
 };
 
