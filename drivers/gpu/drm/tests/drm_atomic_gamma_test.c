@@ -226,6 +226,30 @@ static void legacy_table_clears_other_color_stages(struct kunit *test)
 	KUNIT_EXPECT_NULL(test, new->ctm);
 }
 
+static int accept_with_color_cleared(struct gamma_fixture *f)
+{
+	int ret = set_table(f);
+
+	if (ret)
+		return ret;
+	drm_property_replace_blob(&drm_atomic_get_new_crtc_state(f->state, f->crtc)->gamma_lut,
+				  NULL);
+	ret = drm_atomic_check_only(f->state);
+	if (!ret)
+		ret = drm_atomic_helper_swap_state(f->state, false);
+	return ret;
+}
+
+static void later_color_assignment_preserves_legacy_command(struct kunit *test)
+{
+	const u16 expected[] = { 11, 19, 13, 23, 17, 29 };
+	struct gamma_fixture *f = new_fixture(test, true);
+
+	KUNIT_ASSERT_EQ(test, run_update(f, accept_with_color_cleared), 0);
+	KUNIT_EXPECT_NULL(test, f->crtc->state->gamma_lut);
+	KUNIT_EXPECT_MEMEQ(test, expected, f->crtc->gamma_store, sizeof(expected));
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(pending_table_does_not_change_readback),
 	KUNIT_CASE(accepted_table_changes_readback),
@@ -235,6 +259,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(degamma_property_accepts_legacy_table),
 	KUNIT_CASE(short_table_is_rejected_before_assignment),
 	KUNIT_CASE(legacy_table_clears_other_color_stages),
+	KUNIT_CASE(later_color_assignment_preserves_legacy_command),
 	{}
 };
 
