@@ -592,6 +592,21 @@ struct drm_crtc_funcs {
 				  void *data);
 
 	/**
+	 * @cursor_request:
+	 *
+	 * Execute a resolved universal cursor command without caller-held modeset
+	 * locks. Inputs remain owned by the caller until return. Revalidate access
+	 * on every attempt and bind installation to the retained issuer. Return
+	 * zero on success or a negative error. Atomic helper drivers may use
+	 * drm_atomic_helper_cursor_request(). Preparation-enabled devices without
+	 * this operation reject legacy cursor commands.
+	 */
+	int (*cursor_request)(const struct drm_cursor_update *update,
+			      struct drm_prepare_owner *owner,
+			      int (*validate)(const struct drm_cursor_update *update, void *data),
+			      void *data);
+
+	/**
 	 * @page_flip:
 	 *
 	 * Legacy entry point to schedule a flip to the given framebuffer.
