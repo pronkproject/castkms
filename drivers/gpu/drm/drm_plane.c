@@ -35,6 +35,7 @@
 #include <drm/drm_vblank.h>
 
 #include "drm_crtc_internal.h"
+#include "drm_atomic_user_commit.h"
 
 /**
  * DOC: overview
@@ -1424,6 +1425,9 @@ int drm_mode_page_flip_ioctl(struct drm_device *dev,
 
 	if (!drm_lease_held(file_priv, plane->base.id))
 		return -EACCES;
+
+	if (dev->mode_config.preparation)
+		return drm_atomic_submit_user_flip(crtc, page_flip, file_priv);
 
 	if (crtc->funcs->page_flip_target) {
 		u32 current_vblank;
