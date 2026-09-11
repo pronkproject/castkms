@@ -2383,10 +2383,10 @@ static void drm_test_check_hdmi_color_format_420_only(struct kunit *test)
 				test_edid_hdmi_1080p_rgb_yuv_4k_yuv420_dc_max_200mhz);
 	KUNIT_ASSERT_NOT_NULL(test, priv);
 
-	drm_modeset_acquire_init(&ctx, 0);
-
 	dank = find_420_only_mode(&priv->connector);
 	KUNIT_ASSERT_NOT_NULL(test, dank);
+
+	drm_modeset_acquire_init(&ctx, 0);
 
 	state = drm_kunit_helper_atomic_state_alloc(test, &priv->drm, &ctx);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
