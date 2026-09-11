@@ -117,9 +117,26 @@ static void null_destinations_still_include_the_controller(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->applied_address, 0);
 }
 
+static void detached_output_property_is_rejected_before_assignment(struct kunit *test)
+{
+	u64 addresses[] = { 0x1000, 0x2000, 0 };
+	struct fence_fixture *f = new_fixture(test, addresses);
+	struct drm_object_properties *properties = f->crtc->base.properties;
+	unsigned int count = properties->count;
+	int ret;
+
+	properties->count = 0;
+	ret = apply_destinations(f);
+	properties->count = count;
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+	KUNIT_EXPECT_FALSE(test, f->included_crtc);
+	KUNIT_EXPECT_EQ(test, f->applied_address, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(last_nonnull_destination_is_reapplied),
 	KUNIT_CASE(null_destinations_still_include_the_controller),
+	KUNIT_CASE(detached_output_property_is_rejected_before_assignment),
 	{}
 };
 
