@@ -279,9 +279,26 @@ static void master_loss_cancels_setplane(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->plane->state, before);
 }
 
+static void setplane_requires_request_callback(struct kunit *test)
+{
+	static const struct drm_plane_funcs unsupported = {
+		.reset = drm_atomic_helper_plane_reset,
+		.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
+		.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
+	};
+	struct plane_fixture *f = new_fixture(test);
+	struct drm_mode_set_plane request = { .plane_id = f->plane->base.id };
+
+	f->plane->funcs = &unsupported;
+	KUNIT_EXPECT_EQ(test, drm_mode_setplane(f->dev, &request, f->file->private_data), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setplane_disable_waits_for_reader),
 	KUNIT_CASE(master_loss_cancels_setplane),
+	KUNIT_CASE(setplane_requires_request_callback),
 	{}
 };
 
