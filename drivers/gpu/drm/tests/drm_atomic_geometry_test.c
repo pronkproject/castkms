@@ -94,10 +94,26 @@ static void property_names_do_not_select_geometry(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->state.crtc_x, 17);
 }
 
+static void geometry_property_must_be_attached(struct kunit *test)
+{
+	struct geometry_fixture *f = new_fixture(test);
+	struct drm_object_properties *properties = f->state.plane->base.properties;
+	int count = properties->count;
+	int ret;
+
+	f->state.crtc_x = 17;
+	properties->count = 0;
+	ret = set_geometry(&f->state, f->dev->mode_config.prop_crtc_x, 42);
+	properties->count = count;
+	KUNIT_EXPECT_EQ(test, ret, -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->state.crtc_x, 17);
+}
+
 static struct kunit_case geometry_tests[] = {
 	KUNIT_CASE(coordinates_keep_their_representation),
 	KUNIT_CASE(invalid_values_leave_geometry_unchanged),
 	KUNIT_CASE(property_names_do_not_select_geometry),
+	KUNIT_CASE(geometry_property_must_be_attached),
 	{ }
 };
 
