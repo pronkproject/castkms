@@ -21,7 +21,7 @@ struct gamma_fixture {
 	struct drm_prepare_read_claim *read;
 	struct task_struct *worker;
 	struct completion checked;
-	unsigned int checks, installations;
+	unsigned int checks, installations, validations;
 	u16 before[6], during[6];
 	int worker_error;
 	bool revoke;
@@ -188,9 +188,31 @@ static void revoked_gamma_command_preserves_readback(struct kunit *test)
 	KUNIT_EXPECT_MEMEQ(test, f->before, f->crtc->gamma_store, sizeof(f->before));
 }
 
+static int validate_again(struct drm_crtc *crtc, void *data)
+{
+	struct gamma_fixture *f = data;
+
+	return ++f->validations == 1 ? 0 : -EACCES;
+}
+
+static void gamma_command_revalidates_after_wait(struct kunit *test)
+{
+	struct gamma_fixture *f = new_fixture(test);
+	int ret;
+
+	start_reader(test, f);
+	ret = drm_atomic_commit_legacy_gamma(f->crtc, f->table, f->owner, validate_again, f);
+	join_reader(test, f);
+	KUNIT_EXPECT_EQ(test, ret, -EACCES);
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+	KUNIT_EXPECT_MEMEQ(test, f->before, f->crtc->gamma_store, sizeof(f->before));
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(gamma_command_waits_without_changing_readback),
 	KUNIT_CASE(revoked_gamma_command_preserves_readback),
+	KUNIT_CASE(gamma_command_revalidates_after_wait),
 	{}
 };
 
