@@ -620,6 +620,14 @@ cursor path. Kernel callers use the resolved helper without a file or a buffer
 handle; the file adapter rechecks master and controller/plane leases on every
 attempt and binds acceptance to the original issuer.
 
+The ``legacy-cursor`` selftest in ``tools/testing/selftests/drm_preparation``
+exercises both cursor ioctl versions with real VKMS buffers. It checks hidden
+and visible moves, rejection of an invalid image handle, image lifetime after
+closing the original buffer handle, and hiding the image. Run it only on an
+isolated, single-output VKMS device with preparation enabled. It changes the
+display configuration and leaves the output disabled. Reader waits and authority
+cancellation are covered separately by the kernel cursor tests.
+
 Rebuilding an ordinary atomic ioctl needs additional input retention. In
 particular, an input-fence descriptor number is not a stable identity: another
 thread may close it and reuse the number while preparation waits. A request
