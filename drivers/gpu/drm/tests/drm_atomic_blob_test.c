@@ -59,8 +59,30 @@ static void destination_retains_resolved_blob(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, kref_read(&f->value->base.refcount), 1);
 }
 
+static void size_failure_preserves_destination(struct kunit *test)
+{
+	struct blob_fixture *f = new_fixture(test);
+	struct drm_property_blob *old = new_blob(test, f->dev);
+	struct drm_property_blob *next = new_blob(test, f->dev);
+	const ssize_t limits[][3] = { { 8, -1, -1 }, { -1, 8, -1 }, { -1, -1, 3 } };
+	unsigned int i;
+	bool replaced = false;
+
+	drm_property_replace_blob(&f->value, old);
+	for (i = 0; i < ARRAY_SIZE(limits); i++) {
+		KUNIT_EXPECT_EQ(test, drm_property_replace_blob_checked(f->dev, &f->value,
+				 next, limits[i][0], limits[i][1], limits[i][2], &replaced),
+				 -EINVAL);
+		KUNIT_EXPECT_PTR_EQ(test, f->value, old);
+		KUNIT_EXPECT_FALSE(test, replaced);
+		KUNIT_EXPECT_EQ(test, kref_read(&old->base.refcount), 2);
+		KUNIT_EXPECT_EQ(test, kref_read(&next->base.refcount), 1);
+	}
+}
+
 static struct kunit_case blob_tests[] = {
 	KUNIT_CASE(destination_retains_resolved_blob),
+	KUNIT_CASE(size_failure_preserves_destination),
 	{ }
 };
 
