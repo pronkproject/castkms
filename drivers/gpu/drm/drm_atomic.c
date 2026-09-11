@@ -325,6 +325,8 @@ void drm_atomic_commit_default_clear(struct drm_atomic_commit *state)
 		state->crtcs[i].new_state = NULL;
 		state->crtcs[i].update_cursor_position = false;
 		state->crtcs[i].power_from_connectors = false;
+		drm_property_blob_put(state->crtcs[i].legacy_gamma);
+		state->crtcs[i].legacy_gamma = NULL;
 
 		if (state->crtcs[i].commit) {
 			drm_crtc_commit_put(state->crtcs[i].commit);
