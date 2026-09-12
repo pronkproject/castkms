@@ -150,6 +150,15 @@ available through the image interface. A worker reserves a free image before
 taking any claim on the displayed source. If both images are occupied, it
 reports busy without waiting for reuse or retaining source access.
 
+Private images also share a 16 MiB budget for their output. Each image keeps
+its page-rounded allocation charged until the storage is released, including
+when a caller retains an image after its pool closes. Replacement pools must
+use the same budget. If older images leave insufficient room, allocation
+reports busy rather than waiting for their readers. An unsuccessful pool
+allocation returns any bytes reserved for its partially constructed images.
+Closing a pool therefore prevents further reservations without making retained
+storage disappear from the accounting.
+
 Source mapping resources are prepared before admission. The read callback then
 checks the retained producer results and copies into the private image outside
 display, publication and reservation locks. Returning from the callback releases
