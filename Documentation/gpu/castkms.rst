@@ -165,6 +165,14 @@ and buffer destruction run outside the worker's result lock. The lower
 composition, pool and image modules do not depend on the worker or device
 registration.
 
+Request callers hold a separate handle rather than the shutdown owner. Handles
+may be cloned, but they share one latest result: taking it through one handle
+consumes it for all of them. Dropping a handle does not stop execution. Dropping
+the unique owner rejects further requests through every surviving handle,
+discards the cached result and drains work. An image already taken by a caller
+keeps its private storage, independently of that shutdown. These handles remain
+internal; they grant no permission to deliver pixels to a capture recipient.
+
 These helpers do not yet implement registered capture destinations, capture
 authorization, a display clock, or the transition to a userspace GPU executor.
 The two-image host pool is a private-storage limit, not a receiver frame-rate
