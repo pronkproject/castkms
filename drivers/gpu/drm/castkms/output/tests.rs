@@ -25,7 +25,10 @@ mod cases {
             Selection::DifferentFramebuffer,
         )
         .copied();
-        output.publish(Some((first_owner, first_content)));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some((first_owner, first_content))),
+        );
         let candidate_owner = Provenance::for_update(
             None,
             PreviousOwner::DifferentFramebuffer,
@@ -39,17 +42,26 @@ mod cases {
         {
             let state = output.state.lock();
             match &*state {
-                Publication::Open(Some((owner, content))) => {
+                Publication::Open(Some(Generation {
+                    scene: Some((owner, content)),
+                    ..
+                })) => {
                     assert_eq!(*owner, first_owner);
                     assert_eq!(*content, first_content);
                 }
                 _ => return Err(EINVAL),
             }
         }
-        output.publish(Some((candidate_owner, candidate_content)));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some((candidate_owner, candidate_content))),
+        );
         let state = output.state.lock();
         match &*state {
-            Publication::Open(Some((owner, content))) => {
+            Publication::Open(Some(Generation {
+                scene: Some((owner, content)),
+                ..
+            })) => {
                 assert_eq!(*owner, Some(2));
                 assert_eq!(*content, candidate_content);
             }
@@ -71,21 +83,33 @@ mod cases {
             Selection::RetainedFramebuffer,
         )
         .copied();
-        output.publish(Some((owner, next_content)));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some((owner, next_content))),
+        );
         {
             let state = output.state.lock();
             match &*state {
-                Publication::Open(Some((owner, content))) => {
+                Publication::Open(Some(Generation {
+                    scene: Some((owner, content)),
+                    ..
+                })) => {
                     assert_eq!(*owner, Some(1));
                     assert_eq!(*content, next_content);
                 }
                 _ => return Err(EINVAL),
             }
         }
-        output.publish(None);
-        assert!(matches!(*output.state.lock(), Publication::Open(None)));
+        output.publish(Source::new(2)?, SceneUpdate::Replace(None));
+        assert!(matches!(
+            *output.state.lock(),
+            Publication::Open(Some(Generation { scene: None, .. }))
+        ));
         output.close();
-        output.publish(Some((Some(2), next_content)));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some((Some(2), next_content))),
+        );
         assert!(matches!(*output.state.lock(), Publication::Closed));
         Ok(())
     }
@@ -100,9 +124,15 @@ mod cases {
     fn replacement_releases_previous_resource() -> Result {
         let drops = Arc::new(AtomicUsize::new(0), GFP_KERNEL)?;
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        output.publish(Some(Resource(drops.clone())));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
         assert_eq!(drops.load(Ordering::Relaxed), 0);
-        output.publish(Some(Resource(drops.clone())));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
         assert_eq!(drops.load(Ordering::Relaxed), 1);
         output.close();
         assert_eq!(drops.load(Ordering::Relaxed), 2);
@@ -113,10 +143,16 @@ mod cases {
     fn blank_releases_source_without_closing_output() -> Result {
         let drops = Arc::new(AtomicUsize::new(0), GFP_KERNEL)?;
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        output.publish(Some(Resource(drops.clone())));
-        output.publish(None);
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
+        output.publish(Source::new(2)?, SceneUpdate::Replace(None));
         assert_eq!(drops.load(Ordering::Relaxed), 1);
-        output.publish(Some(Resource(drops.clone())));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
         assert_eq!(drops.load(Ordering::Relaxed), 1);
         output.close();
         assert_eq!(drops.load(Ordering::Relaxed), 2);
@@ -127,10 +163,16 @@ mod cases {
     fn close_rejects_late_publication() -> Result {
         let drops = Arc::new(AtomicUsize::new(0), GFP_KERNEL)?;
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        output.publish(Some(Resource(drops.clone())));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
         output.close();
-        output.publish(Some(Resource(drops.clone())));
-        output.publish(None);
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
+        output.publish(Source::new(2)?, SceneUpdate::Replace(None));
         output.close();
         assert_eq!(drops.load(Ordering::Relaxed), 2);
         assert!(matches!(*output.state.lock(), Publication::Closed));
@@ -141,7 +183,10 @@ mod cases {
     fn discarded_candidate_does_not_replace_current() -> Result {
         let drops = Arc::new(AtomicUsize::new(0), GFP_KERNEL)?;
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        output.publish(Some(Resource(drops.clone())));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
         drop(Resource(drops.clone()));
         assert_eq!(drops.load(Ordering::Relaxed), 1);
         assert!(matches!(*output.state.lock(), Publication::Open(Some(_))));
@@ -154,7 +199,10 @@ mod cases {
     fn output_destruction_releases_current() -> Result {
         let drops = Arc::new(AtomicUsize::new(0), GFP_KERNEL)?;
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        output.publish(Some(Resource(drops.clone())));
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Resource(drops.clone()))),
+        );
         drop(output);
         assert_eq!(drops.load(Ordering::Relaxed), 1);
         Ok(())
@@ -171,8 +219,11 @@ mod cases {
     #[test]
     fn destruction_runs_outside_publication_lock() -> Result {
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        output.publish(Some(Reenter(output.clone())));
-        output.publish(None);
+        output.publish(
+            Source::new(2)?,
+            SceneUpdate::Replace(Some(Reenter(output.clone()))),
+        );
+        output.publish(Source::new(2)?, SceneUpdate::Replace(None));
         assert!(matches!(*output.state.lock(), Publication::Closed));
         Ok(())
     }
