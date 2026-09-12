@@ -163,9 +163,18 @@ Source mapping resources are prepared before admission. The read callback then
 checks the retained producer results and copies into the private image outside
 display, publication and reservation locks. Returning from the callback releases
 the claim before unmapping, which can acquire the buffer's reservation lock.
-A completed private image retains its content serial and attribution,
+A completed private image retains its layout, content serial and attribution,
 but not the source framebuffer, mapping or claim. Keeping that image therefore
 does not prevent the compositor from reusing its source buffer.
+
+The completed image's layout remains valid after worker replacement or device
+shutdown. Its packed pixel byte count excludes the page padding included in
+allocation accounting. A full copy requires an exact-size destination and
+rejects a size mismatch before changing any destination bytes. It creates an
+independent host result without exporting the private image or reacquiring the
+source. The caller remains responsible for recipient authorization before
+exposing the copied pixels; copying into generic capture job storage does not
+establish that permission.
 
 ``host_compositor/worker.rs`` coalesces queued requests onto one work item and
 retains only the output publication, pool and latest result. Its unique shutdown
