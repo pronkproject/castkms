@@ -42,25 +42,49 @@ pub(super) struct Geometry {
 }
 
 /// The framebuffer reference preserves storage lifetime, not the contents of that storage.
+#[derive(Clone)]
 pub(super) struct Scene {
-    _framebuffer: FramebufferRef<Driver>,
-    _source: [u32; 4],
-    _destination: [u32; 2],
-    _content: ContentSerial,
+    framebuffer: FramebufferRef<Driver>,
+    geometry: Geometry,
+    content: ContentSerial,
     // Historical attribution resolved by the accepted transaction, not live capture authority.
-    _owner: Option<MasterRef<Driver>>,
-    _producer: Option<Arc<Dependencies>>,
+    owner: Option<MasterRef<Driver>>,
+    producer: Option<Arc<Dependencies>>,
 }
 
 impl Scene {
-    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(super) fn framebuffer(&self) -> &kernel::drm::kms::framebuffer::Framebuffer<Driver> {
+        &self.framebuffer
+    }
+
+    pub(super) fn geometry(&self) -> Geometry {
+        self.geometry
+    }
+
+    pub(super) fn producer_result(&self) -> Result {
+        let mut pending = false;
+        if let Some(records) = &self.producer {
+            for fence in records.iter() {
+                match fence.status() {
+                    kernel::dma_fence::Status::Pending => pending = true,
+                    kernel::dma_fence::Status::Complete(result) => result?,
+                }
+            }
+        }
+        if pending {
+            Err(EAGAIN)
+        } else {
+            Ok(())
+        }
+    }
+
     pub(super) fn content_serial(&self) -> ContentSerial {
-        self._content
+        self.content
     }
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_failed(&self) -> bool {
-        self._producer.as_ref().is_some_and(|records| {
+        self.producer.as_ref().is_some_and(|records| {
             records
                 .iter()
                 .any(|fence| matches!(fence.status(), kernel::dma_fence::Status::Complete(Err(_))))
@@ -69,16 +93,15 @@ impl Scene {
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_status(&self) -> Option<kernel::dma_fence::Status> {
-        self._producer
+        self.producer
             .as_ref()?
             .iter()
             .next()
             .map(|fence| fence.status())
     }
 
-    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn owner(&self) -> Option<&MasterRef<Driver>> {
-        self._owner.as_ref()
+        self.owner.as_ref()
     }
 
     pub(super) fn new(
@@ -89,12 +112,11 @@ impl Scene {
         producer: Option<Arc<Dependencies>>,
     ) -> Self {
         Self {
-            _framebuffer: framebuffer,
-            _source: geometry.source,
-            _destination: geometry.destination,
-            _content: content,
-            _owner: owner,
-            _producer: producer,
+            framebuffer,
+            geometry,
+            content,
+            owner,
+            producer,
         }
     }
 }
