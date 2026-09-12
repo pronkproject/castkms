@@ -551,6 +551,9 @@ impl<T: ?Sized, const ID: u64> Work<T, ID> {
     }
 }
 
+#[cfg(CONFIG_KUNIT)]
+mod tests;
+
 /// Declares that a type contains a [`Work<T, ID>`].
 ///
 /// The intended way of using this trait is via the [`impl_has_work!`] macro. You can use the macro
