@@ -2,6 +2,8 @@
 
 //! Output publication and shutdown, independent of the retained scene representation.
 
+mod cpu_read;
+
 use kernel::{
     drm::preparation::Source,
     prelude::*,
