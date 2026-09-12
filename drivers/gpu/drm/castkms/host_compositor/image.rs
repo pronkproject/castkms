@@ -68,6 +68,10 @@ impl Image {
         self.layout.dimensions()
     }
 
+    pub(super) fn layout(&self) -> Layout {
+        self.layout
+    }
+
     fn row(&self, y: u32) -> Result<SysMem<'_, [u8]>> {
         let (_, height) = self.dimensions();
         let pitch = self.layout.pitch();
