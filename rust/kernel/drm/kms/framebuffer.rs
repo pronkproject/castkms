@@ -409,6 +409,12 @@ impl<T: KmsDriver> Framebuffer<T> {
         unsafe { (*self.0.get()).height }
     }
 
+    /// Whether the framebuffer was created with interlaced scanlines.
+    pub fn is_interlaced(&self) -> bool {
+        // SAFETY: Creation flags are immutable while the initialized framebuffer is retained.
+        unsafe { (*self.0.get()).flags & bindings::DRM_MODE_FB_INTERLACED as c_int != 0 }
+    }
+
     /// Return the framebuffer's DRM fourcc pixel format.
     pub fn format(&self) -> u32 {
         // SAFETY: An initialized framebuffer has a valid format descriptor.
