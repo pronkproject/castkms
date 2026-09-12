@@ -89,6 +89,50 @@ mod cases {
     }
 
     #[test]
+    fn device_shutdown_closes_registered_host_configuration() -> Result {
+        let fixture = Fixture::new()?;
+        let configuration = fixture.drm.device().host.clone();
+        check(matches!(configuration.current(), Err(EAGAIN)))?;
+        let handle = configuration.configure(fixture.drm.device(), Layout::new(640, 480)?)?;
+        handle.request()?;
+        fixture.state.close();
+        fixture.state.close();
+        check(handle.request() == Err(ENODEV))?;
+        check(handle.take_outcome().is_none())?;
+        check(matches!(configuration.current(), Err(ENODEV)))?;
+        check(matches!(
+            configuration.configure(fixture.drm.device(), Layout::new(3, 2)?),
+            Err(ENODEV)
+        ))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_completed_image_survives_device_owner_shutdown() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let handle = fixture
+            .drm
+            .device()
+            .host
+            .configure(fixture.drm.device(), Layout::new(640, 480)?)?;
+        handle.request()?;
+        handle.flush_for_test();
+        let Some(Outcome::Image(image)) = handle.take_outcome() else {
+            return Err(EINVAL);
+        };
+        fixture.state.close();
+        check(fixture.drm.device().output.inspect(|scene| scene.is_none()))?;
+        check(handle.request() == Err(ENODEV))?;
+        let mut row = [0xff; 2560];
+        image.read_row(0, &mut row)?;
+        check(row == [0; 2560])?;
+        drop(image);
+        Ok(())
+    }
+
+    #[test]
     fn surviving_configuration_references_cannot_restart_after_owner_release() -> Result {
         let fixture = Fixture::new()?;
         let owner = Owner::new(fixture.drm.device().output.clone())?;
