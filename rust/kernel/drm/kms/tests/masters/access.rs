@@ -27,6 +27,37 @@ fn make_current(client: &HandleClient) -> Result {
     Ok(())
 }
 
+// Attach a private client's identity to its retained lessor, with no leased objects.
+fn associate_lessee(client: &HandleClient, owner: &HandleClient) -> Result {
+    let file = client.file();
+    let dev = file.device_raw();
+    if dev != owner.file().device_raw() {
+        return Err(EINVAL);
+    }
+    // SAFETY: Both clients are private to the fixture and remain live throughout setup.
+    let lessor = unsafe { (*owner.file().as_raw()).master };
+    // SAFETY: The private client has not published an association to another task.
+    if lessor.is_null() || unsafe { !(*file.as_raw()).master.is_null() } {
+        return Err(EINVAL);
+    }
+    // SAFETY: The client retains the initialized device; success returns one master reference.
+    let master = NonNull::new(unsafe { bindings::drm_master_create(dev) }).ok_or(ENOMEM)?;
+    // SAFETY: Initialize the new identity's immutable lessor before publishing it to the file.
+    // The native object-ID lock protects the lessor's list. Each link is live and initialized;
+    // native master destruction removes the list entry and releases the lessor reference.
+    unsafe {
+        bindings::mutex_lock(&raw mut (*dev).mode_config.idr_mutex);
+        (*master.as_ptr()).lessor = bindings::drm_master_get(lessor);
+        bindings::list_add_tail(
+            &raw mut (*master.as_ptr()).lessee_list,
+            &raw mut (*lessor).lessees,
+        );
+        bindings::mutex_unlock(&raw mut (*dev).mode_config.idr_mutex);
+        (*file.as_raw()).master = master.as_ptr();
+    }
+    Ok(())
+}
+
 #[track_caller]
 fn check(condition: bool) -> Result {
     if condition {
@@ -45,6 +76,37 @@ fn check(condition: bool) -> Result {
 #[kunit_tests(rust_drm_master_access)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lease_identity_is_independent_of_current_control() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-lease-identity", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let owner = HandleClient::new(&dev)?;
+        let client = HandleClient::new(&dev)?;
+        make_current(&owner)?;
+        associate_lessee(&client, &owner)?;
+        let root = owner.file().associated_master().ok_or(EINVAL)?;
+        let lessee = client.file().associated_master().ok_or(EINVAL)?;
+        check(!root.is_lessee())?;
+        check(lessee.is_lessee())?;
+        {
+            // Even an empty lease has a current root. Identity does not imply object access.
+            let _guard = lessee.lock_current().ok_or(EINVAL)?;
+        }
+        drop(owner);
+        check(root.lock_current().is_none())?;
+        check(lessee.lock_current().is_none())?;
+        check(!root.is_lessee())?;
+        check(lessee.is_lessee())?;
+        drop(client);
+        check(lessee.clone().is_lessee())?;
+        drop(root);
+        drop(lessee);
+        drop(dev);
+        check(counts.objects.load(Ordering::Relaxed) == 0)?;
+        Ok(())
+    }
 
     #[test]
     fn retained_identity_refuses_access_after_file_close() -> Result {
