@@ -244,6 +244,30 @@ authorization, a display clock, or the transition to a userspace GPU executor.
 The two-image host pool is a private-storage limit, not a receiver frame-rate
 policy or a limit on future GPU queues.
 
+Private CPU capture results
+---------------------------
+
+The capture layer has an internal adapter for completing CPU requests from
+retained host images. It receives a claimed job from the shared DRM capture
+code. The job's result storage cannot be read by a consumer until completion.
+Receiving a job does not itself establish permission to deliver a particular
+image: the caller must authorize both the image and recipient before using
+the adapter. Public capture remains disabled.
+
+The adapter copies packed pixels and sets the unused fourth byte of every
+XRGB pixel to ``0xff`` before completing the job. The visible color components
+are unchanged, and no page padding is copied. A size mismatch completes with
+the copy error rather than publishing an image. Cancellation or revocation
+may still suppress delivery when the copy succeeds. No scanout source is
+claimed, and completed consumer results own storage independently of the
+private compositor images.
+
+Copying and then defining unused bytes is appropriate only because the CPU
+job's storage stays private during both operations. A consumer of an exported
+DMA-BUF could observe its contents during the copy. The adapter therefore
+accepts private CPU jobs, not arbitrary exported destinations; an eventual
+path for shared GPU images needs its own rules for writing and reuse.
+
 Testing in a disposable virtual machine
 --------------------------------------
 
@@ -352,6 +376,13 @@ layout and independence from the source; it does not measure sustained frame
 rate or qualify physical GPU memory. The comparison includes all four bytes
 per pixel in the private image, not a policy for exposing unused color bits
 to a capture recipient.
+
+CPU delivery tests check the separately defined unused bytes, copy errors and
+revocation. They also retain six completed consumer results, release all
+private compositor images and reserve the entire private-image budget again
+before reading the results. That checks that a consumer backlog neither owns
+the private images nor prevents source preparation. The fixtures own every
+source and recipient; they do not establish public capture authorization.
 
 When DRM client support is enabled, the import tests export private dumb
 storage through an internal client and import it into a separately registered
