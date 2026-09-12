@@ -191,6 +191,14 @@ the replacement against the output's shared storage budget. If allocation
 fails, the configuration has no current worker and the caller may retry after
 retained images are released.
 
+An internal caller may also stop an idle worker without closing the device.
+That operation drains queued work and releases unused private images, while
+leaving the displayed scene and future configuration available. Old handles
+remain closed even after another worker starts. Completed images still held by
+callers retain their storage charges, so stopping and restarting cannot bypass
+the output budget. Releasing a worker does not activate a userspace executor or
+change which framebuffers the display accepts.
+
 Configuration and shutdown share a lifecycle lock that worker callbacks never
 take. A separate lock protects access to the current handle; neither image
 allocation nor waiting for a worker holds that lock. Device shutdown closes
