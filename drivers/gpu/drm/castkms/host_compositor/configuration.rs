@@ -102,10 +102,8 @@ impl Configuration {
 }
 
 /// Unique shutdown owner; surviving configuration references cannot postpone closure.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Owner(Arc<Configuration>);
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
     pub(crate) fn new(output: Arc<Output<Scene>>) -> Result<Self> {
         let budget = Budget::new()?;

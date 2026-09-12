@@ -4,6 +4,7 @@
 
 use super::{
     authority::Authority,
+    host_compositor::configuration,
     output::Output,
     scene::Scene,
     Driver, //
@@ -19,17 +20,22 @@ pub(super) struct State {
     #[pin]
     pub(super) authority: Authority<MasterRef<Driver>>,
     pub(super) output: Arc<Output<Scene>>,
+    pub(super) host: Arc<configuration::Configuration>,
 }
 
 impl State {
-    fn new() -> impl PinInit<Self, Error> {
+    fn new(
+        output: Arc<Output<Scene>>,
+        host: Arc<configuration::Configuration>,
+    ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
             authority <- Authority::new(),
-            output: Arc::pin_init(Output::new(), GFP_KERNEL)?,
+            output,
+            host,
         })
     }
 
-    pub(super) fn close(&self) {
+    fn close(&self) {
         self.authority.close();
         self.output.close();
     }
@@ -37,19 +43,26 @@ impl State {
 
 /// Closes state on registration failure as well as normal module shutdown. State-held
 /// framebuffer and master references must not keep their owning DRM device alive forever.
-pub(super) struct Owner(Arc<State>);
+pub(super) struct Owner {
+    state: Arc<State>,
+    host: configuration::Owner,
+}
 
 impl Owner {
     pub(super) fn new() -> Result<Self> {
-        Ok(Self(Arc::pin_init(State::new(), GFP_KERNEL)?))
+        let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+        let host = configuration::Owner::new(output.clone())?;
+        let state = Arc::pin_init(State::new(output, host.configuration()), GFP_KERNEL)?;
+        Ok(Self { state, host })
     }
 
     pub(super) fn state(&self) -> Arc<State> {
-        self.0.clone()
+        self.state.clone()
     }
 
     pub(super) fn close(&self) {
-        self.0.close();
+        self.state.close();
+        self.host.close();
     }
 }
 
