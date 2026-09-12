@@ -4,6 +4,7 @@
 
 use super::{
     framebuffer::Framebuffer,
+    layout::Layout,
     pool::{
         Pool,
         Slot, //
@@ -30,12 +31,17 @@ use kernel::{
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Completed {
     slot: Slot,
+    layout: Layout,
     content: ContentSerial,
     owner: Option<MasterRef<Driver>>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Completed {
+    pub(crate) fn layout(&self) -> Layout {
+        self.layout
+    }
+
     pub(crate) fn read_row(&self, y: u32, pixels: &mut [u8]) -> Result {
         self.slot.with_image(|image| image.read_row(y, pixels))?
     }
@@ -60,11 +66,11 @@ pub(crate) fn current(output: &Output<Scene>, pool: &Arc<Pool>) -> Result<Option
         return Ok(None);
     }
     let mut slot = pool.reserve()?;
-    let dimensions = slot.with_image(|image| image.dimensions())?;
+    let layout = slot.with_image(|image| image.layout())?;
     let metadata = output.with_prepared_cpu_scene(
         |scene| {
             let framebuffer = Framebuffer::new(scene.framebuffer(), scene.geometry())?;
-            if framebuffer.dimensions() != dimensions {
+            if framebuffer.dimensions() != layout.dimensions() {
                 return Err(EINVAL);
             }
             framebuffer.prepare_mapping()
@@ -81,6 +87,7 @@ pub(crate) fn current(output: &Output<Scene>, pool: &Arc<Pool>) -> Result<Option
     let (content, owner) = metadata?;
     Ok(Some(Completed {
         slot,
+        layout,
         content,
         owner,
     }))
