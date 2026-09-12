@@ -85,7 +85,6 @@ impl WorkItem for Worker {
 /// images. Registration must close or drop the owner before tearing down the DRM device.
 /// Worker callbacks never own this shutdown object.
 /// No claim is taken by queueing; the callback chooses the then-current scene.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Owner {
     worker: Arc<Worker>,
 }
