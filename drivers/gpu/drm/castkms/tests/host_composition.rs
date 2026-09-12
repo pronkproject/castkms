@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use super::*;
+use crate::host_compositor::layout::Layout;
 use crate::host_compositor::{
     compose,
     pool::Pool, //
@@ -34,7 +35,11 @@ mod cases {
         let serial = output
             .inspect(|scene| scene.map(|scene| scene.content_serial()))
             .ok_or(EINVAL)?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let completed = compose::current(output, &pool)?.ok_or(EINVAL)?;
         check(completed.content_serial() == serial)?;
         check(completed.owner().is_none())?;
@@ -96,7 +101,11 @@ mod cases {
             io_project!(mapping.view(), [try: 2564..5128]).copy_from_slice(&[0x71; 2564]);
         }
         fixture.select(&fb, false, 0)?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let completed = compose::current(&fixture.drm.device().output, &pool)?.ok_or(EINVAL)?;
         let mut row = [0; 2560];
         completed.read_row(0, &mut row)?;
@@ -115,7 +124,11 @@ mod cases {
         let mut producer = kernel::dma_fence::testing::ManualFence::new()?;
         producer.complete(Err(EIO))?;
         fixture.select_with_producer(&fb, false, 0, Some(&producer.fence()))?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         check(matches!(
             compose::current(&fixture.drm.device().output, &pool),
             Err(EIO)
@@ -162,7 +175,11 @@ mod cases {
             let source = Source::new(1)?;
             let output = &fixture.drm.device().output;
             output.publish(source.clone(), SceneUpdate::Replace(Some(scene)));
-            let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+            let pool = Pool::new(
+                fixture.drm.device(),
+                &fixture.host_budget,
+                Layout::new(640, 480)?,
+            )?;
             check(matches!(compose::current(output, &pool), Err(EAGAIN)))?;
             check(source.hold_admission()?.prepared()?.is_some())?;
             {
@@ -183,7 +200,11 @@ mod cases {
     #[test]
     fn missing_or_mismatched_images_release_the_reserved_slot() -> Result {
         let fixture = Fixture::new()?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(3, 2)?,
+        )?;
         let output = &fixture.drm.device().output;
         check(compose::current(output, &pool)?.is_none())?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;

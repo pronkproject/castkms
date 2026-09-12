@@ -4,7 +4,8 @@
 
 use super::{
     budget::Budget,
-    image::Image, //
+    image::Image,
+    layout::Layout, //
 };
 use crate::Driver;
 use kernel::{
@@ -33,11 +34,10 @@ impl Pool {
     pub(crate) fn new(
         device: &Device<Driver>,
         budget: &Arc<Budget>,
-        width: u32,
-        height: u32,
+        layout: Layout,
     ) -> Result<Arc<Self>> {
-        let first = Image::new(device, budget, width, height)?;
-        let second = Image::new(device, budget, width, height)?;
+        let first = Image::new(device, budget, layout)?;
+        let second = Image::new(device, budget, layout)?;
         Arc::pin_init(
             pin_init!(Self {
                 images <- kernel::new_mutex!(Some([Some(first), Some(second)])),

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::host_compositor::image::Image;
+use crate::host_compositor::layout::Layout;
 
 #[kunit_tests(rust_castkms_host_images)]
 mod cases {
@@ -10,7 +11,11 @@ mod cases {
     #[test]
     fn a_private_image_starts_cleared() -> Result {
         let fixture = Fixture::new()?;
-        let image = Image::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
+        let image = Image::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(3, 2)?,
+        )?;
         let mut row = [0xff; 12];
         check(image.dimensions() == (3, 2))?;
         image.read_row(0, &mut row)?;
@@ -23,7 +28,11 @@ mod cases {
     #[test]
     fn rows_are_independent_and_access_is_bounded() -> Result {
         let fixture = Fixture::new()?;
-        let mut image = Image::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
+        let mut image = Image::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(3, 2)?,
+        )?;
         image.write_row(1, &[0x57; 12])?;
         check(image.write_row(0, &[0xff; 11]) == Err(EINVAL))?;
         check(image.write_row(2, &[0xff; 12]) == Err(EINVAL))?;
@@ -43,7 +52,11 @@ mod cases {
         let remainder = fixture
             .host_budget
             .reserve(16 * 1024 * 1024 - kernel::page::PAGE_SIZE)?;
-        let image = Image::new(fixture.drm.device(), &fixture.host_budget, 1, 1)?;
+        let image = Image::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(1, 1)?,
+        )?;
         check(matches!(fixture.host_budget.reserve(1), Err(EBUSY)))?;
         drop(image);
         let _page = fixture.host_budget.reserve(kernel::page::PAGE_SIZE)?;
@@ -55,12 +68,13 @@ mod cases {
     fn dimensions_are_checked_before_allocation() -> Result {
         let fixture = Fixture::new()?;
         for (width, height) in [(0, 1), (1, 0), (1921, 1), (1, 1081), (u32::MAX, u32::MAX)] {
-            check(matches!(
-                Image::new(fixture.drm.device(), &fixture.host_budget, width, height),
-                Err(EINVAL)
-            ))?;
+            check(matches!(Layout::new(width, height), Err(EINVAL)))?;
         }
-        let image = Image::new(fixture.drm.device(), &fixture.host_budget, 1920, 1080)?;
+        let image = Image::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(1920, 1080)?,
+        )?;
         check(image.dimensions() == (1920, 1080))?;
         Ok(())
     }
