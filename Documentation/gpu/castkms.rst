@@ -342,6 +342,17 @@ those images remain in use, and verify producer errors, exhausted pools and
 queued-worker shutdown. Those tests do not capture an active desktop or
 establish permission for a userspace recipient.
 
+A separate set of host tests checks the complete copy with images from one
+pixel to 1920 by 1080 pixels. It includes odd widths, extra bytes between
+rows and starting offsets that cross a page boundary. The tests write a
+pattern directly into source storage, independently of the framebuffer view
+used to read it. They then compose, overwrite the source and close the
+device before checking every byte of the retained image. That checks storage
+layout and independence from the source; it does not measure sustained frame
+rate or qualify physical GPU memory. The comparison includes all four bytes
+per pixel in the private image, not a policy for exposing unused color bits
+to a capture recipient.
+
 When DRM client support is enabled, the import tests export private dumb
 storage through an internal client and import it into a separately registered
 CastKMS device. They check allocation identity, framebuffer layout and retained
