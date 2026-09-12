@@ -31,7 +31,7 @@ use kernel::{
 /// A worker result, not a grant-authorized capture completion.
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) enum Outcome {
-    Image(Completed),
+    Image(Arc<Completed>),
     Blank,
     Failed(Error),
 }
@@ -63,7 +63,10 @@ impl WorkItem for Worker {
             return;
         }
         let outcome = match compose::current(&worker.output, &worker.pool) {
-            Ok(Some(image)) => Outcome::Image(image),
+            Ok(Some(image)) => match Arc::new(image, GFP_KERNEL) {
+                Ok(image) => Outcome::Image(image),
+                Err(error) => Outcome::Failed(error.into()),
+            },
             Ok(None) => Outcome::Blank,
             Err(error) => Outcome::Failed(error),
         };
