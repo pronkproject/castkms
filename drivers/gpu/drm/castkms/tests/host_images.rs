@@ -38,6 +38,20 @@ mod cases {
     }
 
     #[test]
+    fn image_accounting_includes_page_padding() -> Result {
+        let fixture = Fixture::new()?;
+        let remainder = fixture
+            .host_budget
+            .reserve(16 * 1024 * 1024 - kernel::page::PAGE_SIZE)?;
+        let image = Image::new(fixture.drm.device(), &fixture.host_budget, 1, 1)?;
+        check(matches!(fixture.host_budget.reserve(1), Err(EBUSY)))?;
+        drop(image);
+        let _page = fixture.host_budget.reserve(kernel::page::PAGE_SIZE)?;
+        drop(remainder);
+        Ok(())
+    }
+
+    #[test]
     fn dimensions_are_checked_before_allocation() -> Result {
         let fixture = Fixture::new()?;
         for (width, height) in [(0, 1), (1, 0), (1921, 1), (1, 1081), (u32::MAX, u32::MAX)] {
