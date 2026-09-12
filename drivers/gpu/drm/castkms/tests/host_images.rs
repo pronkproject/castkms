@@ -47,6 +47,42 @@ mod cases {
     }
 
     #[test]
+    fn full_pixel_copy_excludes_padding_and_owns_independent_bytes() -> Result {
+        let fixture = Fixture::new()?;
+        let layout = Layout::new(3, 2)?;
+        let mut image = Image::new(fixture.drm.device(), &fixture.host_budget, layout)?;
+        image.write_row(0, &[0x35; 12])?;
+        image.write_row(1, &[0x71; 12])?;
+        let mut pixels = [0xff; 24];
+        check(layout.pixel_bytes() == pixels.len())?;
+        check(layout.size() > pixels.len())?;
+        image.copy_pixels(&mut pixels)?;
+        image.write_row(0, &[0x99; 12])?;
+        drop(image);
+        check(pixels[..12] == [0x35; 12])?;
+        check(pixels[12..] == [0x71; 12])?;
+        Ok(())
+    }
+
+    #[test]
+    fn full_pixel_copy_rejects_wrong_sizes_before_writing() -> Result {
+        let fixture = Fixture::new()?;
+        let image = Image::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(3, 2)?,
+        )?;
+        let mut short = [0xa7; 23];
+        let mut long = [0xa7; 25];
+        check(image.copy_pixels(&mut []) == Err(EINVAL))?;
+        check(image.copy_pixels(&mut short) == Err(EINVAL))?;
+        check(image.copy_pixels(&mut long) == Err(EINVAL))?;
+        check(short == [0xa7; 23])?;
+        check(long == [0xa7; 25])?;
+        Ok(())
+    }
+
+    #[test]
     fn image_accounting_includes_page_padding() -> Result {
         let fixture = Fixture::new()?;
         let remainder = fixture
