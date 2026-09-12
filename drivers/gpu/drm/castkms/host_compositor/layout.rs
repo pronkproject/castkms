@@ -47,6 +47,11 @@ impl Layout {
         self.pitch
     }
 
+    /// Packed visible pixels, excluding the allocation's page padding.
+    pub(crate) fn pixel_bytes(self) -> usize {
+        self.pitch * self.height as usize
+    }
+
     /// Complete allocation size, including the final page's padding.
     pub(crate) fn size(self) -> usize {
         self.size
