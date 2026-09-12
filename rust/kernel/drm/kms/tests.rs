@@ -11,6 +11,7 @@ mod allocation;
 mod buffers;
 mod events;
 mod framebuffers;
+mod generations;
 mod inspection;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod masters;
@@ -45,6 +46,9 @@ struct Counts {
     fail_framebuffer_preparation: AtomicU32,
     // Borrowed only by synchronous preparation callbacks while their source is retained.
     preparation_source: AtomicPtr<bindings::drm_prepare_source>,
+    preparation_capacity: AtomicU32,
+    include_crtc_during_plane_check: AtomicU32,
+    accepted_generation: generations::Observed,
     enables: AtomicU32,
     disables: AtomicU32,
     crtc_states: AtomicU32,
@@ -331,6 +335,7 @@ impl plane::DriverPlane for TestPlane {
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
         use plane::RawPlaneState;
         let (state, mut new) = check.take_state_new_state();
+        generations::expand_check(state)?;
         if let Some(crtc) = new.crtc() {
             let crtc_state = state.add_crtc_state(crtc)?;
             new.atomic_helper_check(&crtc_state, false, false)?;
@@ -399,6 +404,15 @@ impl crtc::DriverCrtc for TestCrtc {
             .disables
             .fetch_add(1, Ordering::Relaxed);
     }
+
+    fn atomic_flush(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        commit
+            .crtc()
+            .life
+            .0
+            .accepted_generation
+            .record(commit.preparation_source());
+    }
 }
 
 #[vtable]
@@ -466,6 +480,10 @@ impl KmsDriver for TestDriver {
         use crtc::{AsRawCrtc, RawCrtc};
         use plane::AsRawPlane;
 
+        let capacity = dev.counts.preparation_capacity.load(Ordering::Relaxed);
+        if capacity != 0 {
+            dev.enable_preparation(capacity)?;
+        }
         let plane = plane::UnregisteredPlane::<TestPlane>::new(
             dev,
             0,
