@@ -10,7 +10,7 @@ mod cases {
     #[test]
     fn a_private_image_starts_cleared() -> Result {
         let fixture = Fixture::new()?;
-        let image = Image::new(fixture.drm.device(), 3, 2)?;
+        let image = Image::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
         let mut row = [0xff; 12];
         check(image.dimensions() == (3, 2))?;
         image.read_row(0, &mut row)?;
@@ -23,7 +23,7 @@ mod cases {
     #[test]
     fn rows_are_independent_and_access_is_bounded() -> Result {
         let fixture = Fixture::new()?;
-        let mut image = Image::new(fixture.drm.device(), 3, 2)?;
+        let mut image = Image::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
         image.write_row(1, &[0x57; 12])?;
         check(image.write_row(0, &[0xff; 11]) == Err(EINVAL))?;
         check(image.write_row(2, &[0xff; 12]) == Err(EINVAL))?;
@@ -42,11 +42,11 @@ mod cases {
         let fixture = Fixture::new()?;
         for (width, height) in [(0, 1), (1, 0), (1921, 1), (1, 1081), (u32::MAX, u32::MAX)] {
             check(matches!(
-                Image::new(fixture.drm.device(), width, height),
+                Image::new(fixture.drm.device(), &fixture.host_budget, width, height),
                 Err(EINVAL)
             ))?;
         }
-        let image = Image::new(fixture.drm.device(), 1920, 1080)?;
+        let image = Image::new(fixture.drm.device(), &fixture.host_budget, 1920, 1080)?;
         check(image.dimensions() == (1920, 1080))?;
         Ok(())
     }

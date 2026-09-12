@@ -10,7 +10,7 @@ mod cases {
     #[test]
     fn only_two_slots_can_be_reserved_at_once() -> Result {
         let fixture = Fixture::new()?;
-        let pool = Pool::new(fixture.drm.device(), 3, 2)?;
+        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
         let first = pool.reserve()?;
         let second = pool.reserve()?;
         check(matches!(pool.reserve(), Err(EBUSY)))?;
@@ -25,7 +25,7 @@ mod cases {
     #[test]
     fn private_images_remain_independent_across_reservations() -> Result {
         let fixture = Fixture::new()?;
-        let pool = Pool::new(fixture.drm.device(), 3, 2)?;
+        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
         let mut first = pool.reserve()?;
         let second = pool.reserve()?;
         first.write_row(0, &[0x31; 12])?;
@@ -42,7 +42,7 @@ mod cases {
     #[test]
     fn shutdown_rejects_reservations_but_retains_active_storage() -> Result {
         let fixture = Fixture::new()?;
-        let pool = Pool::new(fixture.drm.device(), 3, 2)?;
+        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 3, 2)?;
         let mut slot = pool.reserve()?;
         pool.close();
         pool.close();
