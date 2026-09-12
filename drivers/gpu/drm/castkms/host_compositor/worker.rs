@@ -142,6 +142,11 @@ pub(crate) struct Handle {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Handle {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn flush_for_test(&self) {
+        self.worker.work.flush();
+    }
+
     /// Request a fresh private image, coalescing requests already queued on the same work.
     ///
     /// Call from sleepable context: request admission takes the worker's mutex.
