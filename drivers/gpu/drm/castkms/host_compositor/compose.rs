@@ -46,6 +46,14 @@ impl Completed {
         self.slot.with_image(|image| image.read_row(y, pixels))?
     }
 
+    /// Copy only packed pixels into independently owned, exact-size host storage.
+    ///
+    /// The caller must authorize the recipient before exposing the destination.
+    /// Copying a private result neither claims the compositor source nor grants access.
+    pub(crate) fn copy_pixels(&self, pixels: &mut [u8]) -> Result {
+        self.slot.with_image(|image| image.copy_pixels(pixels))?
+    }
+
     pub(crate) fn content_serial(&self) -> ContentSerial {
         self.content
     }
