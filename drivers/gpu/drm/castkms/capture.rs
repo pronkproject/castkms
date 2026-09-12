@@ -6,3 +6,4 @@
 //! current permission and the image's authorized scope before providing either input.
 
 pub(crate) mod host;
+pub(crate) mod streams;

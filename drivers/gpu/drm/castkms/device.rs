@@ -4,6 +4,7 @@
 
 use super::{
     authority::Authority,
+    capture::streams,
     host_compositor::configuration,
     output::Output,
     scene::Scene,
@@ -21,6 +22,7 @@ pub(super) struct State {
     pub(super) authority: Authority<MasterRef<Driver>>,
     pub(super) output: Arc<Output<Scene>>,
     pub(super) host: Arc<configuration::Configuration>,
+    pub(super) capture_streams: Arc<streams::Registry>,
 }
 
 impl State {
@@ -32,10 +34,12 @@ impl State {
             authority <- Authority::new(),
             output,
             host,
+            capture_streams: streams::Registry::new()?,
         })
     }
 
     fn close(&self) {
+        self.capture_streams.close();
         self.authority.close();
         self.output.close();
     }

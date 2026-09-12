@@ -102,6 +102,7 @@ impl drm::Driver for Driver {
     const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
+        dev.capture_streams.revoke_all();
         dev.authority.changed(master);
     }
 }
