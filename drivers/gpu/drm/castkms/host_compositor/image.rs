@@ -72,6 +72,18 @@ impl Image {
         self.layout
     }
 
+    fn pixels(&self) -> SysMem<'_, [u8]> {
+        let storage = self.map.as_view();
+        // SAFETY: The validated layout fits the owned allocation. The mapping remains
+        // live for this borrow, which includes packed pixels but excludes page padding.
+        unsafe {
+            SysMem::new(core::ptr::slice_from_raw_parts_mut(
+                storage.as_ptr().cast::<u8>(),
+                self.layout.pixel_bytes(),
+            ))
+        }
+    }
+
     fn row(&self, y: u32) -> Result<SysMem<'_, [u8]>> {
         let (_, height) = self.dimensions();
         let pitch = self.layout.pitch();
@@ -80,16 +92,16 @@ impl Image {
         }
         let start = y as usize * pitch;
         let end = start + pitch;
-        let storage = self.map.as_view();
-        // SAFETY: Construction checked and allocated every packed row. The mapping remains
-        // owned for the returned borrow; this view excludes any final page padding.
-        let bytes = unsafe {
-            SysMem::new(core::ptr::slice_from_raw_parts_mut(
-                storage.as_ptr().cast::<u8>(),
-                pitch * height as usize,
-            ))
-        };
-        Ok(io_project!(bytes, [try: start..end]))
+        Ok(io_project!(self.pixels(), [try: start..end]))
+    }
+
+    /// Copy packed pixels into independent host storage without copying page padding.
+    pub(crate) fn copy_pixels(&self, output: &mut [u8]) -> Result {
+        if output.len() != self.layout.pixel_bytes() {
+            return Err(EINVAL);
+        }
+        self.pixels().copy_to_slice(output);
+        Ok(())
     }
 
     pub(crate) fn write_row(&mut self, y: u32, pixels: &[u8]) -> Result {
