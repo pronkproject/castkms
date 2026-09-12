@@ -36,9 +36,30 @@ pub(crate) enum Outcome {
     Failed(Error),
 }
 
-struct State {
-    closed: bool,
-    outcome: Option<Outcome>,
+enum State {
+    Open {
+        outcome: Option<Outcome>,
+        last_image: Option<Arc<Completed>>,
+    },
+    Closed,
+}
+
+impl State {
+    /// Return replaced storage for destruction outside the worker's result lock.
+    fn record(&mut self, next: Outcome) -> (Option<Outcome>, Option<Arc<Completed>>) {
+        let Self::Open {
+            outcome,
+            last_image,
+        } = self else {
+            return (Some(next), None);
+        };
+        let retired_image = match &next {
+            Outcome::Image(image) => last_image.replace(image.clone()),
+            Outcome::Blank => last_image.take(),
+            Outcome::Failed(_) => None,
+        };
+        (outcome.replace(next), retired_image)
+    }
 }
 
 #[pin_data]
@@ -59,7 +80,7 @@ impl WorkItem for Worker {
     type Pointer = Arc<Self>;
 
     fn run(worker: Arc<Self>) {
-        if worker.state.lock().closed {
+        if matches!(*worker.state.lock(), State::Closed) {
             return;
         }
         let outcome = match compose::current(&worker.output, &worker.pool) {
@@ -70,14 +91,7 @@ impl WorkItem for Worker {
             Ok(None) => Outcome::Blank,
             Err(error) => Outcome::Failed(error),
         };
-        let retired = {
-            let mut state = worker.state.lock();
-            if state.closed {
-                Some(outcome)
-            } else {
-                state.outcome.replace(outcome)
-            }
-        };
+        let retired = worker.state.lock().record(outcome);
         drop(retired);
     }
 }
@@ -98,7 +112,10 @@ impl Owner {
         let worker = Arc::pin_init(
             pin_init!(Worker {
                 work <- new_work!("castkms-host-compose"),
-                state <- kernel::new_mutex!(State { closed: false, outcome: None }),
+                state <- kernel::new_mutex!(State::Open {
+                    outcome: None,
+                    last_image: None,
+                }),
                 output,
                 pool,
             }),
@@ -121,11 +138,7 @@ impl Owner {
 
     /// Stop new requests and drain work outside locks needed for mapping or source retirement.
     pub(crate) fn close(&self) {
-        let retired = {
-            let mut state = self.worker.state.lock();
-            state.closed = true;
-            state.outcome.take()
-        };
+        let retired = core::mem::replace(&mut *self.worker.state.lock(), State::Closed);
         drop(retired);
         self.worker.work.flush();
         self.worker.pool.close();
@@ -155,7 +168,7 @@ impl Handle {
     /// Call from sleepable context: request admission takes the worker's mutex.
     pub(crate) fn request(&self) -> Result {
         let state = self.worker.state.lock();
-        if state.closed {
+        if matches!(*state, State::Closed) {
             return Err(ENODEV);
         }
         let _queued = workqueue::system_dfl().enqueue(self.worker.clone());
@@ -163,7 +176,22 @@ impl Handle {
     }
 
     pub(crate) fn take_outcome(&self) -> Option<Outcome> {
-        self.worker.state.lock().outcome.take()
+        match &mut *self.worker.state.lock() {
+            State::Open { outcome, .. } => outcome.take(),
+            State::Closed => None,
+        }
+    }
+
+    /// Retain the last complete private image without consuming the latest attempt.
+    ///
+    /// A failure preserves this historical image; a completed blank or shutdown clears
+    /// it. The image may describe an older scene or owner. Callers must independently
+    /// establish currentness and recipient authorization before delivering its pixels.
+    pub(crate) fn last_image(&self) -> Option<Arc<Completed>> {
+        match &*self.worker.state.lock() {
+            State::Open { last_image, .. } => last_image.clone(),
+            State::Closed => None,
+        }
     }
 }
 
