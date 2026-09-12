@@ -182,6 +182,23 @@ discards the cached result and drains work. An image already taken by a caller
 keeps its private storage, independently of that shutdown. These handles remain
 internal; they grant no permission to deliver pixels to a capture recipient.
 
+Device ownership includes a lazy host configuration. Creating the device
+allocates no image pool and queues no composition. An internal caller supplies
+a validated packed-image layout when it needs a worker. Requesting the same
+layout returns another handle to the existing worker and preserves its latest
+result. A different layout closes and drains the old worker before allocating
+the replacement against the output's shared storage budget. If allocation
+fails, the configuration has no current worker and the caller may retry after
+retained images are released.
+
+Configuration and shutdown share a lifecycle lock that worker callbacks never
+take. A separate lock protects access to the current handle; neither image
+allocation nor waiting for a worker holds that lock. Device shutdown closes
+scene publication and drains host work before releasing DRM registration.
+References to configuration or worker handles do not postpone shutdown or
+permit restarting work afterward. Already completed private images retain their
+own storage without retaining a claim on the displayed source.
+
 These helpers do not yet implement registered capture destinations, capture
 authorization, a display clock, or the transition to a userspace GPU executor.
 The two-image host pool is a private-storage limit, not a receiver frame-rate
