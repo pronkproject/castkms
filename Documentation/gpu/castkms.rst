@@ -158,6 +158,13 @@ A completed private image retains its content serial and attribution,
 but not the source framebuffer, mapping or claim. Keeping that image therefore
 does not prevent the compositor from reusing its source buffer.
 
+``host_compositor/worker.rs`` coalesces queued requests onto one work item and
+retains only the output publication, pool and latest result. Its unique shutdown
+owner rejects further requests, drains the work and closes the pool. Copying
+and buffer destruction run outside the worker's result lock. The lower
+composition, pool and image modules do not depend on the worker or device
+registration.
+
 These helpers do not yet implement registered capture destinations, capture
 authorization, a display clock, or the transition to a userspace GPU executor.
 The two-image host pool is a private-storage limit, not a receiver frame-rate
@@ -257,9 +264,9 @@ exclusion. They do not exercise deferred source reads.
 Host tests use private fixture allocations to exercise real pixel copies,
 including different source pitches and offsets. They retain completed images
 across same-framebuffer updates, check that source preparation can finish while
-those images remain in use, and verify producer errors and exhausted pools.
-Those tests do not capture an active desktop or establish permission for a
-userspace recipient.
+those images remain in use, and verify producer errors, exhausted pools and
+queued-worker shutdown. Those tests do not capture an active desktop or
+establish permission for a userspace recipient.
 
 When DRM client support is enabled, the import tests export private dumb
 storage through an internal client and import it into a separately registered
