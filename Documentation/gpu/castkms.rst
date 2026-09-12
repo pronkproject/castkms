@@ -52,8 +52,9 @@ pixels.
 ``scene.rs`` retains the primary plane's framebuffer allocation and copied
 source and destination geometry independently of the atomic callback. The
 source coordinates keep their original fixed-point representation. Atomic
-validation prepares geometry in the candidate plane state; the plane update
-callback replaces the output's description before flip completion. Test-only
+validation prepares geometry in the candidate plane state; the CRTC flush
+callback publishes the description together with the accepted state's source
+accounting before flip completion. Test-only
 and rejected transactions do not publish a replacement. An inactive or
 disabled plane clears the description. Recommitting the same framebuffer
 still replaces the description; framebuffer identity is not a content cache.
@@ -73,8 +74,11 @@ the framebuffer and geometry are unchanged. It marks a possible content change,
 not proof that pixels differ or that rendering succeeded. It does not identify
 the framebuffer's creator, adopt a new capture owner, or replace authorization.
 
-The output holds at most one description. Replacement releases the previous
-reference outside the output lock. Module teardown permanently closes the
+The output holds at most one description and its source accounting generation.
+An accepted update without a changed plane retains the description but gets a
+fresh generation. A blank output also retains its accounting generation.
+Replacement permanently closes the old generation's read admission and releases
+its references outside the output lock. Module teardown permanently closes the
 output before releasing DRM registration, so an outstanding commit cannot
 restore its framebuffer reference after shutdown begins. That ordering breaks
 the reference cycle between the output, framebuffer and DRM device.
