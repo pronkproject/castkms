@@ -15,6 +15,39 @@ mod cases {
     use super::*;
 
     #[test]
+    fn the_last_shared_image_keeps_its_storage_charge_after_shutdown() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let handle = owner.handle();
+        handle.request()?;
+        owner.flush();
+        let Some(Outcome::Image(image)) = handle.take_outcome() else {
+            return Err(EINVAL);
+        };
+        let retained = image.clone();
+        drop(image);
+        drop(owner);
+        check(handle.request() == Err(ENODEV))?;
+        check(matches!(
+            fixture.host_budget.reserve(16 * 1024 * 1024),
+            Err(EBUSY)
+        ))?;
+        let mut row = [0xff; 2560];
+        retained.read_row(0, &mut row)?;
+        check(row == [0; 2560])?;
+        drop(retained);
+        let _whole_budget = fixture.host_budget.reserve(16 * 1024 * 1024)?;
+        Ok(())
+    }
+
+    #[test]
     fn surviving_handles_do_not_postpone_shutdown() -> Result {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
