@@ -29,7 +29,7 @@ use kernel::{
 };
 
 /// A worker result, not a grant-authorized capture completion.
-#[expect(dead_code)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) enum Outcome {
     Image(Completed),
     Blank,
@@ -85,12 +85,12 @@ impl WorkItem for Worker {
 /// images. Registration must close or drop the owner before tearing down the DRM device.
 /// Worker callbacks never own this shutdown object.
 /// No claim is taken by queueing; the callback chooses the then-current scene.
-#[expect(dead_code)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Owner {
     worker: Arc<Worker>,
 }
 
-#[expect(dead_code)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
     pub(crate) fn new(output: Arc<Output<Scene>>, pool: Arc<Pool>) -> Result<Self> {
         let worker = Arc::pin_init(
