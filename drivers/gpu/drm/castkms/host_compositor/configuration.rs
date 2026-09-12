@@ -22,6 +22,9 @@ use kernel::{
     }, //
 };
 
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+mod tests;
+
 struct Active {
     layout: Layout,
     worker: worker::Owner,
