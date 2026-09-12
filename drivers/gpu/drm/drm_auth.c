@@ -30,6 +30,7 @@
 
 #include <linux/export.h>
 #include <linux/slab.h>
+#include <kunit/visibility.h>
 
 #include <drm/drm_auth.h>
 #include <drm/drm_atomic_prepare_auth.h>
@@ -149,6 +150,7 @@ struct drm_master *drm_master_create(struct drm_device *dev)
 
 	return master;
 }
+EXPORT_SYMBOL_IF_KUNIT(drm_master_create);
 
 static void drm_set_master(struct drm_device *dev, struct drm_file *fpriv,
 			   bool new_master)
@@ -467,6 +469,63 @@ void drm_master_put(struct drm_master **master)
 	*master = NULL;
 }
 EXPORT_SYMBOL(drm_master_put);
+
+/**
+ * drm_master_lock_current - stabilize a master's current device and lease access
+ * @master: retained master belonging to a live device
+ *
+ * Check that the root of @master's lease tree is the device's current master.
+ * On success, hold &drm_device.master_mutex and then
+ * &drm_mode_config.idr_mutex until drm_master_unlock_current(). The locks keep
+ * master handoff, lease revocation and object registration from changing the
+ * answer to a short policy check such as drm_master_holds_object_locked().
+ *
+ * An empty or revoked lease may still have a current root. Callers must check
+ * every object they need. A retained identity also does not prove that a file
+ * has the master role, or authorize capture of any pixels.
+ *
+ * Context: May sleep. Neither lock may be held by the caller. Do not acquire
+ * modesetting locks, remove objects or release final master/object references
+ * while holding them. Do not wait for rendering, worker completion or consumer
+ * buffer reuse in the critical section.
+ *
+ * Returns: True with both locks held, or false with neither lock held when the
+ * device does not support modesetting or the lease root is no longer current.
+ */
+bool drm_master_lock_current(struct drm_master *master)
+{
+	struct drm_device *dev = master->dev;
+
+	if (!drm_core_check_feature(dev, DRIVER_MODESET))
+		return false;
+
+	mutex_lock(&dev->master_mutex);
+	if (drm_lease_owner(master) != dev->master) {
+		mutex_unlock(&dev->master_mutex);
+		return false;
+	}
+	mutex_lock(&dev->mode_config.idr_mutex);
+	return true;
+}
+EXPORT_SYMBOL_GPL(drm_master_lock_current);
+
+/**
+ * drm_master_unlock_current - finish a stabilized master access check
+ * @master: master passed to a successful drm_master_lock_current()
+ *
+ * Context: Called by the task that acquired the locks, exactly once for each
+ * successful acquisition. The master and device must remain alive throughout.
+ */
+void drm_master_unlock_current(struct drm_master *master)
+{
+	struct drm_device *dev = master->dev;
+
+	lockdep_assert_held_once(&dev->master_mutex);
+	lockdep_assert_held_once(&dev->mode_config.idr_mutex);
+	mutex_unlock(&dev->mode_config.idr_mutex);
+	mutex_unlock(&dev->master_mutex);
+}
+EXPORT_SYMBOL_GPL(drm_master_unlock_current);
 
 /* Used by drm_client and drm_fb_helper */
 bool drm_master_internal_acquire(struct drm_device *dev)
