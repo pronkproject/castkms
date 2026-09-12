@@ -499,6 +499,18 @@ unsafe impl<T: ?Sized, const ID: u64> Send for Work<T, ID> {}
 unsafe impl<T: ?Sized, const ID: u64> Sync for Work<T, ID> {}
 
 impl<T: ?Sized, const ID: u64> Work<T, ID> {
+    /// Wait for the most recent queued instance of this work to finish.
+    ///
+    /// Returns whether a pending instance was waited for. Callers needing a fully idle
+    /// worker must first prevent further enqueueing. The caller must be in sleepable
+    /// context, must not hold locks needed by the callback, and must not flush the work
+    /// from its own callback. No queued owner reference is consumed by this operation.
+    pub fn flush(&self) -> bool {
+        // SAFETY: A borrowed Work has an initialized native work_struct and remains live
+        // throughout the native wait. Native flushing serializes with queueing and execution.
+        unsafe { bindings::flush_work(self.work.get()) }
+    }
+
     /// Creates a new instance of [`Work`].
     #[inline]
     pub fn new(name: &'static CStr, key: Pin<&'static LockClassKey>) -> impl PinInit<Self>
