@@ -24,7 +24,7 @@ pub(crate) struct Pool {
     images: Mutex<Option<[Option<Image>; 2]>>,
 }
 
-#[expect(dead_code)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Pool {
     pub(crate) fn new(device: &Device<Driver>, width: u32, height: u32) -> Result<Arc<Self>> {
         let first = Image::new(device, width, height)?;
@@ -69,10 +69,14 @@ pub(crate) struct Slot {
     image: Option<Image>,
 }
 
-#[expect(dead_code)]
 impl Slot {
     pub(crate) fn with_image<R>(&self, access: impl FnOnce(&Image) -> R) -> Result<R> {
         Ok(access(self.image.as_ref().ok_or(EIO)?))
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn write_row(&mut self, y: u32, pixels: &[u8]) -> Result {
+        self.image.as_mut().ok_or(EIO)?.write_row(y, pixels)
     }
 }
 
