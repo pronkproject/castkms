@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! One development output, without a presentation clock or pixel consumer.
+//! One development output and its accepted display descriptions.
 
 use super::{
+    output::SceneUpdate,
     provenance::{
         PreviousOwner,
         Provenance,
@@ -169,10 +170,11 @@ impl plane::DriverPlane for Plane {
         }
         Ok(())
     }
+}
 
-    fn atomic_update(commit: plane::PlaneAtomicCommit<'_, Self>) {
-        let (transaction, _, state) = commit.take_all();
-        let scene = state
+impl PlaneState {
+    fn scene(state: &plane::PlaneState<Self>) -> Option<scene::Scene> {
+        state
             .geometry
             .zip(state.content)
             .and_then(|(geometry, content)| {
@@ -185,8 +187,7 @@ impl plane::DriverPlane for Plane {
                         state.producer.clone(),
                     )
                 })
-            });
-        transaction.drm_dev().output.publish(scene);
+            })
     }
 }
 
@@ -199,6 +200,24 @@ impl crtc::DriverCrtc for Crtc {
 
     fn new(_: &Device<Driver>, _: &()) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {})
+    }
+
+    fn atomic_flush(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        let Some(source) = commit.preparation_source() else {
+            commit.take_state().drm_dev().output.close();
+            return;
+        };
+        let primary = commit.crtc().primary_plane();
+        let (transaction, _, state) = commit.take_all();
+        let update = if !state.active() {
+            SceneUpdate::Replace(None)
+        } else {
+            match transaction.get_new_plane_state(primary) {
+                Some(plane) => SceneUpdate::Replace(PlaneState::scene(plane)),
+                None => SceneUpdate::Retain,
+            }
+        };
+        transaction.drm_dev().output.publish(source, update);
     }
 }
 
