@@ -18,15 +18,14 @@ use kernel::{
 pub(super) struct State {
     #[pin]
     pub(super) authority: Authority<MasterRef<Driver>>,
-    #[pin]
-    pub(super) output: Output<Scene>,
+    pub(super) output: Arc<Output<Scene>>,
 }
 
 impl State {
-    fn new() -> impl PinInit<Self> {
-        pin_init!(Self {
+    fn new() -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
             authority <- Authority::new(),
-            output <- Output::new(),
+            output: Arc::pin_init(Output::new(), GFP_KERNEL)?,
         })
     }
 
