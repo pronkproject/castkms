@@ -89,6 +89,16 @@ impl<S: Unpin> Output<S> {
         drop(retired);
     }
 
+    /// Observe scene presence without retaining resources or granting pixel access.
+    ///
+    /// A later read must independently acquire and revalidate its generation.
+    pub(super) fn has_scene(&self) -> bool {
+        matches!(
+            &*self.state.lock(),
+            Publication::Open(Some(Generation { scene: Some(_), .. }))
+        )
+    }
+
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn inspect<R>(&self, inspect: impl FnOnce(Option<&S>) -> R) -> R {
         self.inspect_accepted(|accepted| inspect(accepted.and_then(|(_, scene)| scene)))

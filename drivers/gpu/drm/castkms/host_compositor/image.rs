@@ -8,14 +8,18 @@ use crate::{
 };
 use kernel::{
     drm::{
+        fourcc,
         gem::shmem,
+        kms::framebuffer::FramebufferVMapOwned,
         Device, //
     },
     io::{
         io_project,
         Io,
         IoBase,
-        SysMem, //
+        IoCopyable,
+        SysMem,
+        SysMemBackend, //
     },
     page::page_align,
     prelude::*, //
@@ -92,6 +96,34 @@ impl Image {
             return Err(EINVAL);
         }
         self.row(y)?.copy_to_slice(pixels);
+        Ok(())
+    }
+
+    /// Copy a matching source while the caller holds its synchronous CPU read claim.
+    pub(super) fn copy_from(&mut self, source: &FramebufferVMapOwned<gem::Object>) -> Result {
+        if source.width() != self.width
+            || source.height() != self.height
+            || source.format() != fourcc::XRGB8888
+        {
+            return Err(EINVAL);
+        }
+        let source_bytes = source.view();
+        let destination = self.map.as_view();
+        for y in 0..self.height as usize {
+            let start = y * source.pitch();
+            let row = io_project!(source_bytes, [try: start..start + self.pitch]);
+            // SAFETY: The source mapping validates every complete row including its offset.
+            // Matching dimensions bound each row copy to both mappings. This image's storage
+            // is private and cannot be installed as a framebuffer, so the ranges cannot overlap.
+            // Exclusive access to the destination and the caller's claim protect the copy.
+            // The I/O backend permits source memory to be accessed by external pixel producers.
+            unsafe {
+                SysMemBackend::copy_from_io(
+                    row,
+                    destination.as_ptr().cast::<u8>().add(y * self.pitch),
+                );
+            }
+        }
         Ok(())
     }
 }

@@ -74,6 +74,13 @@ impl Slot {
         Ok(access(self.image.as_ref().ok_or(EIO)?))
     }
 
+    pub(super) fn copy_from(
+        &mut self,
+        source: &kernel::drm::kms::framebuffer::FramebufferVMapOwned<crate::gem::Object>,
+    ) -> Result {
+        self.image.as_mut().ok_or(EIO)?.copy_from(source)
+    }
+
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn write_row(&mut self, y: u32, pixels: &[u8]) -> Result {
         self.image.as_mut().ok_or(EIO)?.write_row(y, pixels)
