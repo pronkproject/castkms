@@ -2,9 +2,12 @@
 
 //! Private packed host images, with no GEM handle or DMA-BUF export interface.
 
-use super::budget::{
-    Budget,
-    Charge, //
+use super::{
+    budget::{
+        Budget,
+        Charge, //
+    },
+    layout::Layout, //
 };
 use crate::{
     gem,
@@ -25,7 +28,6 @@ use kernel::{
         SysMem,
         SysMemBackend, //
     },
-    page::page_align,
     prelude::*,
     sync::Arc, //
 };
@@ -38,9 +40,7 @@ pub(crate) struct Image {
     map: shmem::VMapOwned<gem::Object>,
     // Release the mapping and its allocation before returning the reserved bytes.
     _charge: Charge,
-    width: u32,
-    height: u32,
-    pitch: usize,
+    layout: Layout,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -48,18 +48,9 @@ impl Image {
     pub(crate) fn new(
         device: &Device<Driver>,
         budget: &Arc<Budget>,
-        width: u32,
-        height: u32,
+        layout: Layout,
     ) -> Result<Self> {
-        if width == 0 || height == 0 || width > 1920 || height > 1080 {
-            return Err(EINVAL);
-        }
-        let pitch = (width as usize).checked_mul(4).ok_or(EOVERFLOW)?;
-        let bytes = pitch.checked_mul(height as usize).ok_or(EOVERFLOW)?;
-        let size = page_align(bytes).ok_or(EOVERFLOW)?;
-        if size > 8 * 1024 * 1024 {
-            return Err(E2BIG);
-        }
+        let size = layout.size();
         let charge = budget.reserve(size)?;
         let object = shmem::Object::<gem::Object>::new(device, size, Default::default(), ())?;
         let map = object.owned_vmap()?;
@@ -69,36 +60,36 @@ impl Image {
         Ok(Self {
             map,
             _charge: charge,
-            width,
-            height,
-            pitch,
+            layout,
         })
     }
 
     pub(crate) fn dimensions(&self) -> (u32, u32) {
-        (self.width, self.height)
+        self.layout.dimensions()
     }
 
     fn row(&self, y: u32) -> Result<SysMem<'_, [u8]>> {
-        if y >= self.height {
+        let (_, height) = self.dimensions();
+        let pitch = self.layout.pitch();
+        if y >= height {
             return Err(EINVAL);
         }
-        let start = y as usize * self.pitch;
-        let end = start + self.pitch;
+        let start = y as usize * pitch;
+        let end = start + pitch;
         let storage = self.map.as_view();
         // SAFETY: Construction checked and allocated every packed row. The mapping remains
         // owned for the returned borrow; this view excludes any final page padding.
         let bytes = unsafe {
             SysMem::new(core::ptr::slice_from_raw_parts_mut(
                 storage.as_ptr().cast::<u8>(),
-                self.pitch * self.height as usize,
+                pitch * height as usize,
             ))
         };
         Ok(io_project!(bytes, [try: start..end]))
     }
 
     pub(crate) fn write_row(&mut self, y: u32, pixels: &[u8]) -> Result {
-        if pixels.len() != self.pitch {
+        if pixels.len() != self.layout.pitch() {
             return Err(EINVAL);
         }
         self.row(y)?.copy_from_slice(pixels);
@@ -106,7 +97,7 @@ impl Image {
     }
 
     pub(crate) fn read_row(&self, y: u32, pixels: &mut [u8]) -> Result {
-        if pixels.len() != self.pitch {
+        if pixels.len() != self.layout.pitch() {
             return Err(EINVAL);
         }
         self.row(y)?.copy_to_slice(pixels);
@@ -115,27 +106,26 @@ impl Image {
 
     /// Copy a matching source while the caller holds its synchronous CPU read claim.
     pub(super) fn copy_from(&mut self, source: &FramebufferVMapOwned<gem::Object>) -> Result {
-        if source.width() != self.width
-            || source.height() != self.height
+        let (width, height) = self.dimensions();
+        let pitch = self.layout.pitch();
+        if source.width() != width
+            || source.height() != height
             || source.format() != fourcc::XRGB8888
         {
             return Err(EINVAL);
         }
         let source_bytes = source.view();
         let destination = self.map.as_view();
-        for y in 0..self.height as usize {
+        for y in 0..height as usize {
             let start = y * source.pitch();
-            let row = io_project!(source_bytes, [try: start..start + self.pitch]);
+            let row = io_project!(source_bytes, [try: start..start + pitch]);
             // SAFETY: The source mapping validates every complete row including its offset.
             // Matching dimensions bound each row copy to both mappings. This image's storage
             // is private and cannot be installed as a framebuffer, so the ranges cannot overlap.
             // Exclusive access to the destination and the caller's claim protect the copy.
             // The I/O backend permits source memory to be accessed by external pixel producers.
             unsafe {
-                SysMemBackend::copy_from_io(
-                    row,
-                    destination.as_ptr().cast::<u8>().add(y * self.pitch),
-                );
+                SysMemBackend::copy_from_io(row, destination.as_ptr().cast::<u8>().add(y * pitch));
             }
         }
         Ok(())

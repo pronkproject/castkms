@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use super::*;
+use crate::host_compositor::layout::Layout;
 use crate::host_compositor::{
     pool::Pool,
     worker::{
@@ -18,7 +19,11 @@ mod cases {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
         fixture.select(&fb, false, 0)?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool.clone())?;
         let handle = owner.handle();
         let peer = handle.clone();
@@ -44,7 +49,11 @@ mod cases {
     #[test]
     fn dropping_a_handle_preserves_the_owner() -> Result {
         let fixture = Fixture::new()?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
         let handle = owner.handle();
         handle.request()?;
@@ -61,7 +70,11 @@ mod cases {
     #[test]
     fn cloned_handles_consume_one_shared_result() -> Result {
         let fixture = Fixture::new()?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
         let first = owner.handle();
         let second = first.clone();
@@ -80,7 +93,11 @@ mod cases {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
         fixture.select(&fb, false, 0)?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
         let handle = owner.handle();
         handle.request()?;
@@ -113,7 +130,11 @@ mod cases {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
         fixture.select(&fb, false, 0)?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool.clone())?;
         let handle = owner.handle();
         for _ in 0..16 {
@@ -129,7 +150,11 @@ mod cases {
     #[test]
     fn blank_output_finishes_without_a_source_image() -> Result {
         let fixture = Fixture::new()?;
-        let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, 640, 480)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
         let handle = owner.handle();
         handle.request()?;
