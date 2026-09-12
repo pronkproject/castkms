@@ -2,7 +2,10 @@
 
 //! Nonblocking reservation of the two private host images for an output.
 
-use super::image::Image;
+use super::{
+    budget::Budget,
+    image::Image, //
+};
 use crate::Driver;
 use kernel::{
     drm::Device,
@@ -18,6 +21,7 @@ use kernel::{
 /// Each image is at most 8 MiB, so the pool is at most 16 MiB. A worker must reserve a
 /// slot before claiming a compositor source. Shutdown discards free images immediately;
 /// outstanding slots remain private and release their storage when returned.
+/// Replacements must use the same output budget, including images from closed pools.
 #[pin_data]
 pub(crate) struct Pool {
     #[pin]
@@ -26,9 +30,14 @@ pub(crate) struct Pool {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Pool {
-    pub(crate) fn new(device: &Device<Driver>, width: u32, height: u32) -> Result<Arc<Self>> {
-        let first = Image::new(device, width, height)?;
-        let second = Image::new(device, width, height)?;
+    pub(crate) fn new(
+        device: &Device<Driver>,
+        budget: &Arc<Budget>,
+        width: u32,
+        height: u32,
+    ) -> Result<Arc<Self>> {
+        let first = Image::new(device, budget, width, height)?;
+        let second = Image::new(device, budget, width, height)?;
         Arc::pin_init(
             pin_init!(Self {
                 images <- kernel::new_mutex!(Some([Some(first), Some(second)])),

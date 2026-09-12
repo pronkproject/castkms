@@ -2,6 +2,10 @@
 
 //! Private packed host images, with no GEM handle or DMA-BUF export interface.
 
+use super::budget::{
+    Budget,
+    Charge, //
+};
 use crate::{
     gem,
     Driver, //
@@ -22,7 +26,8 @@ use kernel::{
         SysMemBackend, //
     },
     page::page_align,
-    prelude::*, //
+    prelude::*,
+    sync::Arc, //
 };
 
 /// One exclusively owned image for the bounded host pool, not a capture destination.
@@ -31,6 +36,8 @@ use kernel::{
 /// ownership; neither its native object nor its mapping can escape through this interface.
 pub(crate) struct Image {
     map: shmem::VMapOwned<gem::Object>,
+    // Release the mapping and its allocation before returning the reserved bytes.
+    _charge: Charge,
     width: u32,
     height: u32,
     pitch: usize,
@@ -38,7 +45,12 @@ pub(crate) struct Image {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Image {
-    pub(crate) fn new(device: &Device<Driver>, width: u32, height: u32) -> Result<Self> {
+    pub(crate) fn new(
+        device: &Device<Driver>,
+        budget: &Arc<Budget>,
+        width: u32,
+        height: u32,
+    ) -> Result<Self> {
         if width == 0 || height == 0 || width > 1920 || height > 1080 {
             return Err(EINVAL);
         }
@@ -48,6 +60,7 @@ impl Image {
         if size > 8 * 1024 * 1024 {
             return Err(E2BIG);
         }
+        let charge = budget.reserve(size)?;
         let object = shmem::Object::<gem::Object>::new(device, size, Default::default(), ())?;
         let map = object.owned_vmap()?;
         // SAFETY: The new native allocation has no other pixel users or exported handles.
@@ -55,6 +68,7 @@ impl Image {
         unsafe { map.as_view().as_ptr().cast::<u8>().write_bytes(0, size) };
         Ok(Self {
             map,
+            _charge: charge,
             width,
             height,
             pitch,

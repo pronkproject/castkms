@@ -51,6 +51,7 @@ use kernel::drm::{
 // Close device-owned references before atomic shutdown, then release the faux parent last.
 struct Fixture {
     state: device::Owner,
+    host_budget: kernel::sync::Arc<host_compositor::budget::Budget>,
     drm: TestDevice<Driver>,
     _parent: faux::Registration,
 }
@@ -79,6 +80,7 @@ impl Fixture {
         let drm = TestDevice::new(drm)?;
         Ok(Self {
             state,
+            host_budget: host_compositor::budget::Budget::new()?,
             drm,
             _parent: parent,
         })
