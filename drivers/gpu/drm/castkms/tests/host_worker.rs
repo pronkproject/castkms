@@ -20,25 +20,29 @@ mod cases {
         fixture.select(&fb, false, 0)?;
         let pool = Pool::new(fixture.drm.device(), 640, 480)?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
-        owner.request()?;
+        let handle = owner.handle();
+        handle.request()?;
         owner.flush();
-        let Some(Outcome::Image(first)) = owner.take_outcome() else {
+        let Some(Outcome::Image(first)) = handle.take_outcome() else {
             return Err(EINVAL);
         };
         fixture.select(&fb, false, 0)?;
-        owner.request()?;
+        handle.request()?;
         owner.flush();
-        let Some(Outcome::Image(second)) = owner.take_outcome() else {
+        let Some(Outcome::Image(second)) = handle.take_outcome() else {
             return Err(EINVAL);
         };
         check(first.content_serial() != second.content_serial())?;
-        owner.request()?;
+        handle.request()?;
         owner.flush();
-        check(matches!(owner.take_outcome(), Some(Outcome::Failed(EBUSY))))?;
+        check(matches!(
+            handle.take_outcome(),
+            Some(Outcome::Failed(EBUSY))
+        ))?;
         drop(first);
-        owner.request()?;
+        handle.request()?;
         owner.flush();
-        check(matches!(owner.take_outcome(), Some(Outcome::Image(_))))?;
+        check(matches!(handle.take_outcome(), Some(Outcome::Image(_))))?;
         Ok(())
     }
 
@@ -49,12 +53,13 @@ mod cases {
         fixture.select(&fb, false, 0)?;
         let pool = Pool::new(fixture.drm.device(), 640, 480)?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool.clone())?;
+        let handle = owner.handle();
         for _ in 0..16 {
-            owner.request()?;
+            handle.request()?;
         }
         owner.close();
-        check(owner.take_outcome().is_none())?;
-        check(owner.request() == Err(ENODEV))?;
+        check(handle.take_outcome().is_none())?;
+        check(handle.request() == Err(ENODEV))?;
         check(matches!(pool.reserve(), Err(ENODEV)))?;
         Ok(())
     }
@@ -64,10 +69,11 @@ mod cases {
         let fixture = Fixture::new()?;
         let pool = Pool::new(fixture.drm.device(), 640, 480)?;
         let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
-        owner.request()?;
+        let handle = owner.handle();
+        handle.request()?;
         owner.flush();
-        check(matches!(owner.take_outcome(), Some(Outcome::Blank)))?;
-        check(owner.take_outcome().is_none())?;
+        check(matches!(handle.take_outcome(), Some(Outcome::Blank)))?;
+        check(handle.take_outcome().is_none())?;
         Ok(())
     }
 }

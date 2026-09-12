@@ -105,20 +105,11 @@ impl Owner {
         Ok(Self { worker })
     }
 
-    /// Request a fresh private image, coalescing requests already queued on the same work.
-    ///
-    /// Call from sleepable context: request admission takes the worker's mutex.
-    pub(crate) fn request(&self) -> Result {
-        let state = self.worker.state.lock();
-        if state.closed {
-            return Err(ENODEV);
+    /// Retain request access without sharing responsibility for shutdown.
+    pub(crate) fn handle(&self) -> Handle {
+        Handle {
+            worker: self.worker.clone(),
         }
-        let _queued = workqueue::system_dfl().enqueue(self.worker.clone());
-        Ok(())
-    }
-
-    pub(crate) fn take_outcome(&self) -> Option<Outcome> {
-        self.worker.state.lock().outcome.take()
     }
 
     /// Drain the current request; callers must exclude concurrent requests if they need idle.
@@ -136,6 +127,36 @@ impl Owner {
         drop(retired);
         self.worker.work.flush();
         self.worker.pool.close();
+    }
+}
+
+/// Shared access to private composition requests, without ownership of shutdown.
+///
+/// Handles share one consumable latest result. Dropping a handle does not close the worker;
+/// dropping its [`Owner`] closes all surviving handles and drains any accepted request.
+/// A handle grants no permission to deliver the resulting pixels to a capture recipient.
+#[derive(Clone)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+pub(crate) struct Handle {
+    worker: Arc<Worker>,
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Handle {
+    /// Request a fresh private image, coalescing requests already queued on the same work.
+    ///
+    /// Call from sleepable context: request admission takes the worker's mutex.
+    pub(crate) fn request(&self) -> Result {
+        let state = self.worker.state.lock();
+        if state.closed {
+            return Err(ENODEV);
+        }
+        let _queued = workqueue::system_dfl().enqueue(self.worker.clone());
+        Ok(())
+    }
+
+    pub(crate) fn take_outcome(&self) -> Option<Outcome> {
+        self.worker.state.lock().outcome.take()
     }
 }
 
