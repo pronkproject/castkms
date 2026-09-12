@@ -15,6 +15,52 @@ mod cases {
     struct Resource(Arc<AtomicUsize>);
 
     #[test]
+    fn retained_scene_moves_to_the_new_generation() -> Result {
+        let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+        let first = Source::new(2)?;
+        let second = Source::new(2)?;
+        output.publish(first.clone(), SceneUpdate::Replace(Some(17)));
+        let hold = first.hold_admission()?;
+        assert!(hold.prepared()?.is_some());
+        output.publish(second.clone(), SceneUpdate::Retain);
+        drop(hold);
+        assert!(matches!(first.claim(), Err(EBUSY)));
+        second.claim()?.release_cpu();
+        assert!(
+            output.inspect_accepted(|current| current.is_some_and(|(source, scene)| {
+                core::ptr::eq(source, &*second) && scene == Some(&17)
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn blank_publication_keeps_its_generation() -> Result {
+        let output = Arc::pin_init(Output::<u32>::new(), GFP_KERNEL)?;
+        let source = Source::new(2)?;
+        output.publish(source.clone(), SceneUpdate::Replace(None));
+        assert!(
+            output.inspect_accepted(|current| current.is_some_and(|(published, scene)| {
+                core::ptr::eq(published, &*source) && scene.is_none()
+            }))
+        );
+        output.close();
+        assert!(matches!(source.claim(), Err(EBUSY)));
+        Ok(())
+    }
+
+    #[test]
+    fn closing_rejects_a_late_generation() -> Result {
+        let output = Arc::pin_init(Output::<u32>::new(), GFP_KERNEL)?;
+        let late = Source::new(2)?;
+        output.close();
+        output.publish(late.clone(), SceneUpdate::Retain);
+        assert!(output.inspect_accepted(|current| current.is_none()));
+        assert!(matches!(late.claim(), Err(EBUSY)));
+        Ok(())
+    }
+
+    #[test]
     fn discarded_attribution_does_not_change_publication() -> Result {
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
         let first_content = ContentSerial::for_update(None, true)?;
