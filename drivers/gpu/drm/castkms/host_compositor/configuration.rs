@@ -94,6 +94,25 @@ impl Configuration {
         }
     }
 
+    /// Drain and release the worker while allowing later configuration.
+    ///
+    /// Old handles close permanently, but output publication remains open. Retained
+    /// images keep their budget charges. This controls resources only; it neither
+    /// activates another executor nor changes the accepted framebuffer profile.
+    /// Call outside modeset, publication and buffer reservation locks.
+    pub(crate) fn stop_worker(&self) -> Result {
+        let _change = self.lifecycle.lock();
+        let retired = {
+            let mut state = self.state.lock();
+            let State::Open(active) = &mut *state else {
+                return Err(ENODEV);
+            };
+            active.take()
+        };
+        drop(retired);
+        Ok(())
+    }
+
     fn close(&self) {
         let _change = self.lifecycle.lock();
         let retired = core::mem::replace(&mut *self.state.lock(), State::Closed);
