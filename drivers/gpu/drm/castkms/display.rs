@@ -107,6 +107,10 @@ fn check_geometry(
                     state.source_height_16_16(),
                 ],
                 destination: [state.crtc_w(), state.crtc_h()],
+                output: [
+                    u32::from(crtc_state.mode().hdisplay()),
+                    u32::from(crtc_state.mode().vdisplay()),
+                ],
             });
         }
     }

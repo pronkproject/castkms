@@ -6,6 +6,7 @@ mod authority;
 mod device;
 mod display;
 mod gem;
+mod host_compositor;
 mod output;
 mod provenance;
 mod scene;
