@@ -78,6 +78,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_master_file_is_distinct_from_clients_sharing_its_identity() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-file-role", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let other = create(parent.as_ref(), &counts, false)?;
+        let owner = HandleClient::new(&dev)?;
+        let peer = HandleClient::new(&dev)?;
+        let unassociated = HandleClient::new(&dev)?;
+        let foreign = HandleClient::new(&other)?;
+        make_current(&owner)?;
+        make_current(&foreign)?;
+        // SAFETY: The peer is private with no association. Transfer one reference from the
+        // owner's live identity; native client close releases it. Its master role stays false.
+        unsafe {
+            (*peer.file().as_raw()).master =
+                bindings::drm_master_get((*owner.file().as_raw()).master);
+        }
+        let master = owner.file().associated_master().ok_or(EINVAL)?;
+        let shared = peer.file().associated_master().ok_or(EINVAL)?;
+        check(master == shared)?;
+        let guard = master.lock_current().ok_or(EINVAL)?;
+        check(guard.is_master_file(owner.file()))?;
+        check(!guard.is_master_file(peer.file()))?;
+        check(!guard.is_master_file(unassociated.file()))?;
+        check(!guard.is_master_file(foreign.file()))?;
+        Ok(())
+    }
+
+    #[test]
+    fn master_file_checks_match_the_lease_identity_not_only_its_root() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-file-lease", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let owner = HandleClient::new(&dev)?;
+        let client = HandleClient::new(&dev)?;
+        make_current(&owner)?;
+        associate_lessee(&client, &owner)?;
+        // SAFETY: The private client owns its new lease identity, as a native lease file does.
+        // Set its role before exposing it to the checks; native close revokes that lease.
+        unsafe {
+            (*client.file().as_raw()).is_master = true;
+            (*client.file().as_raw()).was_master = true;
+        }
+        let root = owner.file().associated_master().ok_or(EINVAL)?;
+        let lessee = client.file().associated_master().ok_or(EINVAL)?;
+        {
+            let guard = root.lock_current().ok_or(EINVAL)?;
+            check(guard.is_master_file(owner.file()))?;
+            check(!guard.is_master_file(client.file()))?;
+        }
+        {
+            let guard = lessee.lock_current().ok_or(EINVAL)?;
+            check(guard.is_master_file(client.file()))?;
+            check(!guard.is_master_file(owner.file()))?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn lease_identity_is_independent_of_current_control() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-master-lease-identity", None)?;
