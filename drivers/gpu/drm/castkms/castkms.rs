@@ -3,6 +3,7 @@
 //! CastKMS virtual display device.
 
 mod authority;
+mod capture;
 mod device;
 mod display;
 mod gem;
