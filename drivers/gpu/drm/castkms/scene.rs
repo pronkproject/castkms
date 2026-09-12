@@ -53,6 +53,11 @@ pub(super) struct Scene {
 
 impl Scene {
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(super) fn content_serial(&self) -> ContentSerial {
+        self._content
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_failed(&self) -> bool {
         self._producer.as_ref().is_some_and(|records| {
             records

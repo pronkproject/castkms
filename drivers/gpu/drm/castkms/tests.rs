@@ -4,6 +4,7 @@
 
 use super::*;
 
+mod generations;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
 mod producers;
