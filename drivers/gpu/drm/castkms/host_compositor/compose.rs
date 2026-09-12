@@ -11,7 +11,10 @@ use super::{
     }, //
 };
 use crate::{
-    output::Output,
+    output::{
+        Identity,
+        Output, //
+    },
     scene::{
         ContentSerial,
         Scene, //
@@ -31,6 +34,7 @@ use kernel::{
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Completed {
     slot: Slot,
+    output: Identity,
     layout: Layout,
     content: ContentSerial,
     owner: Option<MasterRef<Driver>>,
@@ -38,6 +42,11 @@ pub(crate) struct Completed {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Completed {
+    /// Origin of the private image, independent of current scene or capture permission.
+    pub(crate) fn output_identity(&self) -> &Identity {
+        &self.output
+    }
+
     pub(crate) fn layout(&self) -> Layout {
         self.layout
     }
@@ -95,6 +104,7 @@ pub(crate) fn current(output: &Output<Scene>, pool: &Arc<Pool>) -> Result<Option
     let (content, owner) = metadata?;
     Ok(Some(Completed {
         slot,
+        output: output.identity().clone(),
         layout,
         content,
         owner,
