@@ -5,9 +5,12 @@
 use super::MasterRef;
 use crate::{
     bindings,
-    drm::kms::{
-        KmsDriver,
-        ModeObject, //
+    drm::{
+        file::File,
+        kms::{
+            KmsDriver,
+            ModeObject, //
+        }, //
     },
     types::NotThreadSafe, //
 };
@@ -18,10 +21,10 @@ use crate::{
 /// device registration, output enablement, a file's master role, or permission to capture pixels.
 /// An empty or revoked lease may have a current root; check every required object explicitly.
 ///
-/// Keep the critical section short. Do not acquire modesetting locks, remove objects or release
-/// final master/object references while holding it. Do not wait for rendering, worker completion
-/// or consumer buffer reuse. A caller must account for any further policy locks in the same order
-/// used by master changes and object removal.
+/// Keep the critical section short. Do not acquire modesetting locks, remove objects, close DRM
+/// files or release final master/object references while holding it. Do not wait for rendering,
+/// worker completion or consumer buffer reuse. A caller must account for any further policy locks
+/// in the same order used by master changes and object removal.
 ///
 /// # Invariants
 ///
@@ -73,6 +76,20 @@ impl<D: KmsDriver> MasterRef<D> {
 }
 
 impl<D: KmsDriver> CurrentMasterGuard<'_, D> {
+    /// Whether the file owns the exact master identity stabilized by this guard.
+    ///
+    /// Merely sharing that identity is insufficient. Another device or a different identity
+    /// under the same lease root is rejected. The result remains stable while the guard is
+    /// held, but establishes neither object access nor permission to create a capture grant.
+    pub fn is_master_file(&self, file: &File<D::File>) -> bool {
+        if file.device_raw() != self.master.dev.as_raw() {
+            return false;
+        }
+        // SAFETY: The same device's master mutex protects the live file's role and association.
+        // Both fields remain stable under the guard; no foreign device's fields are inspected.
+        unsafe { (*file.as_raw()).is_master && (*file.as_raw()).master == self.master.raw.as_ptr() }
+    }
+
     /// Check that the same object remains registered and covered by the native lease.
     ///
     /// Reject another device without reading its object ID. Capture scope must still identify
