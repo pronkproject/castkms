@@ -191,6 +191,15 @@ discards the cached result and drains work. An image already taken by a caller
 keeps its private storage, independently of that shutdown. These handles remain
 internal; they grant no permission to deliver pixels to a capture recipient.
 
+A consumer may wait interruptibly for an outcome through its handle without
+draining or owning the worker. The wait consumes one shared outcome, which
+another handle may take first; it does not create a separately numbered
+request. Publication and shutdown wake waiters. A closed worker reports
+``ENODEV``, and interruption leaves the shared result unconsumed. Waiting is
+consumer work outside display, reservation and worker lifecycle locks, with no
+source claim. Waking on shutdown does not certify that the owner's separate
+source-work drain has finished.
+
 The worker separately retains its last complete image. Reading that cache does
 not consume the latest attempt, and a failed attempt does not erase the cached
 pixels or suppress the failure. A successful image replaces the cache; completed
