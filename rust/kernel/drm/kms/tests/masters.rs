@@ -2,6 +2,7 @@
 
 use super::*;
 
+mod access;
 mod transitions;
 
 // Install a native association on a private internal client. The fixture does not make the
