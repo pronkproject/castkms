@@ -24,6 +24,7 @@ mod generations;
 mod host_composition;
 mod host_configuration;
 mod host_framebuffers;
+mod host_idle;
 mod host_images;
 mod host_pool;
 mod host_worker;
