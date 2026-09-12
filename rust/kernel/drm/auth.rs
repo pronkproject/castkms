@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
-//! Retained DRM master identities, without a claim of current display authority.
+//! Retained DRM master identities and short checks of current object access.
 //!
 //! C header: [`include/drm/drm_auth.h`](srctree/include/drm/drm_auth.h)
 
@@ -9,6 +9,9 @@ use crate::{bindings, sync::aref::ARef};
 use core::ptr::NonNull;
 
 pub(super) mod callbacks;
+mod current;
+
+pub use current::CurrentMasterGuard;
 
 /// A file's associated master and current-master status sampled together.
 ///
@@ -50,16 +53,17 @@ impl<D: Driver> MasterSnapshot<D> {
 ///
 /// # Invariants
 ///
-/// `raw` owns one reference to a live `drm_master` belonging to `_dev`.
+/// `raw` owns one reference to a live `drm_master` belonging to `dev`.
 pub struct MasterRef<D: Driver> {
     raw: NonNull<bindings::drm_master>,
-    _dev: ARef<Device<D>>,
+    dev: ARef<Device<D>>,
 }
 
-// SAFETY: The handle exposes only identity comparison and native atomic reference counting.
-// Its retained device remains alive through native master destruction on any thread.
+// SAFETY: Native references and current-access checks are synchronized. The retained device
+// remains alive through native master destruction on any thread.
 unsafe impl<D: Driver> Send for MasterRef<D> {}
-// SAFETY: Shared access neither exposes nor mutates native master fields.
+// SAFETY: Shared methods expose no unguarded native master fields. Current-access guards
+// remain on the acquiring task and serialize access using the native locks.
 unsafe impl<D: Driver> Sync for MasterRef<D> {}
 
 impl<D: Driver> MasterRef<D> {
@@ -74,20 +78,17 @@ impl<D: Driver> MasterRef<D> {
     ) -> Self {
         Self {
             raw,
-            _dev: ARef::from(dev),
+            dev: ARef::from(dev),
         }
     }
 }
 
 impl<D: Driver> Clone for MasterRef<D> {
     fn clone(&self) -> Self {
-        let dev = self._dev.clone();
+        let dev = self.dev.clone();
         // SAFETY: Our reference keeps the master alive while the helper takes another reference.
         unsafe { bindings::drm_master_get(self.raw.as_ptr()) };
-        Self {
-            raw: self.raw,
-            _dev: dev,
-        }
+        Self { raw: self.raw, dev }
     }
 }
 
