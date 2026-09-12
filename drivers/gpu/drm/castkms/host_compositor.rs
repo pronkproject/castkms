@@ -4,6 +4,7 @@
 
 pub(super) mod budget;
 pub(super) mod compose;
+pub(super) mod configuration;
 pub(super) mod framebuffer;
 pub(super) mod image;
 pub(super) mod layout;
