@@ -24,14 +24,15 @@ There is no display clock. A successful flip event means that the driver has
 accepted the new state and no longer needs the old buffer; it does not mean
 that a frame has been displayed elsewhere. Events complete through DRM's
 existing mechanism for devices without vertical blanking interrupts. The
-driver does not read framebuffer pixels, retain them for capture, or implement
-any private capture requests. Normal DRM operations on a caller's own buffers
-are not a capture capability.
+normal device path does not schedule pixel reads or implement private capture
+requests. The internal host-composition helpers described below are tested
+separately and are not yet connected to capture demand. Normal DRM operations
+on a caller's own buffers are not a capture capability.
 
 There is no cursor plane, configurable display attachment, EDID, audio, CEC,
 writeback, CRC collection, or delegated composition. No default framebuffer
-console client is started. Keep production casting on the existing driver
-until the required facilities have been implemented and qualified.
+console client is started. Do not use the development driver for production
+casting until the required facilities have been implemented and qualified.
 
 Code boundaries
 ---------------
@@ -50,7 +51,7 @@ ordinary commit path into an implicit grant of access to another client's
 pixels.
 
 ``scene.rs`` retains the primary plane's framebuffer allocation and copied
-source and destination geometry independently of the atomic callback. The
+source, destination and output geometry independently of the atomic callback. The
 source coordinates keep their original fixed-point representation. Atomic
 validation prepares geometry in the candidate plane state; the CRTC flush
 callback publishes the description together with the accepted state's source
@@ -99,11 +100,12 @@ not inherit the previous update's records, including on a same-framebuffer
 recommit. An empty collection is missing synchronization evidence, not a
 success result. Test-only validation does not run framebuffer preparation.
 
-An authorized source read lease is still absent. There is no
-interface for reading or exporting pixels. Capture publication must establish
-permission and those remaining lifetime checks before using descriptions for
-deferred work. A later reservation scan cannot recover producer error history
-that was discarded before collection.
+The internal CPU read path takes a claim against the published generation and
+rechecks that it is still current before reading. That claim establishes a
+read lifetime, not permission to capture. No userspace interface exposes those
+pixels. Capture delivery must establish authorization independently. A later
+reservation scan cannot recover producer error history discarded before
+collection.
 
 The shared Rust reservation interface provides read-only, usage-filtered
 snapshots through GEM objects without mapping pixels. It retains individual
@@ -132,6 +134,34 @@ That transport helper grants no source access. A future executor handoff still
 needs authorization, source lifetime management and close-on-exec descriptor
 publication after fallible setup. It must not turn preparation readiness or a
 userspace promise to submit work into a DMA fence.
+
+Private host composition
+------------------------
+
+The kernel has a small internal compositor for the executor-absent path. It
+accepts native CastKMS shmem, linear XRGB8888, and an entire framebuffer matching
+the output size without scaling or clipping, up to 1920 by 1080. Foreign
+imports are not eligible merely because their format says linear. The checked
+layout also bounds offsets, aligned row pitches and the full allocation.
+
+Each host pool contains two private images, each at most 8 MiB. Their complete
+allocations start cleared, and neither a GEM handle nor a DMA-BUF export is
+available through the image interface. A worker reserves a free image before
+taking any claim on the displayed source. If both images are occupied, it
+reports busy without waiting for reuse or retaining source access.
+
+Source mapping resources are prepared before admission. The read callback then
+checks the retained producer results and copies into the private image outside
+display, publication and reservation locks. Returning from the callback releases
+the claim before unmapping, which can acquire the buffer's reservation lock.
+A completed private image retains its content serial and attribution,
+but not the source framebuffer, mapping or claim. Keeping that image therefore
+does not prevent the compositor from reusing its source buffer.
+
+These helpers do not yet implement registered capture destinations, capture
+authorization, a display clock, or the transition to a userspace GPU executor.
+The two-image host pool is a private-storage limit, not a receiver frame-rate
+policy or a limit on future GPU queues.
 
 Testing in a disposable virtual machine
 --------------------------------------
@@ -223,6 +253,13 @@ signaling, successful producer retention across a test-only candidate, and
 the absence of an inherited error on the next same-framebuffer update. These
 tests also cover implicit reservation errors, usage filtering and test-only
 exclusion. They do not exercise deferred source reads.
+
+Host tests use private fixture allocations to exercise real pixel copies,
+including different source pitches and offsets. They retain completed images
+across same-framebuffer updates, check that source preparation can finish while
+those images remain in use, and verify producer errors and exhausted pools.
+Those tests do not capture an active desktop or establish permission for a
+userspace recipient.
 
 When DRM client support is enabled, the import tests export private dumb
 storage through an internal client and import it into a separately registered
