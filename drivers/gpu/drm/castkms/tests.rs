@@ -21,6 +21,7 @@ fn check(condition: bool) -> Result {
 }
 
 mod generations;
+mod host_cache;
 mod host_composition;
 mod host_configuration;
 mod host_framebuffers;
