@@ -7,6 +7,9 @@ use kernel::{
     prelude::*, //
 };
 
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+mod tests;
+
 /// Allocation geometry checked without allocating storage or reserving budget.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Layout {
