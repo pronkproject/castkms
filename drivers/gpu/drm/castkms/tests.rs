@@ -35,6 +35,7 @@ mod host_requests;
 mod host_results;
 mod host_wait;
 mod host_worker;
+mod output_identity;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
 mod producers;
