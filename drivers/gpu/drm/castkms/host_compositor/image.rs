@@ -32,7 +32,7 @@ pub(crate) struct Image {
     pitch: usize,
 }
 
-#[expect(dead_code)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Image {
     pub(crate) fn new(device: &Device<Driver>, width: u32, height: u32) -> Result<Self> {
         if width == 0 || height == 0 || width > 1920 || height > 1080 {

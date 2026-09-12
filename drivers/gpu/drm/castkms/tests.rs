@@ -6,6 +6,7 @@ use super::*;
 
 mod generations;
 mod host_framebuffers;
+mod host_images;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
 mod producers;
