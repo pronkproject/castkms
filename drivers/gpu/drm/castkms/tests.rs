@@ -9,6 +9,7 @@ mod host_composition;
 mod host_framebuffers;
 mod host_images;
 mod host_pool;
+mod host_worker;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
 mod producers;
