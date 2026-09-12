@@ -177,7 +177,7 @@ exposing the copied pixels; copying into generic capture job storage does not
 establish that permission.
 
 ``host_compositor/worker.rs`` coalesces queued requests onto one work item and
-retains only the output publication, pool and latest result. Its unique shutdown
+retains the output publication, pool and latest attempt. Its unique shutdown
 owner rejects further requests, drains the work and closes the pool. Copying
 and buffer destruction run outside the worker's result lock. The lower
 composition, pool and image modules do not depend on the worker or device
@@ -190,6 +190,20 @@ the unique owner rejects further requests through every surviving handle,
 discards the cached result and drains work. An image already taken by a caller
 keeps its private storage, independently of that shutdown. These handles remain
 internal; they grant no permission to deliver pixels to a capture recipient.
+
+The worker separately retains its last complete image. Reading that cache does
+not consume the latest attempt, and a failed attempt does not erase the cached
+pixels or suppress the failure. A successful image replaces the cache; completed
+blanking and shutdown clear it. Images are immutable and reference-counted, so
+the cache and its readers share one existing pool slot rather than allocating
+duplicate pixel storage. The slot and its allocation charge survive until the
+final reference is released.
+
+The cached image is historical, not a statement that its content or owner is
+still current. An accepted framebuffer update may have occurred since it was
+produced, even when the framebuffer object is unchanged. A consumer must
+establish current content and recipient permission separately before using
+cached pixels as a capture result.
 
 Device ownership includes a lazy host configuration. Creating the device
 allocates no image pool and queues no composition. An internal caller supplies
