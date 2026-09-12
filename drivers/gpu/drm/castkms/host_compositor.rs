@@ -3,3 +3,4 @@
 //! Bounded native-linear composition into private kernel storage.
 
 pub(super) mod framebuffer;
+pub(super) mod image;
