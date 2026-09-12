@@ -9,9 +9,25 @@ use kernel::{
     prelude::*,
     sync::{
         aref::ARef,
+        Arc,
         Mutex, //
     }, //
 };
+
+/// One output's identity, without a reference back to its scenes or source accounting.
+///
+/// It remains stable across updates and shutdown. Retaining it prevents identity reuse,
+/// but establishes neither current display control nor permission to deliver an image.
+#[derive(Clone)]
+pub(super) struct Identity(Arc<()>);
+
+impl PartialEq for Identity {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Identity {}
 
 /// Whether the accepted transaction supplied a new primary-plane description.
 pub(super) enum SceneUpdate<S> {
@@ -42,15 +58,22 @@ enum Publication<S> {
 /// framebuffer reference retains the DRM device, whose private data retains this output.
 #[pin_data]
 pub(super) struct Output<S> {
+    identity: Identity,
     #[pin]
     state: Mutex<Publication<S>>,
 }
 
 impl<S: Unpin> Output<S> {
-    pub(super) fn new() -> impl PinInit<Self> {
-        pin_init!(Self {
+    pub(super) fn new() -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
+            identity: Identity(Arc::new((), GFP_KERNEL)?),
             state <- kernel::new_mutex!(Publication::Open(None)),
         })
+    }
+
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(super) fn identity(&self) -> &Identity {
+        &self.identity
     }
 
     /// Publish a fresh accepted generation, including updates without a primary image.
