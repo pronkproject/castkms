@@ -4,3 +4,4 @@
 
 pub(super) mod framebuffer;
 pub(super) mod image;
+pub(super) mod pool;
