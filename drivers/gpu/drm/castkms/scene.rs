@@ -38,6 +38,7 @@ impl ContentSerial {
 pub(super) struct Geometry {
     pub(super) source: [u32; 4],
     pub(super) destination: [u32; 2],
+    pub(super) output: [u32; 2],
 }
 
 /// The framebuffer reference preserves storage lifetime, not the contents of that storage.

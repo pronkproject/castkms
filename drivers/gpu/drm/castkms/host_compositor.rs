@@ -1,0 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+//! Bounded native-linear composition into private kernel storage.
+
+pub(super) mod framebuffer;
