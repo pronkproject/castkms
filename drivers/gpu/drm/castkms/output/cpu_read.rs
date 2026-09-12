@@ -36,7 +36,6 @@ impl<S: Clone + Unpin> Output<S> {
     /// All source access must finish within `read`; it must not enqueue GPU reads.
     /// The read claim is released before destroying prepared resources, so unmapping may
     /// acquire reservation locks without keeping source retirement pending.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn with_prepared_cpu_scene<P, R>(
         &self,
         prepare: impl FnOnce(&S) -> Result<P>,

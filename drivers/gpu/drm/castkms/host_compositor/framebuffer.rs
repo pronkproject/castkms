@@ -2,8 +2,6 @@
 
 //! Checked storage and sampling geometry, without pixel-read authority.
 
-#![cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
-
 use crate::{
     scene::Geometry,
     Driver, //
@@ -74,5 +72,12 @@ impl Framebuffer {
 
     pub(crate) fn dimensions(&self) -> (u32, u32) {
         (self.image.width(), self.image.height())
+    }
+
+    /// Prepare an owned native mapping without reading pixels or claiming the source.
+    pub(super) fn prepare_mapping(
+        &self,
+    ) -> Result<kernel::drm::kms::framebuffer::FramebufferVMapOwned<crate::gem::Object>> {
+        self.image.owned_vmap()
     }
 }
