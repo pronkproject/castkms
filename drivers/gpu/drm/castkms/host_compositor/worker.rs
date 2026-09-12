@@ -17,6 +17,7 @@ use kernel::{
     prelude::*,
     sync::{
         Arc,
+        CondVar,
         Mutex, //
     },
     workqueue::{
@@ -68,6 +69,8 @@ struct Worker {
     work: Work<Self>,
     #[pin]
     state: Mutex<State>,
+    #[pin]
+    changed: CondVar,
     output: Arc<Output<Scene>>,
     pool: Arc<Pool>,
 }
@@ -92,6 +95,7 @@ impl WorkItem for Worker {
             Err(error) => Outcome::Failed(error),
         };
         let retired = worker.state.lock().record(outcome);
+        worker.changed.notify_all();
         drop(retired);
     }
 }
@@ -116,6 +120,7 @@ impl Owner {
                     outcome: None,
                     last_image: None,
                 }),
+                changed <- kernel::sync::new_condvar!(),
                 output,
                 pool,
             }),
@@ -139,6 +144,7 @@ impl Owner {
     /// Stop new requests and drain work outside locks needed for mapping or source retirement.
     pub(crate) fn close(&self) {
         let retired = core::mem::replace(&mut *self.worker.state.lock(), State::Closed);
+        self.worker.changed.notify_all();
         drop(retired);
         self.worker.work.flush();
         self.worker.pool.close();
@@ -179,6 +185,29 @@ impl Handle {
         match &mut *self.worker.state.lock() {
             State::Open { outcome, .. } => outcome.take(),
             State::Closed => None,
+        }
+    }
+
+    /// Wait interruptibly for one shared outcome, or return `ENODEV` on shutdown.
+    ///
+    /// This does not enqueue work or identify an individual request. Another handle
+    /// may consume an available outcome first. Call only from consumer context,
+    /// outside modeset, publication, reservation and worker lifecycle locks. Waiting
+    /// holds no source claim and is not a source-retirement completion primitive.
+    pub(crate) fn wait_for_outcome(&self) -> Result<Outcome> {
+        let mut state = self.worker.state.lock();
+        loop {
+            match &mut *state {
+                State::Open { outcome, .. } => {
+                    if let Some(outcome) = outcome.take() {
+                        return Ok(outcome);
+                    }
+                }
+                State::Closed => return Err(ENODEV),
+            }
+            if self.worker.changed.wait_interruptible(&mut state) {
+                return Err(ERESTARTSYS);
+            }
         }
     }
 
