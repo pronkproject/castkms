@@ -62,6 +62,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_gem_shmem_test.o \
 	drm_hdmi_state_helper_test.o \
 	drm_managed_test.o \
+	drm_master_access_test.o \
 	drm_mm_test.o \
 	drm_modes_test.o \
 	drm_plane_helper_test.o \

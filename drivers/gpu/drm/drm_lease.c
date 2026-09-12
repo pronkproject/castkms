@@ -95,6 +95,33 @@ static int _drm_lease_held_master(struct drm_master *master, int id)
 	return true;
 }
 
+/**
+ * drm_master_holds_object_locked - check registered object identity and lease
+ * @master: master stabilized by drm_master_lock_current()
+ * @object: retained modesetting object belonging to @master's device
+ *
+ * Check the current registration, not just a retained numeric identifier.
+ * Keeping an object alive does not keep it registered. A full owner controls
+ * every registered object; a lessee controls only objects in its lease.
+ *
+ * Context: The caller must hold the locks acquired by
+ * drm_master_lock_current(). The object must remain alive during the check.
+ *
+ * Returns: Whether the same object is registered and covered by the master.
+ */
+bool drm_master_holds_object_locked(struct drm_master *master,
+				    const struct drm_mode_object *object)
+{
+	struct drm_device *dev = master->dev;
+
+	lockdep_assert_held_once(&dev->master_mutex);
+	lockdep_assert_held_once(&dev->mode_config.idr_mutex);
+	return object->id &&
+		idr_find(&dev->mode_config.object_idr, object->id) == object &&
+		_drm_lease_held_master(master, object->id);
+}
+EXPORT_SYMBOL_GPL(drm_master_holds_object_locked);
+
 /* Checks if the given object has been leased to some lessee of drm_master */
 static bool _drm_has_leased(struct drm_master *master, int id)
 {
