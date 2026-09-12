@@ -67,6 +67,17 @@ unsafe impl<D: Driver> Send for MasterRef<D> {}
 unsafe impl<D: Driver> Sync for MasterRef<D> {}
 
 impl<D: Driver> MasterRef<D> {
+    /// Whether this identity was created as a lessee rather than the top-level display owner.
+    ///
+    /// The relationship does not change when a lease is revoked or its owner loses control.
+    /// A false result establishes neither current control nor a file's master role. Providers
+    /// that support only top-level ownership can reject lessees independently of access checks.
+    pub fn is_lessee(&self) -> bool {
+        // SAFETY: The retained initialized master keeps its immutable lessor relationship alive.
+        // Native lease construction sets it before publication; only final destruction clears it.
+        unsafe { !(*self.raw.as_ptr()).lessor.is_null() }
+    }
+
     /// Take ownership of one native reference, retaining its device independently.
     ///
     /// # Safety
