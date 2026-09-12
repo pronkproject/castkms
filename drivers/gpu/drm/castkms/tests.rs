@@ -27,6 +27,7 @@ mod host_configuration;
 mod host_framebuffers;
 mod host_idle;
 mod host_images;
+mod host_layouts;
 mod host_pool;
 mod host_results;
 mod host_wait;
