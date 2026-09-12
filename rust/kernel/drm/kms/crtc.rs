@@ -382,6 +382,14 @@ impl<T: DriverCrtc> Crtc<T> {
         Crtc::<T>::OPS.funcs.enable_vblank.is_some()
     }
 
+    /// Borrow the primary plane registered with this CRTC, without accessing its current state.
+    pub fn primary_plane(&self) -> &Plane<<T::Driver as KmsDriver>::Plane> {
+        // SAFETY: Rust CRTC construction requires an initialized primary plane on the same
+        // device. Plane construction enforces the driver's nominated plane type. The device
+        // owns both objects, and the primary pointer is immutable after registration.
+        unsafe { Plane::from_raw((*self.as_raw()).primary) }
+    }
+
     /// Returns an owned handle to this [`Crtc`].
     ///
     /// A `&Crtc<T>` is only valid for the callback that produced it. Drivers that must reach a
