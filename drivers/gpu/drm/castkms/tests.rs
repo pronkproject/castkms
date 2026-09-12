@@ -29,6 +29,7 @@ mod host_idle;
 mod host_images;
 mod host_layouts;
 mod host_pool;
+mod host_requests;
 mod host_results;
 mod host_wait;
 mod host_worker;
