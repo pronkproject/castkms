@@ -27,14 +27,14 @@ use kernel::{
 ///
 /// Attribution describes the accepted scene; it does not authorize a capture recipient.
 /// The pool slot remains occupied until this image is dropped, independently of KMS.
-#[expect(dead_code)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Completed {
     slot: Slot,
     content: ContentSerial,
     owner: Option<MasterRef<Driver>>,
 }
 
-#[expect(dead_code)]
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Completed {
     pub(crate) fn read_row(&self, y: u32, pixels: &mut [u8]) -> Result {
         self.slot.with_image(|image| image.read_row(y, pixels))?
@@ -54,7 +54,6 @@ impl Completed {
 /// Call only from worker context, outside modeset and reservation locks. Storage and
 /// source mapping are prepared before claiming pixels. Failure returns the slot without
 /// publishing its partial contents; success releases all source access before returning.
-#[expect(dead_code)]
 pub(crate) fn current(output: &Output<Scene>, pool: &Arc<Pool>) -> Result<Option<Completed>> {
     let mut slot = pool.reserve()?;
     let dimensions = slot.with_image(|image| image.dimensions())?;
