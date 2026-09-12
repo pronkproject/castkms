@@ -16,6 +16,17 @@ impl Drop for CpuClaim {
 }
 
 impl<S: Clone + Unpin> Output<S> {
+    /// Run a synchronous source read after securing independently available destination storage.
+    ///
+    /// The callback must finish all source access before returning; it must not enqueue GPU work
+    /// or wait for downstream buffer reuse. Capture authorization remains the caller's task.
+    /// Blank and closed outputs return `None`. Admission holds and generation changes fail
+    /// without invoking the callback. No publication lock is held during admission or reading.
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn with_cpu_scene<R>(&self, read: impl FnOnce(&S) -> R) -> Result<Option<R>> {
+        self.with_prepared_cpu_scene(|_| Ok(()), |scene, ()| read(scene))
+    }
+
     /// Prepare retained mapping resources before admitting a synchronous source read.
     ///
     /// `prepare` may allocate and map storage, but must not read source pixels. `read` runs
@@ -25,7 +36,7 @@ impl<S: Clone + Unpin> Output<S> {
     /// All source access must finish within `read`; it must not enqueue GPU reads.
     /// The read claim is released before destroying prepared resources, so unmapping may
     /// acquire reservation locks without keeping source retirement pending.
-    #[expect(dead_code)]
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn with_prepared_cpu_scene<P, R>(
         &self,
         prepare: impl FnOnce(&S) -> Result<P>,
@@ -59,3 +70,6 @@ impl<S: Clone + Unpin> Output<S> {
         Ok(Some(result))
     }
 }
+
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+mod tests;
