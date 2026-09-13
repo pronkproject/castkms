@@ -6,6 +6,27 @@
 
 #include "fixture.h"
 
+static void check_vblank(int fd, const drmModeModeInfo *mode)
+{
+	drmVBlank first = { .request = { .type = DRM_VBLANK_RELATIVE, .sequence = 1 } };
+	drmVBlank next = { .request = { .type = DRM_VBLANK_RELATIVE, .sequence = 3 } };
+	uint64_t first_us, next_us, expected_us, elapsed_us;
+	uint32_t frames;
+
+	CHECK(drmWaitVBlank(fd, &first) == 0);
+	CHECK(drmWaitVBlank(fd, &next) == 0);
+	frames = next.reply.sequence - first.reply.sequence;
+	CHECK(frames >= 3);
+	first_us = (uint64_t)first.reply.tval_sec * 1000000 + first.reply.tval_usec;
+	next_us = (uint64_t)next.reply.tval_sec * 1000000 + next.reply.tval_usec;
+	CHECK(next_us > first_us);
+	elapsed_us = next_us - first_us;
+	expected_us = 1000ULL * mode->htotal * mode->vtotal * frames / mode->clock;
+	/* Allow scheduling jitter, but distinguish a clock running at half the selected rate. */
+	CHECK(elapsed_us >= expected_us * 3 / 4);
+	CHECK(elapsed_us <= expected_us * 5 / 4);
+}
+
 int main(int argc, char **argv)
 {
 	drmModeRes *resources;
@@ -15,8 +36,9 @@ int main(int argc, char **argv)
 	drmModeCrtc *crtc;
 	drmVersion *version;
 	drmModeModeInfo *mode;
+	drmModeModeInfo slow_mode;
 	struct buffer a, b;
-	uint32_t crtc_id, connector_id, plane_id, mode_id;
+	uint32_t crtc_id, connector_id, plane_id, mode_id, slow_mode_id;
 	int fd;
 
 	if (argc != 2 && argc != 3) {
@@ -71,6 +93,7 @@ int main(int argc, char **argv)
 	crtc = drmModeGetCrtc(fd, crtc_id);
 	CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
 	drmModeFreeCrtc(crtc);
+	check_vblank(fd, mode);
 	req = drmModeAtomicAlloc();
 	CHECK(req);
 	property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", b.fb);
@@ -89,11 +112,24 @@ int main(int argc, char **argv)
 	property(fd, req, crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", 1);
 	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
 	drmModeAtomicFree(req);
+	check_vblank(fd, mode);
 	for (unsigned int i = 0; i < 16; i++) {
 		flip(fd, plane_id, b.fb);
 		flip(fd, plane_id, b.fb);
 		flip(fd, plane_id, a.fb);
 	}
+	slow_mode = *mode;
+	slow_mode.clock /= 2;
+	CHECK(slow_mode.clock > 0);
+	CHECK(drmModeCreatePropertyBlob(fd, &slow_mode, sizeof(slow_mode), &slow_mode_id) == 0);
+	req = drmModeAtomicAlloc();
+	CHECK(req);
+	property(fd, req, crtc_id, DRM_MODE_OBJECT_CRTC, "MODE_ID", slow_mode_id);
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
+	drmModeAtomicFree(req);
+	check_vblank(fd, &slow_mode);
+	flip(fd, plane_id, b.fb);
+	flip(fd, plane_id, a.fb);
 	req = drmModeAtomicAlloc();
 	CHECK(req);
 	property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_W", mode->hdisplay / 2);
@@ -114,11 +150,12 @@ int main(int argc, char **argv)
 	destroy_buffer(fd, &b);
 	destroy_buffer(fd, &a);
 	CHECK(drmModeDestroyPropertyBlob(fd, mode_id) == 0);
+	CHECK(drmModeDestroyPropertyBlob(fd, slow_mode_id) == 0);
 	drmModeFreePlaneResources(planes);
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
 	CHECK(close(fd) == 0);
-	puts("PASS: CastKMS allocation, modeset, 48 flips, rejection, disable");
+	puts("PASS: CastKMS allocation, modeset, timed vblank, 50 flips, rejection, disable");
 	if (argc == 3)
 		puts("PASS: foreign heap storage after closing exporter descriptor and import handle");
 	return 0;
