@@ -54,6 +54,7 @@ mod host_origins;
 mod host_pool;
 mod host_requests;
 mod host_results;
+mod host_snapshots;
 mod host_wait;
 mod host_worker;
 mod output_identity;
