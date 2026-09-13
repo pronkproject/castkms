@@ -5,6 +5,7 @@
 //! Delivery operations do not mint authority. Their caller must establish the recipient's
 //! current permission and the image's authorized scope before providing either input.
 
+pub(crate) mod budget;
 pub(crate) mod host;
 pub(crate) mod permission;
 pub(crate) mod streams;
