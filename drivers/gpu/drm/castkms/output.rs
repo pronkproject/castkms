@@ -179,6 +179,7 @@ impl<S: Unpin, C: Unpin> Output<S, C> {
     }
 }
 
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 impl<S: Unpin> Output<S> {
     /// Publish a scene without additional configuration metadata.
     pub(super) fn publish(&self, source: ARef<Source>, update: SceneUpdate<S>) {

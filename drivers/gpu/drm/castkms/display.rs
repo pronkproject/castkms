@@ -38,7 +38,11 @@ pub(super) struct Encoder {}
 #[pin_data]
 pub(super) struct Connector {}
 
-pub(super) struct State;
+pub(super) struct ConnectorState;
+
+pub(super) struct CrtcState {
+    configuration: Option<scene::Configuration>,
+}
 
 pub(super) struct PlaneState {
     geometry: Option<scene::Geometry>,
@@ -70,17 +74,21 @@ impl plane::DriverPlaneState for PlaneState {
     }
 }
 
-impl crtc::DriverCrtcState for State {
+impl crtc::DriverCrtcState for CrtcState {
     type Crtc = Crtc;
     fn new(_: &crtc::Crtc<Crtc>) -> Result<Self> {
-        Ok(Self)
+        Ok(Self {
+            configuration: None,
+        })
     }
     fn duplicate(&self) -> Result<Self> {
-        Ok(Self)
+        Ok(Self {
+            configuration: self.configuration.clone(),
+        })
     }
 }
 
-impl connector::DriverConnectorState for State {
+impl connector::DriverConnectorState for ConnectorState {
     type Connector = Connector;
     fn new(_: &connector::Connector<Connector>) -> Result<Self> {
         Ok(Self)
@@ -199,11 +207,36 @@ impl PlaneState {
 impl crtc::DriverCrtc for Crtc {
     type Args = ();
     type Driver = Driver;
-    type State = State;
+    type State = CrtcState;
     type VblankImpl = PhantomData<Self>;
 
     fn new(_: &Device<Driver>, _: &()) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {})
+    }
+
+    fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
+        let (_, old, mut state) = check.take_all();
+        if !state.active() {
+            state.configuration = None;
+            return Ok(());
+        }
+        let connectors = state.connector_mask();
+        let dimensions = [
+            u32::from(state.mode().hdisplay()),
+            u32::from(state.mode().vdisplay()),
+        ];
+        state.configuration = match old.configuration.as_ref() {
+            Some(configuration)
+                if old.active()
+                    && !state.mode_changed()
+                    && configuration.connector_mask() == connectors
+                    && configuration.dimensions() == dimensions =>
+            {
+                Some(configuration.clone())
+            }
+            _ => Some(scene::Configuration::new(connectors, dimensions)?),
+        };
+        Ok(())
     }
 
     fn atomic_flush(commit: crtc::CrtcAtomicCommit<'_, Self>) {
@@ -221,7 +254,11 @@ impl crtc::DriverCrtc for Crtc {
                 None => SceneUpdate::Retain,
             }
         };
-        transaction.drm_dev().output.publish(source, update);
+        transaction.drm_dev().output.publish_with_configuration(
+            source,
+            update,
+            state.configuration.clone(),
+        );
     }
 }
 
@@ -239,7 +276,7 @@ impl encoder::DriverEncoder for Encoder {
 impl connector::DriverConnector for Connector {
     type Args = ();
     type Driver = Driver;
-    type State = State;
+    type State = ConnectorState;
 
     fn new(_: &Device<Driver>, _: ()) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {})

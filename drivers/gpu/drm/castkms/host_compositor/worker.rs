@@ -9,10 +9,7 @@ use super::{
     },
     pool::Pool, //
 };
-use crate::{
-    output::Output,
-    scene::Scene, //
-};
+use crate::Output;
 use kernel::{
     prelude::*,
     sync::{
@@ -51,7 +48,8 @@ impl State {
         let Self::Open {
             outcome,
             last_image,
-        } = self else {
+        } = self
+        else {
             return (Some(next), None);
         };
         let retired_image = match &next {
@@ -71,7 +69,7 @@ struct Worker {
     state: Mutex<State>,
     #[pin]
     changed: CondVar,
-    output: Arc<Output<Scene>>,
+    output: Arc<Output>,
     pool: Arc<Pool>,
 }
 
@@ -112,7 +110,7 @@ pub(crate) struct Owner {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
-    pub(crate) fn new(output: Arc<Output<Scene>>, pool: Arc<Pool>) -> Result<Self> {
+    pub(crate) fn new(output: Arc<Output>, pool: Arc<Pool>) -> Result<Self> {
         let worker = Arc::pin_init(
             pin_init!(Worker {
                 work <- new_work!("castkms-host-compose"),

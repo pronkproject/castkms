@@ -174,7 +174,11 @@ mod cases {
             );
             let source = Source::new(1)?;
             let output = &fixture.drm.device().output;
-            output.publish(source.clone(), SceneUpdate::Replace(Some(scene)));
+            output.publish_with_configuration(
+                source.clone(),
+                SceneUpdate::Replace(Some(scene)),
+                None,
+            );
             let pool = Pool::new(
                 fixture.drm.device(),
                 &fixture.host_budget,

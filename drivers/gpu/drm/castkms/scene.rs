@@ -2,6 +2,10 @@
 
 //! Owned display descriptions, without pixel-read permission or completion guarantees.
 
+mod configuration;
+
+pub(crate) use configuration::Configuration;
+
 use super::Driver;
 use core::num::NonZeroU64;
 use kernel::{
