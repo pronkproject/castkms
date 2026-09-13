@@ -49,9 +49,11 @@ use core::ptr::NonNull;
 mod buffers;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod client;
+mod connectors;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod masters;
 
+pub use connectors::ConnectorEntry;
 #[cfg(CONFIG_DRM_CLIENT)]
 pub use masters::MasterFile;
 
