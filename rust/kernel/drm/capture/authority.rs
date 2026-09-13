@@ -4,6 +4,8 @@
 
 mod file;
 
+pub use file::ControlOwner;
+
 use super::{
     Job,
     Stream, //

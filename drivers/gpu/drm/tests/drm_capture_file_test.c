@@ -109,7 +109,26 @@ static void drm_capture_control_has_no_capture_dispatch(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->compat_ioctl, NULL);
 }
 
+static void drm_capture_control_owner_requires_release(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	const struct drm_capture_control_owner_ops missing_release = { .owner = THIS_MODULE };
+	struct file *file;
+
+	control_create(test, &authority, &context);
+	file = drm_capture_control_file_create_owned(authority, NULL, context);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(file));
+	KUNIT_EXPECT_EQ(test, PTR_ERR(file), -EINVAL);
+	file = drm_capture_control_file_create_owned(authority, &missing_release, context);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(file));
+	KUNIT_EXPECT_EQ(test, PTR_ERR(file), -EINVAL);
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_revoked(authority));
+	KUNIT_EXPECT_EQ(test, context->revokes, 0);
+}
+
 static struct kunit_case drm_capture_file_cases[] = {
+	KUNIT_CASE(drm_capture_control_owner_requires_release),
 	KUNIT_CASE(drm_capture_control_last_file_reference),
 	KUNIT_CASE(drm_capture_control_observes_kernel_revoke),
 	KUNIT_CASE(drm_capture_control_has_no_capture_dispatch),

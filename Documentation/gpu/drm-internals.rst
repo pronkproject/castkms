@@ -397,6 +397,26 @@ revoker. Rust runtime tests exercise both cases, policy retention and file
 creation after revocation. Merely creating another file cannot reopen a
 terminal authority.
 
+Providers whose revocation owner also holds registration or accounting state
+can transfer that complete lifetime with
+``drm_capture_control_file_create_owned()``. The file retains the supplied
+data and independently pins its release callback's module. Final release
+revokes the authority before destroying the data, outside admission locks,
+and retains the authority and callback module throughout destruction.
+Duplicated file references share that one owner. Explicit kernel revocation
+does not destroy it while the file remains open. The owner must not retain
+the file itself, which would create a reference cycle.
+
+The native constructor consumes the data only on success. Rust's
+``Authority::create_control_file_with_owner()`` instead consumes a
+``ControlOwner`` on both success and failure: failed construction drops the
+owner in the caller. If dropping that owner revokes the grant, creation
+failure is consequently terminal. Callers must choose that rollback policy
+before transfer and hold none of the locks needed by destruction. The
+unsafe ``ControlOwner`` implementation identifies the module protecting its
+destructor; an arbitrary ``Send`` value does not establish that contract.
+Neither constructor adds capture operations or installs a descriptor.
+
 Driver Initialization
 =====================
 
