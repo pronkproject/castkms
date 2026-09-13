@@ -28,8 +28,15 @@ mod cases {
         fixture.select(&fb, false, 0)?;
         let first = &fixture.drm.device().output;
         let scene = first.inspect(|scene| scene.cloned()).ok_or(EINVAL)?;
+        let configuration = first
+            .with_accepted(|accepted| accepted.and_then(|accepted| accepted.configuration.clone()))
+            .ok_or(EINVAL)?;
         let second = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        second.publish_with_configuration(Source::new(1)?, SceneUpdate::Replace(Some(scene)), None);
+        second.publish_with_configuration(
+            Source::new(1)?,
+            SceneUpdate::Replace(Some(scene)),
+            Some(configuration.clone()),
+        );
         let pool = Pool::new(
             fixture.drm.device(),
             &fixture.host_budget,
@@ -41,6 +48,8 @@ mod cases {
         check(a.content_serial() == b.content_serial())?;
         check(a.owner() == b.owner())?;
         check(a.owner() == Some(&master))?;
+        check(a.configuration() == Some(&configuration))?;
+        check(b.configuration() == Some(&configuration))?;
         check(a.output_identity() == first.identity())?;
         check(b.output_identity() == second.identity())?;
         check(a.output_identity() != b.output_identity())?;

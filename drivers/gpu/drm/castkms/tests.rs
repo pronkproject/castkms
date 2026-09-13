@@ -30,6 +30,7 @@ mod host_delivery;
 mod host_framebuffers;
 mod host_idle;
 mod host_images;
+mod host_intervals;
 mod host_layouts;
 mod host_origins;
 mod host_pool;
