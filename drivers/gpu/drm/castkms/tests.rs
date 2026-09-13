@@ -58,6 +58,7 @@ mod output_identity;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
 mod producers;
+mod vblank;
 use kernel::drm::{
     auth::MasterRef,
     gem::shmem,
