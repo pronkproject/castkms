@@ -183,22 +183,28 @@ and buffer destruction run outside the worker's result lock. The lower
 composition, pool and image modules do not depend on the worker or device
 registration.
 
-Request callers hold a separate handle rather than the shutdown owner. Handles
-may be cloned, but they share one latest result: taking it through one handle
-consumes it for all of them. Dropping a handle does not stop execution. Dropping
-the unique owner rejects further requests through every surviving handle,
-discards the cached result and drains work. An image already taken by a caller
-keeps its private storage, independently of that shutdown. These handles remain
-internal; they grant no permission to deliver pixels to a capture recipient.
+Request callers hold a separate handle rather than the shutdown owner. Each
+call to ``request_outcome()`` queues work and returns its own observer. An
+attempt covers the requests present when it starts, so a request arriving
+during a copy needs a later pass. Requests waiting for the same attempt may
+all observe its outcome; one caller does not consume another's notification.
+Each observation returns the newest completed attempt that covers the request,
+not a permanently assigned frame. The observer retains no read claim.
 
-A consumer may wait interruptibly for an outcome through its handle without
-draining or owning the worker. The wait consumes one shared outcome, which
-another handle may take first; it does not create a separately numbered
-request. Publication and shutdown wake waiters. A closed worker reports
-``ENODEV``, and interruption leaves the shared result unconsumed. Waiting is
-consumer work outside display, reservation and worker lifecycle locks, with no
-source claim. Waking on shutdown does not certify that the owner's separate
-source-work drain has finished.
+An observer may check without waiting or wait interruptibly. Worker shutdown
+wakes every observer with ``ENODEV``, and interruption leaves observation
+available for a retry. Waiting is consumer work outside display, reservation
+and worker lifecycle locks, with no source claim. Waking on shutdown does not
+certify that the owner's separate source-work drain has finished. The older
+untracked outcome interface remains a single consumable result for internal
+inspection; it is not an independent completion for each queued request.
+
+Dropping a request observer or a shared handle does not stop execution.
+Dropping the unique owner rejects further requests through every surviving
+handle, discards cached results and drains work. An image already obtained by
+a caller keeps its private storage independently of that shutdown. These
+interfaces remain internal and grant no permission to deliver pixels to a
+capture recipient.
 
 The worker separately retains its last complete image. Reading that cache does
 not consume the latest attempt, and a failed attempt does not erase the cached

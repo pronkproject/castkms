@@ -2,6 +2,13 @@
 
 //! One coalescing host worker, owned and drained independently of DRM registration.
 
+mod progress;
+mod request;
+
+pub(crate) use request::Request;
+
+use progress::Progress;
+
 use super::{
     compose::{
         self,
@@ -28,6 +35,7 @@ use kernel::{
 
 /// A worker result, not a grant-authorized capture completion.
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+#[derive(Clone)]
 pub(crate) enum Outcome {
     Image(Arc<Completed>),
     Blank,
@@ -38,26 +46,33 @@ enum State {
     Open {
         outcome: Option<Outcome>,
         last_image: Option<Arc<Completed>>,
+        progress: Progress,
     },
     Closed,
 }
 
 impl State {
     /// Return replaced storage for destruction outside the worker's result lock.
-    fn record(&mut self, next: Outcome) -> (Option<Outcome>, Option<Arc<Completed>>) {
+    fn record(
+        &mut self,
+        through: u64,
+        next: Outcome,
+    ) -> (Option<Outcome>, Option<Arc<Completed>>, Option<Outcome>) {
         let Self::Open {
             outcome,
             last_image,
+            progress,
         } = self
         else {
-            return (Some(next), None);
+            return (Some(next), None, None);
         };
         let retired_image = match &next {
             Outcome::Image(image) => last_image.replace(image.clone()),
             Outcome::Blank => last_image.take(),
             Outcome::Failed(_) => None,
         };
-        (outcome.replace(next), retired_image)
+        let retired_attempt = progress.finish(through, next.clone());
+        (outcome.replace(next), retired_image, retired_attempt)
     }
 }
 
@@ -81,9 +96,10 @@ impl WorkItem for Worker {
     type Pointer = Arc<Self>;
 
     fn run(worker: Arc<Self>) {
-        if matches!(*worker.state.lock(), State::Closed) {
-            return;
-        }
+        let through = match &*worker.state.lock() {
+            State::Open { progress, .. } => progress.starting(),
+            State::Closed => return,
+        };
         let outcome = match compose::current(&worker.output, &worker.pool) {
             Ok(Some(image)) => match Arc::new(image, GFP_KERNEL) {
                 Ok(image) => Outcome::Image(image),
@@ -92,7 +108,7 @@ impl WorkItem for Worker {
             Ok(None) => Outcome::Blank,
             Err(error) => Outcome::Failed(error),
         };
-        let retired = worker.state.lock().record(outcome);
+        let retired = worker.state.lock().record(through, outcome);
         worker.changed.notify_all();
         drop(retired);
     }
@@ -117,6 +133,7 @@ impl Owner {
                 state <- kernel::new_mutex!(State::Open {
                     outcome: None,
                     last_image: None,
+                    progress: Progress::new(),
                 }),
                 changed <- kernel::sync::new_condvar!(),
                 output,
@@ -151,7 +168,8 @@ impl Owner {
 
 /// Shared access to private composition requests, without ownership of shutdown.
 ///
-/// Handles share one consumable latest result. Dropping a handle does not close the worker;
+/// Untracked observation shares one consumable latest result; [`Self::request_outcome`] gives
+/// each caller an independent minimum attempt to observe. Dropping a handle does not close the worker;
 /// dropping its [`Owner`] closes all surviving handles and drains any accepted request.
 /// A handle grants no permission to deliver the resulting pixels to a capture recipient.
 #[derive(Clone)]
@@ -171,12 +189,21 @@ impl Handle {
     ///
     /// Call from sleepable context: request admission takes the worker's mutex.
     pub(crate) fn request(&self) -> Result {
-        let state = self.worker.state.lock();
-        if matches!(*state, State::Closed) {
+        self.request_outcome().map(|_| ())
+    }
+
+    /// Queue composition and independently observe an attempt covering this request.
+    ///
+    /// A running attempt covers only requests present when it started. A request arriving
+    /// during that attempt queues another pass; already queued requests coalesce into it.
+    pub(crate) fn request_outcome(&self) -> Result<Request> {
+        let mut state = self.worker.state.lock();
+        let State::Open { progress, .. } = &mut *state else {
             return Err(ENODEV);
-        }
+        };
+        let requested = progress.request()?;
         let _queued = workqueue::system_dfl().enqueue(self.worker.clone());
-        Ok(())
+        Ok(Request::new(self.worker.clone(), requested))
     }
 
     pub(crate) fn take_outcome(&self) -> Option<Outcome> {
@@ -189,7 +216,8 @@ impl Handle {
     /// Wait interruptibly for one shared outcome, or return `ENODEV` on shutdown.
     ///
     /// This does not enqueue work or identify an individual request. Another handle
-    /// may consume an available outcome first. Call only from consumer context,
+    /// may consume an available outcome first. Use [`Self::request_outcome`] to associate
+    /// independent observation with a new request. Call only from consumer context,
     /// outside modeset, publication, reservation and worker lifecycle locks. Waiting
     /// holds no source claim and is not a source-retirement completion primitive.
     pub(crate) fn wait_for_outcome(&self) -> Result<Outcome> {
