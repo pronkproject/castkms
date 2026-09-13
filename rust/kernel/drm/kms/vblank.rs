@@ -265,6 +265,8 @@ impl<T: VblankDriverCrtc> Crtc<T> {
     /// Forbid vblank events for a [`Crtc`].
     ///
     /// This function disables vblank events for a [`Crtc`], even if [`VblankRef`] objects exist.
+    /// It waits for pending vblank work and a running native software-timer callback, so the
+    /// caller must not hold locks needed by that work or callback.
     #[inline]
     pub fn vblank_off(&self) {
         // SAFETY: `as_raw()` always returns a valid pointer to an initialized drm_crtc.
