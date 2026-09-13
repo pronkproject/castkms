@@ -97,6 +97,14 @@ int main(int argc, char **argv)
 		struct buffer foreign = import_buffer(fd, argv[2], mode->hdisplay, mode->vdisplay);
 		const uint32_t flags[] = { DRM_MODE_ATOMIC_TEST_ONLY, 0, DRM_MODE_ATOMIC_NONBLOCK };
 
+		CHECK(drmModeSetCrtc(fd, crtc_id, foreign.fb, 0, 0, &connector_id, 1, mode) < 0);
+		CHECK(errno == EOPNOTSUPP);
+		CHECK(drmModePageFlip(fd, crtc_id, foreign.fb, 0, NULL) < 0);
+		CHECK(errno == EOPNOTSUPP);
+		crtc = drmModeGetCrtc(fd, crtc_id);
+		CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
+		drmModeFreeCrtc(crtc);
+
 		req = drmModeAtomicAlloc();
 		CHECK(req);
 		property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", foreign.fb);
@@ -190,6 +198,6 @@ int main(int argc, char **argv)
 	CHECK(close(fd) == 0);
 	puts("PASS: CastKMS allocation, modeset, timed vblank, 50 flips, rejection, disable");
 	if (argc == 3)
-		puts("PASS: foreign heap imports rejected for host scanout without changing the display");
+		puts("PASS: HOST rejects foreign scanout without changing the display");
 	return 0;
 }

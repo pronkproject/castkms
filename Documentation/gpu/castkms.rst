@@ -491,14 +491,22 @@ To exercise imported storage, also enable ``CONFIG_DMABUF_HEAPS`` and
 
     tools/testing/selftests/drm_castkms/modeset /dev/dri/cardN /dev/dma_heap/system
 
-That variant replaces the second local buffer with a private system-heap
-allocation. The test imports the allocation and creates an explicitly linear
-framebuffer without mapping or reading its pixels. It closes both the DMA-BUF
-descriptor and the imported buffer handle before submitting any updates, so
-the framebuffer must retain the storage throughout the flips and teardown.
-The test covers the native import and modesetting interfaces, not GPU
-execution, producer dependencies or capture of the imported pixels. A
-missing or inaccessible explicitly selected heap fails the test.
+That variant also imports a private system-heap allocation and creates an
+explicitly linear framebuffer without mapping or reading its pixels. It
+closes both the DMA-BUF descriptor and the imported buffer handle before
+submitting updates, so the framebuffer must retain the storage through
+teardown. Import and framebuffer creation succeed, but the HOST profile
+rejects visible foreign storage. Legacy modesets, legacy page flips and
+test-only, blocking and nonblocking atomic replacements must fail without
+replacing the active native framebuffer.
+
+The test then installs the imported framebuffer on an inactive plane and
+attempts to activate the output without resubmitting the plane. Activation
+must reject the stored framebuffer too. Restoring the native framebuffer
+allows the ordinary flip tests to proceed. These checks cover import
+lifetime and HOST eligibility, not GPU execution, producer dependencies or
+capture of imported pixels. A missing or inaccessible explicitly selected
+heap fails the test.
 
 The test also submits a test-only framebuffer replacement while the output is
 active and verifies that the selected framebuffer remains unchanged. It turns
