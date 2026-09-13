@@ -73,6 +73,14 @@ output does not establish that its previously displayed pixels belong to the
 same master. Capture and renderer policy build on those observations without
 making a retained target a continuing permission.
 
+``image_access.rs`` checks who may use an image that has already been composed.
+It requires current ownership of the displayed scene, then compares the image's
+original output, configuration, dimensions and owner with that current state.
+An earlier frame within the same authorized display interval keeps its original
+content serial; checking it does not make it a new frame. These checks neither
+issue a capture grant nor grant control to a renderer. Keeping them separate
+lets callers apply the same pixel-ownership rules without sharing those powers.
+
 ``authority.rs`` records native master transitions and distinguishes uninterrupted
 intervals of control. Losing and regaining the same master identity produces a
 different interval. Those observations require native control to be stabilized
