@@ -28,6 +28,7 @@ mod capture_provider;
 mod capture_streams;
 mod configurations;
 mod generations;
+mod host_attempts;
 mod host_cache;
 mod host_composition;
 mod host_configuration;
