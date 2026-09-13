@@ -12,7 +12,10 @@ use super::{
 };
 use crate::{
     output::Identity,
-    scene::ContentSerial,
+    scene::{
+        Configuration,
+        ContentSerial, //
+    },
     Driver,
     Output, //
 };
@@ -30,6 +33,7 @@ use kernel::{
 pub(crate) struct Completed {
     slot: Slot,
     output: Identity,
+    configuration: Option<Configuration>,
     layout: Layout,
     content: ContentSerial,
     owner: Option<MasterRef<Driver>>,
@@ -40,6 +44,11 @@ impl Completed {
     /// Origin of the private image, independent of current scene or capture permission.
     pub(crate) fn output_identity(&self) -> &Identity {
         &self.output
+    }
+
+    /// Display interval of the pixels, not the output's configuration at observation time.
+    pub(crate) fn configuration(&self) -> Option<&Configuration> {
+        self.configuration.as_ref()
     }
 
     pub(crate) fn layout(&self) -> Layout {
@@ -87,19 +96,24 @@ pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Comple
             }
             framebuffer.prepare_mapping()
         },
-        |scene, _, mapping| -> Result<_> {
+        |scene, configuration, mapping| -> Result<_> {
             scene.producer_result()?;
             slot.copy_from(mapping)?;
-            Ok((scene.content_serial(), scene.owner().cloned()))
+            Ok((
+                scene.content_serial(),
+                scene.owner().cloned(),
+                configuration.clone(),
+            ))
         },
     )?;
     let Some(metadata) = metadata else {
         return Ok(None);
     };
-    let (content, owner) = metadata?;
+    let (content, owner, configuration) = metadata?;
     Ok(Some(Completed {
         slot,
         output: output.identity().clone(),
+        configuration,
         layout,
         content,
         owner,
