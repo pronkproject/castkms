@@ -231,6 +231,19 @@ credit until final native release. Exhaustion rejects the optional copy
 without waiting or reserving a compositor source. The private copy interface
 does not yet export buffers or activate a userspace renderer.
 
+``renderer_startup.rs`` owns one candidate reservation and that snapshot
+budget for each output. Canceling a candidate frees the reservation, not the
+storage of copies that are still retained. A later candidate therefore sees
+the same outstanding allocation charges. Canceling or dropping an old
+candidate cannot cancel its replacement, and device shutdown permanently
+closes candidate admission before display resources are released.
+
+Making a copy checks the candidate on both sides of the operation and checks
+the image's output identity. Copying takes no startup lock and no compositor
+source claim. A canceled operation discards its private result, while a
+previously returned copy keeps its storage. These resource rules do not
+authorize a recipient, publish a new execution profile or activate a GPU.
+
 ``host_compositor/worker.rs`` coalesces queued requests onto one work item and
 retains the output publication, pool and latest attempt. Its unique shutdown
 owner rejects further requests, drains the work and closes the pool. Copying
