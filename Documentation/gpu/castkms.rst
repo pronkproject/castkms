@@ -73,6 +73,12 @@ output does not establish that its previously displayed pixels belong to the
 same master. Capture and renderer policy build on those observations without
 making a retained target a continuing permission.
 
+``authority.rs`` records native master transitions and distinguishes uninterrupted
+intervals of control. Losing and regaining the same master identity produces a
+different interval. Those observations require native control to be stabilized
+separately; they neither grant access nor replace scene provenance. Exhausting
+the interval counter closes tracking rather than reviving an old observation.
+
 ``castkms.rs`` owns the virtual parent device and DRM registration. Destruction
 unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;

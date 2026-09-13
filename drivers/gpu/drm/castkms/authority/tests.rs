@@ -49,6 +49,52 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn an_interval_never_revives_when_the_same_identity_returns() -> Result {
+        let authority = Arc::pin_init(Authority::new(), GFP_KERNEL)?;
+        check(authority.interval() == Err(EACCES))?;
+        authority.changed(Some(1));
+        let first = authority.interval()?;
+        check(authority.interval()? == first)?;
+        authority.changed(None);
+        check(authority.interval() == Err(EACCES))?;
+        authority.changed(Some(1));
+        check(authority.snapshot() == Some(1))?;
+        check(authority.interval()? != first)?;
+        authority.close();
+        check(authority.interval() == Err(ENODEV))?;
+        Ok(())
+    }
+
+    #[test]
+    fn each_native_transition_changes_the_interval() -> Result {
+        let authority = Arc::pin_init(Authority::new(), GFP_KERNEL)?;
+        authority.changed(Some(1));
+        let first = authority.interval()?;
+        authority.changed(Some(1));
+        check(authority.interval()? != first)?;
+        let second = authority.interval()?;
+        authority.changed(Some(2));
+        check(authority.interval()? != second)?;
+        Ok(())
+    }
+
+    #[test]
+    fn interval_exhaustion_permanently_closes_tracking() -> Result {
+        let authority = Arc::pin_init(Authority::new(), GFP_KERNEL)?;
+        *authority.state.lock() = State::Tracking {
+            master: Some(1),
+            interval: u64::MAX,
+        };
+        check(authority.interval()? == Interval(u64::MAX))?;
+        authority.changed(Some(2));
+        check(authority.snapshot().is_none())?;
+        check(authority.interval() == Err(ENODEV))?;
+        authority.changed(Some(3));
+        check(authority.interval() == Err(ENODEV))?;
+        Ok(())
+    }
+
     struct Reenter(Arc<Authority<Reenter>>);
 
     impl Drop for Reenter {
@@ -71,6 +117,18 @@ mod cases {
         let authority = Arc::pin_init(Authority::new(), GFP_KERNEL)?;
         authority.changed(Some(Reenter(authority.clone())));
         authority.close();
+        check(matches!(*authority.state.lock(), State::Closed))?;
+        Ok(())
+    }
+
+    #[test]
+    fn exhausted_tracking_drops_both_identities_outside_the_lock() -> Result {
+        let authority = Arc::pin_init(Authority::new(), GFP_KERNEL)?;
+        *authority.state.lock() = State::Tracking {
+            master: Some(Reenter(authority.clone())),
+            interval: u64::MAX,
+        };
+        authority.changed(Some(Reenter(authority.clone())));
         check(matches!(*authority.state.lock(), State::Closed))?;
         Ok(())
     }
