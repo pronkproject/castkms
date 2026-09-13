@@ -4,6 +4,7 @@
 
 use crate::{
     display,
+    display_control,
     host_compositor::{
         compose::Completed,
         layout::Layout, //
@@ -20,20 +21,12 @@ use kernel::{
             MasterRef, //
         },
         kms::{
-            connector::{
-                Connector,
-                RawConnector, //
-            },
-            crtc::{
-                Crtc,
-                CrtcRef, //
-            }, //
+            connector::Connector,
+            crtc::Crtc, //
         },
         Device, //
     },
-    prelude::*,
-    sync::aref::ARef,
-    types::NotThreadSafe, //
+    prelude::*, //
 };
 
 /// Retained recipient and exact display objects, not a continuing authorization token.
@@ -41,16 +34,14 @@ use kernel::{
 /// Drop outside native master, object-ID and modeset locks: the retained references may
 /// perform final DRM cleanup. Device-owned state must not retain permissions indefinitely.
 pub(crate) struct Permission {
-    master: MasterRef<Driver>,
-    crtc: CrtcRef<display::Crtc>,
-    connector: ARef<Connector<display::Connector>>,
+    target: display_control::Target,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Permission {
     /// Borrow the exact target's device for resource operations, not pixel authorization.
     pub(super) fn device(&self) -> &Device<Driver> {
-        self.crtc.drm_dev()
+        self.target.device()
     }
 
     /// Establish a kernel-issued target from stabilized top-level display control.
@@ -62,14 +53,8 @@ impl Permission {
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
     ) -> Result<Self> {
-        if guard.master().is_lessee() || !guard.holds_object(crtc) || !guard.holds_object(connector)
-        {
-            return Err(EACCES);
-        }
         Ok(Self {
-            master: guard.master().clone(),
-            crtc: crtc.to_owned_ref(),
-            connector: connector.into(),
+            target: display_control::Target::new(guard, crtc, connector)?,
         })
     }
 
@@ -80,28 +65,12 @@ impl Permission {
     /// locks, wait for rendering, or release final DRM object references. Returned data
     /// is historical metadata, not permission to make a later unchecked claim.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce(Current<'_>) -> Result<R>) -> Result<R> {
-        let guard = self.master.lock_current().ok_or(EACCES)?;
-        if !guard.holds_object(self.crtc.crtc()) || !guard.holds_object(&*self.connector) {
-            return Err(EACCES);
-        }
-        let output = &self.crtc.drm_dev().output;
-        output.with_accepted(|accepted| {
-            let accepted = accepted.ok_or(ENODEV)?;
-            let configuration = accepted.configuration.as_ref().ok_or(ENODEV)?;
-            if configuration.connector_mask() & self.connector.mask() == 0 {
-                return Err(EACCES);
-            }
-            let scene = accepted.scene.ok_or(EAGAIN)?;
-            if scene.owner() != Some(&self.master) {
-                return Err(EACCES);
-            }
-            let [width, height] = configuration.dimensions();
+        self.target.with_current(|control| {
+            control.check_scene_owner()?;
+            let [width, height] = control.configuration().dimensions();
             f(Current {
-                configuration,
+                control,
                 layout: Layout::new(width, height)?,
-                output: output.identity(),
-                master: &self.master,
-                _task: NotThreadSafe,
             })
         })
     }
@@ -109,17 +78,14 @@ impl Permission {
 
 /// Callback-local evidence of current access; neither sendable nor independently constructible.
 pub(crate) struct Current<'a> {
-    configuration: &'a Configuration,
+    control: display_control::Current<'a>,
     layout: Layout,
-    output: &'a Identity,
-    master: &'a MasterRef<Driver>,
-    _task: NotThreadSafe,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Current<'_> {
     pub(crate) fn configuration(&self) -> &Configuration {
-        self.configuration
+        self.control.configuration()
     }
 
     pub(crate) fn layout(&self) -> Layout {
@@ -159,10 +125,10 @@ impl Current<'_> {
         layout: Layout,
         owner: Option<&MasterRef<Driver>>,
     ) -> Result {
-        if output != self.output
-            || configuration != Some(self.configuration)
+        if output != self.control.output_identity()
+            || configuration != Some(self.control.configuration())
             || layout != self.layout
-            || owner != Some(self.master)
+            || owner != Some(self.control.master())
         {
             return Err(EACCES);
         }
