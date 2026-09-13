@@ -103,7 +103,7 @@ mod cases {
                 }
                 Ok(23)
             },
-            |scene, resource| *scene + resource,
+            |scene, (), resource| *scene + resource,
         )?;
         assert_eq!(value, Some(40));
         Ok(())
@@ -137,7 +137,7 @@ mod cases {
                         released: &released,
                     })
                 },
-                |_, _resource| {
+                |_, (), _resource| {
                     output.close();
                     assert!(source.prepared()?.is_none());
                     if fail {
@@ -165,7 +165,7 @@ mod cases {
                 output.publish(replacement, SceneUpdate::Replace(Some(23)));
                 Ok(())
             },
-            |_, ()| called = true,
+            |_, (), ()| called = true,
         );
         assert_eq!(result, Err(EBUSY));
         assert!(!called);
@@ -181,7 +181,7 @@ mod cases {
         output.publish(source.clone(), SceneUpdate::Replace(Some(17)));
         let mut called = false;
         assert_eq!(
-            output.with_prepared_cpu_scene(|_| Err::<(), _>(ENOMEM), |_, ()| called = true),
+            output.with_prepared_cpu_scene(|_| Err::<(), _>(ENOMEM), |_, (), ()| called = true),
             Err(ENOMEM)
         );
         assert!(!called);

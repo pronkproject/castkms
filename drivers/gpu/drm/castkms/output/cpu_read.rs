@@ -15,7 +15,7 @@ impl Drop for CpuClaim {
     }
 }
 
-impl<S: Clone + Unpin> Output<S> {
+impl<S: Clone + Unpin, C: Clone + Unpin> Output<S, C> {
     /// Run a synchronous source read after securing independently available destination storage.
     ///
     /// The callback must finish all source access before returning; it must not enqueue GPU work
@@ -24,7 +24,7 @@ impl<S: Clone + Unpin> Output<S> {
     /// without invoking the callback. No publication lock is held during admission or reading.
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn with_cpu_scene<R>(&self, read: impl FnOnce(&S) -> R) -> Result<Option<R>> {
-        self.with_prepared_cpu_scene(|_| Ok(()), |scene, ()| read(scene))
+        self.with_prepared_cpu_scene(|_| Ok(()), |scene, _, ()| read(scene))
     }
 
     /// Prepare retained mapping resources before admitting a synchronous source read.
@@ -36,22 +36,27 @@ impl<S: Clone + Unpin> Output<S> {
     /// All source access must finish within `read`; it must not enqueue GPU reads.
     /// The read claim is released before destroying prepared resources, so unmapping may
     /// acquire reservation locks without keeping source retirement pending.
+    /// Configuration is retained with the candidate scene and passed to `read`; an update
+    /// during the callback cannot pair the source pixels with a later configuration.
     pub(crate) fn with_prepared_cpu_scene<P, R>(
         &self,
         prepare: impl FnOnce(&S) -> Result<P>,
-        read: impl FnOnce(&S, &P) -> R,
+        read: impl FnOnce(&S, &C, &P) -> R,
     ) -> Result<Option<R>> {
         let candidate = {
             let state = self.state.lock();
             match &*state {
-                Publication::Open(Some(current)) => current
-                    .scene
-                    .as_ref()
-                    .map(|scene| (current.source.clone(), scene.clone())),
+                Publication::Open(Some(current)) => current.scene.as_ref().map(|scene| {
+                    (
+                        current.source.clone(),
+                        scene.clone(),
+                        current.configuration.clone(),
+                    )
+                }),
                 _ => None,
             }
         };
-        let Some((source, scene)) = candidate else {
+        let Some((source, scene, configuration)) = candidate else {
             return Ok(None);
         };
         let resources = prepare(&scene)?;
@@ -64,7 +69,7 @@ impl<S: Clone + Unpin> Output<S> {
         if !current {
             return Err(EAGAIN);
         }
-        let result = read(&scene, &resources);
+        let result = read(&scene, &configuration, &resources);
         drop(claim);
         Ok(Some(result))
     }

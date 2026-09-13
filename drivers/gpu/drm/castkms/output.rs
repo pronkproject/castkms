@@ -36,20 +36,28 @@ pub(super) enum SceneUpdate<S> {
 }
 
 /// Accounting and the image it describes are published as one indivisible generation.
-struct Generation<S> {
+struct Generation<S, C> {
     source: ARef<Source>,
     scene: Option<S>,
+    configuration: C,
 }
 
-impl<S> Drop for Generation<S> {
+impl<S, C> Drop for Generation<S, C> {
     fn drop(&mut self) {
         self.source.seal();
     }
 }
 
-enum Publication<S> {
-    Open(Option<Generation<S>>),
+enum Publication<S, C> {
+    Open(Option<Generation<S, C>>),
     Closed,
+}
+
+/// Coherent descriptions borrowed under the publication lock, without permission to read pixels.
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+pub(super) struct Accepted<'a, S, C> {
+    pub(super) scene: Option<&'a S>,
+    pub(super) configuration: &'a C,
 }
 
 /// One output's committed plane description. Shutdown permanently closes publication.
@@ -57,13 +65,13 @@ enum Publication<S> {
 /// The registration owner must close the output before releasing DRM registration: a scene's
 /// framebuffer reference retains the DRM device, whose private data retains this output.
 #[pin_data]
-pub(super) struct Output<S> {
+pub(super) struct Output<S, C = ()> {
     identity: Identity,
     #[pin]
-    state: Mutex<Publication<S>>,
+    state: Mutex<Publication<S, C>>,
 }
 
-impl<S: Unpin> Output<S> {
+impl<S: Unpin, C: Unpin> Output<S, C> {
     pub(super) fn new() -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
             identity: Identity(Arc::new((), GFP_KERNEL)?),
@@ -78,7 +86,12 @@ impl<S: Unpin> Output<S> {
     /// Publish a fresh accepted generation, including updates without a primary image.
     ///
     /// The source belongs to the new accepted CRTC state, not a preceding publication.
-    pub(super) fn publish(&self, source: ARef<Source>, update: SceneUpdate<S>) {
+    pub(super) fn publish_with_configuration(
+        &self,
+        source: ARef<Source>,
+        update: SceneUpdate<S>,
+        configuration: C,
+    ) {
         let retain = matches!(update, SceneUpdate::Retain);
         let mut next = Generation {
             source,
@@ -86,6 +99,7 @@ impl<S: Unpin> Output<S> {
                 SceneUpdate::Retain => None,
                 SceneUpdate::Replace(scene) => scene,
             },
+            configuration,
         };
         let retired = {
             let mut state = self.state.lock();
@@ -121,6 +135,28 @@ impl<S: Unpin> Output<S> {
         )
     }
 
+    /// Observe accepted configuration and scene descriptions in one publication interval.
+    ///
+    /// The callback holds the publication lock. It must not read pixels, wait for work,
+    /// acquire modeset locks or release objects whose destruction can enter DRM. It may
+    /// acquire inner admission locks when the caller's lock order permits it. Descriptions
+    /// may be cloned, but a retained description alone does not grant future access.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(super) fn with_accepted<R>(
+        &self,
+        observe: impl FnOnce(Option<Accepted<'_, S, C>>) -> R,
+    ) -> R {
+        let state = self.state.lock();
+        let accepted = match &*state {
+            Publication::Open(current) => current.as_ref().map(|current| Accepted {
+                scene: current.scene.as_ref(),
+                configuration: &current.configuration,
+            }),
+            Publication::Closed => None,
+        };
+        observe(accepted)
+    }
+
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn inspect<R>(&self, inspect: impl FnOnce(Option<&S>) -> R) -> R {
         self.inspect_accepted(|accepted| inspect(accepted.and_then(|(_, scene)| scene)))
@@ -140,6 +176,13 @@ impl<S: Unpin> Output<S> {
             ),
             Publication::Closed => inspect(None),
         }
+    }
+}
+
+impl<S: Unpin> Output<S> {
+    /// Publish a scene without additional configuration metadata.
+    pub(super) fn publish(&self, source: ARef<Source>, update: SceneUpdate<S>) {
+        self.publish_with_configuration(source, update, ());
     }
 }
 

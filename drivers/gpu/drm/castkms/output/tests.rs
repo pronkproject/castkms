@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod configuration;
+
 #[kunit_tests(rust_castkms_output)]
 mod cases {
     use super::*;
