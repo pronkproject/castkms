@@ -4,9 +4,9 @@ CastKMS virtual display
 ======================
 
 CastKMS is being developed as a virtual display whose images will eventually
-be composed in userspace. The Rust driver currently provides only the display
-device on which that work will build. It is not a replacement for a working
-C CastKMS casting installation.
+be composed in userspace. The Rust driver provides a display device and an
+internal CPU capture path for kernel callers and tests. Public capture is not
+enabled. It is not a replacement for a working C CastKMS casting installation.
 
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create one
 always-connected virtual output. The driver accepts atomic modesetting and
@@ -24,10 +24,10 @@ There is no display clock. A successful flip event means that the driver has
 accepted the new state and no longer needs the old buffer; it does not mean
 that a frame has been displayed elsewhere. Events complete through DRM's
 existing mechanism for devices without vertical blanking interrupts. The
-normal device path does not schedule pixel reads or implement private capture
-requests. The internal host-composition helpers described below are tested
-separately and are not yet connected to capture demand. Normal DRM operations
-on a caller's own buffers are not a capture capability.
+normal device path does not schedule pixel reads on its own. An internal
+capture adapter drives composition only when a kernel caller requests a frame
+through an authorized stream. Normal DRM operations on a caller's own buffers
+are not a capture capability.
 
 There is no cursor plane, configurable display attachment, EDID, audio, CEC,
 writeback, CRC collection, or delegated composition. No default framebuffer
@@ -245,8 +245,9 @@ References to configuration or worker handles do not postpone shutdown or
 permit restarting work afterward. Already completed private images retain their
 own storage without retaining a claim on the displayed source.
 
-These helpers do not yet implement registered capture destinations, capture
-authorization, a display clock, or the transition to a userspace GPU executor.
+The composition helpers do not implement registered capture destinations,
+capture authorization, a display clock, or the transition to a userspace GPU
+executor. The capture layer supplies the separate authorization checks.
 The two-image host pool is a private-storage limit, not a receiver frame-rate
 policy or a limit on future GPU queues.
 
@@ -273,6 +274,45 @@ job's storage stays private during both operations. A consumer of an exported
 DMA-BUF could observe its contents during the copy. The adapter therefore
 accepts private CPU jobs, not arbitrary exported destinations; an eventual
 path for shared GPU images needs its own rules for writing and reuse.
+
+Capturing through the host worker
+--------------------------------
+
+``capture/host_stream.rs`` combines checked private delivery with the output's
+shared worker. A kernel caller first establishes a grant for a particular
+master, CRTC and connector. The grantor owns revocation; capture handles do
+not. Creating a stream reserves its independent result storage before lazily
+configuring a worker on the grant's own device. No caller supplies a separate
+device that might accidentally refer to another output.
+
+Calling ``capture()`` on that stream queues one request, waits interruptibly
+for an eligible composition attempt, rechecks current access and image
+ownership, and completes delivery. The call requires an exclusive stream
+borrow, preventing overlapping calls from delivering frames out of order on
+one stream. Different streams may share a composition attempt without
+consuming each other's notifications. The adapter owns no source read while
+waiting, and it copies the completed image outside the display policy locks.
+
+A returned request has a terminal result, which the caller must inspect for
+copy failure or revocation during delivery. Failure before delivery abandons
+the unreturned request and releases its queue credit. The adapter does not
+retry automatically, promise a frame rate, or provide the eventual asynchronous
+userspace interface. A blank scene returns ``EAGAIN`` until the policy for
+authorizing blank images is implemented.
+
+Consumer results retain separate storage rather than the worker's private
+images. A stream may therefore retain more completed requests than the
+two-image compositor pool holds, without delaying source retirement. Closing
+one stream discards its results but does not stop a sibling's worker. Grantor
+revocation stops new delivery while preserving completed authorized results
+on streams that remain open. Replacing a display configuration requires fresh
+streams; replacing the worker permanently closes the old adapter's worker
+handle. Reopening explicitly avoids silently moving outstanding work to a
+different worker.
+
+These are private kernel operations. Issuing grants through a DRM file,
+revoking them when the issuing file closes, exposing capture to userspace,
+and selecting the supported HOST/GPU execution profile remain separate work.
 
 Testing in a disposable virtual machine
 --------------------------------------

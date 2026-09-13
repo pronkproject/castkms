@@ -17,14 +17,21 @@ use super::{
     streams::Registration, //
 };
 use crate::{
-    host_compositor::compose::Completed,
-    scene::Configuration, //
+    host_compositor::{
+        compose::Completed,
+        layout::Layout, //
+    },
+    scene::Configuration,
+    Driver, //
 };
 use kernel::{
-    drm::capture::{
-        Authority,
-        Policy as NativePolicy,
-        Stream as NativeStream, //
+    drm::{
+        capture::{
+            Authority,
+            Policy as NativePolicy,
+            Stream as NativeStream, //
+        },
+        Device, //
     },
     prelude::*,
     sync::{
@@ -146,6 +153,15 @@ pub(crate) struct Stream {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Stream {
+    /// Borrow the allocation device without granting access to its current pixels.
+    pub(super) fn device(&self) -> &Device<Driver> {
+        self.capture.policy.permission.device()
+    }
+
+    pub(super) fn layout(&self) -> Layout {
+        self.storage.layout()
+    }
+
     /// Recheck an allocated stream before arranging additional resources.
     ///
     /// The result is an observation, not continuing pixel permission. Delivery still
