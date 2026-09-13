@@ -87,6 +87,15 @@ execution activation. Revocation waits for authorization callbacks to leave;
 owners of individual operations remain responsible for their resource cleanup.
 There is no conversion from a final-image capture grant to renderer permission.
 
+``renderer/candidate.rs`` combines that permission with one private startup
+reservation and the accepted mode/route interval. Reservation happens outside
+policy locks and validation runs on both sides. Ordinary content updates leave
+the candidate valid; a changed configuration, revoked issuer, canceled reservation
+or shutdown does not. The retained description is historical metadata rather
+than an activation token. HOST remains active, and the candidate has no live
+source claim. Canceling or dropping the operation releases its reservation;
+revoking its issuer stops authorization but does not replace operation cleanup.
+
 ``castkms.rs`` owns the virtual parent device and DRM registration. Destruction
 unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;
