@@ -5,6 +5,7 @@
 use super::provider::{
     self,
     Capture,
+    Description,
     Request, //
 };
 use crate::host_compositor::worker::{
@@ -31,7 +32,15 @@ impl Stream {
     /// Configuration may allocate or drain a previous worker. Subsequent delivery checks
     /// current authorization again; configuring storage does not preserve that permission.
     pub(crate) fn new(capture: &Capture, capacity: u32) -> Result<Self> {
-        let delivery = capture.stream(capacity)?;
+        Self::from_description(&capture.describe_stream()?, capacity)
+    }
+
+    /// Open the described layout or fail if permission or its configuration has changed.
+    ///
+    /// Stale descriptions do not configure a worker or start composition. The returned
+    /// stream still checks current authorization at each delivery.
+    pub(crate) fn from_description(description: &Description, capacity: u32) -> Result<Self> {
+        let delivery = description.create_stream(capacity)?;
         let device = delivery.device();
         let worker = device
             .host
