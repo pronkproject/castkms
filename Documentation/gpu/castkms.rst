@@ -558,6 +558,13 @@ before reading the results. That checks that a consumer backlog neither owns
 the private images nor prevents source preparation. The fixtures own every
 source and recipient; they do not establish public capture authorization.
 
+A concurrent progress test replaces two immutable framebuffers while a
+separate kernel consumer repeatedly requests images. It checks every pixel
+of each delivered image and requires successful delivery during the update
+interval, excluding results drained after replacement stops. Transient
+admission failures are allowed. The bounded test checks useful scheduling,
+not a promised capture frame rate or a userspace media pipeline.
+
 When DRM client support is enabled, the import tests export private dumb
 storage through an internal client and import it into a separately registered
 CastKMS device. They check allocation identity, framebuffer layout and retained

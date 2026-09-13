@@ -2,6 +2,8 @@
 
 //! Authorized kernel capture driven by the shared host worker.
 
+mod progress;
+
 use super::*;
 use crate::{
     capture::{
