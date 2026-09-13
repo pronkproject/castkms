@@ -218,6 +218,19 @@ source. The caller remains responsible for recipient authorization before
 exposing the copied pixels; copying into generic capture job storage does not
 establish that permission.
 
+``host_snapshot.rs`` makes an independent immutable copy of a completed host
+image for renderer startup. It copies initialized pixels and clears allocation
+padding into fresh GEM storage; it never exports or retains the reusable host
+slot. The snapshot keeps the image's actual output identity, configuration,
+content serial and owner, even after the display changes. Those observations
+do not grant permission to deliver the image.
+
+One output's snapshot budget is limited to 16 MiB independently of the host
+pool. Current and retired copies must share it; each allocation keeps its
+credit until final native release. Exhaustion rejects the optional copy
+without waiting or reserving a compositor source. The private copy interface
+does not yet export buffers or activate a userspace renderer.
+
 ``host_compositor/worker.rs`` coalesces queued requests onto one work item and
 retains the output publication, pool and latest attempt. Its unique shutdown
 owner rejects further requests, drains the work and closes the pool. Copying

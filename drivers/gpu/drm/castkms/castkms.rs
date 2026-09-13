@@ -10,6 +10,7 @@ mod execution;
 mod file;
 mod gem;
 mod host_compositor;
+mod host_snapshot;
 mod output;
 mod provenance;
 mod scene;
