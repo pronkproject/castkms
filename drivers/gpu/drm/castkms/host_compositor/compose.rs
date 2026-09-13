@@ -35,7 +35,7 @@ pub(crate) struct Completed {
     output: Identity,
     configuration: Option<Configuration>,
     layout: Layout,
-    content: ContentSerial,
+    content: Option<ContentSerial>,
     owner: Option<MasterRef<Driver>>,
 }
 
@@ -67,7 +67,7 @@ impl Completed {
         self.slot.with_image(|image| image.copy_pixels(pixels))?
     }
 
-    pub(crate) fn content_serial(&self) -> ContentSerial {
+    pub(crate) fn content_serial(&self) -> Option<ContentSerial> {
         self.content
     }
 
@@ -90,7 +90,8 @@ pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Comple
     let layout = slot.with_image(|image| image.layout())?;
     let metadata = output.with_prepared_cpu_scene(
         |scene| {
-            let framebuffer = Framebuffer::new(scene.framebuffer(), scene.geometry())?;
+            let primary = scene.primary().ok_or(EOPNOTSUPP)?;
+            let framebuffer = Framebuffer::new(primary.framebuffer(), primary.geometry())?;
             if framebuffer.dimensions() != layout.dimensions() {
                 return Err(EINVAL);
             }

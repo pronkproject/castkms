@@ -11,7 +11,7 @@ use kernel::{
 fn published(fixture: &Fixture) -> Result<(ARef<Source>, Option<scene::ContentSerial>)> {
     fixture.drm.device().output.inspect_accepted(|current| {
         current
-            .map(|(source, scene)| (source.into(), scene.map(scene::Scene::content_serial)))
+            .map(|(source, scene)| (source.into(), scene.and_then(scene::Scene::content_serial)))
             .ok_or(EINVAL)
     })
 }

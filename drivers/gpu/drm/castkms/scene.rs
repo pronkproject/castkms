@@ -45,18 +45,24 @@ pub(super) struct Geometry {
     pub(super) output: [u32; 2],
 }
 
-/// The framebuffer reference preserves storage lifetime, not the contents of that storage.
+/// An active output, including a blank output with no framebuffer to retain.
 #[derive(Clone)]
 pub(super) struct Scene {
+    primary: Option<Primary>,
+    // Historical attribution resolved by the accepted transaction, not live capture authority.
+    owner: Option<MasterRef<Driver>>,
+}
+
+/// The framebuffer reference preserves storage lifetime, not the contents of that storage.
+#[derive(Clone)]
+pub(super) struct Primary {
     framebuffer: FramebufferRef<Driver>,
     geometry: Geometry,
     content: ContentSerial,
-    // Historical attribution resolved by the accepted transaction, not live capture authority.
-    owner: Option<MasterRef<Driver>>,
     producer: Option<Arc<Dependencies>>,
 }
 
-impl Scene {
+impl Primary {
     pub(super) fn framebuffer(&self) -> &kernel::drm::kms::framebuffer::Framebuffer<Driver> {
         &self.framebuffer
     }
@@ -64,10 +70,20 @@ impl Scene {
     pub(super) fn geometry(&self) -> Geometry {
         self.geometry
     }
+}
+
+impl Scene {
+    pub(super) fn primary(&self) -> Option<&Primary> {
+        self.primary.as_ref()
+    }
 
     pub(super) fn producer_result(&self) -> Result {
         let mut pending = false;
-        if let Some(records) = &self.producer {
+        if let Some(records) = self
+            .primary
+            .as_ref()
+            .and_then(|primary| primary.producer.as_ref())
+        {
             for fence in records.iter() {
                 match fence.status() {
                     kernel::dma_fence::Status::Pending => pending = true,
@@ -82,22 +98,28 @@ impl Scene {
         }
     }
 
-    pub(super) fn content_serial(&self) -> ContentSerial {
-        self.content
+    /// Blank output has no framebuffer content revision, not an unchanged revision.
+    pub(super) fn content_serial(&self) -> Option<ContentSerial> {
+        self.primary.as_ref().map(|primary| primary.content)
     }
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_failed(&self) -> bool {
-        self.producer.as_ref().is_some_and(|records| {
-            records
-                .iter()
-                .any(|fence| matches!(fence.status(), kernel::dma_fence::Status::Complete(Err(_))))
-        })
+        self.primary
+            .as_ref()
+            .and_then(|primary| primary.producer.as_ref())
+            .is_some_and(|records| {
+                records.iter().any(|fence| {
+                    matches!(fence.status(), kernel::dma_fence::Status::Complete(Err(_)))
+                })
+            })
     }
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_status(&self) -> Option<kernel::dma_fence::Status> {
-        self.producer
+        self.primary
+            .as_ref()?
+            .producer
             .as_ref()?
             .iter()
             .next()
@@ -116,11 +138,20 @@ impl Scene {
         producer: Option<Arc<Dependencies>>,
     ) -> Self {
         Self {
-            framebuffer,
-            geometry,
-            content,
+            primary: Some(Primary {
+                framebuffer,
+                geometry,
+                content,
+                producer,
+            }),
             owner,
-            producer,
+        }
+    }
+
+    pub(super) fn blank(owner: Option<MasterRef<Driver>>) -> Self {
+        Self {
+            primary: None,
+            owner,
         }
     }
 }

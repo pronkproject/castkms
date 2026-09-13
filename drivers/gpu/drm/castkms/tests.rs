@@ -30,6 +30,7 @@ mod capture_permissions;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod capture_provider;
 mod capture_streams;
+mod blank_ownership;
 mod configurations;
 mod generations;
 mod host_attempts;

@@ -60,24 +60,26 @@ and rejected transactions do not publish a replacement. An inactive or
 disabled plane clears the description. Recommitting the same framebuffer
 still replaces the description; framebuffer identity is not a content cache.
 
-Each checked plane update that publishes a scene derives a content serial
-from that plane's last accepted atomic state. The serial is installed only
-if the update is accepted; test-only submissions and failed candidates do
+Each checked plane update that publishes a visible image derives a content
+serial from that plane's last accepted atomic state. The serial is installed
+only if the update is accepted; test-only submissions and failed candidates do
 not consume numbers. Rechecking one candidate derives the same successor
 rather than incrementing it again.
 Blank updates preserve the counter, so reactivation continues the sequence.
-Exhaustion rejects candidates that publish a scene with ``EOVERFLOW`` rather
-than reusing a serial; blanking remains possible. The serial is internal and
-meaningful only within one plane lifetime.
+Exhaustion rejects candidates that publish a visible image with ``EOVERFLOW``
+rather than reusing a serial; blanking remains possible. The serial is
+internal and meaningful only within one plane lifetime.
 
-The serial conservatively advances for every accepted scene update, even when
-the framebuffer and geometry are unchanged. It marks a possible content change,
-not proof that pixels differ or that rendering succeeded. It does not identify
-the framebuffer's creator, adopt a new capture owner, or replace authorization.
+The serial conservatively advances for every accepted visible-plane update,
+even when the framebuffer and geometry are unchanged. It marks a possible
+content change, not proof that pixels differ or that rendering succeeded.
+It does not identify the framebuffer's creator, adopt a new capture owner,
+or replace authorization.
 
 The output holds at most one description and its source accounting generation.
-An accepted update without a changed plane retains the description but gets a
-fresh generation. A blank output also retains its accounting generation.
+An accepted update that leaves a visible primary plane unchanged retains its
+image description but gets a fresh generation. Active blank updates publish
+their separately attributed scene with fresh accounting as well.
 Replacement permanently closes the old generation's read admission and releases
 its references outside the output lock. Module teardown permanently closes the
 output before releasing DRM registration, so an outstanding commit cannot
