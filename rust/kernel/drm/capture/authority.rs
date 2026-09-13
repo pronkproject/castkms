@@ -3,8 +3,10 @@
 //! Provider policy and revocation ownership, independent of capture file transport.
 
 mod file;
+mod revocation;
 
 pub use file::ControlOwner;
+pub use revocation::Revocation;
 
 use super::{
     Job,

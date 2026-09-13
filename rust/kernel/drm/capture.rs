@@ -20,7 +20,8 @@ pub use authority::{
     Admission,
     Authority,
     ControlOwner,
-    Policy, //
+    Policy,
+    Revocation, //
 };
 
 #[cfg(CONFIG_KUNIT)]

@@ -356,6 +356,23 @@ release protocol. Runtime tests cover provider lifetime, denied claims,
 stream removal and active jobs across revocation. Compiler fixtures check the
 admission guard's ownership restrictions without granting real pixel access.
 
+Kernel owners that only need to end capture may retain
+``Authority::revocation()`` instead of the typed authority. The resulting
+``Revocation`` reference exposes revocation and terminal status, but no
+stream registration, capture claim or provider conversion. Different
+providers may therefore share shutdown tracking without making their
+private policy types part of that tracking interface. Each reference keeps
+the original native callbacks, policy data and module alive; it does not
+replace or reinterpret them.
+
+Dropping an ordinary revocation reference is not an explicit request to
+revoke while other authority references remain. Call ``revoke()`` when
+ending a grant independently of those references. As with the typed
+authority, final native release still revokes and destroys the policy.
+Device-owned tracking must arrange removal when its external grant owner
+closes, so that a policy retaining the device cannot keep both alive
+indefinitely. Revocation runs outside admission and provider cleanup locks.
+
 Anonymous Revocation File
 ------------------------
 
