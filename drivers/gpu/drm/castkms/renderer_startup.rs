@@ -93,6 +93,11 @@ pub(crate) struct Candidate {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Candidate {
+    /// Observe whether the reservation is current, without authorizing an operation.
+    pub(crate) fn check(&self) -> Result {
+        self.startup.check(&self.identity)
+    }
+
     pub(crate) fn cancel(&self) {
         self.startup.cancel(&self.identity);
     }
