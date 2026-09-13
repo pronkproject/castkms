@@ -11,15 +11,10 @@ use super::{
     }, //
 };
 use crate::{
-    output::{
-        Identity,
-        Output, //
-    },
-    scene::{
-        ContentSerial,
-        Scene, //
-    },
-    Driver, //
+    output::Identity,
+    scene::ContentSerial,
+    Driver,
+    Output, //
 };
 use kernel::{
     drm::auth::MasterRef,
@@ -77,7 +72,7 @@ impl Completed {
 /// Call only from worker context, outside modeset and reservation locks. Storage and
 /// source mapping are prepared before claiming pixels. Failure returns the slot without
 /// publishing its partial contents; success releases all source access before returning.
-pub(crate) fn current(output: &Output<Scene>, pool: &Arc<Pool>) -> Result<Option<Completed>> {
+pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Completed>> {
     // An empty publication needs neither private storage nor source admission.
     if !output.has_scene() {
         return Ok(None);
@@ -92,7 +87,7 @@ pub(crate) fn current(output: &Output<Scene>, pool: &Arc<Pool>) -> Result<Option
             }
             framebuffer.prepare_mapping()
         },
-        |scene, (), mapping| -> Result<_> {
+        |scene, _, mapping| -> Result<_> {
             scene.producer_result()?;
             slot.copy_from(mapping)?;
             Ok((scene.content_serial(), scene.owner().cloned()))

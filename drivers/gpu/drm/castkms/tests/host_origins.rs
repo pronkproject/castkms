@@ -7,10 +7,8 @@ use crate::{
         layout::Layout,
         pool::Pool, //
     },
-    output::{
-        Output,
-        SceneUpdate, //
-    }, //
+    output::SceneUpdate,
+    Output, //
 };
 use kernel::{
     drm::preparation::Source,
@@ -31,7 +29,7 @@ mod cases {
         let first = &fixture.drm.device().output;
         let scene = first.inspect(|scene| scene.cloned()).ok_or(EINVAL)?;
         let second = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        second.publish(Source::new(1)?, SceneUpdate::Replace(Some(scene)));
+        second.publish_with_configuration(Source::new(1)?, SceneUpdate::Replace(Some(scene)), None);
         let pool = Pool::new(
             fixture.drm.device(),
             &fixture.host_budget,

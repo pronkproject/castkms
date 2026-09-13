@@ -75,6 +75,8 @@ impl CastKms {
 struct Driver;
 struct File;
 
+type Output = output::Output<scene::Scene, Option<scene::Configuration>>;
+
 impl drm::file::DriverFile for File {
     type Driver = Driver;
 

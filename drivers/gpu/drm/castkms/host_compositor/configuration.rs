@@ -9,9 +9,8 @@ use super::{
     worker, //
 };
 use crate::{
-    output::Output,
-    scene::Scene,
-    Driver, //
+    Driver,
+    Output, //
 };
 use kernel::{
     drm::Device,
@@ -46,7 +45,7 @@ pub(crate) struct Configuration {
     lifecycle: Mutex<()>,
     #[pin]
     state: Mutex<State>,
-    output: Arc<Output<Scene>>,
+    output: Arc<Output>,
     budget: Arc<Budget>,
 }
 
@@ -124,7 +123,7 @@ impl Configuration {
 pub(crate) struct Owner(Arc<Configuration>);
 
 impl Owner {
-    pub(crate) fn new(output: Arc<Output<Scene>>) -> Result<Self> {
+    pub(crate) fn new(output: Arc<Output>) -> Result<Self> {
         let budget = Budget::new()?;
         Ok(Self(Arc::pin_init(
             pin_init!(Configuration {

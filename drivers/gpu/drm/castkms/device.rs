@@ -6,9 +6,8 @@ use super::{
     authority::Authority,
     capture::streams,
     host_compositor::configuration,
-    output::Output,
-    scene::Scene,
-    Driver, //
+    Driver,
+    Output, //
 };
 use kernel::{
     drm::auth::MasterRef,
@@ -20,14 +19,14 @@ use kernel::{
 pub(super) struct State {
     #[pin]
     pub(super) authority: Authority<MasterRef<Driver>>,
-    pub(super) output: Arc<Output<Scene>>,
+    pub(super) output: Arc<Output>,
     pub(super) host: Arc<configuration::Configuration>,
     pub(super) capture_streams: Arc<streams::Registry>,
 }
 
 impl State {
     fn new(
-        output: Arc<Output<Scene>>,
+        output: Arc<Output>,
         host: Arc<configuration::Configuration>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {

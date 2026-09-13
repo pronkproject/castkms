@@ -21,6 +21,7 @@ fn check(condition: bool) -> Result {
 }
 
 mod capture_streams;
+mod configurations;
 mod generations;
 mod host_cache;
 mod host_composition;
