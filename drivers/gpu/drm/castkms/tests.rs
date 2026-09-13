@@ -20,6 +20,7 @@ fn check(condition: bool) -> Result {
     }
 }
 
+mod capture_configurations;
 mod capture_streams;
 mod configurations;
 mod generations;
