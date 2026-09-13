@@ -47,6 +47,8 @@ use core::ptr::NonNull;
 
 #[cfg(CONFIG_DRM_CLIENT)]
 mod buffers;
+#[cfg(CONFIG_DRM_CLIENT)]
+mod client;
 
 // Native master allocation stays in the built-in test support, not in driver modules.
 #[inline(never)]
