@@ -7,6 +7,7 @@
 
 pub(crate) mod budget;
 pub(crate) mod host;
+pub(crate) mod host_stream;
 pub(crate) mod permission;
 pub(crate) mod provider;
 pub(crate) mod streams;
