@@ -6,11 +6,14 @@ mod authority;
 mod capture;
 mod device;
 mod display;
+mod file;
 mod gem;
 mod host_compositor;
 mod output;
 mod provenance;
 mod scene;
+
+use file::File;
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 mod tests;
@@ -73,17 +76,8 @@ impl CastKms {
 }
 
 struct Driver;
-struct File;
 
 type Output = output::Output<scene::Scene, Option<scene::Configuration>>;
-
-impl drm::file::DriverFile for File {
-    type Driver = Driver;
-
-    fn open(_: &drm::Device<Driver>) -> Result<Pin<KBox<Self>>> {
-        Ok(KBox::new(Self, GFP_KERNEL)?.into())
-    }
-}
 
 #[vtable]
 impl drm::Driver for Driver {

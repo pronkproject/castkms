@@ -310,9 +310,34 @@ streams; replacing the worker permanently closes the old adapter's worker
 handle. Reopening explicitly avoids silently moving outstanding work to a
 different worker.
 
-These are private kernel operations. Issuing grants through a DRM file,
-revoking them when the issuing file closes, exposing capture to userspace,
-and selecting the supported HOST/GPU execution profile remain separate work.
+These are private kernel operations. Exposing capture to userspace and selecting
+the supported HOST/GPU execution profile remain separate work.
+
+Grants tied to a DRM file
+------------------------
+
+``file.rs`` adapts an open DRM file to the kernel provider. It verifies that
+the file itself is the current master, rather than merely sharing a master's
+identity, and that the selected CRTC and connector belong to that control.
+Grant allocation happens outside the native policy locks. The adapter then
+rechecks the file and objects before attaching the grant to the file's close
+lifetime. A grant may be issued before an image is displayed; creating a stream
+and delivering pixels still require their separate current checks.
+
+Each file owns a bounded collection of at most 64 live grantors. Closing the
+file revokes those grants even when callers retain their grantor or capture
+handles. Closing a grantor earlier removes its registration and frees that
+slot. The collection retains native authority objects, not files or grantors,
+so it does not keep its creating file alive. Policy callbacks and final
+reference cleanup run outside the collection's lock.
+
+The collection is a provider operation with no dependency on DRM file
+operations. Kernel-issued grants need not join it: their explicit grantor
+still owns revocation, and losing current display control separately denies
+access. The file adapter adds a lifetime restriction, not a new way around
+recipient policy. Completed, authorized private results retain the same
+revocation behavior described above. No capture ioctl or descriptor transport
+is enabled by the adapter.
 
 Testing in a disposable virtual machine
 --------------------------------------

@@ -6,9 +6,11 @@
 //! current display access and image ownership before claiming a job, then copies outside
 //! policy locks. No operation exports source buffers or represents asynchronous GPU access.
 
+mod creator;
 mod request;
 mod storage;
 
+pub(crate) use creator::Creator;
 pub(crate) use request::Request;
 
 use super::{
@@ -65,6 +67,7 @@ unsafe impl NativePolicy for Policy {
 #[must_use = "dropping the grantor revokes capture"]
 pub(crate) struct Grantor {
     capture: Capture,
+    creator: Option<creator::Registration>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -75,7 +78,20 @@ impl Grantor {
         let authority = Authority::new(policy.clone())?;
         Ok(Self {
             capture: Capture { authority, policy },
+            creator: None,
         })
+    }
+
+    /// Attach one external lifetime without transferring the grantor's own revocation duty.
+    ///
+    /// The caller must keep issuance authority stable until registration returns. On failure,
+    /// the existing grantor remains owned by the caller and must be dropped outside DRM locks.
+    pub(crate) fn track_creator(&mut self, creator: &Creator) -> Result {
+        if self.creator.is_some() {
+            return Err(EEXIST);
+        }
+        self.creator = Some(creator.register(&self.capture.authority)?);
+        Ok(())
     }
 
     pub(crate) fn capture(&self) -> Capture {

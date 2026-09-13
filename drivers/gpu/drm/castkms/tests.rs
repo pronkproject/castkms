@@ -22,6 +22,8 @@ fn check(condition: bool) -> Result {
 
 mod capture_configurations;
 #[cfg(CONFIG_DRM_CLIENT)]
+mod capture_files;
+#[cfg(CONFIG_DRM_CLIENT)]
 mod capture_host_stream;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod capture_permissions;
