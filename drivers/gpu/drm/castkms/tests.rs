@@ -66,6 +66,8 @@ mod output_identity;
 mod imports;
 mod producers;
 mod renderer_startup;
+#[cfg(CONFIG_DRM_CLIENT)]
+mod renderer_permission;
 mod vblank;
 use kernel::drm::{
     auth::MasterRef,

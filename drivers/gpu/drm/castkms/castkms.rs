@@ -14,6 +14,7 @@ mod host_compositor;
 mod host_snapshot;
 mod output;
 mod provenance;
+mod renderer;
 mod renderer_startup;
 mod scene;
 
