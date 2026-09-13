@@ -70,6 +70,7 @@
 #include <drm/drm_plane.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank.h>
+#include <drm/drm_vblank_helper.h>
 #include <kunit/test.h>
 #include <linux/auxiliary_bus.h>
 #ifdef CONFIG_DMA_SHARED_BUFFER
