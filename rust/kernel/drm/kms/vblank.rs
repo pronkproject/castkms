@@ -5,7 +5,9 @@
 //! C headers: [`drm_vblank.h`](srctree/include/drm/drm_vblank.h),
 //! [`drm_vblank_helper.h`](srctree/include/drm/drm_vblank_helper.h).
 
+mod sample;
 mod timer;
+pub use sample::VblankSample;
 pub use timer::SoftwareVblank;
 
 use super::{crtc::*, ModeObject};
