@@ -910,6 +910,16 @@ pub trait RawCrtcState: AsRawCrtcState {
         unsafe { (*self.as_raw()).mode_changed() }
     }
 
+    /// Return the connector-index bits routed to this CRTC in the borrowed atomic state.
+    ///
+    /// Each bit corresponds to a connector's `mask()`. The value describes routing, not
+    /// persistent object identity or capture permission. A retained snapshot needs separate
+    /// checks that its intended connectors still exist and belong to the same device.
+    fn connector_mask(&self) -> u32 {
+        // SAFETY: Atomic-state access serializes changes to the native routing mask.
+        unsafe { (*self.as_raw()).connector_mask }
+    }
+
     /// Return the display mode programmed into this CRTC state.
     fn mode(&self) -> &DisplayMode {
         // SAFETY: `mode` is embedded in the CRTC state and therefore has the same lifetime. The
