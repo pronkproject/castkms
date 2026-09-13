@@ -12,7 +12,6 @@ use super::{
     scene,
     Driver, //
 };
-use core::marker::PhantomData;
 use crtc::{
     RawCrtc,
     RawCrtcState, //
@@ -262,7 +261,7 @@ impl crtc::DriverCrtc for Crtc {
     type Args = ();
     type Driver = Driver;
     type State = CrtcState;
-    type VblankImpl = PhantomData<Self>;
+    type VblankImpl = vblank::SoftwareVblank<Self>;
 
     fn new(_: &Device<Driver>, _: &()) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {})
@@ -274,13 +273,45 @@ impl crtc::DriverCrtc for Crtc {
         CrtcState::check_configuration(old, &mut state)
     }
 
-    fn atomic_flush(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+    fn atomic_enable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        commit.crtc().vblank_on();
+    }
+
+    fn atomic_disable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        commit.crtc().vblank_off();
+    }
+
+    fn atomic_flush(mut commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        // A tick between publication and arming may delay notification, but cannot announce
+        // a scene before it is accepted. The timer itself never accesses scene pixels.
+        Self::publish_scene(&commit);
+
+        let crtc = commit.crtc();
+        if let Some(event) = commit.get_pending_vblank_event() {
+            if let Ok(reference) = crtc.vblank_get() {
+                if event.arm(reference).is_ok() {
+                    return;
+                }
+            } else {
+                event.send();
+                return;
+            }
+        }
+        if let Some(event) = commit.get_pending_vblank_event() {
+            event.send();
+        }
+    }
+}
+
+impl Crtc {
+    fn publish_scene(commit: &crtc::CrtcAtomicCommit<'_, Self>) {
         let Some(source) = commit.preparation_source() else {
-            commit.take_state().drm_dev().output.close();
+            commit.crtc().drm_dev().output.close();
             return;
         };
         let primary = commit.crtc().primary_plane();
-        let (transaction, old, state) = commit.take_all();
+        let transaction = commit.atomic_state();
+        let (old, state) = commit.old_new_state();
         let update = if !state.active() {
             SceneUpdate::Replace(None)
         } else if !state.visible {
@@ -406,9 +437,6 @@ impl KmsDriver for Driver {
         let disabled = tail.commit_modeset_disables(modesets);
         let planes = tail.commit_planes(planes, atomic::PlaneCommitFlags::default());
         let enabled = tail.commit_modeset_enables(disabled);
-        // No pixel reader survives the commit. Complete events immediately using DRM's
-        // no-vblank path, not a claim that a receiver presented the frame.
-        tail.fake_vblank();
         tail.commit_hw_done(enabled, planes)
     }
 }

@@ -20,11 +20,13 @@ and reservation without requiring a persistent CPU mapping. It does not add
 new scanout formats or modifiers, authorize capture, or qualify a real GPU's
 allocation and synchronization path.
 
-There is no display clock. A successful flip event means that the driver has
-accepted the new state and no longer needs the old buffer; it does not mean
-that a frame has been displayed elsewhere. Events complete through DRM's
-existing mechanism for devices without vertical blanking interrupts. The
-normal device path does not schedule pixel reads on its own. An internal
+DRM's software timer supplies a display clock at the programmed mode's refresh
+rate. Ordinary flip events are armed after the accepted scene is published and
+complete on a subsequent timer tick. Initial activation or an unavailable
+clock uses DRM's immediate-event fallback. The timer reads no pixels, and a
+flip event does not mean that a receiver has displayed a frame. Receiver and
+encoder frame-rate limits do not control the display clock.
+The normal device path does not schedule pixel reads on its own. An internal
 capture adapter drives composition only when a kernel caller requests a frame
 through an authorized stream. Normal DRM operations on a caller's own buffers
 are not a capture capability.
@@ -453,8 +455,11 @@ version before attempting a modeset.
 The test allocates and maps two local buffers, verifies that a test-only
 commit leaves the display inactive, enables the output, and submits 48 flips
 including same-framebuffer updates. Each submitted flip must produce exactly
-one event. A scaling request must be rejected. Finally the test disables the
-output and releases its framebuffers, buffer handles and mode description.
+one event. It then selects a mode with the same dimensions and half the pixel
+clock and submits two more flips. Counter and timestamp checks compare the
+display clock with the selected mode before and after that change and across
+disable and re-enable. A scaling request must be rejected. Finally the test
+disables the output and releases its buffers and mode descriptions.
 
 To exercise imported storage, also enable ``CONFIG_DMABUF_HEAPS`` and
 ``CONFIG_DMABUF_HEAPS_SYSTEM`` in the guest kernel, then supply the heap::
@@ -478,8 +483,9 @@ output's resource replacement, blanking and terminal shutdown rules, including
 resource destruction that reenters output shutdown. Those tests do not read
 framebuffer pixels or establish capture authorization.
 
-Those checks establish ordinary DRM submission behavior, not presentation
-timing, GPU interoperability, capture authorization, or casting performance.
+Those checks establish ordinary DRM submission behavior and virtual display
+clock timing, not receiver presentation, GPU interoperability, capture
+authorization, or casting performance.
 
 The separate master-lifetime test exercises multiple real DRM files::
 
