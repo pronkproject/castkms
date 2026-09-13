@@ -483,16 +483,24 @@ adapter adds no public grant-creation or capture ABI.
 Testing in a disposable virtual machine
 --------------------------------------
 
-The userspace smoke test requires the libdrm development headers and library::
+The userspace smoke tests require the libdrm development headers and library::
 
     make -C tools/testing/selftests/drm_castkms
+    tools/testing/selftests/drm_castkms/execution /dev/dri/cardN
     tools/testing/selftests/drm_castkms/modeset /dev/dri/cardN
 
 Choose the Rust CastKMS node explicitly in an otherwise unused test VM. The
-test changes display state and requires DRM master access. Do not run it
-against an active desktop. Without a node argument it skips instead of
-selecting a device automatically. It checks the driver name and development
-version before attempting a modeset.
+modeset test changes display state and requires DRM master access. Do not run
+the tests against an active desktop. Without a node argument the modeset test
+skips instead of selecting a device automatically. It checks the driver name
+and development version before attempting a modeset.
+
+The execution test compares the immutable ``CASTKMS_EXECUTION`` description
+through a master file and a separate read-only, non-master file. Both must
+report the same HOST profile and generation. It also checks that the master
+cannot change the description. The test needs an unused node so its first
+file acquires master; reading the description itself does not require master,
+a capture grant or an active display. Neither file receives pixel access.
 
 The test allocates and maps two local buffers, verifies that a test-only
 commit leaves the display inactive, enables the output, and submits 48 flips
@@ -558,7 +566,7 @@ successor file, and finally disables the output and checks framebuffer release.
 These cases exercise the real paths that supply attribution evidence. They
 observe ordinary DRM state, not the driver's private scene owner, so passing
 them does not establish that historical ownership was resolved correctly.
-Neither userspace test adds a private ioctl or exports pixels.
+None of the userspace smoke tests adds a private ioctl or exports pixels.
 
 With ``CONFIG_DRM_CASTKMS_KUNIT_TEST``, a separate set of kernel tests creates
 unregistered CastKMS devices and submits transactions through their real atomic
