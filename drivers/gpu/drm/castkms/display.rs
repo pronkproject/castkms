@@ -160,6 +160,12 @@ impl plane::DriverPlane for Plane {
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
         check_geometry(transaction, &mut state)?;
+        if let Some(geometry) = state.geometry {
+            super::execution::host::check_framebuffer(
+                state.framebuffer().ok_or(EINVAL)?,
+                geometry,
+            )?;
+        }
         state.content = scene::ContentSerial::for_update(old.content, state.geometry.is_some())?;
         state.selection = Selection::for_update(
             transaction.plane_input(state.plane())?,

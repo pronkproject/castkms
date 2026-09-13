@@ -65,8 +65,7 @@ int main(int argc, char **argv)
 	CHECK(planes && planes->count_planes == 1);
 	plane_id = planes->planes[0];
 	a = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x33);
-	b = argc == 3 ? import_buffer(fd, argv[2], mode->hdisplay, mode->vdisplay) :
-			create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x88);
+	b = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x88);
 	CHECK(drmModeCreatePropertyBlob(fd, mode, sizeof(*mode), &mode_id) == 0);
 	req = drmModeAtomicAlloc();
 	CHECK(req);
@@ -94,6 +93,40 @@ int main(int argc, char **argv)
 	CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
 	drmModeFreeCrtc(crtc);
 	check_vblank(fd, mode);
+	if (argc == 3) {
+		struct buffer foreign = import_buffer(fd, argv[2], mode->hdisplay, mode->vdisplay);
+		const uint32_t flags[] = { DRM_MODE_ATOMIC_TEST_ONLY, 0, DRM_MODE_ATOMIC_NONBLOCK };
+
+		req = drmModeAtomicAlloc();
+		CHECK(req);
+		property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", foreign.fb);
+		for (unsigned int i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
+			CHECK(drmModeAtomicCommit(fd, req, flags[i], NULL) < 0);
+			CHECK(errno == EOPNOTSUPP);
+			crtc = drmModeGetCrtc(fd, crtc_id);
+			CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
+			drmModeFreeCrtc(crtc);
+		}
+		drmModeAtomicFree(req);
+		req = drmModeAtomicAlloc();
+		CHECK(req);
+		property(fd, req, crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", 0);
+		property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", foreign.fb);
+		CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
+		drmModeAtomicFree(req);
+		req = drmModeAtomicAlloc();
+		CHECK(req);
+		property(fd, req, crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", 1);
+		for (unsigned int i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
+			CHECK(drmModeAtomicCommit(fd, req, flags[i] | DRM_MODE_ATOMIC_ALLOW_MODESET,
+						 NULL) < 0);
+			CHECK(errno == EOPNOTSUPP);
+		}
+		property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", a.fb);
+		CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
+		drmModeAtomicFree(req);
+		destroy_buffer(fd, &foreign);
+	}
 	req = drmModeAtomicAlloc();
 	CHECK(req);
 	property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", b.fb);
@@ -157,6 +190,6 @@ int main(int argc, char **argv)
 	CHECK(close(fd) == 0);
 	puts("PASS: CastKMS allocation, modeset, timed vblank, 50 flips, rejection, disable");
 	if (argc == 3)
-		puts("PASS: foreign heap storage after closing exporter descriptor and import handle");
+		puts("PASS: foreign heap imports rejected for host scanout without changing the display");
 	return 0;
 }

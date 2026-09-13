@@ -10,9 +10,10 @@ enabled. It is not a replacement for a working C CastKMS casting installation.
 
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create one
 always-connected virtual output. The driver accepts atomic modesetting and
-linear XRGB8888 framebuffers, with local storage allocated through the usual
-DRM dumb-buffer interface or foreign storage imported through PRIME. Modes up
-to 1920 by 1080 are offered for development.
+native linear XRGB8888 framebuffers allocated through the usual DRM dumb-buffer
+interface. Foreign storage may be imported through PRIME and described by a
+framebuffer, but is rejected for visible HOST scanout during atomic validation.
+Modes up to 1920 by 1080 are offered for development.
 That size is a temporary driver limit, not a receiver or transport policy.
 The virtual parent has DMA addressing configured before DRM registration so
 exporters can map imported attachments. Import retains the exporter's storage
@@ -51,8 +52,10 @@ HOST_V1 requires native CastKMS linear XRGB8888 storage, at most 1920 by 1080,
 covering the complete output without cropping or scaling. Each source allocation
 is bounded by 16 MiB and contains complete, four-byte-aligned strides. Clients
 render the cursor into the primary image; hardware cursor and color transforms
-are not provided. The description reports renderer eligibility independently of
-whether the general PRIME and framebuffer interfaces accept an allocation.
+are not provided. Atomic validation applies the same eligibility check as the
+renderer before accepting a visible plane. Rejection preserves the current
+display for test-only, blocking and nonblocking submissions. General PRIME and
+framebuffer creation remain independent of eligibility for HOST scanout.
 
 ``execution`` defines eligibility without acquiring a mapping or reading pixels.
 Its property adapter serializes a kernel-accessible description; neither the
