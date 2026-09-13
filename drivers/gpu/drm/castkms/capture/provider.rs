@@ -7,6 +7,7 @@
 //! policy locks. No operation exports source buffers or represents asynchronous GPU access.
 
 mod creator;
+mod control_file;
 mod request;
 mod storage;
 
