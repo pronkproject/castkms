@@ -1247,6 +1247,15 @@ impl<'a, T: DriverCrtc> CrtcAtomicCommit<'a, T> {
             )
         }
     }
+
+    /// Inspect the committed transaction without giving up pending-event handling.
+    ///
+    /// The reader exposes immutable private payloads, including related plane and connector
+    /// state. It cannot create state mutators or handle events. The callback token remains
+    /// the unique route to its pending event, independently of these read-only views.
+    pub fn atomic_state(&self) -> &'a AtomicStateReader<T::Driver> {
+        self.state
+    }
 }
 
 impl<T: VblankDriverCrtc> CrtcAtomicCommit<'_, T> {
