@@ -510,21 +510,29 @@ impl<T: StaticModeObject> Clone for KmsRef<T> {
 
 macro_rules! impl_aref_for_mode_object {
     (impl $( < $( $param:ident: $bound:ident ),+ > )? for $type:ty) => {
-        // SAFETY: drm_mode_object_get()/put() ensure the type is ref-counted according to the
-        // safety contract
+        // SAFETY: Each Rust reference owns one native object reference and one device
+        // reference. Object cleanup finishes before releasing the corresponding device.
         unsafe impl $( < $( $param: $bound ),+ > )? kernel::sync::aref::AlwaysRefCounted for $type {
             #[inline]
             fn inc_ref(&self) {
                 // SAFETY: We're guaranteed by the safety contract of `ModeObject` that
                 // `raw_mode_obj()` always returns a pointer to an initialized `drm_mode_object`.
-                unsafe { kernel::bindings::drm_mode_object_get(self.raw_mode_obj()) }
+                unsafe {
+                    kernel::bindings::drm_dev_get(self.drm_dev().as_raw());
+                    kernel::bindings::drm_mode_object_get(self.raw_mode_obj());
+                }
             }
 
             #[inline]
             unsafe fn dec_ref(obj: core::ptr::NonNull<Self>) {
-                // SAFETY: We're guaranteed by the safety contract of `ModeObject` that
-                // `raw_mode_obj()` always returns a pointer to an initialized `drm_mode_object`.
-                unsafe { kernel::bindings::drm_mode_object_put(obj.as_ref().raw_mode_obj()) }
+                // SAFETY: The paired device reference keeps mode configuration alive through
+                // native object destruction. Save the device pointer before the object put,
+                // which may destroy obj, and balance the independent device reference last.
+                unsafe {
+                    let dev = obj.as_ref().drm_dev().as_raw();
+                    kernel::bindings::drm_mode_object_put(obj.as_ref().raw_mode_obj());
+                    kernel::bindings::drm_dev_put(dev);
+                }
             }
         }
     };
