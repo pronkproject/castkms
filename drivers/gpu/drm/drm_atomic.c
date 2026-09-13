@@ -1957,7 +1957,20 @@ int drm_atomic_nonblocking_commit(struct drm_atomic_commit *state)
 }
 EXPORT_SYMBOL(drm_atomic_nonblocking_commit);
 
-/* just used from drm-client and atomic-helper: */
+/**
+ * __drm_atomic_helper_disable_plane - clear a plane in an existing transaction
+ * @plane: plane being disabled
+ * @plane_state: that plane's new state in the caller's transaction
+ *
+ * Clear the plane's CRTC, framebuffer and coordinates without disabling the
+ * CRTC itself. Framebuffer assignment is recorded even when already NULL.
+ * The caller must exclude other access to the transaction while the helper
+ * acquires and updates any affected CRTC state. Validation and submission
+ * remain the caller's responsibility.
+ *
+ * Returns: Zero on success or a negative error, including -EDEADLK when the
+ * caller must discard the attempt and perform modeset lock backoff.
+ */
 int __drm_atomic_helper_disable_plane(struct drm_plane *plane,
 				      struct drm_plane_state *plane_state)
 {
