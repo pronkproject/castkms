@@ -39,7 +39,6 @@ use kernel::{
 /// exhausting it omits the optional snapshot rather than waiting for a previous recipient.
 pub(crate) struct Budget(Arc<gem::budget::Budget>);
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Budget {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self(gem::budget::Budget::new(16 * 1024 * 1024)?))
