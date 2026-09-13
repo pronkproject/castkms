@@ -42,6 +42,8 @@ pub(super) struct ConnectorState;
 
 pub(super) struct CrtcState {
     configuration: Option<scene::Configuration>,
+    visible: bool,
+    blank_owner: Option<kernel::drm::auth::MasterRef<Driver>>,
 }
 
 pub(super) struct PlaneState {
@@ -79,11 +81,15 @@ impl crtc::DriverCrtcState for CrtcState {
     fn new(_: &crtc::Crtc<Crtc>) -> Result<Self> {
         Ok(Self {
             configuration: None,
+            visible: false,
+            blank_owner: None,
         })
     }
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
             configuration: self.configuration.clone(),
+            visible: self.visible,
+            blank_owner: self.blank_owner.clone(),
         })
     }
 }
@@ -203,19 +209,30 @@ impl PlaneState {
     }
 }
 
-#[vtable]
-impl crtc::DriverCrtc for Crtc {
-    type Args = ();
-    type Driver = Driver;
-    type State = CrtcState;
-    type VblankImpl = PhantomData<Self>;
-
-    fn new(_: &Device<Driver>, _: &()) -> impl PinInit<Self, Error> {
-        try_pin_init!(Self {})
+impl CrtcState {
+    fn resolve_blank_owner(
+        transaction: &atomic::AtomicStateComposer<Driver>,
+        old: &crtc::CrtcState<Self>,
+        state: &mut crtc::CrtcStateMutator<'_, crtc::CrtcState<Self>>,
+    ) {
+        // Native atomic validation checks plane visibility before invoking CRTC checks.
+        state.visible = state.active()
+            && transaction
+                .get_new_plane_state(state.crtc().primary_plane())
+                .map_or(old.visible, |plane| plane.geometry.is_some());
+        state.blank_owner = if !state.active() || state.visible {
+            None
+        } else if !old.active() || old.visible || state.mode_changed() {
+            transaction.drm_dev().authority.snapshot()
+        } else {
+            old.blank_owner.clone()
+        };
     }
 
-    fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
-        let (_, old, mut state) = check.take_all();
+    fn check_configuration(
+        old: &crtc::CrtcState<Self>,
+        state: &mut crtc::CrtcStateMutator<'_, crtc::CrtcState<Self>>,
+    ) -> Result {
         if !state.active() {
             state.configuration = None;
             return Ok(());
@@ -238,6 +255,24 @@ impl crtc::DriverCrtc for Crtc {
         };
         Ok(())
     }
+}
+
+#[vtable]
+impl crtc::DriverCrtc for Crtc {
+    type Args = ();
+    type Driver = Driver;
+    type State = CrtcState;
+    type VblankImpl = PhantomData<Self>;
+
+    fn new(_: &Device<Driver>, _: &()) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {})
+    }
+
+    fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
+        let (transaction, old, mut state) = check.take_all();
+        CrtcState::resolve_blank_owner(transaction, old, &mut state);
+        CrtcState::check_configuration(old, &mut state)
+    }
 
     fn atomic_flush(commit: crtc::CrtcAtomicCommit<'_, Self>) {
         let Some(source) = commit.preparation_source() else {
@@ -248,6 +283,8 @@ impl crtc::DriverCrtc for Crtc {
         let (transaction, old, state) = commit.take_all();
         let update = if !state.active() {
             SceneUpdate::Replace(None)
+        } else if !state.visible {
+            SceneUpdate::Replace(Some(scene::Scene::blank(state.blank_owner.clone())))
         } else {
             match transaction.get_new_plane_state(primary) {
                 Some(plane) => SceneUpdate::Replace(PlaneState::scene(plane)),
