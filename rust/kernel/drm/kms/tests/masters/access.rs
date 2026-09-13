@@ -125,11 +125,13 @@ mod tests {
         let lessee = client.file().associated_master().ok_or(EINVAL)?;
         {
             let guard = root.lock_current().ok_or(EINVAL)?;
+            check(guard.master() == &root)?;
             check(guard.is_master_file(owner.file()))?;
             check(!guard.is_master_file(client.file()))?;
         }
         {
             let guard = lessee.lock_current().ok_or(EINVAL)?;
+            check(guard.master() == &lessee)?;
             check(guard.is_master_file(client.file()))?;
             check(!guard.is_master_file(owner.file()))?;
         }
