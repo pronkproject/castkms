@@ -93,10 +93,10 @@ mod cases {
         drop(handle);
         owner.flush();
         let replacement = owner.handle();
-        check(matches!(replacement.take_outcome(), Some(Outcome::Blank)))?;
+        check(matches!(replacement.take_outcome(), Some(Outcome::NoScene)))?;
         replacement.request()?;
         owner.flush();
-        check(matches!(replacement.take_outcome(), Some(Outcome::Blank)))?;
+        check(matches!(replacement.take_outcome(), Some(Outcome::NoScene)))?;
         Ok(())
     }
 
@@ -113,7 +113,7 @@ mod cases {
         let second = first.clone();
         first.request()?;
         owner.flush();
-        check(matches!(second.take_outcome(), Some(Outcome::Blank)))?;
+        check(matches!(second.take_outcome(), Some(Outcome::NoScene)))?;
         check(first.take_outcome().is_none())?;
         owner.close();
         let closed = owner.handle();
@@ -192,7 +192,7 @@ mod cases {
         let handle = owner.handle();
         handle.request()?;
         owner.flush();
-        check(matches!(handle.take_outcome(), Some(Outcome::Blank)))?;
+        check(matches!(handle.take_outcome(), Some(Outcome::NoScene)))?;
         check(handle.take_outcome().is_none())?;
         Ok(())
     }

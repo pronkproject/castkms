@@ -112,6 +112,19 @@ impl Image {
         Ok(())
     }
 
+    /// Clear an exclusively owned allocation, including padding, before blank-image reuse.
+    pub(super) fn clear(&mut self) {
+        // SAFETY: The owned mapping covers the validated allocation. Exclusive access to
+        // this private image excludes readers, and no GEM handle or DMA-BUF is exported.
+        unsafe {
+            self.map
+                .as_view()
+                .as_ptr()
+                .cast::<u8>()
+                .write_bytes(0, self.layout.size());
+        }
+    }
+
     pub(crate) fn read_row(&self, y: u32, pixels: &mut [u8]) -> Result {
         if pixels.len() != self.layout.pitch() {
             return Err(EINVAL);

@@ -21,10 +21,10 @@ mod cases {
         let second = progress.request()?;
         check(progress.observe(first).is_none())?;
         let through = progress.starting();
-        check(progress.finish(through, Outcome::Blank).is_none())?;
-        check(matches!(progress.observe(first), Some(Outcome::Blank)))?;
-        check(matches!(progress.observe(second), Some(Outcome::Blank)))?;
-        check(matches!(progress.observe(first), Some(Outcome::Blank)))?;
+        check(progress.finish(through, Outcome::NoScene).is_none())?;
+        check(matches!(progress.observe(first), Some(Outcome::NoScene)))?;
+        check(matches!(progress.observe(second), Some(Outcome::NoScene)))?;
+        check(matches!(progress.observe(first), Some(Outcome::NoScene)))?;
         Ok(())
     }
 
@@ -34,8 +34,8 @@ mod cases {
         let first = progress.request()?;
         let through = progress.starting();
         let second = progress.request()?;
-        progress.finish(through, Outcome::Blank);
-        check(matches!(progress.observe(first), Some(Outcome::Blank)))?;
+        progress.finish(through, Outcome::NoScene);
+        check(matches!(progress.observe(first), Some(Outcome::NoScene)))?;
         check(progress.observe(second).is_none())?;
         let through = progress.starting();
         progress.finish(through, Outcome::Failed(EIO));
@@ -50,10 +50,10 @@ mod cases {
     fn an_old_completion_does_not_satisfy_a_new_request() -> Result {
         let mut progress = Progress::new();
         let first = progress.request()?;
-        progress.finish(progress.starting(), Outcome::Blank);
+        progress.finish(progress.starting(), Outcome::NoScene);
         let second = progress.request()?;
         check(progress.observe(second).is_none())?;
-        check(matches!(progress.observe(first), Some(Outcome::Blank)))?;
+        check(matches!(progress.observe(first), Some(Outcome::NoScene)))?;
         Ok(())
     }
 
@@ -67,8 +67,8 @@ mod cases {
         check(last == u64::MAX)?;
         check(progress.request() == Err(EOVERFLOW))?;
         check(progress.starting() == last)?;
-        progress.finish(last, Outcome::Blank);
-        check(matches!(progress.observe(last), Some(Outcome::Blank)))?;
+        progress.finish(last, Outcome::NoScene);
+        check(matches!(progress.observe(last), Some(Outcome::NoScene)))?;
         check(progress.request() == Err(EOVERFLOW))?;
         Ok(())
     }

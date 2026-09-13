@@ -90,6 +90,11 @@ impl Slot {
         self.image.as_mut().ok_or(EIO)?.copy_from(source)
     }
 
+    pub(super) fn clear(&mut self) -> Result {
+        self.image.as_mut().ok_or(EIO)?.clear();
+        Ok(())
+    }
+
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn write_row(&mut self, y: u32, pixels: &[u8]) -> Result {
         self.image.as_mut().ok_or(EIO)?.write_row(y, pixels)

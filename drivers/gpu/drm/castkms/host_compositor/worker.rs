@@ -38,7 +38,8 @@ use kernel::{
 #[derive(Clone)]
 pub(crate) enum Outcome {
     Image(Arc<Completed>),
-    Blank,
+    /// No active scene was available; an active blank is an ordinary image.
+    NoScene,
     Failed(Error),
 }
 
@@ -68,7 +69,7 @@ impl State {
         };
         let retired_image = match &next {
             Outcome::Image(image) => last_image.replace(image.clone()),
-            Outcome::Blank => last_image.take(),
+            Outcome::NoScene => last_image.take(),
             Outcome::Failed(_) => None,
         };
         let retired_attempt = progress.finish(through, next.clone());
@@ -105,7 +106,7 @@ impl WorkItem for Worker {
                 Ok(image) => Outcome::Image(image),
                 Err(error) => Outcome::Failed(error.into()),
             },
-            Ok(None) => Outcome::Blank,
+            Ok(None) => Outcome::NoScene,
             Err(error) => Outcome::Failed(error),
         };
         let retired = worker.state.lock().record(through, outcome);
@@ -239,7 +240,7 @@ impl Handle {
 
     /// Retain the last complete private image without consuming the latest attempt.
     ///
-    /// A failure preserves this historical image; a completed blank or shutdown clears
+    /// A failure preserves this historical image; no active scene or shutdown clears
     /// it. The image may describe an older scene or owner. Callers must independently
     /// establish currentness and recipient authorization before delivering its pixels.
     pub(crate) fn last_image(&self) -> Option<Arc<Completed>> {
