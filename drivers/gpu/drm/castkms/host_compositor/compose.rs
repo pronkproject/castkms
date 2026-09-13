@@ -92,7 +92,7 @@ pub(crate) fn current(output: &Output<Scene>, pool: &Arc<Pool>) -> Result<Option
             }
             framebuffer.prepare_mapping()
         },
-        |scene, mapping| -> Result<_> {
+        |scene, (), mapping| -> Result<_> {
             scene.producer_result()?;
             slot.copy_from(mapping)?;
             Ok((scene.content_serial(), scene.owner().cloned()))
