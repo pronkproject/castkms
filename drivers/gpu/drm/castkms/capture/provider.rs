@@ -15,6 +15,7 @@ pub(crate) use creator::Creator;
 pub(crate) use request::Request;
 
 use super::{
+    grants,
     host,
     permission::Permission,
     streams::Registration, //
@@ -69,6 +70,7 @@ unsafe impl NativePolicy for Policy {
 pub(crate) struct Grantor {
     capture: Capture,
     creator: Option<creator::Registration>,
+    _device_registration: grants::Registration,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -77,9 +79,15 @@ impl Grantor {
     pub(crate) fn new(permission: Permission) -> Result<Self> {
         let policy = Arc::new(Policy { permission }, GFP_KERNEL)?;
         let authority = Authority::new(policy.clone())?;
+        let device_registration = policy
+            .permission
+            .device()
+            .capture_grants
+            .register(&authority.revocation())?;
         Ok(Self {
             capture: Capture { authority, policy },
             creator: None,
+            _device_registration: device_registration,
         })
     }
 

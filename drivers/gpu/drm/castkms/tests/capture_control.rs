@@ -25,6 +25,16 @@ impl ControlFile {
     fn new(grantor: Grantor) -> Result<Self> {
         Ok(Self(Some(grantor.into_control_file()?)))
     }
+
+    fn is_revoked(&self) -> Result<bool> {
+        let file = self.0.as_ref().ok_or(EINVAL)?;
+        // SAFETY: The owned anonymous file retains its immutable operations and callback module.
+        let poll = unsafe { (*(*file.as_ptr()).f_op).poll }.ok_or(EINVAL)?;
+        // SAFETY: The file remains live. A null table requests current readiness without
+        // registering a waiter, and the control endpoint does not access file-position state.
+        let events = unsafe { poll(file.as_ptr(), core::ptr::null_mut()) };
+        Ok(events & kernel::bindings::POLLHUP != 0)
+    }
 }
 
 impl Drop for ControlFile {
@@ -52,6 +62,59 @@ fn select(fixture: &Fixture, file: &MasterFile<'_, Driver>) -> Result<Framebuffe
 #[kunit_tests(rust_castkms_capture_control)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn device_shutdown_revokes_control_files_without_any_stream() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let grantor = grant(&fixture, &creator)?;
+        let capture = grantor.capture();
+        let control = ControlFile::new(grantor)?;
+        check(!control.is_revoked()?)?;
+        fixture.state.close();
+        check(control.is_revoked()?)?;
+        check(matches!(capture.stream(1), Err(EKEYREVOKED)))?;
+        fixture.state.close();
+        check(control.is_revoked()?)?;
+        Ok(())
+    }
+
+    #[test]
+    fn shutdown_before_transfer_is_terminal_and_rejects_new_issuance() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let grantor = grant(&fixture, &creator)?;
+        let capture = grantor.capture();
+        fixture.state.close();
+        let control = ControlFile::new(grantor)?;
+        check(control.is_revoked()?)?;
+        check(matches!(capture.stream(1), Err(EKEYREVOKED)))?;
+        check(matches!(grant(&fixture, &creator), Err(ENODEV)))?;
+        Ok(())
+    }
+
+    #[test]
+    fn device_shutdown_preserves_completed_authorized_results() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &creator)?;
+        let grantor = grant(&fixture, &creator)?;
+        let capture = grantor.capture();
+        let control = ControlFile::new(grantor)?;
+        let mut stream = Stream::new(&capture, 1)?;
+        let completed = stream.capture()?;
+        fixture.state.close();
+        check(control.is_revoked()?)?;
+        check(matches!(stream.capture(), Err(EKEYREVOKED)))?;
+        let mut bytes = KVVec::new();
+        bytes.resize(640 * 480 * 4, 0, GFP_KERNEL)?;
+        check(completed.copy_result(&mut bytes)? == bytes.len())?;
+        check(completed.status()? == Status::Complete(Ok(())))?;
+        Ok(())
+    }
 
     #[test]
     fn transferred_grant_revokes_only_after_the_last_control_reference() -> Result {

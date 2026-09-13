@@ -6,6 +6,7 @@ use super::{
     authority::Authority,
     capture::{
         budget,
+        grants,
         streams, //
     },
     host_compositor::configuration,
@@ -24,6 +25,7 @@ pub(super) struct State {
     pub(super) authority: Authority<MasterRef<Driver>>,
     pub(super) output: Arc<Output>,
     pub(super) host: Arc<configuration::Configuration>,
+    pub(super) capture_grants: Arc<grants::Registry>,
     pub(super) capture_streams: Arc<streams::Registry>,
     pub(super) capture_budget: Arc<budget::Budget>,
 }
@@ -37,12 +39,14 @@ impl State {
             authority <- Authority::new(),
             output,
             host,
+            capture_grants: grants::Registry::new()?,
             capture_streams: streams::Registry::new()?,
             capture_budget: budget::Budget::new()?,
         })
     }
 
     fn close(&self) {
+        self.capture_grants.close();
         self.capture_streams.close();
         self.authority.close();
         self.output.close();
