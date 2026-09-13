@@ -76,6 +76,14 @@ impl<D: KmsDriver> MasterRef<D> {
 }
 
 impl<D: KmsDriver> CurrentMasterGuard<'_, D> {
+    /// Identity whose current control is stabilized by this guard.
+    ///
+    /// A lease retains its own identity, not its lessor's. Cloning the returned handle
+    /// preserves identity and storage lifetime, but does not retain the guard or authority.
+    pub fn master(&self) -> &MasterRef<D> {
+        self.master
+    }
+
     /// Whether the file owns the exact master identity stabilized by this guard.
     ///
     /// Merely sharing that identity is insufficient. Another device or a different identity
