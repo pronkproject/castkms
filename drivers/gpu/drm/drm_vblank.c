@@ -1344,6 +1344,9 @@ EXPORT_SYMBOL(drm_crtc_wait_one_vblank);
  *
  * Drivers must use this function when the hardware vblank counter can get
  * reset, e.g. when suspending or disabling the @crtc in general.
+ *
+ * This function waits for pending vblank work and any running native timer
+ * callback. Callers must not hold locks needed by that work or callback.
  */
 void drm_crtc_vblank_off(struct drm_crtc *crtc)
 {
@@ -1402,6 +1405,10 @@ void drm_crtc_vblank_off(struct drm_crtc *crtc)
 	drm_vblank_cancel_pending_works(vblank);
 
 	spin_unlock_irq(&dev->event_lock);
+
+	/* Finish the timer outside the locks its callback may acquire. */
+	if (vblank->vblank_timer.crtc)
+		hrtimer_cancel(&vblank->vblank_timer.timer);
 
 	/* Will be reset by the modeset helpers when re-enabling the crtc by
 	 * calling drm_calc_timestamping_constants(). */
