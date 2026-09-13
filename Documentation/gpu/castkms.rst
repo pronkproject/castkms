@@ -36,6 +36,28 @@ writeback, CRC collection, or delegated composition. No default framebuffer
 console client is started. Do not use the development driver for production
 casting until the required facilities have been implemented and qualified.
 
+Execution description
+---------------------
+
+The read-only ``CASTKMS_EXECUTION`` connector property contains a single
+``drm_castkms_execution`` blob. It describes the built-in renderer's HOST_V1
+profile at capability generation 1. Clients read the version, profile and
+generation together through the standard DRM property interface. The initial
+description remains fixed throughout the connector lifetime; runtime renderer
+transitions are not enabled. Reading it grants no capture permission and does
+not reserve acceptance of a later display update.
+
+HOST_V1 requires native CastKMS linear XRGB8888 storage, at most 1920 by 1080,
+covering the complete output without cropping or scaling. Each source allocation
+is bounded by 16 MiB and contains complete, four-byte-aligned strides. Clients
+render the cursor into the primary image; hardware cursor and color transforms
+are not provided. The description reports renderer eligibility independently of
+whether the general PRIME and framebuffer interfaces accept an allocation.
+
+``execution`` defines eligibility without acquiring a mapping or reading pixels.
+Its property adapter serializes a kernel-accessible description; neither the
+eligibility check nor the renderer needs to impersonate a userspace caller.
+
 Code boundaries
 ---------------
 
