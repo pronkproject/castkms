@@ -356,6 +356,34 @@ recipient policy. Completed, authorized private results retain the same
 revocation behavior described above. No capture ioctl or descriptor transport
 is enabled by the adapter.
 
+Transferring revocation to a control file
+---------------------------------------
+
+The provider's ``control_file.rs`` adapter transfers a complete grantor into
+an anonymous file. That file only reports revocation; it has no capture,
+mapping or modesetting operations. The conversion returns a kernel file
+reference without installing a userspace descriptor. Kernel consumers may
+continue using the grantor directly without creating a file.
+
+All references to the same control file share one grantor. Closing a
+duplicate does not revoke while another reference remains. Final release
+revokes before destroying the grantor and removing its creator registration.
+The file therefore keeps the registration's quota occupied until its final
+release. Ordinary capture handles retain neither the control file nor its
+creating DRM file.
+
+For grants issued by a DRM file, closing that creating file still revokes
+even if the control file remains open. Transferring a kernel-issued grant
+does not add a creating-file restriction. Previously completed, authorized
+results retain their documented lifetime in both cases. Failed conversion
+drops the unpublished grantor and revokes it; callers must treat that failure
+as terminal and perform conversion outside policy locks.
+
+Poll on the control file reports completion of authority revocation. It is
+not a general notification of display changes or device loss: current
+permission checks and stream shutdown enforce those restrictions separately.
+The adapter adds no public grant-creation or capture ABI.
+
 Testing in a disposable virtual machine
 --------------------------------------
 
