@@ -2,6 +2,8 @@
 
 //! Event consumers with native vblank storage, separate from the no-vblank setup tests.
 
+mod samples;
+
 use super::{framebuffer, mode, Counts, Lifetime};
 use crate::{
     device,
