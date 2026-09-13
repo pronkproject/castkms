@@ -245,7 +245,7 @@ impl crtc::DriverCrtc for Crtc {
             return;
         };
         let primary = commit.crtc().primary_plane();
-        let (transaction, _, state) = commit.take_all();
+        let (transaction, old, state) = commit.take_all();
         let update = if !state.active() {
             SceneUpdate::Replace(None)
         } else {
@@ -259,6 +259,14 @@ impl crtc::DriverCrtc for Crtc {
             update,
             state.configuration.clone(),
         );
+        if old.configuration != state.configuration {
+            if let Some(configuration) = &old.configuration {
+                transaction
+                    .drm_dev()
+                    .capture_streams
+                    .revoke_configuration(configuration);
+            }
+        }
     }
 }
 

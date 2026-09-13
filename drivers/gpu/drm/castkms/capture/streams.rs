@@ -99,7 +99,6 @@ impl Registry {
     ///
     /// Matching entries stay tracked until their registration owners close. Only native
     /// revocation runs under the lock; no storage is freed and no provider work is waited for.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn revoke_configuration(&self, configuration: &Configuration) {
         let state = self.state.lock();
         for entry in &state.streams {
