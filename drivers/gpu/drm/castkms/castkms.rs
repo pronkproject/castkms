@@ -6,6 +6,7 @@ mod authority;
 mod capture;
 mod device;
 mod display;
+mod display_control;
 mod execution;
 mod file;
 mod gem;

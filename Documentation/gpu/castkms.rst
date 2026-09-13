@@ -64,6 +64,15 @@ eligibility check nor the renderer needs to impersonate a userspace caller.
 Code boundaries
 ---------------
 
+``display_control.rs`` retains the exact display objects selected under the
+current DRM master's control. Its callback checks that control again and
+observes the accepted output configuration under the publication lock. It
+does not expose framebuffer storage or confer capture or renderer authority.
+Checking the current scene's owner is a separate operation: controlling an
+output does not establish that its previously displayed pixels belong to the
+same master. Capture and renderer policy build on those observations without
+making a retained target a continuing permission.
+
 ``castkms.rs`` owns the virtual parent device and DRM registration. Destruction
 unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;
