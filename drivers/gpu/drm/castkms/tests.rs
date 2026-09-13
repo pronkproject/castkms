@@ -32,6 +32,8 @@ mod capture_host_stream;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod capture_permissions;
 #[cfg(CONFIG_DRM_CLIENT)]
+mod capture_snapshots;
+#[cfg(CONFIG_DRM_CLIENT)]
 mod capture_provider;
 mod capture_streams;
 mod blank_ownership;
