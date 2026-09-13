@@ -857,6 +857,25 @@ impl<T: KmsDriver> AtomicStateComposer<T> {
         to_result(unsafe { bindings::__drm_atomic_helper_set_config(&mut config, self.as_raw()) })
     }
 
+    /// Disable one plane without disabling its CRTC or submitting a separate transaction.
+    ///
+    /// Clears routing, framebuffer and geometry through the native helper, recording an
+    /// explicit null framebuffer assignment. Exclusive composer access excludes state guards
+    /// while the helper adds or edits affected CRTC state. Propagate errors to the transaction
+    /// runner; validation and commit remain separate from editing the candidate.
+    pub fn disable_plane(self: Pin<&mut Self>, plane: &Plane<T::Plane>) -> Result {
+        if !core::ptr::eq(self.drm_dev(), plane.drm_dev()) {
+            return Err(EINVAL);
+        }
+        let mut state = self.add_plane_state(plane)?;
+        // SAFETY: The plane and newly acquired state belong to this transaction's device.
+        // The exclusive composer borrow excludes all earlier state accessors, and the local
+        // guard is the only access to this plane while the native helper updates the candidate.
+        to_result(unsafe {
+            bindings::__drm_atomic_helper_disable_plane(plane.as_raw(), state.as_raw_mut())
+        })
+    }
+
     /// Attempt to add the state for `crtc` to the atomic state for this composer if it hasn't
     /// already been added, and create a mutator for it.
     ///

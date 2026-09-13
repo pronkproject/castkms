@@ -19,6 +19,7 @@ mod inspection;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod masters;
 mod plane_assignments;
+mod plane_disable;
 mod plane_inputs;
 mod preparation;
 mod properties;
