@@ -240,6 +240,10 @@ pub struct DriverConnectorOps {
 /// immutable access to whatever private data is contained within an implementor's
 /// [`DriverConnector`] type.
 ///
+/// An owned Rust [`ARef`](crate::sync::aref::ARef) retains both the connector and its
+/// device. The device remains alive through connector cleanup. Device-owned state must
+/// release such handles during shutdown to break ownership cycles.
+///
 /// # Invariants
 ///
 /// - The DRM C API and our interface guarantees that only the user has mutable access to `state`,
@@ -633,6 +637,9 @@ unsafe extern "C" fn mode_valid_callback<T: DriverConnector>(
 /// This is mainly for situations where our bindings can't infer the [`DriverConnector`]
 /// implementation for a [`struct drm_connector`] automatically. It is identical to [`Connector`],
 /// except that it does not provide access to the driver's private data.
+///
+/// Like a typed connector handle, an owned Rust [`ARef`](crate::sync::aref::ARef)
+/// retains the device independently until its connector reference has been released.
 ///
 /// # Invariants
 ///
