@@ -7,6 +7,7 @@
 
 #[cfg(CONFIG_FAILSLAB)]
 mod allocation;
+mod connector_refs;
 mod events;
 mod framebuffers;
 mod inspection;
