@@ -3,7 +3,10 @@
 //! Stream lifetime mechanics, with test-owned streams and synthetic control transitions.
 
 use super::*;
-use crate::capture::streams::Registry;
+use crate::capture::streams::{
+    Registration,
+    Registry, //
+};
 use kernel::{
     drm::capture::{
         Status,
@@ -21,6 +24,11 @@ use kernel::{
         WorkItem, //
     }, //
 };
+
+// Control-lifetime tests use independent synthetic configuration tags.
+fn register(registry: &Arc<Registry>, stream: &Stream) -> Result<Registration> {
+    registry.register(stream, &scene::Configuration::new(1, [1, 1])?)
+}
 
 #[pin_data]
 struct Revoker {
@@ -81,7 +89,7 @@ mod cases {
     fn control_change_revokes_queued_work() -> Result {
         let registry = Registry::new()?;
         let stream = Stream::new(1, 4)?;
-        let _registration = registry.register(&stream)?;
+        let _registration = register(&registry, &stream)?;
         let request = stream.queue()?;
         registry.revoke_all();
         check(request.status()? == Status::Complete(Err(EKEYREVOKED)))?;
@@ -93,7 +101,7 @@ mod cases {
     fn claimed_storage_survives_without_publishing_success() -> Result {
         let registry = Registry::new()?;
         let stream = Stream::new(1, 4)?;
-        let _registration = registry.register(&stream)?;
+        let _registration = register(&registry, &stream)?;
         let request = stream.queue()?;
         let mut job = stream.claim()?;
         registry.revoke_all();
@@ -111,7 +119,7 @@ mod cases {
     fn completed_results_keep_their_authorized_old_pixels() -> Result {
         let registry = Registry::new()?;
         let stream = Stream::new(1, 4)?;
-        let registration = registry.register(&stream)?;
+        let registration = register(&registry, &stream)?;
         let request = stream.queue()?;
         let mut job = stream.claim()?;
         job.data_mut().copy_from_slice(&[0x35; 4]);
@@ -129,10 +137,10 @@ mod cases {
     fn new_control_does_not_revive_an_old_stream() -> Result {
         let registry = Registry::new()?;
         let old = Stream::new(1, 4)?;
-        let registration = registry.register(&old)?;
+        let registration = register(&registry, &old)?;
         registry.revoke_all();
         let new = Stream::new(1, 4)?;
-        let _replacement = registry.register(&new)?;
+        let _replacement = register(&registry, &new)?;
         drop(registration);
         check(matches!(old.queue(), Err(EKEYREVOKED)))?;
         let request = new.queue()?;
@@ -146,9 +154,9 @@ mod cases {
         let registry = Registry::new()?;
         let first = Stream::new(1, 4)?;
         let second = Stream::new(1, 4)?;
-        let registration = registry.register(&first)?;
-        let _sibling = registry.register(&second)?;
-        check(matches!(registry.register(&first), Err(EEXIST)))?;
+        let registration = register(&registry, &first)?;
+        let _sibling = register(&registry, &second)?;
+        check(matches!(register(&registry, &first), Err(EEXIST)))?;
         let _first_request = first.queue()?;
         drop(registration);
         check(matches!(first.queue(), Err(EKEYREVOKED)))?;
@@ -162,12 +170,12 @@ mod cases {
     fn permanent_close_rejects_new_registrations() -> Result {
         let registry = Registry::new()?;
         let stream = Stream::new(1, 4)?;
-        let registration = registry.register(&stream)?;
+        let registration = register(&registry, &stream)?;
         registry.close();
         registry.revoke_all();
         registry.close();
         let replacement = Stream::new(1, 4)?;
-        check(matches!(registry.register(&replacement), Err(ENODEV)))?;
+        check(matches!(register(&registry, &replacement), Err(ENODEV)))?;
         check(matches!(stream.queue(), Err(EKEYREVOKED)))?;
         drop(registry);
         drop(registration);
@@ -178,11 +186,11 @@ mod cases {
     fn old_handles_cannot_remove_a_new_registration_of_the_same_stream() -> Result {
         let registry = Registry::new()?;
         let stream = Stream::new(1, 4)?;
-        let old = registry.register(&stream)?;
+        let old = register(&registry, &stream)?;
         registry.revoke_all();
-        let _new = registry.register(&stream)?;
+        let _new = register(&registry, &stream)?;
         drop(old);
-        check(matches!(registry.register(&stream), Err(EEXIST)))?;
+        check(matches!(register(&registry, &stream), Err(EEXIST)))?;
         // Tracking a revoked stream cannot restore its native admission.
         check(matches!(stream.queue(), Err(EKEYREVOKED)))?;
         Ok(())
@@ -193,14 +201,14 @@ mod cases {
         let fixture = Fixture::new()?;
         let registry = fixture.drm.device().capture_streams.clone();
         let old = Stream::new(1, 4)?;
-        let _old_registration = registry.register(&old)?;
+        let _old_registration = register(&registry, &old)?;
         <Driver as drm::Driver>::master_changed(fixture.drm.device(), None);
         check(matches!(old.queue(), Err(EKEYREVOKED)))?;
         let new = Stream::new(1, 4)?;
-        let _new_registration = registry.register(&new)?;
+        let _new_registration = register(&registry, &new)?;
         fixture.state.close();
         check(matches!(new.queue(), Err(EKEYREVOKED)))?;
-        check(matches!(registry.register(&new), Err(ENODEV)))?;
+        check(matches!(register(&registry, &new), Err(ENODEV)))?;
         Ok(())
     }
 
@@ -209,7 +217,7 @@ mod cases {
         for _ in 0..64 {
             let registry = Registry::new()?;
             let stream = Stream::new(1, 4)?;
-            let registration = registry.register(&stream)?;
+            let registration = register(&registry, &stream)?;
             let request = stream.queue()?;
             let worker = Revocation::start(registry.clone())?;
             worker.0.proceed.complete_all();

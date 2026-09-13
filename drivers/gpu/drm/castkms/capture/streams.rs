@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Streams revoked when display control changes, without retaining grant callbacks.
+//! Streams revoked when display control or configuration changes, without grant callbacks.
 //!
 //! Registration tracks delivery lifetime, not pixel permission. The provider must establish
-//! current access while excluding master transitions before registering a stream.
+//! current access and accepted configuration while excluding their transitions before registration.
+
+use crate::scene::Configuration;
 
 use kernel::{
     drm::capture::Stream,
@@ -23,6 +25,7 @@ struct State {
 /// Identifies one registration independently of the native stream it retains.
 struct Entry {
     stream: ARef<Stream>,
+    configuration: Configuration,
 }
 
 #[pin_data]
@@ -43,10 +46,15 @@ impl Registry {
 
     /// Keep a stream in the current control interval until its unique registration is dropped.
     #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
-    pub(crate) fn register(self: &Arc<Self>, stream: &Stream) -> Result<Registration> {
+    pub(crate) fn register(
+        self: &Arc<Self>,
+        stream: &Stream,
+        configuration: &Configuration,
+    ) -> Result<Registration> {
         let entry = Arc::new(
             Entry {
                 stream: stream.into(),
+                configuration: configuration.clone(),
             },
             GFP_KERNEL,
         )?;
@@ -85,6 +93,20 @@ impl Registry {
     pub(crate) fn revoke_all(&self) {
         let retired = Self::revoke_locked(&mut self.state.lock());
         drop(retired);
+    }
+
+    /// End streams from one configuration without revoking a newer interval's registrations.
+    ///
+    /// Matching entries stay tracked until their registration owners close. Only native
+    /// revocation runs under the lock; no storage is freed and no provider work is waited for.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn revoke_configuration(&self, configuration: &Configuration) {
+        let state = self.state.lock();
+        for entry in &state.streams {
+            if &entry.configuration == configuration {
+                entry.stream.revoke();
+            }
+        }
     }
 
     /// Permanently stop registration and revoke streams even if their handles remain alive.
