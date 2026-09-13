@@ -13,7 +13,7 @@ use kernel::{
 
 const BYTE_LIMIT: usize = 64 * 1024 * 1024;
 const STREAM_LIMIT: usize = 16;
-const CAPACITY_LIMIT: u32 = 8;
+pub(super) const CAPACITY_LIMIT: u32 = 8;
 
 struct Used {
     bytes: usize,

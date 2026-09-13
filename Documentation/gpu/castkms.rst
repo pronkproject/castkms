@@ -330,6 +330,31 @@ different worker.
 These are private kernel operations. Exposing capture to userspace and selecting
 the supported HOST/GPU execution profile remain separate work.
 
+Describing a stream before allocation
+------------------------------------
+
+``Capture::describe_stream()`` reports the authorized output's host-linear
+layout before creating a stream. A description supplies the XRGB8888 format,
+linear modifier, dimensions, row pitch, visible byte count and maximum
+private request count. It reserves no stream or image capacity, starts no
+compositor work and holds no source read claim. Reported limits are not a
+promise that budget will remain available when the caller opens a stream.
+
+The description retains its own capture handle and exact accepted display
+configuration. ``Description::create_stream()`` opens only for that pair;
+there is no operation that combines a description with another grant.
+Permission and configuration are checked before allocation and again when
+registering the stream. A modeset, even with identical dimensions, requires
+a fresh description. Ordinary source-content updates preserve the layout
+without preserving old pixels. Grantor close, creator close and device
+shutdown still revoke descriptions retained by a caller.
+
+``host_stream::Stream::from_description()`` connects the checked stream to
+the same private compositor used by immediate kernel capture. Descriptions
+do not promise that a future source image is valid or host-readable; the
+executor still checks that image before composition. No source descriptor,
+public capture ABI or GPU execution profile is exposed by these operations.
+
 Grants across device shutdown
 ----------------------------
 

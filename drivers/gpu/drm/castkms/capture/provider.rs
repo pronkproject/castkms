@@ -8,10 +8,12 @@
 
 mod creator;
 mod control_file;
+mod description;
 mod request;
 mod storage;
 
 pub(crate) use creator::Creator;
+pub(crate) use description::Description;
 pub(crate) use request::Request;
 
 use super::{
@@ -123,21 +125,35 @@ pub(crate) struct Capture {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Capture {
-    /// Allocate outside policy locks, then revalidate the same configuration at registration.
+    /// Describe and open the current stream layout in one kernel convenience operation.
     pub(crate) fn stream(&self, capacity: u32) -> Result<Stream> {
+        self.describe_stream()?.create_stream(capacity)
+    }
+
+    /// Allocate outside policy locks, checking the described configuration on both sides.
+    fn create_stream(
+        &self,
+        configuration: &Configuration,
+        layout: Layout,
+        capacity: u32,
+    ) -> Result<Stream> {
         if self.authority.is_revoked() {
             return Err(EKEYREVOKED);
         }
         let permission = &self.policy.permission;
-        let (configuration, layout) = permission
-            .with_current(|current| Ok((current.configuration().clone(), current.layout())))?;
+        permission.with_current(|current| {
+            if current.configuration() != configuration {
+                return Err(ESTALE);
+            }
+            Ok(())
+        })?;
         let charge = permission
             .device()
             .capture_budget
             .reserve(layout, capacity)?;
         let storage = Storage::new(charge, self.authority.clone())?;
         let registered = permission.with_current(|current| {
-            if current.configuration() != &configuration {
+            if current.configuration() != configuration {
                 return Err(ESTALE);
             }
             let admission = self.authority.begin()?;
@@ -160,7 +176,7 @@ impl Capture {
             _registration: registration,
             storage,
             capture: self.clone(),
-            configuration,
+            configuration: configuration.clone(),
         })
     }
 }
