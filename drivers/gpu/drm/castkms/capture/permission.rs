@@ -27,7 +27,8 @@ use kernel::{
                 Crtc,
                 CrtcRef, //
             }, //
-        }, //
+        },
+        Device, //
     },
     prelude::*,
     sync::aref::ARef,
@@ -46,6 +47,11 @@ pub(crate) struct Permission {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Permission {
+    /// Borrow the exact target's device for resource operations, not pixel authorization.
+    pub(super) fn device(&self) -> &Device<Driver> {
+        self.crtc.drm_dev()
+    }
+
     /// Establish a kernel-issued target from stabilized top-level display control.
     ///
     /// File issuance must additionally verify the issuing file's master role and retain

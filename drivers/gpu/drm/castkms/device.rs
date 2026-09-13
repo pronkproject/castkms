@@ -4,7 +4,10 @@
 
 use super::{
     authority::Authority,
-    capture::streams,
+    capture::{
+        budget,
+        streams, //
+    },
     host_compositor::configuration,
     Driver,
     Output, //
@@ -22,6 +25,7 @@ pub(super) struct State {
     pub(super) output: Arc<Output>,
     pub(super) host: Arc<configuration::Configuration>,
     pub(super) capture_streams: Arc<streams::Registry>,
+    pub(super) capture_budget: Arc<budget::Budget>,
 }
 
 impl State {
@@ -34,6 +38,7 @@ impl State {
             output,
             host,
             capture_streams: streams::Registry::new()?,
+            capture_budget: budget::Budget::new()?,
         })
     }
 

@@ -66,6 +66,8 @@ impl Budget {
         Ok(Charge {
             budget: self.clone(),
             bytes,
+            layout,
+            capacity,
         })
     }
 }
@@ -74,6 +76,18 @@ impl Budget {
 pub(crate) struct Charge {
     budget: Arc<Budget>,
     bytes: usize,
+    layout: Layout,
+    capacity: u32,
+}
+
+impl Charge {
+    pub(super) fn layout(&self) -> Layout {
+        self.layout
+    }
+
+    pub(super) fn capacity(&self) -> u32 {
+        self.capacity
+    }
 }
 
 impl Drop for Charge {
