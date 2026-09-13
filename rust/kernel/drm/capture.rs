@@ -19,6 +19,7 @@ mod wait;
 pub use authority::{
     Admission,
     Authority,
+    ControlOwner,
     Policy, //
 };
 
