@@ -261,7 +261,7 @@ mod cases {
         fixture.state.close();
         check(request.status()? == Status::Complete(Err(EKEYREVOKED)))?;
         check(matches!(stream.queue(), Err(EKEYREVOKED)))?;
-        check(matches!(capture.stream(1), Err(ENODEV)))?;
+        check(matches!(capture.stream(1), Err(EKEYREVOKED)))?;
         Ok(())
     }
 

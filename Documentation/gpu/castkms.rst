@@ -330,6 +330,32 @@ different worker.
 These are private kernel operations. Exposing capture to userspace and selecting
 the supported HOST/GPU execution profile remain separate work.
 
+Grants across device shutdown
+----------------------------
+
+Every grant joins a device-wide collection, even if it never opens a stream.
+The collection retains only the shared authority's revocation interface; it
+does not know the provider's private policy, capture handles or file
+operations. There are at most 256 tracked grants per device, independently
+of the limits on streams, image storage and grants created by one DRM file.
+Releasing a grantor returns its registration credit even when ordinary
+references to the revoked authority remain.
+
+Device shutdown permanently closes registration before revoking the
+previously tracked authorities and closing streams and display state.
+Revocation and final reference cleanup run outside the collection's lock.
+Concurrent shutdown calls wait for the first cleanup pass to finish. An
+already-issued grant becomes terminal, including a grant without streams;
+new issuance fails instead of creating an authority beyond shutdown.
+Completed, authorized results retain their existing lifetime.
+
+The grantor owns the unique token that removes its entry. The collection
+retains neither that token nor the grantor, and token destruction revokes
+before removing tracking. That separation breaks the retained references
+between a device, its tracked authorities and policies referring to the
+device when external grant owners close. Provider cleanup must not
+recursively close the same collection.
+
 Grants tied to a DRM file
 ------------------------
 
@@ -379,10 +405,11 @@ results retain their documented lifetime in both cases. Failed conversion
 drops the unpublished grantor and revokes it; callers must treat that failure
 as terminal and perform conversion outside policy locks.
 
-Poll on the control file reports completion of authority revocation. It is
-not a general notification of display changes or device loss: current
-permission checks and stream shutdown enforce those restrictions separately.
-The adapter adds no public grant-creation or capture ABI.
+Poll on the control file reports completion of authority revocation,
+including device shutdown. Ordinary display changes or loss of current
+display control need not terminate a durable grant; current permission
+checks and stream revocation enforce those restrictions separately. The
+adapter adds no public grant-creation or capture ABI.
 
 Testing in a disposable virtual machine
 --------------------------------------
