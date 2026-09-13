@@ -116,7 +116,7 @@ mod cases {
         })?;
         handle.request()?;
         handle.flush_for_test();
-        check(matches!(handle.take_outcome(), Some(Outcome::Blank)))?;
+        check(matches!(handle.take_outcome(), Some(Outcome::NoScene)))?;
         check(handle.last_image().is_none())?;
         let mut row = [0xff; 2560];
         retained.read_row(0, &mut row)?;

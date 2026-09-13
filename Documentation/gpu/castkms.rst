@@ -56,8 +56,10 @@ source coordinates keep their original fixed-point representation. Atomic
 validation prepares geometry in the candidate plane state; the CRTC flush
 callback publishes the description together with the accepted state's source
 accounting before flip completion. Test-only
-and rejected transactions do not publish a replacement. An inactive or
-disabled plane clears the description. Recommitting the same framebuffer
+and rejected transactions do not publish a replacement. An inactive
+controller clears the description. An active controller without a visible
+plane publishes a blank scene with no framebuffer or producer dependencies.
+Recommitting the same framebuffer
 still replaces the description; framebuffer identity is not a content cache.
 
 Each checked plane update that publishes a visible image derives a content
@@ -69,6 +71,13 @@ Blank updates preserve the counter, so reactivation continues the sequence.
 Exhaustion rejects candidates that publish a visible image with ``EOVERFLOW``
 rather than reusing a serial; blanking remains possible. The serial is
 internal and meaningful only within one plane lifetime.
+
+Active blank scenes have no framebuffer content serial. Their historical
+owner is established when visible content is removed, the controller is
+activated, or its mode changes. An unchanged blank preserves its accepted
+owner, including an unknown owner, across master changes. Current capture
+permission is checked separately; a new master does not gain access merely
+by submitting an unchanged blank configuration.
 
 The serial conservatively advances for every accepted visible-plane update,
 even when the framebuffer and geometry are unchanged. It marks a possible
@@ -210,8 +219,9 @@ capture recipient.
 
 The worker separately retains its last complete image. Reading that cache does
 not consume the latest attempt, and a failed attempt does not erase the cached
-pixels or suppress the failure. A successful image replaces the cache; completed
-blanking and shutdown clear it. Images are immutable and reference-counted, so
+pixels or suppress the failure. A successful image replaces the cache, including
+an active blank image. An attempt with no scene and shutdown clear the cache.
+Images are immutable and reference-counted, so
 the cache and its readers share one existing pool slot rather than allocating
 duplicate pixel storage. The slot and its allocation charge survive until the
 final reference is released.
@@ -299,8 +309,13 @@ A returned request has a terminal result, which the caller must inspect for
 copy failure or revocation during delivery. Failure before delivery abandons
 the unreturned request and releases its queue credit. The adapter does not
 retry automatically, promise a frame rate, or provide the eventual asynchronous
-userspace interface. A blank scene returns ``EAGAIN`` until the policy for
-authorizing blank images is implemented.
+userspace interface. An inactive or unpublished output returns ``EAGAIN``.
+An active blank scene produces ordinary authorized black pixels. Composition
+clears the entire reserved private allocation before reuse, checks the accepted
+configuration against the pool dimensions, and releases its synchronous claim
+before returning. The removed framebuffer and its producer dependencies are
+not retained. Capture delivery normalizes the unused XRGB byte as for visible
+frames; no private allocation or padding is exported.
 
 Consumer results retain separate storage rather than the worker's private
 images. A stream may therefore retain more completed requests than the

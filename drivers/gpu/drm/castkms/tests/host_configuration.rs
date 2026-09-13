@@ -32,11 +32,11 @@ mod cases {
         first.request()?;
         first.flush_for_test();
         let second = configuration.configure(fixture.drm.device(), layout)?;
-        check(matches!(second.take_outcome(), Some(Outcome::Blank)))?;
+        check(matches!(second.take_outcome(), Some(Outcome::NoScene)))?;
         check(first.take_outcome().is_none())?;
         first.request()?;
         first.flush_for_test();
-        check(matches!(second.take_outcome(), Some(Outcome::Blank)))?;
+        check(matches!(second.take_outcome(), Some(Outcome::NoScene)))?;
         Ok(())
     }
 
@@ -55,7 +55,7 @@ mod cases {
         second.flush_for_test();
         check(matches!(
             configuration.current()?.take_outcome(),
-            Some(Outcome::Blank)
+            Some(Outcome::NoScene)
         ))?;
         Ok(())
     }

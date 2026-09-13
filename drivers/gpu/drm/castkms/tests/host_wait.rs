@@ -131,7 +131,7 @@ mod cases {
         let handle = owner.handle();
         handle.request()?;
         owner.flush();
-        check(matches!(handle.wait_for_outcome()?, Outcome::Blank))?;
+        check(matches!(handle.wait_for_outcome()?, Outcome::NoScene))?;
         check(handle.take_outcome().is_none())?;
         Ok(())
     }

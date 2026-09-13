@@ -31,6 +31,7 @@ mod capture_permissions;
 mod capture_provider;
 mod capture_streams;
 mod blank_ownership;
+mod host_blank;
 mod configurations;
 mod generations;
 mod host_attempts;

@@ -90,16 +90,26 @@ pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Comple
     let layout = slot.with_image(|image| image.layout())?;
     let metadata = output.with_prepared_cpu_scene(
         |scene| {
-            let primary = scene.primary().ok_or(EOPNOTSUPP)?;
+            let Some(primary) = scene.primary() else {
+                return Ok(None);
+            };
             let framebuffer = Framebuffer::new(primary.framebuffer(), primary.geometry())?;
             if framebuffer.dimensions() != layout.dimensions() {
                 return Err(EINVAL);
             }
-            framebuffer.prepare_mapping()
+            framebuffer.prepare_mapping().map(Some)
         },
         |scene, configuration, mapping| -> Result<_> {
             scene.producer_result()?;
-            slot.copy_from(mapping)?;
+            if let Some(mapping) = mapping {
+                slot.copy_from(mapping)?;
+            } else {
+                let dimensions = configuration.as_ref().ok_or(EINVAL)?.dimensions();
+                if (dimensions[0], dimensions[1]) != layout.dimensions() {
+                    return Err(EINVAL);
+                }
+                slot.clear()?;
+            }
             Ok((
                 scene.content_serial(),
                 scene.owner().cloned(),

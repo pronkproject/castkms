@@ -45,12 +45,13 @@ impl Stream {
     /// The wait is interruptible and owns no source claim. Failure abandons unreturned
     /// demand and releases its queue credit. A returned request has a terminal result;
     /// inspect that result for copy failure or revocation during authorized delivery.
-    /// A blank scene returns EAGAIN until blank-image authorization is implemented.
+    /// An inactive or unpublished output returns EAGAIN. Active blank output produces
+    /// an ordinary authorized image, with no framebuffer content revision.
     pub(crate) fn capture(&mut self) -> Result<Request> {
         let request = self.delivery.queue()?;
         match self.worker.request_outcome()?.wait()? {
             Outcome::Image(image) => self.delivery.deliver(&image)?,
-            Outcome::Blank => return Err(EAGAIN),
+            Outcome::NoScene => return Err(EAGAIN),
             Outcome::Failed(error) => return Err(error),
         }
         Ok(request)

@@ -30,6 +30,56 @@ mod cases {
     use super::*;
 
     #[test]
+    fn file_grants_capture_active_blank_pixels_without_retaining_old_content() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let fb = select(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let mut stream = Stream::new(&grantor.capture(), 2)?;
+        let first = stream.capture()?;
+        fixture
+            .drm
+            .update(|transaction| transaction.disable_plane(fixture.drm.plane()?))?;
+        drop(fb);
+        let blank = stream.capture()?;
+        let mut pixels = KVVec::new();
+        pixels.resize(640 * 480 * 4, 0x93, GFP_KERNEL)?;
+        check(blank.copy_result(&mut pixels)? == pixels.len())?;
+        check(pixels.chunks_exact(4).all(|pixel| pixel == [0, 0, 0, 0xff]))?;
+        check(first.status()? == Status::Complete(Ok(())))?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_new_file_cannot_capture_the_previous_masters_unchanged_blank() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &file)?;
+        fixture
+            .drm
+            .update(|transaction| transaction.disable_plane(fixture.drm.plane()?))?;
+        drop(file);
+        let replacement = fixture.drm.master_file()?;
+        let grantor = grant(&fixture, &replacement)?;
+        fixture.drm.update(|transaction| {
+            drop(transaction.add_crtc_state(fixture.drm.crtc()?)?);
+            Ok(())
+        })?;
+        check(matches!(Stream::new(&grantor.capture(), 1), Err(EACCES)))?;
+        fixture.drm.update(|transaction| {
+            transaction
+                .add_crtc_state(fixture.drm.crtc()?)?
+                .set_mode_changed(true);
+            Ok(())
+        })?;
+        let mut stream = Stream::new(&grantor.capture(), 1)?;
+        check(stream.capture()?.wait()? == Ok(()))?;
+        Ok(())
+    }
+
+    #[test]
     fn file_grants_precede_display_but_not_pixel_authorization() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
