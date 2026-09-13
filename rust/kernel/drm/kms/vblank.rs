@@ -2,7 +2,11 @@
 
 //! DRM KMS vblank support.
 //!
-//! C header: [`include/drm/drm_vblank.h`](srcfree/include/drm/drm_vblank.h)
+//! C headers: [`drm_vblank.h`](srctree/include/drm/drm_vblank.h),
+//! [`drm_vblank_helper.h`](srctree/include/drm/drm_vblank_helper.h).
+
+mod timer;
+pub use timer::SoftwareVblank;
 
 use super::{crtc::*, ModeObject};
 use bindings;
@@ -59,8 +63,8 @@ pub trait VblankSupport: Sized {
 
 /// Trait used for CRTC vblank (or lack there-of) implementations. Implemented internally.
 ///
-/// Drivers interested in implementing vblank support should refer to [`VblankSupport`], drivers
-/// that don't have vblank support can use [`PhantomData`].
+/// Drivers can implement [`VblankSupport`] for their own interrupt source or select
+/// [`SoftwareVblank`] for the native DRM timer. Drivers without vblank use [`PhantomData`].
 pub trait VblankImpl: private::VblankImpl {
     /// The parent [`DriverCrtc`].
     type Crtc: DriverCrtc<VblankImpl = Self>;
@@ -72,7 +76,7 @@ pub trait VblankImpl: private::VblankImpl {
 mod private {
     use super::*;
 
-    // Only the two framework-generated implementations may supply callbacks. In particular,
+    // Only framework-selected implementations may supply callbacks. In particular,
     // an implementation must not reuse a table whose callbacks expect a different CRTC type.
     pub trait VblankImpl {}
 
@@ -80,12 +84,21 @@ mod private {
 
     impl<T: DriverCrtc<VblankImpl = PhantomData<T>>> VblankImpl for PhantomData<T> {}
 
+    impl<T: DriverCrtc<VblankImpl = SoftwareVblank<T>>> VblankImpl for SoftwareVblank<T> {}
+
+    // A callback table with an actual interrupt or timer source, excluding PhantomData.
+    pub trait VblankSource: super::VblankImpl {}
+
+    impl<T: VblankSupport> VblankSource for T {}
+
+    impl<T: DriverCrtc<VblankImpl = SoftwareVblank<T>>> VblankSource for SoftwareVblank<T> {}
+
     pub trait VblankDriverCrtc {}
 
     impl<T, V> VblankDriverCrtc for T
     where
         T: DriverCrtc<VblankImpl = V>,
-        V: VblankSupport<Crtc = T>,
+        V: VblankSource<Crtc = T>,
     {
     }
 }
@@ -198,17 +211,16 @@ pub struct VblankTimestamp {
     pub max_error: i32,
 }
 
-/// A trait for [`DriverCrtc`] implementations with hardware vblank support.
+/// A trait for [`DriverCrtc`] implementations with interrupt or timer vblank support.
 ///
-/// This trait is implemented internally by DRM for any [`DriverCrtc`] implementation that
-/// implements [`VblankSupport`]. It is used to expose hardware-vblank driver exclusive methods and
-/// data to users.
+/// DRM implements this for controllers selecting [`VblankSupport`] or [`SoftwareVblank`].
+/// It exposes event and counter operations only where a vblank source is available.
 pub trait VblankDriverCrtc: DriverCrtc + private::VblankDriverCrtc {}
 
 impl<T, V> VblankDriverCrtc for T
 where
     T: DriverCrtc<VblankImpl = V>,
-    V: VblankSupport<Crtc = T>,
+    V: private::VblankSource<Crtc = T>,
 {
 }
 
