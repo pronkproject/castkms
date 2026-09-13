@@ -8,6 +8,7 @@ use crate::{
         compose::Completed,
         layout::Layout, //
     },
+    host_snapshot::Snapshot,
     output::Identity,
     scene::Configuration,
     Driver, //
@@ -130,10 +131,38 @@ impl Current<'_> {
     /// A completed image may precede the latest content update within the same display
     /// interval. Its original content serial remains unchanged; it is not relabeled current.
     pub(crate) fn check_image(&self, image: &Completed) -> Result {
-        if image.output_identity() != self.output
-            || image.configuration() != Some(self.configuration)
-            || image.layout() != self.layout
-            || image.owner() != Some(self.master)
+        self.check_origin(
+            image.output_identity(),
+            image.configuration(),
+            image.layout(),
+            image.owner(),
+        )
+    }
+
+    /// Validate an independent copy against current access without relabeling its content.
+    ///
+    /// Like an ordinary completed image, a snapshot may contain earlier content within the
+    /// same authorized interval. Success applies only while this callback's guards are held.
+    pub(crate) fn check_snapshot(&self, snapshot: &Snapshot) -> Result {
+        self.check_origin(
+            snapshot.output_identity(),
+            snapshot.configuration(),
+            snapshot.layout(),
+            snapshot.owner(),
+        )
+    }
+
+    fn check_origin(
+        &self,
+        output: &Identity,
+        configuration: Option<&Configuration>,
+        layout: Layout,
+        owner: Option<&MasterRef<Driver>>,
+    ) -> Result {
+        if output != self.output
+            || configuration != Some(self.configuration)
+            || layout != self.layout
+            || owner != Some(self.master)
         {
             return Err(EACCES);
         }
