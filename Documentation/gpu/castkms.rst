@@ -79,6 +79,14 @@ different interval. Those observations require native control to be stabilized
 separately; they neither grant access nor replace scene provenance. Exhausting
 the interval counter closes tracking rather than reviving an old observation.
 
+``renderer/permission.rs`` binds exact display control to one such interval and
+a separate revocation owner. Retained renderer handles do not retain the issuer's
+authority after revocation. Their callbacks permit control operations without
+requiring a capturable image, but expose no source storage, image exports or
+execution activation. Revocation waits for authorization callbacks to leave;
+owners of individual operations remain responsible for their resource cleanup.
+There is no conversion from a final-image capture grant to renderer permission.
+
 ``castkms.rs`` owns the virtual parent device and DRM registration. Destruction
 unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;
