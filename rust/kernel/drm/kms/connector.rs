@@ -4,6 +4,8 @@
 //!
 //! C header: [`include/drm/drm_connector.h`](srctree/include/drm/drm_connector.h)
 
+mod properties;
+
 use super::{
     atomic::*, encoder::*, modes::DisplayMode, KmsDriver, ModeConfigGuard, ModeObject,
     ModeObjectVtable, Sealed,
