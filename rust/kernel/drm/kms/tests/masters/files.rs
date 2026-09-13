@@ -92,4 +92,52 @@ mod cases {
         )?;
         Ok(())
     }
+
+    #[test]
+    fn an_associated_file_shares_identity_without_the_master_role() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-private-peer-role", None)?;
+        let fixture = TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let owner = fixture.master_file()?;
+        let peer = owner.associated_file()?;
+        let identity = owner.file().associated_master().ok_or(EINVAL)?;
+        let snapshot = peer.file().master_snapshot().ok_or(EINVAL)?;
+        check(snapshot.master() == &identity)?;
+        check(!snapshot.was_current())?;
+        {
+            let guard = identity.lock_current().ok_or(EINVAL)?;
+            check(guard.is_master_file(owner.file()))?;
+            check(!guard.is_master_file(peer.file()))?;
+        }
+        drop(peer);
+        check(counts.master_sets.load(Ordering::Relaxed) == 1)?;
+        check(counts.master_drops.load(Ordering::Relaxed) == 0)?;
+        check(identity.lock_current().is_some())?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_peer_does_not_postpone_its_owners_close() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-private-peer-close", None)?;
+        let fixture = TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let owner = fixture.master_file()?;
+        let peer = owner.associated_file()?;
+        let identity = peer.file().associated_master().ok_or(EINVAL)?;
+        drop(owner);
+        check(counts.master_drops.load(Ordering::Relaxed) == 1)?;
+        check(identity.lock_current().is_none())?;
+        check(peer.file().associated_master().as_ref() == Some(&identity))?;
+        let replacement = fixture.master_file()?;
+        check(replacement.file().associated_master().as_ref() != Some(&identity))?;
+        drop(peer);
+        check(counts.master_drops.load(Ordering::Relaxed) == 1)?;
+        check(
+            replacement
+                .file()
+                .master_snapshot()
+                .is_some_and(|state| state.was_current()),
+        )?;
+        Ok(())
+    }
 }

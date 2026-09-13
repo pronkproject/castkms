@@ -55,7 +55,10 @@ mod masters;
 
 pub use connectors::ConnectorEntry;
 #[cfg(CONFIG_DRM_CLIENT)]
-pub use masters::MasterFile;
+pub use masters::{
+    AssociatedFile,
+    MasterFile, //
+};
 
 // Native master allocation stays in the built-in test support, not in driver modules.
 #[inline(never)]

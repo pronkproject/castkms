@@ -38,8 +38,55 @@ pub struct MasterFile<'a, T: KmsDriver> {
     _fixture: &'a TestDevice<T>,
 }
 
-impl<T: KmsDriver> MasterFile<'_, T> {
+impl<'a, T: KmsDriver> MasterFile<'a, T> {
     /// Borrow the initialized file without extending its ownership lifetime.
+    pub fn file(&self) -> &File<T::File> {
+        self.client.file()
+    }
+
+    /// Open a private peer with the same identity but without the master file's role.
+    ///
+    /// Call outside native master, object-ID and modeset locks. The owner must still be
+    /// current. The peer owns its association and may outlive the master file, but not the
+    /// fixture. Creation does not invoke a master-set callback or grant display control.
+    pub fn associated_file(&self) -> Result<AssociatedFile<'a, T>> {
+        let client = Client::new(self._fixture)?;
+        let identity = self.file().associated_master().ok_or(EINVAL)?;
+        {
+            let access = identity.lock_current().ok_or(EACCES)?;
+            if !access.is_master_file(self.file()) {
+                return Err(EACCES);
+            }
+            let peer = client.file().as_raw();
+            let owner = self.file().as_raw();
+            // SAFETY: The new client retains its initialized file but has no association.
+            // The owner's native role and association are stabilized by the access guard.
+            // Publish an independently retained association under the lookup lock. Native
+            // peer close releases it; the zero-initialized master role remains false.
+            unsafe {
+                bindings::spin_lock(&raw mut (*peer).master_lookup_lock);
+                (*peer).master = bindings::drm_master_get((*owner).master);
+                bindings::spin_unlock(&raw mut (*peer).master_lookup_lock);
+            }
+        }
+        Ok(AssociatedFile {
+            client,
+            _fixture: self._fixture,
+        })
+    }
+}
+
+/// A private non-master file retaining an association, not its creating master file.
+///
+/// No descriptor is installed. Closing the file follows native client cleanup without
+/// dropping another file's display control. The fixture must outlive the peer.
+pub struct AssociatedFile<'a, T: KmsDriver> {
+    client: Client<T>,
+    _fixture: &'a TestDevice<T>,
+}
+
+impl<T: KmsDriver> AssociatedFile<'_, T> {
+    /// Borrow the initialized non-master file without extending its close lifetime.
     pub fn file(&self) -> &File<T::File> {
         self.client.file()
     }
