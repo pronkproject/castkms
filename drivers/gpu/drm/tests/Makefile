@@ -69,6 +69,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_probe_helper_test.o \
 	drm_rect_test.o \
 	drm_sysfb_modeset_test.o \
+	drm_vblank_timer_test.o \
 	drm_fixp_test.o \
 	drm_kunit_edid.o
 

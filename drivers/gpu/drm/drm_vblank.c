@@ -2212,6 +2212,8 @@ static enum hrtimer_restart drm_vblank_timer_function(struct hrtimer *timer)
  * Drivers should call this function from their CRTC's enable_vblank
  * function to start a vblank timer. The timer will fire after the duration
  * of a full frame. drm_crtc_vblank_cancel_timer() disables a running timer.
+ * A previous callback that is still executing makes the start return -EBUSY;
+ * the caller may retry after that callback has finished.
  *
  * Returns:
  * 0 on success, or a negative errno code otherwise.
@@ -2230,13 +2232,13 @@ int drm_crtc_vblank_start_timer(struct drm_crtc *crtc)
 		spin_lock_init(&vtimer->interval_lock);
 		hrtimer_setup(&vtimer->timer, drm_vblank_timer_function,
 			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	} else {
+	} else if (hrtimer_try_to_cancel(&vtimer->timer) < 0) {
 		/*
-		 * Timer should not be active. If it is, wait for the
-		 * previous cancel operations to finish.
+		 * The callback may need vblank_time_lock, which the enable
+		 * path holds. Leave the cancelled interval unchanged and let
+		 * the caller retry instead of waiting for that callback.
 		 */
-		while (hrtimer_active(&vtimer->timer))
-			hrtimer_try_to_cancel(&vtimer->timer);
+		return -EBUSY;
 	}
 
 	drm_calc_timestamping_constants(crtc, &crtc->mode);
