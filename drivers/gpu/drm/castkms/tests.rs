@@ -39,6 +39,8 @@ mod capture_streams;
 mod blank_ownership;
 mod host_blank;
 mod configurations;
+#[cfg(CONFIG_DRM_CLIENT)]
+mod display_control;
 mod generations;
 mod gem_budget;
 mod host_attempts;
