@@ -21,6 +21,8 @@ fn check(condition: bool) -> Result {
 }
 
 mod capture_configurations;
+#[cfg(CONFIG_DRM_CLIENT)]
+mod capture_permissions;
 mod capture_streams;
 mod configurations;
 mod generations;
@@ -83,8 +85,12 @@ fn with_exporter(test: impl FnOnce(&Fixture) -> Result) -> Result {
 
 impl Fixture {
     fn new() -> Result<Self> {
+        Self::new_named(c"castkms-attribution-test")
+    }
+
+    fn new_named(name: &'static kernel::str::CStr) -> Result<Self> {
         let parent = faux::Registration::new_with_dma_mask(
-            c"castkms-attribution-test",
+            name,
             None,
             kernel::dma::DmaMask::new::<64>(),
         )?;
