@@ -8,9 +8,16 @@ use kernel::{
 };
 
 enum State<I> {
-    Tracking(Option<I>),
+    Tracking { master: Option<I>, interval: u64 },
     Closed,
 }
+
+/// One uninterrupted control interval within its originating authority tracker.
+///
+/// Equality is meaningful only for observations of the same tracker. Retaining an
+/// interval does not stabilize control or authorize an operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Interval(u64);
 
 #[pin_data]
 pub(super) struct Authority<I> {
@@ -20,19 +27,31 @@ pub(super) struct Authority<I> {
 
 impl<I: Unpin> Authority<I> {
     pub(super) fn new() -> impl PinInit<Self> {
-        pin_init!(Self { state <- kernel::new_mutex!(State::Tracking(None)) })
+        pin_init!(Self {
+            state <- kernel::new_mutex!(State::Tracking { master: None, interval: 0 }),
+        })
     }
 
     /// Called in native master transition order. Closing permanently rejects later events.
-    pub(super) fn changed(&self, master: Option<I>) {
+    pub(super) fn changed(&self, mut master: Option<I>) {
         let retired = {
             let mut state = self.state.lock();
-            match &mut *state {
-                State::Tracking(current) => core::mem::replace(current, master),
-                State::Closed => master,
-            }
+            let next = match &*state {
+                State::Tracking { interval, .. } => interval.checked_add(1),
+                State::Closed => None,
+            };
+            // Closing also handles exhaustion; neither identities nor intervals wrap.
+            let replacement = match next {
+                Some(interval) => State::Tracking {
+                    master: master.take(),
+                    interval,
+                },
+                None => State::Closed,
+            };
+            core::mem::replace(&mut *state, replacement)
         };
         drop(retired);
+        drop(master);
     }
 
     /// A coherent historical observation, never a permission to read pixels.
@@ -41,8 +60,21 @@ impl<I: Unpin> Authority<I> {
         I: Clone,
     {
         match &*self.state.lock() {
-            State::Tracking(current) => current.clone(),
+            State::Tracking { master, .. } => master.clone(),
             State::Closed => None,
+        }
+    }
+
+    /// Observe an interval while the caller separately stabilizes native master control.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn interval(&self) -> Result<Interval> {
+        match &*self.state.lock() {
+            State::Tracking {
+                master: Some(_),
+                interval,
+            } => Ok(Interval(*interval)),
+            State::Tracking { master: None, .. } => Err(EACCES),
+            State::Closed => Err(ENODEV),
         }
     }
 
