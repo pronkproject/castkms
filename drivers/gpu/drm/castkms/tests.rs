@@ -61,6 +61,8 @@ mod host_results;
 mod host_snapshots;
 mod host_wait;
 mod host_worker;
+#[cfg(CONFIG_DRM_CLIENT)]
+mod image_access;
 mod output_identity;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
