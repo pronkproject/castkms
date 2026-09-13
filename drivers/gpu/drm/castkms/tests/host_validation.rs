@@ -6,8 +6,12 @@ use super::*;
 
 fn framebuffer(fixture: &Fixture, size: usize, pitch: u32) -> Result<FramebufferRef<Driver>> {
     let size = kernel::page::page_align(size).ok_or(EOVERFLOW)?;
-    let object =
-        shmem::Object::<gem::Object>::new(fixture.drm.device(), size, Default::default(), ())?;
+    let object = shmem::Object::<gem::Object>::new(
+        fixture.drm.device(),
+        size,
+        Default::default(),
+        Default::default(),
+    )?;
     fixture.drm.framebuffer(
         &FramebufferLayout {
             width: 640,

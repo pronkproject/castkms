@@ -25,8 +25,12 @@ fn native(
     offset: u32,
     interlaced: bool,
 ) -> Result<FramebufferRef<Driver>> {
-    let object =
-        shmem::Object::<gem::Object>::new(fixture.drm.device(), size, Default::default(), ())?;
+    let object = shmem::Object::<gem::Object>::new(
+        fixture.drm.device(),
+        size,
+        Default::default(),
+        Default::default(),
+    )?;
     fixture.drm.framebuffer(
         &FramebufferLayout {
             width,

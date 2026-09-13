@@ -38,6 +38,7 @@ mod blank_ownership;
 mod host_blank;
 mod configurations;
 mod generations;
+mod gem_budget;
 mod host_attempts;
 mod host_cache;
 mod host_composition;
@@ -126,7 +127,7 @@ impl Fixture {
             self.drm.device(),
             640 * 480 * 4,
             Default::default(),
-            (),
+            Default::default(),
         )?;
         self.drm.framebuffer(
             &FramebufferLayout {

@@ -74,7 +74,7 @@ mod cases {
             fixture.drm.device(),
             2 * 1024 * 1024,
             Default::default(),
-            (),
+            Default::default(),
         )?;
         {
             let mapping = object.vmap::<0>()?;
