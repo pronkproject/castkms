@@ -52,7 +52,9 @@ impl Image {
     ) -> Result<Self> {
         let size = layout.size();
         let charge = budget.reserve(size)?;
-        let object = shmem::Object::<gem::Object>::new(device, size, Default::default(), ())?;
+        let object = shmem::Object::<gem::Object>::new(
+            device, size, Default::default(), Default::default(),
+        )?;
         let map = object.owned_vmap()?;
         // SAFETY: The new native allocation has no other pixel users or exported handles.
         // The owned mapping covers all `size` bytes, including the rounded page padding.

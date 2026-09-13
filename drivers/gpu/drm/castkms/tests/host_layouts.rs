@@ -28,7 +28,7 @@ fn check_layout(width: u16, height: u16, padding: u32, offset: u32) -> Result {
         fixture.drm.device(),
         size,
         Default::default(),
-        (),
+        Default::default(),
     )?;
     let fb = fixture.drm.framebuffer(
         &FramebufferLayout {

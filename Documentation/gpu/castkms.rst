@@ -70,8 +70,12 @@ objects may remain allocated while existing DRM references are being released;
 their data does not borrow the module's registration storage.
 
 ``display.rs`` defines the output and its atomic checks. ``gem.rs`` defines the
-private buffer payload and opts into local allocation. Neither layer calls a
-capture file adapter. Shared DRM helpers remain responsible for object
+private buffer payload and opts into local allocation. Its optional storage
+budget is charged in that payload until the final native allocation reference
+is released, including references held by mappings or DMA-BUF exports. A
+caller owns the budget independently of any particular buffer; ordinary dumb
+allocations and imports do not consume another caller's credit. Neither layer
+calls a capture file adapter. Shared DRM helpers remain responsible for object
 allocation, framebuffer validation, atomic transaction locking and ordinary
 ioctl handling. Future capture policy must not turn buffer allocation or the
 ordinary commit path into an implicit grant of access to another client's
