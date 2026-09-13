@@ -3,6 +3,10 @@
 //! Mode and routing intervals published by real atomic callbacks.
 
 use super::*;
+use kernel::drm::capture::{
+    Status,
+    Stream, //
+};
 use kernel::drm::kms::connector::RawConnector;
 
 fn accepted(fixture: &Fixture) -> Result<scene::Configuration> {
@@ -155,6 +159,92 @@ mod cases {
         check(accepted(&fixture).is_err())?;
         check(retained == first)?;
         check(retained.dimensions() == [640, 480])?;
+        Ok(())
+    }
+
+    #[test]
+    fn content_updates_preserve_registered_capture() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let stream = Stream::new(1, 4)?;
+        let _registration = fixture
+            .drm
+            .device()
+            .capture_streams
+            .register(&stream, &accepted(&fixture)?)?;
+        let request = stream.queue()?;
+        fixture.select(&fb, false, 0)?;
+        fixture.drm.update(|transaction| {
+            drop(transaction.add_crtc_state(fixture.drm.crtc()?)?);
+            Ok(())
+        })?;
+        check(request.status()? == Status::Pending)?;
+        stream.claim()?.complete(Ok(()));
+        check(request.status()? == Status::Complete(Ok(())))?;
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_timings_revoke_old_capture_without_reviving_it() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let old = accepted(&fixture)?;
+        let registry = &fixture.drm.device().capture_streams;
+        let stream = Stream::new(1, 4)?;
+        let _registration = registry.register(&stream, &old)?;
+        let request = stream.queue()?;
+        select_clock(&fixture, &fb, 25200, false)?;
+        check(request.status()? == Status::Complete(Err(EKEYREVOKED)))?;
+        let replacement = Stream::new(1, 4)?;
+        let _replacement_registration = registry.register(&replacement, &accepted(&fixture)?)?;
+        registry.revoke_configuration(&old);
+        let new_request = replacement.queue()?;
+        select_clock(&fixture, &fb, 25200, false)?;
+        check(new_request.status()? == Status::Pending)?;
+        check(matches!(stream.queue(), Err(EKEYREVOKED)))?;
+        Ok(())
+    }
+
+    #[test]
+    fn unaccepted_modes_preserve_registered_capture() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let stream = Stream::new(1, 4)?;
+        let _registration = fixture
+            .drm
+            .device()
+            .capture_streams
+            .register(&stream, &accepted(&fixture)?)?;
+        let request = stream.queue()?;
+        select_clock(&fixture, &fb, 25200, true)?;
+        check(fixture.select(&fb, false, 1).is_err())?;
+        check(request.status()? == Status::Pending)?;
+        stream.claim()?.complete(Ok(()));
+        check(request.status()? == Status::Complete(Ok(())))?;
+        Ok(())
+    }
+
+    #[test]
+    fn disabling_the_output_ends_its_capture_interval() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let stream = Stream::new(1, 4)?;
+        let _registration = fixture
+            .drm
+            .device()
+            .capture_streams
+            .register(&stream, &accepted(&fixture)?)?;
+        let request = stream.queue()?;
+        fixture.drm.update(|mut transaction| {
+            transaction.as_mut().set_crtc_config(fixture.drm.crtc()?, None)
+        })?;
+        check(request.status()? == Status::Complete(Err(EKEYREVOKED)))?;
+        fixture.select(&fb, false, 0)?;
+        check(matches!(stream.queue(), Err(EKEYREVOKED)))?;
         Ok(())
     }
 }
