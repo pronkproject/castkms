@@ -44,6 +44,7 @@ mod host_composition;
 mod host_configuration;
 mod host_delivery;
 mod host_framebuffers;
+mod host_validation;
 mod host_idle;
 mod host_images;
 mod host_intervals;
