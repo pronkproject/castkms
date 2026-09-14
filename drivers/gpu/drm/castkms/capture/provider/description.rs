@@ -62,7 +62,6 @@ impl Description {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Capture {
     /// Describe authorized current output without reserving storage or reading pixels.
     ///

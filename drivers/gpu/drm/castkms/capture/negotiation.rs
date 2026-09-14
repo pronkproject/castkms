@@ -17,7 +17,6 @@ pub(crate) struct Offer {
     description: Description,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Offer {
     pub(crate) fn id(&self) -> u64 {
         self.id

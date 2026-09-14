@@ -2,6 +2,8 @@
 
 //! Capture-client files never inherit the separate grantor or creating DRM file lifetime.
 
+mod description;
+
 use super::*;
 use crate::capture::provider::Capture;
 use kernel::drm::{

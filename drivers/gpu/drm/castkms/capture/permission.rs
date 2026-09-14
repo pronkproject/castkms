@@ -28,7 +28,6 @@ pub(crate) struct Permission {
     target: display_control::Target,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Permission {
     /// Borrow the exact target's device for resource operations, not pixel authorization.
     pub(super) fn device(&self) -> &Device<Driver> {
