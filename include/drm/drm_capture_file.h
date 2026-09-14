@@ -6,6 +6,7 @@
 #include <drm/drm_capture_description.h>
 
 struct drm_capture_authority;
+struct drm_capture_destination;
 struct file;
 struct module;
 
@@ -26,6 +27,10 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
  *               id and positive capacity; failure must not consume the name
  * @close_stream: optionally release one named stream, including after revocation;
  *                closing must not make its name available for reuse
+ * @register_destination: optionally retain a checked destination under a new,
+ *                        increasing client-local name; failure consumes no name
+ * @unregister_destination: optionally remove a destination name, including after
+ *                          revocation, without canceling accepted native uses
  *
  * Operations remain immutable until release. The client file does not explicitly
  * revoke its authority before release; provider cleanup must respect other clients.
@@ -44,6 +49,9 @@ struct drm_capture_client_owner_ops {
 	int (*describe)(void *data, struct drm_capture_description *description);
 	int (*open_stream)(void *data, u64 id, u64 offer, u32 capacity);
 	int (*close_stream)(void *data, u64 id);
+	int (*register_destination)(void *data, u64 id,
+				    const struct drm_capture_destination *destination);
+	int (*unregister_destination)(void *data, u64 id);
 };
 
 /*
@@ -93,6 +101,27 @@ int drm_capture_client_open_stream(struct file *file, u64 id, u64 offer, u32 cap
  * Retain file and call outside locks needed by cleanup. No descriptor is closed.
  */
 int drm_capture_client_close_stream(struct file *file, u64 id);
+
+/*
+ * Register borrowed storage through the client's serialized provider callback.
+ * Retain file, every destination buffer and its immutable metadata throughout
+ * the call. Shared validation checks shape and export write access; the provider
+ * validates complete layout, resource limits and current capture permission.
+ * Successful retention requires provider-owned buffer references. Registration
+ * admits no pixel write and needs both registration and cleanup callbacks.
+ * Failure must leave the nonzero client-local name retryable. Call outside DRM,
+ * authority, provider lifecycle and buffer reservation locks.
+ */
+int drm_capture_client_register_destination(struct file *file, u64 id,
+					    const struct drm_capture_destination *destination);
+
+/*
+ * Remove a name without requiring current capture permission or revoking the
+ * exported allocation. Accepted operations retain their own storage and native
+ * completion duties. Names are never reused; no descriptor is closed. Retain
+ * file and call outside every lock needed by provider resource cleanup.
+ */
+int drm_capture_client_unregister_destination(struct file *file, u64 id);
 
 /**
  * struct drm_capture_control_owner_ops - lifetime retained by a revocation file
