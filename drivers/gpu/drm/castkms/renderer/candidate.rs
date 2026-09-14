@@ -13,9 +13,16 @@ use crate::{
     host_snapshot::Snapshot,
     image_access,
     renderer_startup,
-    scene::Configuration, //
+    scene::Configuration,
+    Driver, //
 };
-use kernel::prelude::*;
+use kernel::{
+    drm::{
+        device::Registered,
+        Device, //
+    },
+    prelude::*, //
+};
 
 /// One renderer's private reservation, without an activation or live-source claim.
 ///
@@ -74,20 +81,40 @@ impl Candidate {
     }
 
     /// Observe display metadata after checking the candidate under stable control.
-    /// The startup lock is not retained, and no later operation is reserved.
+    /// No lock survives the callback, and no later operation is reserved.
     fn with_current_control<R>(
         &self,
         f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
     ) -> Result<R> {
-        self.access.with_current(|current| {
-            if current.configuration() != &self.configuration
-                || execution::describe() != self.execution
-            {
-                return Err(ESTALE);
-            }
-            self.resources.check()?;
-            f(current)
-        })
+        self.access
+            .with_current(|current| self.with_reservation(current, f))
+    }
+
+    /// Stabilize installed display state, permission and this reservation for handoff.
+    ///
+    /// The callback holds master, CRTC, object-ID, output, revocation and startup locks in
+    /// that order. It must not wait, read pixels, enter other DRM operations, cancel this
+    /// candidate or release final resources. Only the callback may publish a control change;
+    /// a returned observation does not reserve a later operation.
+    pub(crate) fn with_activation_control<R>(
+        &self,
+        registered: &Device<Driver, Registered>,
+        f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        self.access
+            .with_installed(registered, |current| self.with_reservation(current, f))
+    }
+
+    fn with_reservation<R>(
+        &self,
+        current: display_control::Current<'_>,
+        f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        if current.configuration() != &self.configuration || execution::describe() != self.execution
+        {
+            return Err(ESTALE);
+        }
+        self.resources.with_current(|| f(current))
     }
 
     /// Copy an optional image into independent private storage after checking ownership.
