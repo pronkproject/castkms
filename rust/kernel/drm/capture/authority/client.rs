@@ -81,6 +81,8 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
+        register_destination: None,
+        unregister_destination: None,
     };
 
     unsafe extern "C" fn release(data: *mut c_void) {

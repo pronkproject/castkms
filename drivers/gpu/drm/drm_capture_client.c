@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 
 #include <drm/drm_capture_authority.h>
+#include <drm/drm_capture_destination.h>
 #include <drm/drm_capture_file.h>
 #include <drm/drm_fourcc.h>
 
@@ -129,6 +130,46 @@ int drm_capture_client_close_stream(struct file *file, u64 id)
 	return ret > 0 ? -EINVAL : ret;
 }
 EXPORT_SYMBOL_GPL(drm_capture_client_close_stream);
+
+int drm_capture_client_register_destination(struct file *file, u64 id,
+					    const struct drm_capture_destination *destination)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+	int ret;
+
+	if (!client || !id)
+		return -EINVAL;
+	ret = drm_capture_destination_validate(destination);
+	if (ret)
+		return ret;
+	mutex_lock(&client->lock);
+	if (drm_capture_authority_revoked(client->authority))
+		ret = -EKEYREVOKED;
+	else if (!client->ops->register_destination || !client->ops->unregister_destination)
+		ret = -EOPNOTSUPP;
+	else
+		ret = client->ops->register_destination(client->data, id, destination);
+	mutex_unlock(&client->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_register_destination);
+
+int drm_capture_client_unregister_destination(struct file *file, u64 id)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+	int ret;
+
+	if (!client || !id)
+		return -EINVAL;
+	mutex_lock(&client->lock);
+	if (!client->ops->unregister_destination)
+		ret = -EOPNOTSUPP;
+	else
+		ret = client->ops->unregister_destination(client->data, id);
+	mutex_unlock(&client->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_unregister_destination);
 
 struct drm_capture_authority *drm_capture_client_authority(struct file *file)
 {
