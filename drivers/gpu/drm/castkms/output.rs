@@ -56,6 +56,7 @@ enum Publication<S, C> {
 /// Coherent descriptions borrowed under the publication lock, without permission to read pixels.
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(super) struct Accepted<'a, S, C> {
+    pub(super) source: &'a Source,
     pub(super) scene: Option<&'a S>,
     pub(super) configuration: &'a C,
 }
@@ -149,6 +150,7 @@ impl<S: Unpin, C: Unpin> Output<S, C> {
         let state = self.state.lock();
         let accepted = match &*state {
             Publication::Open(current) => current.as_ref().map(|current| Accepted {
+                source: &current.source,
                 scene: current.scene.as_ref(),
                 configuration: &current.configuration,
             }),

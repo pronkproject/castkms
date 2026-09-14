@@ -4,7 +4,13 @@
 
 use super::*;
 use crate::display_control::Target;
-use kernel::drm::kms::testing::MasterFile;
+use kernel::{
+    drm::{
+        kms::testing::MasterFile,
+        preparation::Source, //
+    },
+    sync::aref::ARef, //
+};
 
 fn target(fixture: &Fixture, file: &MasterFile<'_, Driver>) -> Result<Target> {
     let snapshot = file.file().master_snapshot().ok_or(EINVAL)?;
@@ -15,6 +21,54 @@ fn target(fixture: &Fixture, file: &MasterFile<'_, Driver>) -> Result<Target> {
 #[kunit_tests(rust_castkms_display_control)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn generation_matching_does_not_use_framebuffer_or_configuration_equality() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let target = target(&fixture, &file)?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let first: ARef<Source> = fixture
+            .drm
+            .device()
+            .output
+            .with_accepted(|accepted| accepted.map(|accepted| accepted.source.into()))
+            .ok_or(EINVAL)?;
+        target.with_current(|current| current.check_source(&first))?;
+        fixture.select(&fb, false, 0)?;
+        let second: ARef<Source> = fixture
+            .drm
+            .device()
+            .output
+            .with_accepted(|accepted| accepted.map(|accepted| accepted.source.into()))
+            .ok_or(EINVAL)?;
+        target.with_current(|current| {
+            check(current.configuration().dimensions() == [640, 480])?;
+            check(current.check_source(&first) == Err(EAGAIN))?;
+            current.check_source(&second)
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn installed_control_rejects_a_registration_for_another_device() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let target = target(&fixture, &file)?;
+        let other = CastKms::new(c"castkms-control-registration")?;
+        let registered = other._display.registration_guard().ok_or(ENODEV)?;
+        let mut calls = 0;
+        check(
+            target.with_installed(&registered, |_| {
+                calls += 1;
+                Ok(())
+            }) == Err(EINVAL),
+        )?;
+        check(calls == 0)
+    }
 
     #[test]
     fn control_of_an_unowned_scene_does_not_authorize_its_pixels() -> Result {

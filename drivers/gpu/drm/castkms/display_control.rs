@@ -17,6 +17,7 @@ use kernel::{
             CurrentMasterGuard,
             MasterRef, //
         },
+        device::Registered,
         kms::{
             connector::{
                 Connector,
@@ -27,6 +28,7 @@ use kernel::{
                 CrtcRef, //
             }, //
         },
+        preparation::Source,
         Device, //
     },
     prelude::*,
@@ -71,6 +73,30 @@ impl Target {
         self.crtc.drm_dev()
     }
 
+    /// Inspect control only after the latest accepted CRTC state has installed its scene.
+    ///
+    /// Registration is followed by master, CRTC, object-ID and output locks, in that order.
+    /// The callback runs once with those locks held, without waiting for commit-tail progress.
+    /// It follows `with_current`'s restrictions and must not acquire another modeset lock.
+    /// An accepted predecessor that has not installed its scene returns `EAGAIN` instead of
+    /// permitting control changes against the preceding publication.
+    pub(crate) fn with_installed<R>(
+        &self,
+        registered: &Device<Driver, Registered>,
+        f: impl FnOnce(Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        let identity = self.master.lock_current_identity().ok_or(EACCES)?;
+        registered.with_crtc_preparation_source(self.crtc.crtc(), |source| {
+            let source = source.ok_or(EAGAIN)?;
+            identity.with_objects(|guard| {
+                self.with_guard(guard, |current| {
+                    current.check_source(source)?;
+                    f(current)
+                })
+            })
+        })?
+    }
+
     /// Inspect current control and configuration while excluding their replacement.
     ///
     /// Lock order is native master, object IDs, then accepted output. The callback must
@@ -79,6 +105,14 @@ impl Target {
     /// Retained observations are historical metadata, not later admission or activation.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce(Current<'_>) -> Result<R>) -> Result<R> {
         let guard = self.master.lock_current().ok_or(EACCES)?;
+        self.with_guard(&guard, f)
+    }
+
+    fn with_guard<R>(
+        &self,
+        guard: &CurrentMasterGuard<'_, Driver>,
+        f: impl FnOnce(Current<'_>) -> Result<R>,
+    ) -> Result<R> {
         if !guard.holds_object(self.crtc.crtc()) || !guard.holds_object(&*self.connector) {
             return Err(EACCES);
         }
@@ -94,6 +128,7 @@ impl Target {
                 output: output.identity(),
                 master: &self.master,
                 scene: accepted.scene,
+                source: accepted.source,
                 _task: NotThreadSafe,
             })
         })
@@ -106,11 +141,24 @@ pub(crate) struct Current<'a> {
     output: &'a Identity,
     master: &'a MasterRef<Driver>,
     scene: Option<&'a Scene>,
+    source: &'a Source,
     _task: NotThreadSafe,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Current<'_> {
+    /// Compare generation identity, not framebuffer identity or mode equality.
+    ///
+    /// The caller must separately stabilize the native accepted source for a control change.
+    /// A retained source checked without modeset exclusion is only a historical observation.
+    pub(crate) fn check_source(&self, source: &Source) -> Result {
+        if core::ptr::eq(self.source, source) {
+            Ok(())
+        } else {
+            Err(EAGAIN)
+        }
+    }
+
     pub(crate) fn configuration(&self) -> &Configuration {
         self.configuration
     }
