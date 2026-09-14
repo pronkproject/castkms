@@ -47,6 +47,24 @@ impl<P, T> Queue<P, T> {
         })
     }
 
+    /// Whether another observation could make progress on an accepted pending attempt.
+    ///
+    /// A cancellation request remains pending until its owner reports a terminal outcome.
+    pub(crate) fn has_pending(&self) -> bool {
+        self.records
+            .iter()
+            .any(|record| matches!(record.state, State::Pending(_)))
+    }
+
+    /// Whether a terminal record remains available, including after failed publication.
+    ///
+    /// Inspection neither acknowledges a record nor reserves it for a particular reader.
+    pub(crate) fn has_results(&self) -> bool {
+        self.records
+            .iter()
+            .any(|record| matches!(record.state, State::Ready(_)))
+    }
+
     /// Admit a pending operation only after validating its ID and reserving its terminal record.
     ///
     /// Zero is invalid. Once u64::MAX has been accepted, a new stream incarnation is needed.
