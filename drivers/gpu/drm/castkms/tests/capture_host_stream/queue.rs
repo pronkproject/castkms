@@ -58,6 +58,53 @@ mod cases {
     }
 
     #[test]
+    fn opening_a_described_queue_does_not_adopt_a_later_modeset() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let capture = grantor.capture();
+        let description = capture.describe_stream()?;
+        fixture.drm.update(|transaction| {
+            transaction
+                .add_crtc_state(fixture.drm.crtc()?)?
+                .set_mode_changed(true);
+            Ok(())
+        })?;
+        for _ in 0..32 {
+            check(matches!(Queue::from_description(&description, 1), Err(ESTALE)))?;
+        }
+        check(matches!(fixture.drm.device().host.current(), Err(EAGAIN)))?;
+        let fresh = capture.describe_stream()?;
+        check(fresh.layout() == description.layout())?;
+        let mut queue = Queue::from_description(&fresh, 1)?;
+        queue.queue(1)?;
+        fixture.drm.device().host.current()?.flush_for_test();
+        check(queue.advance() == 1)?;
+        queue.dequeue(|completion| {
+            check(completion.use_id == 1)?;
+            check(completion.result?.metadata().layout() == fresh.layout())
+        })
+    }
+
+    #[test]
+    fn a_description_does_not_keep_queue_creation_authorized() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let description = grantor.capture().describe_stream()?;
+        drop(grantor);
+        check(matches!(
+            Queue::from_description(&description, 1),
+            Err(EKEYREVOKED)
+        ))?;
+        check(matches!(fixture.drm.device().host.current(), Err(EAGAIN)))
+    }
+
+    #[test]
     fn publication_failure_retains_the_result_and_its_credit() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;

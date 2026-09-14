@@ -9,6 +9,7 @@ use super::{
     },
     provider::{
         Capture,
+        Description,
         Frame, //
     },
     requests::{
@@ -31,8 +32,17 @@ pub(crate) struct Queue {
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Queue {
     pub(crate) fn new(capture: &Capture, capacity: u32) -> Result<Self> {
+        Self::from_description(&capture.describe_stream()?, capacity)
+    }
+
+    /// Open the described configuration without replacing it with the latest output state.
+    ///
+    /// The description retains its grant, but neither permission nor storage credit.
+    /// Stream creation rechecks both before starting a compositor worker. A failed
+    /// opening leaves the description available for an explicit retry.
+    pub(crate) fn from_description(description: &Description, capacity: u32) -> Result<Self> {
         // Stream creation enforces the provider's capacity limit before allocating records.
-        let stream = Stream::new(capture, capacity)?;
+        let stream = Stream::from_description(description, capacity)?;
         Ok(Self {
             records: requests::Queue::new(capacity as usize)?,
             stream,
