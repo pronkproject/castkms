@@ -5,9 +5,9 @@ DRM capture grants
 The experimental capture interface separates permission to receive a final
 output image from modesetting, source-buffer access and rendering. Its current
 public operations create a grant, describe an offered image configuration,
-create or destroy streams, and register or remove destination storage. Image
-delivery is not yet exposed on the file. The interface assignments are
-development ABI, not upstream allocations.
+create or destroy streams, register or remove destination storage, and queue,
+cancel or dequeue final-image output. The interface assignments are development
+ABI, not upstream allocations.
 
 Issuing a grant
 ==============
@@ -77,9 +77,57 @@ establish continuing authority over future pixels.
 
 ``DRM_IOCTL_CAPTURE_DESTROY_STREAM`` removes one stream without revoking
 siblings. Destruction remains available after a modeset or revocation, and
-final client-file release destroys its remaining streams. Neither operation
-is a GPU-completion notification or permission to reuse a buffer whose native
-readers or writers have not finished.
+final client-file release destroys its remaining streams. Successful explicit
+destruction ends that stream's destination writes; ``EBUSY`` leaves cleanup
+retryable while access ends. Final file release instead abandons observation
+without waiting for detached exporter access. Neither operation establishes
+completion of shared rendering or other users of the same allocation.
+
+Submitting and receiving output
+==============================
+
+``DRM_IOCTL_CAPTURE_QUEUE_OUTPUT`` supplies a stream-local increasing request
+name, a registered destination name and an optional sync-file reuse descriptor.
+The transport resolves and retains the fence before provider admission. Success
+has no later copyout or descriptor installation; rejection consumes neither the
+name nor a request slot. Accepted work retains the exact allocation even if its
+registered name is removed. The provider rechecks its layout and permission.
+
+The recipient must exclude competing access until terminal completion or
+successful explicit stream destruction. A reuse fence describes prior work,
+not exclusive future access. CastKMS rejects known current-source aliases by
+comparing backing reservations, but different reservations do not prove physical
+independence. The check does not prevent later KMS selection of that storage.
+Destination reuse and exporter waits retain no compositor source.
+
+``DRM_IOCTL_CAPTURE_DEQUEUE`` copies one terminal result to an explicit output
+address before acknowledging it. ``EFAULT`` retains the record and request slot;
+ignore partially copied bytes. A duplicate descriptor may consume the same queue.
+``EAGAIN`` means no result is available. A terminal capture error, including
+``EAGAIN``, is instead returned in the result's status with a successful ioctl.
+Use an ioctl wrapper that preserves ``EAGAIN``: libdrm's ``drmIoctl()`` retries it
+internally and is unsuitable for these nonblocking observations. Poll indicates
+availability without reserving a result. ``POLLIN`` and ``POLLHUP`` may coexist.
+
+Successful output carries the original image-production timestamp in monotonic
+nanoseconds, not dequeue time or a presentation event. All destination writes
+and cache maintenance for the attempt have ended before a terminal result is
+published, including on failure. Failed output may contain partial pixels and
+is not a valid image. No source descriptor or output fence is published.
+
+``DRM_IOCTL_CAPTURE_CANCEL`` requests cancellation without acknowledging either
+the result or storage reuse. It remains usable after revocation. A request whose
+exporter access is already running stays pending until that access ends; no
+completion is fabricated to acknowledge cancellation. Shared source rendering
+and downstream users remain independent. Already cancelled or terminal requests
+return ``EALREADY``; absent names return ``ENOENT``.
+
+The wire adapters call ``drm_capture_client_queue_output()``,
+``drm_capture_client_dequeue()`` and ``drm_capture_client_cancel()``. Kernel C
+consumers use those entry points without userspace memory or descriptor lookup;
+Rust ``ClientStream`` exposes the same operations with retained file references.
+CastKMS delegates all three to its existing client queue. The transport owns no
+provider pixel policy, request accounting or renderer selection.
 
 Kernel providers
 ================

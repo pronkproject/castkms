@@ -137,7 +137,8 @@ struct drm_capture_create_stream {
  * Success ends every destination write admitted through this stream before
  * returning. Buffers may still have other users: this is not a compositor-source,
  * presentation or downstream-consumer fence. Closing a descriptor alone does
- * not acknowledge this boundary; other references or active calls may survive.
+ * not acknowledge this boundary; detached destination access may survive even
+ * final file release. EBUSY leaves cleanup retryable while that access ends.
  */
 struct drm_capture_destroy_stream {
 	__u64 id;
@@ -212,5 +213,112 @@ struct drm_capture_unregister_destination {
 	DRM_IOW(0x03, struct drm_capture_register_destination)
 #define DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION \
 	DRM_IOW(0x04, struct drm_capture_unregister_destination)
+
+/**
+ * struct drm_capture_queue_output - Admit one output to registered storage
+ * @stream: Nonzero name of an open stream on this capture client.
+ * @use_id: Nonzero request name greater than all names admitted on that stream.
+ * @destination: Nonzero destination name registered on the same client.
+ * @reuse_fd: Sync-file descriptor for prior destination use, or -1 for none.
+ * @flags: Must be zero.
+ * @reserved: Must be zero.
+ *
+ * All fields are input. Success retains the exact destination and optional
+ * native reuse fence, consumes the request name and occupies one stream slot.
+ * Closing or reusing the input descriptor afterward does not replace that fence.
+ * No output descriptor is installed and no fallible publication follows admission.
+ * Removing a destination name does not cancel an accepted write.
+ *
+ * The caller must exclude competing destination users until its terminal result
+ * is dequeued or stream destruction succeeds. A signaled reuse fence does not
+ * exclude later users. Known current-source aliases may be rejected; acceptance
+ * does not prove independent physical backing or reserve storage against KMS.
+ * Destination waits retain no compositor source. Exporter access may run after
+ * the ioctl returns; successful admission does not establish valid output pixels.
+ *
+ * Rejection consumes neither name nor capacity. Invalid fields or a descriptor
+ * that is not a sync file return EINVAL, absent names ENOENT, exhausted request
+ * slots EAGAIN, non-increasing names ESTALE and revoked authority EKEYREVOKED.
+ * Admitting UINT64_MAX exhausts further request names with EOVERFLOW. A fence
+ * or exporter error after admission is reported through a terminal result.
+ */
+struct drm_capture_queue_output {
+	__u64 stream;
+	__u64 use_id;
+	__u64 destination;
+	__s32 reuse_fd;
+	__u32 flags;
+	__u64 reserved;
+};
+
+/**
+ * struct drm_capture_result - Terminal output metadata without storage ownership
+ * @use_id: Original request name within the selected stream.
+ * @completed_at_ns: CLOCK_MONOTONIC image-production time, zero on failure.
+ * @status: Zero for valid output, negative errno for terminal failure.
+ * @reserved: Returned as zero.
+ *
+ * Destination writes and cache maintenance for this request have ended before
+ * publication, including on failure. Failed output may contain partial pixels
+ * and must not be used as a valid image. The timestamp describes the produced
+ * image, not dequeue, presentation or receiver display. Repeated images may
+ * share a timestamp; dequeue order need not match timestamp or request order.
+ * Completion says nothing about other users of the same allocation.
+ */
+struct drm_capture_result {
+	__u64 use_id;
+	__s64 completed_at_ns;
+	__s32 status;
+	__u32 reserved;
+};
+
+/**
+ * struct drm_capture_dequeue - Publish and acknowledge one terminal result
+ * @stream: Nonzero stream name on this capture client.
+ * @result: Pointer to writable struct drm_capture_result output storage.
+ * @reserved: Must be zero.
+ *
+ * The request fields are input only. Success returns zero after publishing one
+ * result and releasing its request slot. EAGAIN means no terminal result exists;
+ * it does not wait for rendering or destination reuse. A terminal capture error,
+ * including EAGAIN, is carried in result.status with a successful ioctl return.
+ *
+ * EFAULT retains the same result and slot for retry; ignore all partially copied
+ * output. Duplicate descriptors share the queue, so another reader may consume
+ * the retained result. Poll readiness is an observation, not a reservation.
+ * Dequeue remains available after revocation. No file descriptor or source
+ * buffer is published, and acknowledgment grants no authority for later frames.
+ * Callers must use an ioctl wrapper that returns EAGAIN rather than retrying it
+ * internally, then arrange another observation through poll or their scheduler.
+ */
+struct drm_capture_dequeue {
+	__u64 stream;
+	__u64 result;
+	__u64 reserved;
+};
+
+/**
+ * struct drm_capture_cancel - Request cancellation without acknowledging reuse
+ * @stream: Nonzero stream name on this capture client.
+ * @use_id: Nonzero name of an admitted request on that stream.
+ * @reserved: Must be zero.
+ *
+ * Input only. Cleanup remains available after revocation. Success requests
+ * cancellation but does not acknowledge a result or permit destination reuse.
+ * Already entered exporter access may still be running. Observe terminal
+ * completion or successfully destroy the stream before reusing its storage.
+ * Missing names return ENOENT; already cancelled or terminal requests return
+ * EALREADY. Cancellation does not wait for destination fences, cancel shared
+ * rendering, revoke a grant or return the request's accounting slot.
+ */
+struct drm_capture_cancel {
+	__u64 stream;
+	__u64 use_id;
+	__u64 reserved;
+};
+
+#define DRM_IOCTL_CAPTURE_QUEUE_OUTPUT DRM_IOW(0x05, struct drm_capture_queue_output)
+#define DRM_IOCTL_CAPTURE_DEQUEUE DRM_IOW(0x06, struct drm_capture_dequeue)
+#define DRM_IOCTL_CAPTURE_CANCEL DRM_IOW(0x07, struct drm_capture_cancel)
 
 #endif
