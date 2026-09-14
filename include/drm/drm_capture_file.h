@@ -71,9 +71,11 @@ struct drm_capture_client_owner_ops {
  * The callback must return an owned reference or NULL, never an error pointer.
  *
  * The module pin is independent of the authority. All operations may sleep. The file
- * observes completed revocation through poll and offers a description ioctl;
+ * observes retained result readiness and completed revocation through poll;
  * it exposes neither pixel operations nor DRM primary-node dispatch. HUP is
  * not GPU completion.
+ * IN and HUP may coexist while terminal results remain available. A readiness
+ * observation neither reserves a result nor guarantees a successful dequeue.
  * No descriptor is installed; a publishing adapter must use close-on-exec.
  */
 struct file *drm_capture_client_file_create(

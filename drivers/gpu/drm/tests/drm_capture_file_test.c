@@ -333,7 +333,39 @@ static void drm_capture_client_readiness_checks_role_and_support(struct kunit *t
 			    ERR_PTR(-EOPNOTSUPP));
 }
 
+static void drm_capture_client_polls_results_without_borrowing_provider(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	struct file *file;
+	struct poll_wqueues wait;
+
+	control_create(test, &authority, &context);
+	context->readiness = drm_capture_readiness_create();
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, context->readiness);
+	KUNIT_ASSERT_EQ(test,
+			kunit_add_action_or_reset(test, readiness_put, context->readiness), 0);
+	file = drm_capture_client_file_create(authority, &client_readiness_ops, context);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, file);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, control_file_put, file), 0);
+	poll_initwait(&wait);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, &wait.pt), 0);
+	drm_capture_readiness_update(context->readiness, true);
+	KUNIT_EXPECT_TRUE(test, wait.triggered);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLIN | EPOLLRDNORM);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLIN | EPOLLRDNORM);
+	drm_capture_readiness_update(context->readiness, false);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), 0);
+	drm_capture_authority_revoke(authority);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLHUP);
+	drm_capture_readiness_update(context->readiness, true);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLIN | EPOLLRDNORM | EPOLLHUP);
+	KUNIT_EXPECT_EQ(test, context->readiness_calls, 1);
+	poll_freewait(&wait);
+}
+
 static struct kunit_case drm_capture_file_cases[] = {
+	KUNIT_CASE(drm_capture_client_polls_results_without_borrowing_provider),
 	KUNIT_CASE(drm_capture_client_retains_readiness),
 	KUNIT_CASE(drm_capture_client_readiness_checks_role_and_support),
 	KUNIT_CASE(drm_capture_file_pairs_check_roles_and_authority),

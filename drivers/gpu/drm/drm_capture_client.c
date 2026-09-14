@@ -44,9 +44,17 @@ static int capture_client_release(struct inode *inode, struct file *file)
 static __poll_t capture_client_poll(struct file *file, poll_table *wait)
 {
 	struct drm_capture_client *client = file->private_data;
+	__poll_t events = 0;
 
 	poll_wait(file, drm_capture_authority_waitqueue(client->authority), wait);
-	return drm_capture_authority_cleanup_done(client->authority) ? EPOLLHUP : 0;
+	if (client->readiness) {
+		poll_wait(file, drm_capture_readiness_waitqueue(client->readiness), wait);
+		if (drm_capture_readiness_has_results(client->readiness))
+			events |= EPOLLIN | EPOLLRDNORM;
+	}
+	if (drm_capture_authority_cleanup_done(client->authority))
+		events |= EPOLLHUP;
+	return events;
 }
 
 static const struct file_operations capture_client_fops = {
