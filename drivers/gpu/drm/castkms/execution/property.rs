@@ -8,12 +8,15 @@ use super::{
 };
 use crate::display::Connector;
 use kernel::{
-    drm::kms::connector::UnregisteredConnector,
+    drm::kms::connector::{
+        ReadOnlyBlobProperty,
+        UnregisteredConnector, //
+    },
     prelude::*,
     uapi, //
 };
 
-fn encode(description: Description) -> [u8; 16] {
+pub(super) fn encode(description: Description) -> [u8; 16] {
     let mut bytes = [0; 16];
     let profile = match description.profile {
         Profile::HostV1 => uapi::DRM_CASTKMS_EXECUTION_HOST_V1,
@@ -25,7 +28,10 @@ fn encode(description: Description) -> [u8; 16] {
 }
 
 /// Publish only the fixed initial profile; no runtime capability transition is exposed.
-pub(crate) fn attach(connector: &UnregisteredConnector<Connector>) -> Result {
+pub(super) fn attach(
+    connector: &UnregisteredConnector<Connector>,
+    description: Description,
+) -> Result<ReadOnlyBlobProperty<Connector>> {
     const { assert!(core::mem::size_of::<uapi::drm_castkms_execution>() == 16) };
-    connector.attach_static_blob_property(c"CASTKMS_EXECUTION", &encode(super::describe()))
+    connector.attach_readonly_blob_property(c"CASTKMS_EXECUTION", &encode(description))
 }

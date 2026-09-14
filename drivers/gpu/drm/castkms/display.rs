@@ -441,7 +441,7 @@ impl KmsDriver for Driver {
         )?;
         let connector =
             connector::UnregisteredConnector::<Connector>::new(dev, connector::Type::Virtual, ())?;
-        super::execution::property::attach(connector)?;
+        dev.execution.attach(connector)?;
         connector.attach_encoder(encoder)
     }
 

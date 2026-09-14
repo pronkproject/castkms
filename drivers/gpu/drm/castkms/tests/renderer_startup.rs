@@ -37,8 +37,10 @@ mod cases {
         check(matches!(startup.begin(), Err(EBUSY)))?;
         drop(second);
         let _third = startup.begin()?;
-        check(crate::execution::describe().profile == crate::execution::Profile::HostV1)?;
-        check(crate::execution::describe().generation == 1)?;
+        check(
+            fixture.drm.device().execution.describe().profile == crate::execution::Profile::HostV1,
+        )?;
+        check(fixture.drm.device().execution.describe().generation == 1)?;
         Ok(())
     }
 

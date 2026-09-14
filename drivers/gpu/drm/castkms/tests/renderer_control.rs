@@ -151,7 +151,7 @@ mod cases {
                 ),
                 Err(EOPNOTSUPP)
             ))?;
-            check(crate::execution::describe().profile == crate::execution::Profile::HostV1)
+            check(device.execution.describe().profile == crate::execution::Profile::HostV1)
         })
     }
 

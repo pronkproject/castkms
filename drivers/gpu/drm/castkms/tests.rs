@@ -46,6 +46,7 @@ mod configurations;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod display_control;
 mod generations;
+mod execution_publication;
 mod gem_budget;
 mod host_attempts;
 mod host_cache;

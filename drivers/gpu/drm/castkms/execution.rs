@@ -5,6 +5,7 @@
 pub(crate) mod host;
 
 pub(crate) mod property;
+pub(crate) mod publication;
 
 /// The initial renderer profile, before delegated execution is available.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,7 +20,7 @@ pub(crate) struct Description {
     pub(crate) generation: u64,
 }
 
-pub(crate) const fn describe() -> Description {
+const fn initial() -> Description {
     Description {
         profile: Profile::HostV1,
         generation: 1,
