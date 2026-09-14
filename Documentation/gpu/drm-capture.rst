@@ -5,9 +5,9 @@ DRM capture grants
 The experimental capture interface separates permission to receive a final
 output image from modesetting, source-buffer access and rendering. Its current
 public operations create a grant, describe an offered image configuration,
-and create or destroy streams. Image delivery is not yet exposed on the file.
-The interface assignments
-are development ABI, not upstream allocations.
+create or destroy streams, and register or remove destination storage. Image
+delivery is not yet exposed on the file. The interface assignments are
+development ABI, not upstream allocations.
 
 Issuing a grant
 ==============
@@ -113,5 +113,23 @@ transport-independent client registry, also used by direct kernel consumers.
 Drivers without capture leave the provider absent. This is not a requirement
 for native GPU drivers used by a userspace renderer, and it does not enable
 preparation or delegated rendering on another modesetting driver.
+
+Destination registration uses the same kernel and file boundary. The generic
+description borrows up to four DMA-BUF image planes; shared validation checks
+metadata shape and each export's write access. Providers validate the complete
+format/modifier layout and resource limits and acquire their own references.
+Rust ``Destination`` borrows the buffers, and ``ClientDestination`` retains a
+file-backed cleanup obligation without acquiring revocation ownership.
+
+The input-only destination ioctls resolve all descriptors before admission.
+Repeated numbers in one request use the first resolved allocation, and every
+temporary reference is released after the provider returns. CastKMS accepts
+single-plane HOST_V1 images through its existing checked image and client
+registry. It currently bounds registrations to 16 per client and allocations
+to 16 MiB each, independently of stream request depth and private result storage.
+These operations do not queue a capture or deliver pixels. Unregistering a
+name is not storage revocation or GPU completion, and cleanup remains available
+after capture revocation. Registration does not guarantee that a later exporter
+mapping or GPU import will succeed.
 
 .. kernel-doc:: include/uapi/drm/drm_capture.h
