@@ -9,7 +9,8 @@ use super::{
 use crate::{
     drm::capture::{
         Description,
-        Destination, //
+        Destination,
+        Readiness, //
     },
     error::from_err_ptr,
     fs::File,
@@ -33,6 +34,15 @@ use core::{
 /// throughout the transferred lifetime. The vtable macro selects the local module.
 #[vtable]
 pub unsafe trait ClientOwner: Send + 'static {
+    /// Supply a notification to retain independently of this owner's mutable state.
+    ///
+    /// Called once before the client file is published, never during polling. The file
+    /// takes its own native reference before this borrow ends. Publish availability only
+    /// after updating the result queue, and clear it when no terminal records remain.
+    fn readiness(&self) -> Option<&Readiness> {
+        None
+    }
+
     /// Describe a currently authorized offer without allocating images or reading sources.
     ///
     /// Native dispatch serializes calls and retains this owner through their completion.
@@ -87,7 +97,11 @@ impl<O: ClientOwner> Callbacks<O> {
     const OPS: bindings::drm_capture_client_owner_ops = bindings::drm_capture_client_owner_ops {
         owner: crate::module::this_module::<O::OwnerModule>().as_ptr(),
         release: Some(Self::release),
-        get_readiness: None,
+        get_readiness: if O::HAS_READINESS {
+            Some(Self::get_readiness)
+        } else {
+            None
+        },
         describe: if O::HAS_DESCRIBE {
             Some(Self::describe)
         } else {
@@ -114,6 +128,19 @@ impl<O: ClientOwner> Callbacks<O> {
             None
         },
     };
+
+    unsafe extern "C" fn get_readiness(data: *mut c_void) -> *mut bindings::drm_capture_readiness {
+        // SAFETY: Creation exclusively owns the initialized KBox<O> before file publication.
+        // No other file callback can run until this call returns.
+        let owner = unsafe { &*data.cast::<O>() };
+        match owner.readiness() {
+            Some(readiness) => {
+                let retained: ARef<Readiness> = readiness.into();
+                ARef::into_raw(retained).cast().as_ptr()
+            }
+            None => core::ptr::null_mut(),
+        }
+    }
 
     unsafe extern "C" fn release(data: *mut c_void) {
         // SAFETY: Creation transfers one initialized KBox<O> on success. Native final file
