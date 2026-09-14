@@ -7,6 +7,7 @@
 
 struct drm_capture_authority;
 struct drm_capture_destination;
+struct drm_capture_readiness;
 struct file;
 struct module;
 
@@ -21,6 +22,9 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
  * struct drm_capture_client_owner_ops - lifetime retained by a capture client file
  * @owner: module containing callbacks and the transferred data's destruction code
  * @release: destroy transferred client state outside authority locks
+ * @get_readiness: optionally transfer one owned notification reference at file
+ *                 creation, or return NULL when result notifications are absent;
+ *                 called once before publication, never from poll
  * @describe: optionally describe the currently offered final-image configuration;
  *            zero succeeds, a negative errno fails without publishing output
  * @open_stream: optionally open offer under a new nonzero caller-supplied stream
@@ -46,6 +50,7 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
 struct drm_capture_client_owner_ops {
 	struct module *owner;
 	void (*release)(void *data);
+	struct drm_capture_readiness *(*get_readiness)(void *data);
 	int (*describe)(void *data, struct drm_capture_description *description);
 	int (*open_stream)(void *data, u64 id, u64 offer, u32 capacity);
 	int (*close_stream)(void *data, u64 id);
@@ -61,7 +66,11 @@ struct drm_capture_client_owner_ops {
  * performs normal authority cleanup. Cloned files share one client lifetime.
  *
  * Success consumes data; failure leaves it owned by the caller. The file pins
- * ops->owner independently of the authority. All operations may sleep. The file
+ * ops->owner before calling get_readiness. Any notification reference returned
+ * by that callback is consumed even when file allocation subsequently fails.
+ * The callback must return an owned reference or NULL, never an error pointer.
+ *
+ * The module pin is independent of the authority. All operations may sleep. The file
  * observes completed revocation through poll and offers a description ioctl;
  * it exposes neither pixel operations nor DRM primary-node dispatch. HUP is
  * not GPU completion.
@@ -70,6 +79,16 @@ struct drm_capture_client_owner_ops {
 struct file *drm_capture_client_file_create(
 	struct drm_capture_authority *authority,
 	const struct drm_capture_client_owner_ops *ops, void *data);
+
+/*
+ * Obtain an owned readiness reference from a retained client file without
+ * invoking its provider. A different endpoint returns -EINVAL; no notification
+ * returns -EOPNOTSUPP. The reference survives file release and revocation, but
+ * observes only result availability, not permission or ownership of results.
+ * The caller must put the reference when finished, including after removing
+ * any waiters registered on its wait queue.
+ */
+struct drm_capture_readiness *drm_capture_client_get_readiness(struct file *file);
 
 /*
  * Describe through an owned client file without accessing userspace memory.
