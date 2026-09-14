@@ -471,6 +471,47 @@ void drm_master_put(struct drm_master **master)
 EXPORT_SYMBOL(drm_master_put);
 
 /**
+ * drm_master_lock_current_identity - stabilize a master's current lease root
+ * @master: retained master belonging to a live device
+ *
+ * Hold only the device master mutex on success. This establishes current root
+ * identity, not object registration, lease membership or pixel permission.
+ * An operation may acquire modeset locks next, then the object-ID mutex for
+ * object checks. Do not acquire modeset locks while holding the object-ID mutex.
+ *
+ * Context: May sleep. Call without master, modeset or object-ID locks held.
+ * Returns: True with the master mutex held, or false with no lock held.
+ */
+bool drm_master_lock_current_identity(struct drm_master *master)
+{
+	struct drm_device *dev = master->dev;
+
+	if (!drm_core_check_feature(dev, DRIVER_MODESET))
+		return false;
+	mutex_lock(&dev->master_mutex);
+	if (drm_lease_owner(master) != dev->master) {
+		mutex_unlock(&dev->master_mutex);
+		return false;
+	}
+	return true;
+}
+EXPORT_SYMBOL_GPL(drm_master_lock_current_identity);
+
+/**
+ * drm_master_unlock_current_identity - release a stabilized lease root
+ * @master: master passed to successful drm_master_lock_current_identity()
+ *
+ * Context: The acquiring task calls exactly once, after releasing inner locks.
+ * The retained master and its device must remain alive throughout.
+ */
+void drm_master_unlock_current_identity(struct drm_master *master)
+{
+	lockdep_assert_held_once(&master->dev->master_mutex);
+	mutex_unlock(&master->dev->master_mutex);
+}
+EXPORT_SYMBOL_GPL(drm_master_unlock_current_identity);
+
+/**
  * drm_master_lock_current - stabilize a master's current device and lease access
  * @master: retained master belonging to a live device
  *
@@ -496,14 +537,8 @@ bool drm_master_lock_current(struct drm_master *master)
 {
 	struct drm_device *dev = master->dev;
 
-	if (!drm_core_check_feature(dev, DRIVER_MODESET))
+	if (!drm_master_lock_current_identity(master))
 		return false;
-
-	mutex_lock(&dev->master_mutex);
-	if (drm_lease_owner(master) != dev->master) {
-		mutex_unlock(&dev->master_mutex);
-		return false;
-	}
 	mutex_lock(&dev->mode_config.idr_mutex);
 	return true;
 }
@@ -523,7 +558,7 @@ void drm_master_unlock_current(struct drm_master *master)
 	lockdep_assert_held_once(&dev->master_mutex);
 	lockdep_assert_held_once(&dev->mode_config.idr_mutex);
 	mutex_unlock(&dev->mode_config.idr_mutex);
-	mutex_unlock(&dev->master_mutex);
+	drm_master_unlock_current_identity(master);
 }
 EXPORT_SYMBOL_GPL(drm_master_unlock_current);
 

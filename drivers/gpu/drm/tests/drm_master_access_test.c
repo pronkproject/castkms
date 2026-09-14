@@ -83,6 +83,45 @@ static bool holds_plane(struct drm_master *master, struct drm_plane *plane)
 	return held;
 }
 
+static void identity_allows_modeset_before_object_checks(struct kunit *test)
+{
+	struct access_fixture *f = new_fixture(test);
+	bool objects_unlocked, held = false;
+	int ret;
+
+	KUNIT_ASSERT_TRUE(test, drm_master_lock_current_identity(f->root));
+	objects_unlocked = mutex_trylock(&f->dev->mode_config.idr_mutex);
+	if (objects_unlocked)
+		mutex_unlock(&f->dev->mode_config.idr_mutex);
+	ret = drm_modeset_lock_single_interruptible(&f->plane->mutex);
+	if (!ret) {
+		mutex_lock(&f->dev->mode_config.idr_mutex);
+		held = drm_master_holds_object_locked(f->root, &f->plane->base);
+		mutex_unlock(&f->dev->mode_config.idr_mutex);
+		drm_modeset_unlock(&f->plane->mutex);
+	}
+	drm_master_unlock_current_identity(f->root);
+	KUNIT_EXPECT_TRUE(test, objects_unlocked);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_TRUE(test, held);
+}
+
+static void stale_identity_does_not_retain_the_master_lock(struct kunit *test)
+{
+	struct access_fixture *f = new_fixture(test);
+	bool acquired, unlocked;
+
+	clear_current(f->dev);
+	acquired = drm_master_lock_current_identity(f->root);
+	if (acquired)
+		drm_master_unlock_current_identity(f->root);
+	unlocked = mutex_trylock(&f->dev->master_mutex);
+	if (unlocked)
+		mutex_unlock(&f->dev->master_mutex);
+	KUNIT_EXPECT_FALSE(test, acquired);
+	KUNIT_EXPECT_TRUE(test, unlocked);
+}
+
 static void current_root_controls_registered_object(struct kunit *test)
 {
 	struct access_fixture *f = new_fixture(test);
@@ -157,6 +196,8 @@ static void registration_requires_the_same_object(struct kunit *test)
 }
 
 static struct kunit_case cases[] = {
+	KUNIT_CASE(identity_allows_modeset_before_object_checks),
+	KUNIT_CASE(stale_identity_does_not_retain_the_master_lock),
 	KUNIT_CASE(current_root_controls_registered_object),
 	KUNIT_CASE(retained_root_loses_current_access),
 	KUNIT_CASE(lease_revocation_changes_object_access),
