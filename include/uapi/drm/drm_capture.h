@@ -92,4 +92,57 @@ struct drm_capture_describe {
 
 #define DRM_IOCTL_CAPTURE_DESCRIBE DRM_IOR(0x00, struct drm_capture_describe)
 
+/**
+ * struct drm_capture_create_stream - Open an offered configuration in a client
+ * @id: Caller-supplied nonzero stream name, greater than all admitted names.
+ * @offer: Name returned by the latest successful description query.
+ * @capacity: Nonzero maximum outstanding requests, at most the offered limit.
+ * @flags: Must be zero.
+ * @reserved: Must be zero.
+ *
+ * Valid only on a capture-client descriptor. All fields are input. Success
+ * returns zero after the provider registers the stream; no descriptor or
+ * output is published. Failure retains no new stream and does not consume
+ * the name. Duplicate descriptors share one client and its stream namespace.
+ *
+ * The provider rechecks current permission and the exact offered configuration.
+ * A replaced offer or non-increasing name returns ESTALE, unavailable storage
+ * EBUSY, excessive capacity E2BIG, and revoked authority EKEYREVOKED. An admitted
+ * UINT64_MAX name exhausts further creation with EOVERFLOW, without preventing
+ * cleanup. Zero names or capacity return EINVAL.
+ *
+ * Each stream retains its own configuration and bounded resources. Querying
+ * another offer does not replace existing streams. Creation does not queue a
+ * frame or authorize future pixels; later requests recheck their permission.
+ */
+struct drm_capture_create_stream {
+	__u64 id;
+	__u64 offer;
+	__u32 capacity;
+	__u32 flags;
+	__u64 reserved;
+};
+
+/**
+ * struct drm_capture_destroy_stream - Release a named stream in a client
+ * @id: Nonzero name of a stream admitted on the same capture client.
+ * @reserved: Must be zero.
+ *
+ * All fields are input. Success removes the stream and abandons its pending
+ * delivery, without revoking sibling streams or canceling shared rendering.
+ * The name remains unavailable for reuse. Missing names return ENOENT; zero
+ * returns EINVAL. Cleanup remains available after revocation or a modeset.
+ * Final client-file release also releases its remaining streams.
+ *
+ * Successful destruction is not a native completion or buffer-release fence.
+ * Previously accepted execution retains its independent completion ownership.
+ */
+struct drm_capture_destroy_stream {
+	__u64 id;
+	__u64 reserved;
+};
+
+#define DRM_IOCTL_CAPTURE_CREATE_STREAM DRM_IOW(0x01, struct drm_capture_create_stream)
+#define DRM_IOCTL_CAPTURE_DESTROY_STREAM DRM_IOW(0x02, struct drm_capture_destroy_stream)
+
 #endif
