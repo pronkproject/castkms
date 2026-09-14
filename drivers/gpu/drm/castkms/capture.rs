@@ -6,6 +6,7 @@
 //! current permission and the image's authorized scope before providing either input.
 
 pub(crate) mod budget;
+pub(crate) mod destination;
 pub(crate) mod grants;
 pub(crate) mod host;
 pub(crate) mod host_stream;
