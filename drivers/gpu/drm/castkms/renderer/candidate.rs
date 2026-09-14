@@ -4,6 +4,7 @@
 
 use super::permission::Access;
 use crate::{
+    display_control,
     execution::{
         self,
         Description, //
@@ -66,13 +67,23 @@ impl Candidate {
     /// Success is an observation only. A later operation must perform its own validation
     /// and admission under the locks governing that operation.
     pub(crate) fn validate(&self) -> Result {
+        self.with_current_control(|_| Ok(()))
+    }
+
+    /// Observe display metadata after checking the candidate under stable control.
+    /// The startup lock is not retained, and no later operation is reserved.
+    fn with_current_control<R>(
+        &self,
+        f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
+    ) -> Result<R> {
         self.access.with_current(|current| {
             if current.configuration() != &self.configuration
                 || execution::describe() != self.execution
             {
                 return Err(ESTALE);
             }
-            self.resources.check()
+            self.resources.check()?;
+            f(current)
         })
     }
 
