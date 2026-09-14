@@ -53,16 +53,22 @@ static const struct file_operations capture_client_fops = {
 	.compat_ioctl = compat_ptr_ioctl,
 };
 
+static struct drm_capture_client *capture_client_from_file(struct file *file)
+{
+	if (!file || file->f_op != &capture_client_fops)
+		return NULL;
+	return file->private_data;
+}
+
 int drm_capture_client_describe(struct file *file,
 			       struct drm_capture_description *description)
 {
 	struct drm_capture_description result = {};
-	struct drm_capture_client *client;
+	struct drm_capture_client *client = capture_client_from_file(file);
 	int ret;
 
-	if (!file || file->f_op != &capture_client_fops || !description)
+	if (!client || !description)
 		return -EINVAL;
-	client = file->private_data;
 	mutex_lock(&client->lock);
 	if (drm_capture_authority_revoked(client->authority)) {
 		ret = -EKEYREVOKED;
@@ -87,13 +93,49 @@ unlock:
 }
 EXPORT_SYMBOL_GPL(drm_capture_client_describe);
 
+int drm_capture_client_open_stream(struct file *file, u64 id, u64 offer, u32 capacity)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+	int ret;
+
+	if (!client || !id || !offer || !capacity)
+		return -EINVAL;
+	mutex_lock(&client->lock);
+	if (drm_capture_authority_revoked(client->authority))
+		ret = -EKEYREVOKED;
+	else if (!client->ops->open_stream || !client->ops->close_stream)
+		ret = -EOPNOTSUPP;
+	else
+		ret = client->ops->open_stream(client->data, id, offer, capacity);
+	mutex_unlock(&client->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_open_stream);
+
+int drm_capture_client_close_stream(struct file *file, u64 id)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+	int ret;
+
+	if (!client || !id)
+		return -EINVAL;
+	mutex_lock(&client->lock);
+	/* Cleanup is independent of permission to admit another capture operation. */
+	if (!client->ops->close_stream)
+		ret = -EOPNOTSUPP;
+	else
+		ret = client->ops->close_stream(client->data, id);
+	mutex_unlock(&client->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_close_stream);
+
 struct drm_capture_authority *drm_capture_client_authority(struct file *file)
 {
-	struct drm_capture_client *client;
+	struct drm_capture_client *client = capture_client_from_file(file);
 
-	if (!file || file->f_op != &capture_client_fops)
+	if (!client)
 		return NULL;
-	client = file->private_data;
 	return client->authority;
 }
 

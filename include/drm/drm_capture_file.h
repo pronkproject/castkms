@@ -22,12 +22,19 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
  * @release: destroy transferred client state outside authority locks
  * @describe: optionally describe the currently offered final-image configuration;
  *            zero succeeds, a negative errno fails without publishing output
+ * @open_stream: optionally open offer under a new nonzero caller-supplied stream
+ *               id and positive capacity; failure must not consume the name
+ * @close_stream: optionally release one named stream, including after revocation;
+ *                closing must not make its name available for reuse
  *
  * Operations remain immutable until release. The client file does not explicitly
  * revoke its authority before release; provider cleanup must respect other clients.
- * Describe calls are serialized for each client, outside authority admission
- * locks. The callback may sleep and must check current provider permission.
- * It must not reenter operations on the same client. Final release runs after
+ * Operation calls are serialized for each client, outside authority admission
+ * locks. The callbacks may sleep. Describe and open must check current provider
+ * permission. Close must permit cleanup without requiring pixel permission.
+ * Open must serialize resource registration with authority revocation; the
+ * client mutex does not exclude that separate lifetime transition.
+ * Callbacks must not reenter operations on the same client. Final release runs after
  * every callback has returned; mutable client data needs no additional lock
  * when accessed only through these callbacks.
  */
@@ -35,6 +42,8 @@ struct drm_capture_client_owner_ops {
 	struct module *owner;
 	void (*release)(void *data);
 	int (*describe)(void *data, struct drm_capture_description *description);
+	int (*open_stream)(void *data, u64 id, u64 offer, u32 capacity);
+	int (*close_stream)(void *data, u64 id);
 };
 
 /*
@@ -64,6 +73,26 @@ struct file *drm_capture_client_file_create(
  */
 int drm_capture_client_describe(struct file *file,
 			       struct drm_capture_description *description);
+
+/*
+ * Open a named stream through a retained client file, without userspace memory
+ * access. The provider must validate the offered configuration, current
+ * permission, increasing unused stream ID and capacity before admission.
+ * Success is zero after admission, with no output publication left to fail.
+ * Opening requires both open and close callbacks, otherwise -EOPNOTSUPP.
+ * Failure must not consume the ID or retain an unreported stream. IDs are
+ * client-local, never reused, and not authority. Call outside DRM, authority,
+ * provider lifecycle and reservation locks.
+ */
+int drm_capture_client_open_stream(struct file *file, u64 id, u64 offer, u32 capacity);
+
+/*
+ * Close through the provider even after authority revocation. No new pixel
+ * access is authorized. The provider owns stream cleanup and must preserve
+ * outstanding native completion duties independently of result delivery.
+ * Retain file and call outside locks needed by cleanup. No descriptor is closed.
+ */
+int drm_capture_client_close_stream(struct file *file, u64 id);
 
 /**
  * struct drm_capture_control_owner_ops - lifetime retained by a revocation file
