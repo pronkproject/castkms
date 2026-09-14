@@ -92,6 +92,17 @@ impl<T> Resources<T> {
         self.values[index].as_mut().ok_or(EIO)
     }
 
+    /// Visit retained payloads without changing their registered names or occupied slots.
+    ///
+    /// Each mutable borrow ends before visiting the next payload. The table's exclusive
+    /// borrow prevents namespace mutation during traversal. Empty slots are not visited;
+    /// traversal order is unspecified and conveys no admission or completion ordering.
+    pub fn for_each_mut(&mut self, mut visit: impl FnMut(&mut T)) {
+        for value in self.values.iter_mut().flatten() {
+            visit(value);
+        }
+    }
+
     /// Transfer cleanup to the caller without making the name available again.
     pub fn remove(&mut self, id: u64) -> Result<T> {
         // SAFETY: Exclusive access permits removal and transfer of the corresponding payload.

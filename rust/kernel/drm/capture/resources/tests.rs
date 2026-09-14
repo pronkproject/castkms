@@ -24,6 +24,31 @@ mod cases {
     use super::*;
 
     #[test]
+    fn visiting_payloads_preserves_names_and_skips_removed_slots() -> Result {
+        let mut table = Resources::new(3)?;
+        let mut visits = 0;
+        table.for_each_mut(|_| visits += 1);
+        check(visits == 0)?;
+        table.insert(10, || Ok(1))?;
+        table.insert(20, || Ok(2))?;
+        table.insert(30, || Ok(3))?;
+        check(table.remove(20)? == 2)?;
+        table.for_each_mut(|value| {
+            visits += 1;
+            *value += 10;
+        });
+        check(visits == 2)?;
+        check(*table.get(10)? == 11)?;
+        check(*table.get(30)? == 13)?;
+        check(table.get(20) == Err(ENOENT))?;
+        check(table.insert(20, || Ok(4)) == Err(ESTALE))?;
+        table.insert(40, || Ok(4))?;
+        let mut sum = 0;
+        table.for_each_mut(|value| sum += *value);
+        check(sum == 28)
+    }
+
+    #[test]
     fn checking_does_not_reserve_a_name_or_capacity() -> Result {
         let mut table = Resources::new(1)?;
         check(table.check(0) == Err(EINVAL))?;
