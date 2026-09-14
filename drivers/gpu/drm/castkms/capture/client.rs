@@ -15,6 +15,7 @@ use super::{
     provider::Capture, //
 };
 use kernel::{
+    dma_fence::Fence,
     drm::capture::{
         ClientOwner,
         Completion,
@@ -34,7 +35,6 @@ pub(crate) struct Client {
     negotiation: Negotiation,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Client {
     pub(crate) fn new(capture: Capture) -> Result<Self> {
         Ok(Self {
@@ -106,6 +106,16 @@ impl Client {
 // SAFETY: The callback trampolines, client destructor and dependencies belong to CastKMS.
 #[vtable]
 unsafe impl ClientOwner for Client {
+    fn queue_output(
+        &mut self,
+        stream: u64,
+        use_id: u64,
+        destination: u64,
+        reuse: Option<&Fence>,
+    ) -> Result {
+        self.queue_to(stream, use_id, destination, reuse.map(Into::into))
+    }
+
     fn dequeue(&mut self, stream: u64, publish: impl FnOnce(Completion) -> Result) -> Result {
         self.stream(stream)?.dequeue(|completion| {
             publish(Completion::new(

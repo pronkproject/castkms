@@ -199,7 +199,6 @@ impl Owner {
 /// dropping its [`Owner`] closes all surviving handles and drains any accepted request.
 /// A handle grants no permission to deliver the resulting pixels to a capture recipient.
 #[derive(Clone)]
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Handle {
     worker: Arc<Worker>,
 }
