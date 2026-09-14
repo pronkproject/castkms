@@ -3,7 +3,9 @@
 #include <linux/fcntl.h>
 #include <linux/dma-buf.h>
 #include <linux/file.h>
+#include <linux/sync_file.h>
 #include <linux/uaccess.h>
+#include <drm/drm_capture_completion.h>
 #include <drm/drm_capture_destination.h>
 #include <drm/drm_capture_grant.h>
 #include <drm/drm_capture_file.h>
@@ -114,6 +116,68 @@ static long capture_unregister_destination(struct file *file, void __user *arg)
 	return drm_capture_client_unregister_destination(file, input.id);
 }
 
+static long capture_queue_output(struct file *file, void __user *arg)
+{
+	struct drm_capture_queue_output input;
+	struct dma_fence *reuse = NULL;
+	int ret;
+
+	if (copy_from_user(&input, arg, sizeof(input)))
+		return -EFAULT;
+	if (input.flags || input.reserved || input.reuse_fd < -1)
+		return -EINVAL;
+	if (input.reuse_fd >= 0) {
+		reuse = sync_file_get_fence(input.reuse_fd);
+		if (!reuse)
+			return -EINVAL;
+	}
+	ret = drm_capture_client_queue_output(file, input.stream, input.use_id,
+					      input.destination, reuse);
+	dma_fence_put(reuse);
+	return ret;
+}
+
+static int capture_publish_result(void *data, const struct drm_capture_completion *completion)
+{
+	const struct drm_capture_dequeue *input = data;
+	struct drm_capture_result output = {
+		.use_id = completion->use_id,
+		.completed_at_ns = ktime_to_ns(completion->completed_at),
+		.status = completion->status,
+	};
+
+	if (copy_to_user(u64_to_user_ptr(input->result), &output, sizeof(output)))
+		return -EFAULT;
+	return 0;
+}
+
+static long capture_dequeue(struct file *file, void __user *arg)
+{
+	struct drm_capture_dequeue input;
+	struct drm_capture_completion_sink sink = {
+		.publish = capture_publish_result,
+		.data = &input,
+	};
+
+	if (copy_from_user(&input, arg, sizeof(input)))
+		return -EFAULT;
+	if (input.reserved)
+		return -EINVAL;
+	/* The synchronous publisher completes fallible copyout before acknowledgment. */
+	return drm_capture_client_dequeue(file, input.stream, &sink);
+}
+
+static long capture_cancel(struct file *file, void __user *arg)
+{
+	struct drm_capture_cancel input;
+
+	if (copy_from_user(&input, arg, sizeof(input)))
+		return -EFAULT;
+	if (input.reserved)
+		return -EINVAL;
+	return drm_capture_client_cancel(file, input.stream, input.use_id);
+}
+
 long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	void __user *pointer = (void __user *)arg;
@@ -129,6 +193,12 @@ long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long
 		return capture_register_destination(file, pointer);
 	case DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION:
 		return capture_unregister_destination(file, pointer);
+	case DRM_IOCTL_CAPTURE_QUEUE_OUTPUT:
+		return capture_queue_output(file, pointer);
+	case DRM_IOCTL_CAPTURE_DEQUEUE:
+		return capture_dequeue(file, pointer);
+	case DRM_IOCTL_CAPTURE_CANCEL:
+		return capture_cancel(file, pointer);
 	default:
 		return -ENOTTY;
 	}

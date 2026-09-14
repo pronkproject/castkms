@@ -379,7 +379,7 @@ retained host images. It receives a claimed job from the shared DRM capture
 code. The job's result storage cannot be read by a consumer until completion.
 Receiving a job does not itself establish permission to deliver a particular
 image: the caller must authorize both the image and recipient before using
-the adapter. Public capture remains disabled.
+the adapter. The public capture client uses that same authorization path.
 
 The adapter copies packed pixels and sets the unused fourth byte of every
 XRGB pixel to ``0xff`` before completing the job. The visible color components
@@ -416,8 +416,8 @@ waiting, and it copies the completed image outside the display policy locks.
 A returned request has a terminal result, which the caller must inspect for
 copy failure or revocation during delivery. Failure before delivery abandons
 the unreturned request and releases its queue credit. The adapter does not
-retry automatically, promise a frame rate, or provide the eventual asynchronous
-userspace interface. An inactive or unpublished output returns ``EAGAIN``.
+retry automatically or promise a frame rate. The asynchronous file interface
+uses independently queued attempts. An inactive or unpublished output returns ``EAGAIN``.
 An active blank scene produces ordinary authorized black pixels. Composition
 clears the entire reserved private allocation before reuse, checks the accepted
 configuration against the pool dimensions, and releases its synchronous claim
@@ -435,8 +435,9 @@ streams; replacing the worker permanently closes the old adapter's worker
 handle. Reopening explicitly avoids silently moving outstanding work to a
 different worker.
 
-These are private kernel operations. Exposing capture to userspace and selecting
-the supported HOST/GPU execution profile remain separate work.
+These kernel operations remain usable without descriptors. The anonymous capture
+client adapts queued host output; selecting a userspace GPU renderer remains an
+independent execution feature.
 
 Describing a stream before allocation
 ------------------------------------
@@ -460,8 +461,9 @@ shutdown still revoke descriptions retained by a caller.
 ``host_stream::Stream::from_description()`` connects the checked stream to
 the same private compositor used by immediate kernel capture. Descriptions
 do not promise that a future source image is valid or host-readable; the
-executor still checks that image before composition. No source descriptor,
-public capture ABI or GPU execution profile is exposed by these operations.
+executor still checks that image before composition. No source descriptor or
+GPU execution profile is exposed by these operations. The anonymous client
+separately assigns offer names for the public description interface.
 
 Grants across device shutdown
 ----------------------------
@@ -544,8 +546,33 @@ Poll on the control file reports completion of authority revocation,
 including device shutdown. Ordinary display changes or loss of current
 display control need not terminate a durable grant; current permission
 checks and stream revocation enforce those restrictions separately. The
-public grant-creation operation preserves these same ownership rules. Public
-image negotiation and delivery are not yet exposed on the capture file.
+public grant-creation operation preserves these same ownership rules. The
+capture file separately supports image negotiation, registered destinations,
+queued output, cancellation and terminal dequeue through :doc:`drm-capture`.
+
+Delivering to registered destinations
+------------------------------------
+
+The initial public path captures through private host storage and then copies
+into a caller-owned linear destination. It is not a GPU-to-GPU implementation.
+Layout, current permission and known source aliases are checked before output
+admission. Request depth and destination registrations have independent bounds;
+neither encodes a receiver's frame rate or transport window.
+
+Queue observation and destination access are separate. The bounded native
+delivery queue retains private pixels, destination storage and the provider
+module while mapping, cache maintenance and copying run outside the client's
+queue mutex. Readiness snapshots do not make exporter access nonblocking: a
+late implicit dependency may still stall one detached delivery. Other queues
+and final file release do not wait for that destination fence.
+
+Cancellation requests are observed again after exporter acquisition and between
+rows. Explicit stream destruction returns ``EBUSY`` while detached access is
+active; successful destruction acknowledges that stream's writes have ended.
+Final file release abandons observation without that acknowledgment. Callers
+must not recycle its destination merely because its capture descriptor closed.
+Completed results retain their request slots until dequeue successfully copies
+the terminal metadata to the caller. No source or private image is exported.
 
 Testing in a disposable virtual machine
 --------------------------------------
@@ -555,6 +582,7 @@ The userspace smoke tests require the libdrm development headers and library::
     make -C tools/testing/selftests/drm_castkms
     tools/testing/selftests/drm_castkms/execution /dev/dri/cardN
     tools/testing/selftests/drm_castkms/capture-grant /dev/dri/cardN
+    tools/testing/selftests/drm_castkms/capture-output /dev/dri/cardN
     tools/testing/selftests/drm_castkms/modeset /dev/dri/cardN
 
 Choose the Rust CastKMS node explicitly in an otherwise unused test VM. The
@@ -640,7 +668,11 @@ successor file, and finally disables the output and checks framebuffer release.
 These cases exercise the real paths that supply attribution evidence. They
 observe ordinary DRM state, not the driver's private scene owner, so passing
 them does not establish that historical ownership was resolved correctly.
-None of the userspace smoke tests adds a private ioctl or exports pixels.
+Those attribution tests do not inspect captured pixels. The separate
+``capture-output`` test uses the shared final-image interface to verify pixel
+delivery, native reuse-fence lookup, alias rejection, failed-copyout retention,
+cancellation and dequeue after revocation. It does not qualify GPU composition
+or an installed media pipeline.
 
 With ``CONFIG_DRM_CASTKMS_KUNIT_TEST``, a separate set of kernel tests creates
 unregistered CastKMS devices and submits transactions through their real atomic
