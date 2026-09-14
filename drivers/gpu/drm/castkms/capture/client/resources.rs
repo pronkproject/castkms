@@ -69,6 +69,17 @@ impl<T> Resources<T> {
             .ok_or(ENOENT)
     }
 
+    pub(super) fn get(&self, id: u64) -> Result<&T> {
+        if id == 0 {
+            return Err(EINVAL);
+        }
+        self.entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| &entry.value)
+            .ok_or(ENOENT)
+    }
+
     /// Transfer cleanup to the caller without making the name available again.
     pub(super) fn remove(&mut self, id: u64) -> Result<T> {
         if id == 0 {

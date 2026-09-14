@@ -2,6 +2,7 @@
 
 //! Capture file operations above provider permission and kernel negotiation.
 
+mod destinations;
 mod resources;
 mod stream;
 
@@ -9,6 +10,7 @@ pub(crate) use stream::Stream;
 
 use super::{
     budget::STREAM_LIMIT,
+    destination::Image,
     host_queue::Queue,
     negotiation::Negotiation,
     provider::Capture, //
@@ -18,7 +20,8 @@ use kernel::{
         ClientOwner,
         Description, //
     },
-    prelude::*, //
+    prelude::*,
+    sync::Arc, //
 };
 use resources::Resources;
 
@@ -26,6 +29,7 @@ use resources::Resources;
 /// No grantor or creating DRM file is retained by this client.
 pub(crate) struct Client {
     streams: Resources<Queue>,
+    destinations: destinations::Destinations,
     negotiation: Negotiation,
 }
 
@@ -34,6 +38,7 @@ impl Client {
     pub(crate) fn new(capture: Capture) -> Result<Self> {
         Ok(Self {
             streams: Resources::new(STREAM_LIMIT)?,
+            destinations: destinations::Destinations::new()?,
             negotiation: Negotiation::new(capture),
         })
     }
@@ -66,6 +71,32 @@ impl Client {
     pub(crate) fn close_stream(&mut self, id: u64) -> Result {
         drop(self.streams.remove(id)?);
         Ok(())
+    }
+
+    /// Retain caller-owned output storage without queuing capture or mapping pixels.
+    ///
+    /// The name belongs to this client, independently of stream names. Registration
+    /// checks current capture permission and the retained buffer's export write access.
+    /// It does not exclude another native or CPU user of the allocation.
+    pub(crate) fn register_destination(&mut self, id: u64, image: Image) -> Result {
+        self.negotiation.check_capture()?;
+        self.destinations.insert(id, image)
+    }
+
+    /// Retain the exact registered image for an independently bounded operation.
+    ///
+    /// This transfers storage ownership only, not permission to capture future pixels.
+    /// The operation must validate its stream and arrange destination reuse separately.
+    pub(crate) fn destination(&self, id: u64) -> Result<Arc<Image>> {
+        self.destinations.get(id)
+    }
+
+    /// Forget a name without revoking storage or canceling already accepted uses.
+    ///
+    /// Cleanup remains available after revocation. Surviving operation references keep
+    /// the original image alive; its name is never reused during this client lifetime.
+    pub(crate) fn unregister_destination(&mut self, id: u64) -> Result {
+        self.destinations.remove(id)
     }
 }
 

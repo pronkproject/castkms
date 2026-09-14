@@ -26,6 +26,24 @@ impl<T: KmsDriver> TestDevice<T> {
     /// client and its handles close before return, leaving the independently retained DMA-BUF.
     /// Pixels are uninitialized, and the fixture grants no capture authority over other buffers.
     pub fn export_dumb(&self, width: u32, height: u32, bpp: u32) -> Result<ARef<DmaBuf>> {
+        self.export_dumb_flags(width, height, bpp, bindings::O_RDWR)
+    }
+
+    /// Export a fresh allocation whose native file has no write access.
+    ///
+    /// Allocation and teardown follow [`Self::export_dumb`]. No writable export of this
+    /// object is created first, so the native PRIME cache cannot supply a different mode.
+    pub fn export_dumb_read_only(&self, width: u32, height: u32, bpp: u32) -> Result<ARef<DmaBuf>> {
+        self.export_dumb_flags(width, height, bpp, bindings::O_RDONLY)
+    }
+
+    fn export_dumb_flags(
+        &self,
+        width: u32,
+        height: u32,
+        bpp: u32,
+        flags: u32,
+    ) -> Result<ARef<DmaBuf>> {
         let client = Client::new(self)?;
         let device = self.device().as_raw();
         let file = client.file().as_raw();
@@ -42,7 +60,7 @@ impl<T: KmsDriver> TestDevice<T> {
         // SAFETY: Export the new handle through native PRIME's file/cache protocol. It returns
         // an owned DMA-BUF reference; no descriptor is installed in a task's file table.
         let raw = from_err_ptr(unsafe {
-            bindings::drm_gem_prime_handle_to_dmabuf(device, file, args.handle, bindings::O_RDWR)
+            bindings::drm_gem_prime_handle_to_dmabuf(device, file, args.handle, flags)
         })?;
         let raw = NonNull::new(raw).ok_or(ENOMEM)?;
         // SAFETY: Native export returned one reference to an initialized DMA-BUF.

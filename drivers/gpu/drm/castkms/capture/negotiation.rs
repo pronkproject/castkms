@@ -46,6 +46,11 @@ impl Negotiation {
         }
     }
 
+    /// Recheck capture permission without changing this client's offered configuration.
+    pub(super) fn check_capture(&self) -> Result {
+        self.capture.describe_stream().map(|_| ())
+    }
+
     /// Observe current permission before returning even an unchanged offer.
     ///
     /// Failure leaves the previous description intact but grants no right to use it.
