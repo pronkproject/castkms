@@ -9,8 +9,10 @@ pub(crate) use configuration::Configuration;
 use super::Driver;
 use core::num::NonZeroU64;
 use kernel::{
+    dma_resv::Reservation,
     drm::{
         auth::MasterRef,
+        gem::BaseObject,
         kms::framebuffer::{
             dependencies::Dependencies,
             FramebufferRef, //
@@ -73,6 +75,18 @@ impl Primary {
 }
 
 impl Scene {
+    /// Compare backing reservations without mapping pixels or acquiring a source read.
+    pub(super) fn uses_reservation(&self, reservation: &Reservation) -> Result<bool> {
+        if let Some(primary) = &self.primary {
+            for plane in 0..primary.framebuffer.plane_count() {
+                if core::ptr::eq(primary.framebuffer.object_at(plane)?.reservation(), reservation) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn primary(&self) -> Option<&Primary> {
         self.primary.as_ref()
     }

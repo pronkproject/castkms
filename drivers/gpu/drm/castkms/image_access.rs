@@ -14,6 +14,7 @@ use crate::{
     Driver, //
 };
 use kernel::{
+    dma_buf::DmaBuf,
     drm::auth::MasterRef,
     prelude::*, //
 };
@@ -45,6 +46,18 @@ impl<'a> Current<'a> {
 
     pub(crate) fn layout(&self) -> Layout {
         self.layout
+    }
+
+    /// Reject storage known to overlap the currently displayed source.
+    ///
+    /// Shared reservations identify aliases even through distinct exports or imports.
+    /// Different reservations do not prove distinct physical backing. This observation
+    /// neither reserves the destination nor prevents a later KMS update from selecting it.
+    pub(crate) fn check_destination(&self, buffer: &DmaBuf) -> Result {
+        if self.control.uses_reservation(buffer.reservation())? {
+            return Err(EINVAL);
+        }
+        Ok(())
     }
 
     /// Check independently completed pixels without confusing retention with permission.

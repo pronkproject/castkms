@@ -12,6 +12,7 @@ use crate::{
     Driver, //
 };
 use kernel::{
+    dma_resv::Reservation,
     drm::{
         auth::{
             CurrentMasterGuard,
@@ -152,6 +153,12 @@ pub(crate) struct Current<'a> {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Current<'_> {
+    /// Inspect current backing identity without returning scene storage or a source claim.
+    pub(crate) fn uses_reservation(&self, reservation: &Reservation) -> Result<bool> {
+        self.scene
+            .map_or(Ok(false), |scene| scene.uses_reservation(reservation))
+    }
+
     /// Compare generation identity, not framebuffer identity or mode equality.
     ///
     /// The caller must separately stabilize the native accepted source for a control change.
