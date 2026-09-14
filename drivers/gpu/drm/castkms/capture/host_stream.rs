@@ -3,6 +3,7 @@
 //! Kernel capture using the output's shared host compositor.
 
 mod pending;
+pub(crate) mod output;
 
 pub(crate) use pending::Pending;
 
