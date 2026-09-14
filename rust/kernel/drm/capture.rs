@@ -3,8 +3,8 @@
 //! Owned requests for kernel-controlled final-image capture.
 //!
 //! These wrappers manage private CPU result storage, not DRM pixel permission or GPU submission.
-//! Providers must establish the source and recipient policy before using a stream. Every operation,
-//! including destructors, requires a context that may sleep.
+//! Providers must establish the source and recipient policy before using a stream. Private stream
+//! operations, including destructors, require a context that may sleep.
 
 use crate::{
     error::{from_err_ptr, to_result},
@@ -22,10 +22,12 @@ mod destination;
 mod files;
 pub(crate) mod grant;
 mod range;
+mod readiness;
 mod selection;
 mod wait;
 mod resources;
 pub use resources::Resources;
+pub use readiness::Readiness;
 pub use files::FilePair;
 pub use description::Description;
 pub use destination::{Destination, DestinationPlane};
