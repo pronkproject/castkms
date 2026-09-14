@@ -33,6 +33,30 @@ mod cases {
     use super::*;
 
     #[test]
+    fn pending_work_and_retained_results_are_independent_observations() -> Result {
+        let mut queue = Queue::<bool, u32>::new(2)?;
+        check(!queue.has_pending() && !queue.has_results())?;
+        queue.queue(1, || Ok(false))?;
+        queue.queue(2, || Ok(false))?;
+        check(queue.has_pending() && !queue.has_results())?;
+        queue.cancel(1, |cancelled| {
+            *cancelled = true;
+            Ok(())
+        })?;
+        check(queue.has_pending() && !queue.has_results())?;
+        check(queue.advance(|cancelled| if *cancelled { Err(ECANCELED) } else { Ok(None) }) == 1)?;
+        check(queue.has_pending() && queue.has_results())?;
+        check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
+        check(queue.has_pending() && queue.has_results())?;
+        queue.dequeue(|completion| check(matches!(completion.result, Err(ECANCELED))))?;
+        check(queue.has_pending() && !queue.has_results())?;
+        check(queue.advance(|_| Ok(Some(42))) == 1)?;
+        check(!queue.has_pending() && queue.has_results())?;
+        queue.dequeue(|completion| check(*completion.result? == 42))?;
+        check(!queue.has_pending() && !queue.has_results())
+    }
+
+    #[test]
     fn cancellation_waits_for_terminal_observation_and_acknowledgment() -> Result {
         let mut queue = Queue::<bool, u32>::new(2)?;
         queue.queue(1, || Ok(false))?;
