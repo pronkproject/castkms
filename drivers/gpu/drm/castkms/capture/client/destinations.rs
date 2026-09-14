@@ -2,9 +2,9 @@
 
 //! Client-local output registrations, separate from private result storage and source depth.
 
-use super::resources::Resources;
 use crate::capture::destination::Image;
 use kernel::{
+    drm::capture::Resources,
     prelude::*,
     sync::Arc, //
 };

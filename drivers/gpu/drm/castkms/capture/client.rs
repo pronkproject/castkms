@@ -3,7 +3,6 @@
 //! Capture file operations above provider permission and kernel negotiation.
 
 mod destinations;
-mod resources;
 mod stream;
 
 pub(crate) use stream::Stream;
