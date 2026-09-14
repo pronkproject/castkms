@@ -93,14 +93,28 @@ impl Completed {
 /// Call only from worker context, outside modeset and reservation locks. Storage and
 /// source mapping are prepared before claiming pixels. Failure returns the slot without
 /// publishing its partial contents; success releases all source access before returning.
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Completed>> {
+    current_checked(output, pool, || Ok(()))
+}
+
+/// Retain caller admission across source claiming, after all mapping preparation.
+///
+/// The returned guard must exclude the caller's cutoff without waiting for device work.
+/// It is released before source revalidation and copying; an admitted read completes
+/// normally even if later admission closes. Destination storage remains source-independent.
+pub(crate) fn current_checked<G>(
+    output: &Output,
+    pool: &Arc<Pool>,
+    admit: impl FnOnce() -> Result<G>,
+) -> Result<Option<Completed>> {
     // An empty publication needs neither private storage nor source admission.
     if !output.has_scene() {
         return Ok(None);
     }
     let mut slot = pool.reserve()?;
     let layout = slot.with_image(|image| image.layout())?;
-    let metadata = output.with_prepared_cpu_scene(
+    let metadata = output.with_checked_cpu_scene(
         |scene| {
             let Some(primary) = scene.primary() else {
                 return Ok(None);
@@ -111,6 +125,7 @@ pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Comple
             }
             framebuffer.prepare_mapping().map(Some)
         },
+        admit,
         |scene, configuration, mapping| -> Result<_> {
             scene.producer_result()?;
             if let Some(mapping) = mapping {
