@@ -39,6 +39,25 @@ pub unsafe trait ClientOwner: Send + 'static {
     fn describe(&mut self) -> Result<Description> {
         Err(EOPNOTSUPP)
     }
+
+    /// Open the named offer under a new, increasing nonzero stream ID.
+    ///
+    /// Serialize provider registration with revocation as well as checking current
+    /// permission and capacity. The file mutex excludes other client callbacks, not
+    /// authority revocation. Failure must leave the name retryable and retain no new
+    /// stream. Opening through a file requires both open and close implementations.
+    fn open_stream(&mut self, _id: u64, _offer: u64, _capacity: u32) -> Result {
+        Err(EOPNOTSUPP)
+    }
+
+    /// Close one named stream without requiring permission to capture more pixels.
+    ///
+    /// Removed names must never be reused. Preserve native completion ownership
+    /// independently of result delivery. Return ENOENT when the entry is absent;
+    /// other errors must leave cleanup retryable. Do not reenter the client file.
+    fn close_stream(&mut self, _id: u64) -> Result {
+        Err(EOPNOTSUPP)
+    }
 }
 
 struct Callbacks<O>(PhantomData<O>);
@@ -52,8 +71,16 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
-        open_stream: None,
-        close_stream: None,
+        open_stream: if O::HAS_OPEN_STREAM {
+            Some(Self::open_stream)
+        } else {
+            None
+        },
+        close_stream: if O::HAS_CLOSE_STREAM {
+            Some(Self::close_stream)
+        } else {
+            None
+        },
     };
 
     unsafe extern "C" fn release(data: *mut c_void) {
@@ -79,6 +106,26 @@ impl<O: ClientOwner> Callbacks<O> {
             Err(error) => error.to_errno(),
         }
     }
+
+    unsafe extern "C" fn open_stream(data: *mut c_void, id: u64, offer: u64, capacity: u32) -> i32 {
+        // SAFETY: Native dispatch retains the file and holds its client mutex, exclusively
+        // borrowing the KBox<O> installed at creation. No reference escapes this callback.
+        let owner = unsafe { &mut *data.cast::<O>() };
+        match owner.open_stream(id, offer, capacity) {
+            Ok(()) => 0,
+            Err(error) => error.to_errno(),
+        }
+    }
+
+    unsafe extern "C" fn close_stream(data: *mut c_void, id: u64) -> i32 {
+        // SAFETY: The same file lifetime and client mutex exclude every other callback
+        // and final destruction while this exclusive borrow of the transferred O exists.
+        let owner = unsafe { &mut *data.cast::<O>() };
+        match owner.close_stream(id) {
+            Ok(()) => 0,
+            Err(error) => error.to_errno(),
+        }
+    }
 }
 
 impl<P: Policy> Authority<P> {
@@ -91,8 +138,8 @@ impl<P: Policy> Authority<P> {
     /// Failure drops `owner` outside native admission locks, too. Do not retain this file
     /// in its own owner. Call outside every lock needed by owner or authority cleanup.
     /// The file observes completed revocation through poll and supports optional kernel
-    /// description queries. It exposes no mapping or primary-node operations, and its
-    /// hangup is not device-work completion.
+    /// description and stream-lifetime operations. It exposes no mapping or primary-node
+    /// operations. Its hangup is not device-work completion.
     pub fn create_client_file<O: ClientOwner>(&self, owner: O) -> Result<ARef<File>> {
         let data = KBox::into_raw(KBox::new(owner, GFP_KERNEL)?);
         // SAFETY: Authority remains live. OPS describes the exact allocation and its module;
