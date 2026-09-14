@@ -11,6 +11,59 @@ mod cases {
     use super::*;
 
     #[test]
+    fn closing_returns_capacity_without_reusing_the_stream_name() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &creator)?;
+        let grantor = grant(&fixture, &creator)?;
+        let mut client = Client::new(grantor.capture())?;
+        let offer = client.describe()?.id();
+        for id in 1..=16 {
+            client.open_stream(id, offer, 1)?;
+        }
+        check(client.open_stream(17, offer, 1) == Err(EBUSY))?;
+        client.stream(1)?.queue(1)?;
+        client.close_stream(1)?;
+        check(matches!(client.stream(1), Err(ENOENT)))?;
+        check(client.close_stream(1) == Err(ENOENT))?;
+        check(client.close_stream(0) == Err(EINVAL))?;
+        check(client.open_stream(1, offer, 1) == Err(ESTALE))?;
+        client.open_stream(17, offer, 1)?;
+        client.stream(17)?.queue(1)?;
+        fixture.drm.device().host.current()?.flush_for_test();
+        check(client.stream(17)?.advance() == 1)?;
+        client.stream(17)?.dequeue(|completion| {
+            check(completion.result?.metadata().layout().dimensions() == (640, 480))
+        })
+    }
+
+    #[test]
+    fn closing_a_stream_keeps_its_sibling_live_and_cleanup_available() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &creator)?;
+        let grantor = grant(&fixture, &creator)?;
+        let mut client = Client::new(grantor.capture())?;
+        let offer = client.describe()?.id();
+        client.open_stream(1, offer, 1)?;
+        client.open_stream(2, offer, 1)?;
+        client.stream(1)?.queue(1)?;
+        client.close_stream(1)?;
+        client.stream(2)?.queue(1)?;
+        fixture.drm.device().host.current()?.flush_for_test();
+        check(client.stream(2)?.advance() == 1)?;
+        client.stream(2)?.dequeue(|completion| {
+            check(completion.result?.metadata().layout().dimensions() == (640, 480))
+        })?;
+        drop(grantor);
+        check(client.open_stream(3, offer, 1) == Err(EKEYREVOKED))?;
+        client.close_stream(2)?;
+        check(matches!(client.stream(2), Err(ENOENT)))
+    }
+
+    #[test]
     fn opening_and_queueing_independent_named_streams() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
