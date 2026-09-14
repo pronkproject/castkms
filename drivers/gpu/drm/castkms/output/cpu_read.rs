@@ -43,6 +43,23 @@ impl<S: Clone + Unpin, C: Clone + Unpin> Output<S, C> {
         prepare: impl FnOnce(&S) -> Result<P>,
         read: impl FnOnce(&S, &C, &P) -> R,
     ) -> Result<Option<R>> {
+        self.with_checked_cpu_scene(prepare, || Ok(()), read)
+    }
+
+    /// Check caller admission after mapping preparation and retain its guard across the claim.
+    ///
+    /// `admit` returns a guard excluding the caller's own cutoff until source claiming finishes.
+    /// It must not read pixels, wait for device work or acquire the publication lock. Its guard
+    /// is dropped before publication revalidation or pixel access. A failed check acquires no
+    /// source claim; a cutoff after successful claiming must let that admitted CPU read retire.
+    /// The output always claims and revalidates its own retained source, independent of the
+    /// caller's guard. The preparation, storage and synchronous-read rules above still apply.
+    pub(crate) fn with_checked_cpu_scene<P, G, R>(
+        &self,
+        prepare: impl FnOnce(&S) -> Result<P>,
+        admit: impl FnOnce() -> Result<G>,
+        read: impl FnOnce(&S, &C, &P) -> R,
+    ) -> Result<Option<R>> {
         let candidate = {
             let state = self.state.lock();
             match &*state {
@@ -60,7 +77,9 @@ impl<S: Clone + Unpin, C: Clone + Unpin> Output<S, C> {
             return Ok(None);
         };
         let resources = prepare(&scene)?;
+        let admission = admit()?;
         let claim = CpuClaim(Some(source.claim()?));
+        drop(admission);
         let current = {
             let state = self.state.lock();
             matches!(&*state, Publication::Open(Some(current))
