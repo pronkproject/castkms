@@ -3,6 +3,7 @@
 //! Initial connector state created by property attachment before device-wide state creation.
 
 mod static_blob;
+mod readonly_blob;
 
 use super::*;
 use connector::AsRawConnector;
