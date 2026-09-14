@@ -15,6 +15,8 @@ mod buffer_reservations;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod cpu_writes;
 #[cfg(CONFIG_DRM_CLIENT)]
+mod capture_destinations;
+#[cfg(CONFIG_DRM_CLIENT)]
 mod connector_entries;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod connector_lookup;
