@@ -78,6 +78,7 @@ drm-y := \
 	drm_capture_wait.o \
 	drm_capture_authority.o \
 	drm_capture_client.o \
+	drm_capture_grant.o \
 	drm_capture_file.o \
 	drm_color_mgmt.o \
 	drm_colorop.o \
