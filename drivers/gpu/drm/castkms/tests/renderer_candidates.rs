@@ -32,6 +32,27 @@ mod cases {
     use super::*;
 
     #[test]
+    fn activation_control_rejects_a_foreign_registration_without_consuming_startup() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let _fb = enable(&fixture)?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let candidate = Candidate::begin(owner.access())?;
+        let other = CastKms::new(c"castkms-candidate-registration")?;
+        let registered = other._display.registration_guard().ok_or(ENODEV)?;
+        let mut calls = 0;
+        check(
+            candidate.with_activation_control(&registered, |_| {
+                calls += 1;
+                Ok(())
+            }) == Err(EINVAL),
+        )?;
+        check(calls == 0)?;
+        candidate.validate()
+    }
+
+    #[test]
     fn private_startup_survives_continuously_changing_unowned_content() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
