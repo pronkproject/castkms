@@ -39,7 +39,6 @@ pub(crate) struct Output {
     reuse: Option<ARef<Fence>>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Output {
     pub(crate) fn new(
         pending: Pending,
