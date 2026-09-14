@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 use super::*;
+use crate::drm::capture::ClientStream;
 use crate::sync::Arc;
 use core::cell::Cell;
 use core::sync::atomic::{
+    AtomicBool,
     AtomicU32,
     Ordering, //
 };
@@ -13,9 +15,50 @@ struct Counts {
     revokes: AtomicU32,
     owners: AtomicU32,
     policies: AtomicU32,
+    streams_opened: AtomicU32,
+    streams_closed: AtomicU32,
+    fail_close: AtomicBool,
 }
 
 struct TestOwner(Arc<Counts>);
+
+struct StreamOwner {
+    counts: Arc<Counts>,
+    active: Option<u64>,
+    last: u64,
+}
+
+// SAFETY: Stream callbacks and their owner destruction belong to LocalModule.
+#[vtable]
+unsafe impl ClientOwner for StreamOwner {
+    fn open_stream(&mut self, id: u64, offer: u64, capacity: u32) -> Result {
+        if offer != 19 || capacity != 2 {
+            return Err(EINVAL);
+        }
+        if id <= self.last {
+            return Err(ESTALE);
+        }
+        if self.active.is_some() {
+            return Err(EBUSY);
+        }
+        self.active = Some(id);
+        self.last = id;
+        self.counts.streams_opened.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn close_stream(&mut self, id: u64) -> Result {
+        if self.counts.fail_close.swap(false, Ordering::Relaxed) {
+            return Err(EIO);
+        }
+        if self.active != Some(id) {
+            return Err(ENOENT);
+        }
+        self.active = None;
+        self.counts.streams_closed.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+}
 
 struct DescribingOwner(Cell<u64>);
 
@@ -72,6 +115,107 @@ fn check(condition: bool) -> Result {
 #[kunit_tests(rust_drm_capture_client_file)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn owned_stream_drop_closes_after_revocation_without_revoking_its_client() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(Arc::new(TestPolicy(counts.clone()), GFP_KERNEL)?)?;
+        let file = authority.create_client_file(StreamOwner {
+            counts: counts.clone(),
+            active: None,
+            last: 0,
+        })?;
+        let stream = ClientStream::open(&file, 7, 19, 2)?;
+        check(stream.id() == Some(7))?;
+        check(counts.streams_opened.load(Ordering::Relaxed) == 1)?;
+        drop(stream);
+        check(!authority.is_revoked())?;
+        let mut stream = ClientStream::open(&file, 8, 19, 2)?;
+        // The stream retains the client after its caller releases the original reference.
+        release(file);
+        authority.revoke();
+        stream.close()?;
+        drop(stream);
+        check(counts.streams_closed.load(Ordering::Relaxed) == 2)?;
+        check(counts.revokes.load(Ordering::Relaxed) == 1)?;
+        Ok(())
+    }
+
+    #[test]
+    fn external_close_does_not_let_an_old_handle_close_a_later_stream() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(Arc::new(TestPolicy(counts.clone()), GFP_KERNEL)?)?;
+        let file = authority.create_client_file(StreamOwner {
+            counts: counts.clone(),
+            active: None,
+            last: 0,
+        })?;
+        let mut old = ClientStream::open(&file, 1, 19, 2)?;
+        // SAFETY: The owned client file remains live while another holder's explicit close
+        // is simulated through native role-checked dispatch. No pointer ownership transfers.
+        check(unsafe { bindings::drm_capture_client_close_stream(file.as_ptr(), 1) } == 0)?;
+        let next = ClientStream::open(&file, 2, 19, 2)?;
+        old.close()?;
+        check(old.id().is_none())?;
+        drop(old);
+        check(counts.streams_closed.load(Ordering::Relaxed) == 1)?;
+        drop(next);
+        check(counts.streams_closed.load(Ordering::Relaxed) == 2)?;
+        release(file);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_stream_close_retains_failure_for_retry_and_is_idempotent() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(Arc::new(TestPolicy(counts.clone()), GFP_KERNEL)?)?;
+        let file = authority.create_client_file(StreamOwner {
+            counts: counts.clone(),
+            active: None,
+            last: 0,
+        })?;
+        let mut stream = ClientStream::open(&file, 1, 19, 2)?;
+        counts.fail_close.store(true, Ordering::Relaxed);
+        check(stream.close() == Err(EIO))?;
+        check(stream.id() == Some(1))?;
+        check(matches!(ClientStream::open(&file, 2, 19, 2), Err(EBUSY)))?;
+        stream.close()?;
+        stream.close()?;
+        check(stream.id().is_none())?;
+        drop(stream);
+        check(counts.streams_closed.load(Ordering::Relaxed) == 1)?;
+        check(!authority.is_revoked())?;
+        check(matches!(ClientStream::open(&file, 1, 19, 2), Err(ESTALE)))?;
+        drop(ClientStream::open(&file, 2, 19, 2)?);
+        check(counts.streams_closed.load(Ordering::Relaxed) == 2)?;
+        release(file);
+        Ok(())
+    }
+
+    #[test]
+    fn stream_handles_reject_invalid_and_unsupported_endpoints() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(Arc::new(TestPolicy(counts.clone()), GFP_KERNEL)?)?;
+        let file = authority.create_client_file(TestOwner(counts.clone()))?;
+        check(matches!(ClientStream::open(&file, 0, 19, 2), Err(EINVAL)))?;
+        check(matches!(
+            ClientStream::open(&file, 1, 19, 2),
+            Err(EOPNOTSUPP)
+        ))?;
+        let control = authority.create_control_file()?;
+        check(matches!(
+            ClientStream::open(&control, 1, 19, 2),
+            Err(EINVAL)
+        ))?;
+        authority.revoke();
+        check(matches!(
+            ClientStream::open(&file, 1, 19, 2),
+            Err(EKEYREVOKED)
+        ))?;
+        release(file);
+        release(control);
+        Ok(())
+    }
 
     #[test]
     fn queries_exclusively_borrow_a_send_only_owner() -> Result {

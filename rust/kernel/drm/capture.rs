@@ -15,6 +15,7 @@ use crate::{
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod authority;
+mod client_stream;
 mod description;
 mod files;
 pub(crate) mod grant;
@@ -23,6 +24,7 @@ mod selection;
 mod wait;
 pub use files::FilePair;
 pub use description::Description;
+pub use client_stream::ClientStream;
 pub use grant::Target;
 pub use authority::{
     Admission,
