@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 
 #include <drm/drm_capture_authority.h>
+#include <drm/drm_capture_completion.h>
 #include <drm/drm_capture_destination.h>
 #include <drm/drm_capture_file.h>
 #include <drm/drm_capture_readiness.h>
@@ -193,6 +194,57 @@ int drm_capture_client_unregister_destination(struct file *file, u64 id)
 	return ret > 0 ? -EINVAL : ret;
 }
 EXPORT_SYMBOL_GPL(drm_capture_client_unregister_destination);
+
+struct capture_publication {
+	const struct drm_capture_completion_sink *sink;
+	bool called;
+	int status;
+};
+
+static int capture_publish_completion(void *data, const struct drm_capture_completion *completion)
+{
+	struct capture_publication *publication = data;
+	int ret;
+
+	if (publication->called)
+		return -EALREADY;
+	publication->called = true;
+	if (!completion || !completion->use_id || completion->status > 0 ||
+	    completion->status < -MAX_ERRNO || completion->completed_at < 0 ||
+	    (completion->status && completion->completed_at))
+		ret = -EINVAL;
+	else
+		ret = publication->sink->publish(publication->sink->data, completion);
+	publication->status = ret > 0 ? -EINVAL : ret;
+	return publication->status;
+}
+
+int drm_capture_client_dequeue(struct file *file, u64 stream,
+			       const struct drm_capture_completion_sink *sink)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+	struct capture_publication publication = { .sink = sink };
+	const struct drm_capture_completion_sink checked = {
+		.publish = capture_publish_completion,
+		.data = &publication,
+	};
+	int ret;
+
+	if (!client || !stream || !sink || !sink->publish)
+		return -EINVAL;
+	mutex_lock(&client->lock);
+	if (!client->ops->dequeue) {
+		ret = -EOPNOTSUPP;
+	} else {
+		ret = client->ops->dequeue(client->data, stream, &checked);
+		if ((!ret && !publication.called) ||
+		    (publication.called && ret != publication.status))
+			ret = -EIO;
+	}
+	mutex_unlock(&client->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_dequeue);
 
 struct drm_capture_authority *drm_capture_client_authority(struct file *file)
 {

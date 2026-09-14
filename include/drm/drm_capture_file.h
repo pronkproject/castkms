@@ -7,6 +7,7 @@
 
 struct drm_capture_authority;
 struct drm_capture_destination;
+struct drm_capture_completion_sink;
 struct drm_capture_readiness;
 struct file;
 struct module;
@@ -35,6 +36,8 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
  *                        increasing client-local name; failure consumes no name
  * @unregister_destination: optionally remove a destination name, including after
  *                          revocation, without canceling accepted native uses
+ * @dequeue: optionally publish one terminal result from a named stream; retain
+ *           the result and accounting credit unless publication succeeds
  *
  * Operations remain immutable until release. The client file does not explicitly
  * revoke its authority before release; provider cleanup must respect other clients.
@@ -57,6 +60,7 @@ struct drm_capture_client_owner_ops {
 	int (*register_destination)(void *data, u64 id,
 				    const struct drm_capture_destination *destination);
 	int (*unregister_destination)(void *data, u64 id);
+	int (*dequeue)(void *data, u64 stream, const struct drm_capture_completion_sink *sink);
 };
 
 /*
@@ -143,6 +147,19 @@ int drm_capture_client_register_destination(struct file *file, u64 id,
  * file and call outside every lock needed by provider resource cleanup.
  */
 int drm_capture_client_unregister_destination(struct file *file, u64 id);
+
+/*
+ * Publish and acknowledge one terminal result without userspace memory access.
+ * Retain file and sink for the call. Dequeue remains available after revocation;
+ * the provider must still enforce its result-validity and delivery policy.
+ * Missing results return -EAGAIN. A successful publication returns zero even
+ * when the completion describes a failed capture. A publication error returns
+ * that errno and must leave the result queued for retry. All destination writes
+ * have ended before a terminal result is published. Call outside DRM, authority,
+ * reservation and provider lifecycle locks; the sink must not reenter the client.
+ */
+int drm_capture_client_dequeue(struct file *file, u64 stream,
+			       const struct drm_capture_completion_sink *sink);
 
 /**
  * struct drm_capture_control_owner_ops - lifetime retained by a revocation file
