@@ -50,6 +50,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_capture_wait_test.o \
 	drm_capture_authority_test.o \
 	drm_capture_creator_test.o \
+	drm_capture_resources_test.o \
 	drm_capture_file_test.o \
 	drm_capture_description_test.o \
 	drm_capture_destination_test.o \
