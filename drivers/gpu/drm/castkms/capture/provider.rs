@@ -8,6 +8,7 @@
 
 mod creator;
 mod control_file;
+mod client_file;
 mod description;
 mod frame;
 mod request;

@@ -2,6 +2,8 @@
 
 //! Transferring complete grantors to revocation-only files preserves both close paths.
 
+mod client;
+
 use super::*;
 use crate::capture::{
     host_stream::Stream,
