@@ -34,7 +34,6 @@ pub(crate) struct Queue<P, T> {
     last_use: u64,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl<P, T> Queue<P, T> {
     pub(crate) fn new(capacity: usize) -> Result<Self> {
         if capacity == 0 {

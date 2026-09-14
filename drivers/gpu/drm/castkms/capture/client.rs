@@ -106,6 +106,10 @@ impl Client {
 // SAFETY: The callback trampolines, client destructor and dependencies belong to CastKMS.
 #[vtable]
 unsafe impl ClientOwner for Client {
+    fn cancel(&mut self, stream: u64, use_id: u64) -> Result {
+        Client::cancel(self, stream, use_id)
+    }
+
     fn queue_output(
         &mut self,
         stream: u64,

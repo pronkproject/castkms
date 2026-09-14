@@ -25,7 +25,10 @@ use kernel::{
     types::ScopeGuard, //
 };
 
-fn with_client(capture: Capture, run: impl FnOnce(&kernel::fs::File) -> Result) -> Result {
+pub(super) fn with_client(
+    capture: Capture,
+    run: impl FnOnce(&kernel::fs::File) -> Result,
+) -> Result {
     let file = capture.into_client_file_with(Client::new)?;
     let file = ScopeGuard::new_with_data(file, |file| {
         // SAFETY: The KUnit task releases its owned reference outside driver locks, after
@@ -35,7 +38,11 @@ fn with_client(capture: Capture, run: impl FnOnce(&kernel::fs::File) -> Result) 
     run(&file)
 }
 
-fn register(file: &kernel::fs::File, id: u64, image: &Image) -> Result<ClientDestination> {
+pub(super) fn register(
+    file: &kernel::fs::File,
+    id: u64,
+    image: &Image,
+) -> Result<ClientDestination> {
     let (width, height) = image.layout().dimensions();
     let description = Destination::new(
         [width, height],
@@ -86,6 +93,7 @@ mod cases {
                 let _replacement = register(file, 2, &replacement)?;
                 reuse.complete(Ok(()))?;
                 wait(&readiness)?;
+                check(stream.cancel(1) == Err(EALREADY))?;
                 check(stream.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
                 check(readiness.has_results())?;
                 stream.dequeue(|completion| {
@@ -93,6 +101,7 @@ mod cases {
                     completion.result().map(|_| ())
                 })?;
                 check(!readiness.has_results())?;
+                check(stream.cancel(1) == Err(ENOENT))?;
                 check(
                     pixels(first.buffer())?[128..160]
                         .chunks_exact(4)
@@ -104,6 +113,36 @@ mod cases {
                         .all(|byte| *byte == 0x73),
                 )?;
                 check(stream.queue_output(2, 1, None) == Err(ENOENT))?;
+                stream.close()
+            })
+        })
+    }
+
+    #[test]
+    fn file_cancellation_does_not_wait_for_pending_destination_reuse() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let creator = fixture.drm.master_file()?;
+            let _fb = select(fixture, &creator)?;
+            let grantor = grant(fixture, &creator)?;
+            with_client(grantor.capture(), |file| {
+                let image = destination(fixture, Layout::new(640, 480)?)?;
+                let _registered = register(file, 1, &image)?;
+                let mut stream = ClientStream::open(file, 1, Description::query(file)?.id(), 1)?;
+                let readiness = Readiness::for_client(file)?;
+                let reuse = ManualFence::new()?;
+                stream.queue_output(1, 1, Some(&reuse.fence()))?;
+                check(stream.cancel(2) == Err(ENOENT))?;
+                stream.cancel(1)?;
+                check(stream.cancel(1) == Err(EALREADY))?;
+                wait(&readiness)?;
+                check(stream.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
+                stream.dequeue(|completion| {
+                    check(completion.use_id() == 1)?;
+                    check(matches!(completion.result(), Err(ECANCELED)))
+                })?;
+                check(reuse.fence().status() == kernel::dma_fence::Status::Pending)?;
+                check(pixels(image.buffer())?.iter().all(|byte| *byte == 0x73))?;
                 stream.close()
             })
         })
