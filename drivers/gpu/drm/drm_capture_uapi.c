@@ -9,14 +9,12 @@
 
 #include "drm_capture_uapi.h"
 
-long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static long capture_describe(struct file *file, void __user *arg)
 {
 	struct drm_capture_describe output = {};
 	struct drm_capture_description description;
 	int ret;
 
-	if (cmd != DRM_IOCTL_CAPTURE_DESCRIBE)
-		return -ENOTTY;
 	ret = drm_capture_client_describe(file, &description);
 	if (ret)
 		return ret;
@@ -26,9 +24,47 @@ long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long
 	output.format = description.format;
 	output.max_requests = description.max_requests;
 	output.modifier = description.modifier;
-	if (copy_to_user((void __user *)arg, &output, sizeof(output)))
+	if (copy_to_user(arg, &output, sizeof(output)))
 		return -EFAULT;
 	return 0;
+}
+
+static long capture_create_stream(struct file *file, void __user *arg)
+{
+	struct drm_capture_create_stream input;
+
+	if (copy_from_user(&input, arg, sizeof(input)))
+		return -EFAULT;
+	if (input.flags || input.reserved)
+		return -EINVAL;
+	return drm_capture_client_open_stream(file, input.id, input.offer, input.capacity);
+}
+
+static long capture_destroy_stream(struct file *file, void __user *arg)
+{
+	struct drm_capture_destroy_stream input;
+
+	if (copy_from_user(&input, arg, sizeof(input)))
+		return -EFAULT;
+	if (input.reserved)
+		return -EINVAL;
+	return drm_capture_client_close_stream(file, input.id);
+}
+
+long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	void __user *pointer = (void __user *)arg;
+
+	switch (cmd) {
+	case DRM_IOCTL_CAPTURE_DESCRIBE:
+		return capture_describe(file, pointer);
+	case DRM_IOCTL_CAPTURE_CREATE_STREAM:
+		return capture_create_stream(file, pointer);
+	case DRM_IOCTL_CAPTURE_DESTROY_STREAM:
+		return capture_destroy_stream(file, pointer);
+	default:
+		return -ENOTTY;
+	}
 }
 
 int drm_mode_create_capture_grant_ioctl(struct drm_device *dev, void *data,

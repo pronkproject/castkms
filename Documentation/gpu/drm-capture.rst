@@ -4,8 +4,8 @@ DRM capture grants
 
 The experimental capture interface separates permission to receive a final
 output image from modesetting, source-buffer access and rendering. Its current
-public operations create a grant and describe an offered image configuration;
-stream creation and image delivery are not yet exposed on the returned file.
+public operations create a grant, describe an offered image configuration,
+and create or destroy streams. Image delivery is not yet exposed on the file.
 The interface assignments
 are development ABI, not upstream allocations.
 
@@ -60,6 +60,27 @@ previous offer or any image-storage credit. A revoked grant returns
 ``EKEYREVOKED``. Providers may reject a description when the output is inactive
 or its current content is outside the recipient's permission.
 
+Creating and destroying streams
+===============================
+
+``DRM_IOCTL_CAPTURE_CREATE_STREAM`` supplies the offer name, a request
+capacity and a new caller-chosen stream name. Names are nonzero and increase
+within the client file, including across its duplicated descriptors. A
+successful name is never reused, even after its stream is destroyed. The
+provider checks the exact offered configuration and current permission while
+reserving bounded resources. A failed creation does not consume the name.
+
+Creation is input-only: no user-memory write or descriptor installation
+follows admission. The stream belongs to the client file independently of
+later description queries. Creating it does not queue capture demand or
+establish continuing authority over future pixels.
+
+``DRM_IOCTL_CAPTURE_DESTROY_STREAM`` removes one stream without revoking
+siblings. Destruction remains available after a modeset or revocation, and
+final client-file release destroys its remaining streams. Neither operation
+is a GPU-completion notification or permission to reuse a buffer whose native
+readers or writers have not finished.
+
 Kernel providers
 ================
 
@@ -81,6 +102,13 @@ permission. ``drm_capture_client_describe()`` and Rust ``Description::query()``
 perform the same query entirely in kernel memory. CastKMS's file callback uses
 its transport-independent negotiation object above the permission provider,
 so exposing the ioctl does not introduce another policy implementation.
+
+Optional ``open_stream`` and ``close_stream`` callbacks use that same serialized
+file layer. Opening requires both callbacks. Kernel callers use
+``drm_capture_client_open_stream()`` and ``drm_capture_client_close_stream()``;
+Rust ``ClientStream`` retains the file and attempts closure on drop. Explicit
+close errors remain retryable. CastKMS forwards these callbacks to its
+transport-independent client registry, also used by direct kernel consumers.
 
 Drivers without capture leave the provider absent. This is not a requirement
 for native GPU drivers used by a userspace renderer, and it does not enable
