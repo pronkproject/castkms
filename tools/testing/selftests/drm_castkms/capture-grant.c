@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+/* Grant publication and revocation, without requesting or reading pixels. */
+#include "fixture.h"
+
+#include <dirent.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <unistd.h>
+
+#include "../../../../include/uapi/drm/drm_capture.h"
+
+static unsigned int open_files(int *highest)
+{
+	DIR *directory = opendir("/proc/self/fd");
+	struct dirent *entry;
+	unsigned int count = 0;
+
+	CHECK(directory);
+	*highest = -1;
+	while ((entry = readdir(directory))) {
+		char *end;
+		long fd = strtol(entry->d_name, &end, 10);
+
+		if (*end || fd < 0 || fd == dirfd(directory))
+			continue;
+		count++;
+		if (fd > *highest)
+			*highest = fd;
+	}
+	CHECK(closedir(directory) == 0);
+	return count;
+}
+
+static int revoked(int fd)
+{
+	struct pollfd event = { .fd = fd, .events = POLLIN };
+
+	CHECK(poll(&event, 1, 0) >= 0);
+	CHECK(!(event.revents & (POLLERR | POLLNVAL)));
+	return !!(event.revents & POLLHUP);
+}
+
+static void rejected_publication(int fd, struct drm_mode_create_capture_grant request)
+{
+	struct drm_capture_grant_files files = { -1, -1 };
+	struct rlimit saved, limited;
+	unsigned int before;
+	long page_size = sysconf(_SC_PAGESIZE);
+	void *partial;
+	int highest, probe;
+
+	before = open_files(&highest);
+	request.files = 1;
+	/* More failed grants than the creator quota must neither leak fds nor consume quota. */
+	for (unsigned int i = 0; i < 128; i++) {
+		CHECK(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
+		CHECK(errno == EFAULT);
+	}
+	CHECK(open_files(&highest) == before);
+	CHECK(page_size > 0);
+	partial = mmap(NULL, page_size * 2, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(partial != MAP_FAILED);
+	CHECK(mprotect((char *)partial + page_size, page_size, PROT_NONE) == 0);
+	request.files = (uintptr_t)((char *)partial + page_size - sizeof(files.capture_fd));
+	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
+	CHECK(errno == EFAULT);
+	CHECK(open_files(&highest) == before);
+	CHECK(munmap(partial, page_size * 2) == 0);
+	request.files = (uintptr_t)&files;
+	CHECK(getrlimit(RLIMIT_NOFILE, &saved) == 0);
+	probe = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	CHECK(probe >= 0);
+	CHECK(close(probe) == 0);
+	limited = saved;
+	/* Leave one descriptor slot: the second reservation must roll back the first. */
+	limited.rlim_cur = probe + 1;
+	CHECK(limited.rlim_cur < saved.rlim_cur);
+	CHECK(setrlimit(RLIMIT_NOFILE, &limited) == 0);
+	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
+	CHECK(errno == EMFILE);
+	CHECK(setrlimit(RLIMIT_NOFILE, &saved) == 0);
+	CHECK(open_files(&highest) == before);
+	CHECK(files.capture_fd == -1 && files.control_fd == -1);
+	request.flags = 1;
+	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
+	CHECK(errno == EINVAL);
+	request.flags = 0;
+	for (unsigned int i = 0; i < 3; i++) {
+		request.reserved[i] = 1;
+		CHECK(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
+		CHECK(errno == EINVAL);
+		request.reserved[i] = 0;
+	}
+	request.crtc_id = request.connector_id;
+	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
+	CHECK(errno == ENOENT);
+	CHECK(open_files(&highest) == before);
+}
+
+int main(int argc, char **argv)
+{
+	struct drm_mode_create_capture_grant request = {}, *read_only;
+	struct drm_capture_grant_files files;
+	struct drm_mode_create_dumb dumb = {};
+	drmVersion *version;
+	drmModeRes *resources;
+	uint64_t capability;
+	long page_size = sysconf(_SC_PAGESIZE);
+	int master, reader, duplicate;
+
+	CHECK(argc == 2 && page_size > 0);
+	master = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(master >= 0 && drmIsMaster(master) == 1);
+	version = drmGetVersion(master);
+	CHECK(version && !strcmp(version->name, "castkms"));
+	drmFreeVersion(version);
+	CHECK(drmGetCap(master, DRM_CAP_CAPTURE_GRANT, &capability) == 0 && capability == 1);
+	resources = drmModeGetResources(master);
+	CHECK(resources && resources->count_crtcs == 1 && resources->count_connectors == 1);
+	request.crtc_id = resources->crtcs[0];
+	request.connector_id = resources->connectors[0];
+	request.files = (uintptr_t)&files;
+	drmModeFreeResources(resources);
+	reader = open(argv[1], O_RDONLY | O_CLOEXEC);
+	CHECK(reader >= 0 && !drmIsMaster(reader));
+	CHECK(drmIoctl(reader, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
+	CHECK(errno == EACCES);
+	rejected_publication(master, request);
+
+	read_only = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+			 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(read_only != MAP_FAILED);
+	*read_only = request;
+	CHECK(mprotect(read_only, page_size, PROT_READ) == 0);
+	/* The request is input-only; publication writes solely to the explicit output. */
+	CHECK(drmIoctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, read_only) == 0);
+	CHECK(munmap(read_only, page_size) == 0);
+	CHECK(files.capture_fd >= 0 && files.control_fd >= 0);
+	CHECK(files.capture_fd != files.control_fd);
+	CHECK(fcntl(files.capture_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(fcntl(files.control_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(drmIoctl(files.capture_fd, DRM_IOCTL_MODE_CREATE_DUMB, &dumb) == -1);
+	CHECK(errno == ENOTTY);
+	CHECK(!revoked(files.capture_fd) && !revoked(files.control_fd));
+	duplicate = fcntl(files.control_fd, F_DUPFD_CLOEXEC, 0);
+	CHECK(duplicate >= 0);
+	CHECK(close(files.control_fd) == 0);
+	CHECK(!revoked(files.capture_fd));
+	CHECK(close(duplicate) == 0);
+	CHECK(revoked(files.capture_fd));
+	CHECK(close(files.capture_fd) == 0);
+
+	CHECK(drmIoctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == 0);
+	CHECK(close(files.capture_fd) == 0);
+	CHECK(!revoked(files.control_fd));
+	CHECK(close(master) == 0);
+	CHECK(revoked(files.control_fd));
+	CHECK(close(files.control_fd) == 0);
+	CHECK(close(reader) == 0);
+	puts("PASS: creator-bound capture grant publication, rollback and revocation");
+	return 0;
+}
