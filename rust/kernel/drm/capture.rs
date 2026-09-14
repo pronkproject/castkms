@@ -15,9 +15,11 @@ use crate::{
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod authority;
+mod files;
 mod range;
 mod selection;
 mod wait;
+pub use files::FilePair;
 pub use authority::{
     Admission,
     Authority,
