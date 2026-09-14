@@ -195,6 +195,26 @@ mod cases {
     }
 
     #[test]
+    fn pending_reuse_is_distinct_from_a_terminal_retry_error() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let mut stream = Stream::new(&grantor.capture(), 1)?;
+            let result = stream.capture()?;
+            let image = destination(fixture, Layout::new(640, 480)?)?;
+            let mut reuse = ManualFence::new()?;
+            check(result.try_copy_to_destination(&image, Some(&reuse.fence())) == Ok(false))?;
+            reuse.complete(Err(EAGAIN))?;
+            check(result.try_copy_to_destination(&image, Some(&reuse.fence())) == Err(EAGAIN))?;
+            check(pixels(image.buffer())?.iter().all(|byte| *byte == 0x73))?;
+            check(result.try_copy_to_destination(&image, None) == Ok(true))?;
+            check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])
+        })
+    }
+
+    #[test]
     fn wrong_layout_does_not_start_destination_access() -> Result {
         with_exporter(|fixture| {
             let _connector = fixture.drm.publish_connector_identity()?;

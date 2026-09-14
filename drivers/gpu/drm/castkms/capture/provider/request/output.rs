@@ -15,10 +15,10 @@ use kernel::{
     prelude::*, //
 };
 
-fn ready(fence: &Fence) -> Result {
+fn ready(fence: &Fence) -> Result<bool> {
     match fence.status() {
-        FenceStatus::Pending => Err(EAGAIN),
-        FenceStatus::Complete(result) => result,
+        FenceStatus::Pending => Ok(false),
+        FenceStatus::Complete(result) => result.map(|()| true),
     }
 }
 
@@ -38,20 +38,43 @@ impl Request {
     /// private request remains separately readable until it is dropped or its stream closes.
     /// Revocation preserves an already completed, authorized private result, as for copy_result.
     pub(crate) fn copy_to_destination(&self, destination: &Image, reuse: Option<&Fence>) -> Result {
+        if self.try_copy_to_destination(destination, reuse)? {
+            Ok(())
+        } else {
+            Err(EAGAIN)
+        }
+    }
+
+    /// Try delivery without confusing an unfinished dependency with a failed operation.
+    ///
+    /// `Ok(false)` means no destination write was attempted because capture or reuse is
+    /// pending. `Ok(true)` includes completed copying and cache maintenance. Every error
+    /// is terminal for the attempt, including `EAGAIN` reported by a completed fence or
+    /// exporter; it may follow a partial write. Ownership and locking requirements match
+    /// [`Self::copy_to_destination`].
+    pub(crate) fn try_copy_to_destination(
+        &self,
+        destination: &Image,
+        reuse: Option<&Fence>,
+    ) -> Result<bool> {
         let layout = self.storage.layout();
         if destination.layout() != layout {
             return Err(EINVAL);
         }
         match self.status()? {
-            Status::Pending => return Err(EAGAIN),
+            Status::Pending => return Ok(false),
             Status::Complete(result) => result?,
         }
         if let Some(reuse) = reuse {
-            ready(reuse)?;
+            if !ready(reuse)? {
+                return Ok(false);
+            }
         }
         let dependencies = destination.buffer().reservation().snapshot(Usage::Read)?;
         for fence in dependencies.iter() {
-            ready(fence)?;
+            if !ready(fence)? {
+                return Ok(false);
+            }
         }
 
         let mut row = KVVec::new();
@@ -70,6 +93,7 @@ impl Request {
                 padding += count;
             }
         }
-        write.finish()
+        write.finish()?;
+        Ok(true)
     }
 }
