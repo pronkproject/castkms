@@ -76,4 +76,52 @@ mod cases {
             client.close_stream(1)
         })
     }
+
+    #[test]
+    fn cancellation_uses_the_stream_not_the_removed_destination_name() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let mut client = Client::new(grantor.capture())?;
+            let offer = client.describe()?.id();
+            for id in [1, 2] {
+                client.open_stream(id, offer, 1)?;
+                client.register_destination(id, destination(fixture, Layout::new(640, 480)?)?)?;
+            }
+            let first = client.destination(1)?;
+            let second = client.destination(2)?;
+            let mut reuse = ManualFence::new()?;
+            client.queue_to(1, 7, 1, Some(reuse.fence()))?;
+            client.queue_to(2, 7, 2, None)?;
+            client.unregister_destination(1)?;
+            fixture.drm.device().host.current()?.flush_for_test();
+            check(client.stream(1)?.advance() == 0)?;
+            check(client.stream(2)?.advance() == 1)?;
+            check(client.cancel(3, 7) == Err(ENOENT))?;
+            check(client.cancel(1, 8) == Err(ENOENT))?;
+            client.cancel(1, 7)?;
+            drop(grantor);
+            check(client.stream(1)?.advance() == 1)?;
+            check(client.cancel(1, 7) == Err(EALREADY))?;
+            check(client.cancel(2, 7) == Err(EALREADY))?;
+            client.stream(1)?.dequeue(|completion| {
+                check(completion.use_id == 7)?;
+                check(matches!(completion.result, Err(ECANCELED)))
+            })?;
+            client.stream(2)?.dequeue(|completion| {
+                check(completion.use_id == 7)?;
+                completion.result.map(|_| ())
+            })?;
+            reuse.complete(Ok(()))?;
+            check(client.stream(1)?.advance() == 0)?;
+            check(pixels(first.buffer())?.iter().all(|byte| *byte == 0x73))?;
+            check(pixels(second.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])?;
+            client.close_stream(1)?;
+            check(client.cancel(1, 7) == Err(ENOENT))?;
+            client.close_stream(2)?;
+            client.unregister_destination(2)
+        })
+    }
 }
