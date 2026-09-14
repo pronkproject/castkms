@@ -7,6 +7,7 @@ use super::{
     Policy, //
 };
 use crate::{
+    dma_fence::Fence,
     drm::capture::{
         Completion,
         Description,
@@ -35,6 +36,22 @@ use core::{
 /// throughout the transferred lifetime. The vtable macro selects the local module.
 #[vtable]
 pub unsafe trait ClientOwner: Send + 'static {
+    /// Admit an output attempt using this client's registered destination.
+    ///
+    /// Retain the exact destination and an owned reference to any borrowed reuse fence
+    /// before returning success. Rejecting an attempt must not consume its name or start
+    /// destination access. Native dispatch requires readiness, dequeue and stream cleanup
+    /// support too. Destination waits must not retain compositor sources.
+    fn queue_output(
+        &mut self,
+        _stream: u64,
+        _use_id: u64,
+        _destination: u64,
+        _reuse: Option<&Fence>,
+    ) -> Result {
+        Err(EOPNOTSUPP)
+    }
+
     /// Publish one terminal result without acknowledging it on publication failure.
     ///
     /// The closure is synchronous and called at most once. Return its result unchanged;
@@ -145,8 +162,33 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
-        queue_output: None,
+        queue_output: if O::HAS_QUEUE_OUTPUT {
+            Some(Self::queue_output)
+        } else {
+            None
+        },
     };
+
+    unsafe extern "C" fn queue_output(
+        data: *mut c_void,
+        stream: u64,
+        use_id: u64,
+        destination: u64,
+        reuse: *mut bindings::dma_fence,
+    ) -> i32 {
+        // SAFETY: Native dispatch retains the file and exclusively borrows its initialized
+        // KBox<O> under the client mutex for this callback.
+        let owner = unsafe { &mut *data.cast::<O>() };
+        let reuse = if reuse.is_null() {
+            None
+        } else {
+            // SAFETY: The caller retains the optional fence through synchronous dispatch.
+            Some(unsafe { Fence::from_raw(reuse) })
+        };
+        owner
+            .queue_output(stream, use_id, destination, reuse)
+            .map_or_else(|error| error.to_errno(), |_| 0)
+    }
 
     unsafe extern "C" fn dequeue(
         data: *mut c_void,
