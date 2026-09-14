@@ -54,6 +54,51 @@ mod cases {
     use super::*;
 
     #[test]
+    fn failed_client_construction_does_not_take_revocation_ownership() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &creator)?;
+        let grantor = grant(&fixture, &creator)?;
+        let capture = grantor.capture();
+        check(matches!(
+            capture.clone().into_client_file_with::<Capture>(|_| Err(ENOMEM)),
+            Err(ENOMEM)
+        ))?;
+        let description = capture.describe_stream()?;
+        check(description.layout().dimensions() == (640, 480))?;
+        let client = ClientFile(Some(capture.into_client_file_with(|capture| {
+            check(capture.describe_stream()?.layout() == description.layout())?;
+            Ok(capture)
+        })?));
+        check(!client.is_revoked()?)?;
+        drop(grantor);
+        check(client.is_revoked()?)
+    }
+
+    #[test]
+    fn failed_pair_construction_releases_the_consumed_grantor() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &creator)?;
+        let grantor = grant(&fixture, &creator)?;
+        let capture = grantor.capture();
+        check(matches!(
+            grantor.into_files_with::<Capture>(|_| Err(ENOMEM)),
+            Err(ENOMEM)
+        ))?;
+        check(matches!(capture.describe_stream(), Err(EKEYREVOKED)))?;
+        let next = grant(&fixture, &creator)?;
+        let (client, control) = next.into_files_with(Ok)?.into_files();
+        let client = ClientFile(Some(client));
+        let control = ControlFile(Some(control));
+        check(!client.is_revoked()?)?;
+        drop(control);
+        check(client.is_revoked()?)
+    }
+
+    #[test]
     fn generic_issuance_keeps_creator_close_separate_from_client_close() -> Result {
         let display = CastKms::new(c"castkms-file-grant")?;
         let dev = display._display.registration_guard().ok_or(ENODEV)?;
