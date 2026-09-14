@@ -63,6 +63,49 @@ mod cases {
     use super::*;
 
     #[test]
+    fn selected_delivery_does_not_consume_other_demand() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = selected_framebuffer(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let stream = grantor.capture().stream(2)?;
+        let first = stream.queue()?;
+        let second = stream.queue()?;
+        let image =
+            compose::current(&fixture.drm.device().output, &pool(&fixture)?)?.ok_or(EINVAL)?;
+        second.deliver(&stream, &image)?;
+        check(first.status()? == Status::Pending)?;
+        check(second.status()? == Status::Complete(Ok(())))?;
+        check(second.deliver(&stream, &image) == Err(EALREADY))?;
+        first.cancel()?;
+        check(first.deliver(&stream, &image) == Err(EALREADY))?;
+        Ok(())
+    }
+
+    #[test]
+    fn selected_delivery_rejects_foreign_stream_and_revoked_grant() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = selected_framebuffer(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let capture = grantor.capture();
+        let first = capture.stream(1)?;
+        let second = capture.stream(1)?;
+        let first_request = first.queue()?;
+        let second_request = second.queue()?;
+        let image =
+            compose::current(&fixture.drm.device().output, &pool(&fixture)?)?.ok_or(EINVAL)?;
+        check(first_request.deliver(&second, &image) == Err(EINVAL))?;
+        check(first_request.status()? == Status::Pending)?;
+        check(second_request.status()? == Status::Pending)?;
+        drop(grantor);
+        check(first_request.deliver(&first, &image) == Err(EKEYREVOKED))?;
+        Ok(())
+    }
+
+    #[test]
     fn authorized_pixels_arrive_without_retaining_scanout_reads() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;

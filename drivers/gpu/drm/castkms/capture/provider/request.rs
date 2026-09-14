@@ -13,6 +13,7 @@ use kernel::{
 };
 
 mod output;
+mod delivery;
 
 /// Drop the native request before releasing the last possible owner of its storage charge.
 #[must_use = "dropping a request abandons demand or its retained result"]
