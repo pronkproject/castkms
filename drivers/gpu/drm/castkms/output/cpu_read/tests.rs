@@ -8,6 +8,94 @@ mod cases {
     use kernel::sync::Arc;
 
     #[test]
+    fn caller_cutoff_during_mapping_prevents_source_claiming() -> Result {
+        use core::cell::Cell;
+
+        let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+        let source = Source::new(1)?;
+        let open = Cell::new(true);
+        let read = Cell::new(false);
+        output.publish(source.clone(), SceneUpdate::Replace(Some(17)));
+        let result = output.with_checked_cpu_scene(
+            |_| {
+                open.set(false);
+                Ok(())
+            },
+            || if open.get() { Ok(()) } else { Err(ENODEV) },
+            |_, (), ()| read.set(true),
+        );
+        assert_eq!(result, Err(ENODEV));
+        assert!(!read.get());
+        assert!(source.hold_admission()?.prepared()?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn caller_guard_covers_claiming_but_not_the_pixel_callback() -> Result {
+        use core::cell::Cell;
+
+        struct Guard<'a> {
+            source: &'a Source,
+            dropped: &'a Cell<bool>,
+            claimed: &'a Cell<bool>,
+        }
+
+        impl Drop for Guard<'_> {
+            fn drop(&mut self) {
+                self.claimed.set(
+                    self.source
+                        .hold_admission()
+                        .is_ok_and(|hold| matches!(hold.prepared(), Ok(None))),
+                );
+                self.dropped.set(true);
+            }
+        }
+
+        let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+        let source = Source::new(1)?;
+        output.publish(source.clone(), SceneUpdate::Replace(Some(17)));
+        let dropped = Cell::new(false);
+        let claimed = Cell::new(false);
+        let result = output.with_checked_cpu_scene(
+            |_| Ok(()),
+            || {
+                Ok(Guard {
+                    source: &source,
+                    dropped: &dropped,
+                    claimed: &claimed,
+                })
+            },
+            |scene, (), ()| (*scene, dropped.get()),
+        )?;
+        assert_eq!(result, Some((17, true)));
+        assert!(claimed.get());
+        source.claim()?.release_cpu();
+        Ok(())
+    }
+
+    #[test]
+    fn source_rejection_releases_the_callers_guard() -> Result {
+        use core::cell::Cell;
+        use kernel::types::ScopeGuard;
+
+        let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+        let source = Source::new(1)?;
+        output.publish(source.clone(), SceneUpdate::Replace(Some(17)));
+        let _hold = source.hold_admission()?;
+        let dropped = Cell::new(false);
+        let mut read = false;
+        let result = output.with_checked_cpu_scene(
+            |_| Ok(()),
+            || Ok(ScopeGuard::new(|| dropped.set(true))),
+            |_, (), ()| read = true,
+        );
+        assert_eq!(result, Err(EBUSY));
+        assert!(dropped.get());
+        assert!(!read);
+        Ok(())
+    }
+
+    #[test]
     fn preparation_waits_until_the_cpu_callback_returns() -> Result {
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
         let source = Source::new(2)?;
