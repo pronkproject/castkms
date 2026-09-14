@@ -39,6 +39,39 @@ mod cases {
     use super::*;
 
     #[test]
+    fn assembled_pair_keeps_revocation_in_the_control_endpoint() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &creator)?;
+        let grantor = grant(&fixture, &creator)?;
+        let capture = grantor.capture();
+        let (client, control) = grantor.into_files()?.into_files();
+        let client = ClientFile(Some(client));
+        let control = ControlFile(Some(control));
+        drop(client);
+        check(!control.is_revoked()?)?;
+        let mut stream = Stream::new(&capture, 1)?;
+        check(stream.capture()?.status()? == Status::Complete(Ok(())))?;
+        drop(control);
+        check(matches!(Stream::new(&capture, 1), Err(EKEYREVOKED)))
+    }
+
+    #[test]
+    fn assembled_pair_preserves_the_creators_revocation_edge() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let grantor = grant(&fixture, &creator)?;
+        let (client, control) = grantor.into_files()?.into_files();
+        let client = ClientFile(Some(client));
+        let control = ControlFile(Some(control));
+        drop(creator);
+        check(client.is_revoked()?)?;
+        check(control.is_revoked()?)
+    }
+
+    #[test]
     fn client_close_does_not_revoke_siblings_or_retain_the_grantor() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
