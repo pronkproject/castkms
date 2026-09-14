@@ -146,6 +146,20 @@ pub(crate) struct Stream {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Stream {
+    /// Recheck an allocated stream before arranging additional resources.
+    ///
+    /// The result is an observation, not continuing pixel permission. Delivery still
+    /// checks the image and claims through the native authority under policy locks.
+    pub(crate) fn check_current(&self) -> Result {
+        self.capture.policy.permission.with_current(|current| {
+            if current.configuration() != &self.configuration {
+                return Err(ESTALE);
+            }
+            let _admission = self.capture.authority.begin()?;
+            Ok(())
+        })
+    }
+
     pub(crate) fn queue(&self) -> Result<Request> {
         Request::new(&self.storage)
     }
