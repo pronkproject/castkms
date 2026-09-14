@@ -5,13 +5,12 @@
 mod destinations;
 mod requests;
 mod stream;
+mod streams;
 
 pub(crate) use stream::Stream;
 
 use super::{
-    budget::STREAM_LIMIT,
     destination::Image,
-    host_queue::Queue,
     negotiation::Negotiation,
     provider::Capture, //
 };
@@ -19,8 +18,7 @@ use kernel::{
     drm::capture::{
         ClientOwner,
         Description,
-        Destination,
-        Resources, //
+        Destination, //
     },
     prelude::*,
     sync::Arc, //
@@ -29,7 +27,7 @@ use kernel::{
 /// The shared file dispatcher exclusively borrows operation state for each callback.
 /// No grantor or creating DRM file is retained by this client.
 pub(crate) struct Client {
-    streams: Resources<Queue>,
+    streams: streams::Streams,
     destinations: destinations::Destinations,
     negotiation: Negotiation,
 }
@@ -38,7 +36,7 @@ pub(crate) struct Client {
 impl Client {
     pub(crate) fn new(capture: Capture) -> Result<Self> {
         Ok(Self {
-            streams: Resources::new(STREAM_LIMIT)?,
+            streams: streams::Streams::new()?,
             destinations: destinations::Destinations::new()?,
             negotiation: Negotiation::new(capture),
         })
@@ -61,7 +59,8 @@ impl Client {
     /// Queue operations keep their own current-permission and delivery checks. Merely
     /// finding an entry neither preserves permission nor authorizes source access.
     pub(crate) fn stream(&mut self, id: u64) -> Result<Stream<'_>> {
-        Ok(Stream::new(self.streams.get_mut(id)?))
+        self.streams.with_queue(id, |_| Ok(()))?;
+        Ok(Stream::new(&self.streams, id))
     }
 
     /// Close one stream without revoking the client or making its name reusable.
@@ -70,8 +69,7 @@ impl Client {
     /// abandoned through normal queue destruction; shared composition is not canceled.
     /// Call outside DRM, publication, worker-lifecycle and reservation locks.
     pub(crate) fn close_stream(&mut self, id: u64) -> Result {
-        drop(self.streams.remove(id)?);
-        Ok(())
+        self.streams.remove(id)
     }
 
     /// Retain caller-owned output storage without queuing capture or mapping pixels.
