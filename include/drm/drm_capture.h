@@ -54,6 +54,9 @@ wait_queue_head_t *drm_capture_result_waitqueue(struct drm_capture *capture);
  */
 int drm_capture_wait_result(struct drm_capture *capture, u64 id,
 			    struct drm_capture_result *result);
+int drm_capture_wait_provider(struct drm_capture *capture, u64 id,
+			      wait_queue_head_t *provider_wait,
+			      int (*ready)(void *data), void *data);
 int drm_capture_ack(struct drm_capture *capture, u64 id);
 ssize_t drm_capture_copy_result(struct drm_capture *capture, u64 id,
 				void *buffer, size_t size);
