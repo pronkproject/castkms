@@ -3,6 +3,7 @@
 //! Owned cleanup for a stream named within an anonymous capture client.
 
 mod completion;
+mod output;
 
 use crate::{
     error::to_result,
