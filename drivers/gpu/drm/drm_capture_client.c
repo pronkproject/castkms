@@ -14,6 +14,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "drm_capture_file_internal.h"
+#include "drm_capture_uapi.h"
 
 struct drm_capture_client {
 	/* Serializes mutable provider callbacks, never held by authority revocation. */
@@ -48,6 +49,8 @@ static const struct file_operations capture_client_fops = {
 	.owner = THIS_MODULE,
 	.release = capture_client_release,
 	.poll = capture_client_poll,
+	.unlocked_ioctl = drm_capture_client_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
 };
 
 int drm_capture_client_describe(struct file *file,

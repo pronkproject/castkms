@@ -54,4 +54,42 @@ struct drm_mode_create_capture_grant {
 #define DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT \
 	DRM_IOW(0xD4, struct drm_mode_create_capture_grant)
 
+/**
+ * struct drm_capture_describe - Observe an offered final-image configuration
+ * @id: Nonzero offer name within this capture client, not capture authority.
+ * @width: Visible width in pixels.
+ * @height: Visible height in pixels.
+ * @format: DRM fourcc format of the offered image.
+ * @max_requests: Maximum requests per stream, not a reservation of queue credit.
+ * @modifier: DRM format modifier of the offered image.
+ * @reserved: Returned as zero.
+ *
+ * All fields are output. Valid only on an anonymous capture-client descriptor,
+ * not its revocation descriptor or a primary DRM file. The provider checks
+ * current permission. Inactive output may return ENODEV, denied content EACCES,
+ * absent description support EOPNOTSUPP, and revoked authority EKEYREVOKED.
+ *
+ * Repeated queries of an unchanged configuration return the same name. Content
+ * updates do not alone change that name; a new mode or route interval does,
+ * even at equal dimensions. A replaced name is never reused within the client.
+ * The name identifies the latest offered configuration, not a buffer, fence,
+ * presentation time or right to open it after permission changes.
+ *
+ * Querying reserves no image storage and starts no rendering. The image layout
+ * does not establish destination strides, offsets or exporter compatibility.
+ * On error ignore all output, which may have been partially copied. A failed
+ * copy does not consume the offer; retry queries the current configuration.
+ */
+struct drm_capture_describe {
+	__u64 id;
+	__u32 width;
+	__u32 height;
+	__u32 format;
+	__u32 max_requests;
+	__u64 modifier;
+	__u64 reserved[2];
+};
+
+#define DRM_IOCTL_CAPTURE_DESCRIBE DRM_IOR(0x00, struct drm_capture_describe)
+
 #endif

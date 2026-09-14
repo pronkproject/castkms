@@ -4,6 +4,7 @@
 #include "fixture.h"
 
 #include <dirent.h>
+#include <drm_fourcc.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <string.h>
@@ -12,6 +13,8 @@
 #include <unistd.h>
 
 #include "../../../../include/uapi/drm/drm_capture.h"
+
+_Static_assert(sizeof(struct drm_capture_describe) == 48, "capture description ABI");
 
 static unsigned int open_files(int *highest)
 {
@@ -102,10 +105,70 @@ static void rejected_publication(int fd, struct drm_mode_create_capture_grant re
 	CHECK(open_files(&highest) == before);
 }
 
+static void describe_output(int master, const struct drm_mode_create_capture_grant *request,
+			   const struct drm_capture_grant_files *files)
+{
+	struct drm_capture_describe first, next;
+	drmModeConnector *connector = drmModeGetConnector(master, request->connector_id);
+	drmModeModeInfo mode;
+	struct buffer buffer;
+	uint32_t connector_id = request->connector_id;
+	unsigned int before;
+	int highest;
+	long page_size = sysconf(_SC_PAGESIZE);
+	void *partial;
+
+	CHECK(connector && connector->count_modes > 0 && page_size > 0);
+	mode = connector->modes[0];
+	drmModeFreeConnector(connector);
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &first) == -1);
+	CHECK(errno == ENODEV);
+	buffer = create_buffer(master, mode.hdisplay, mode.vdisplay, 0x39);
+	CHECK(drmModeSetCrtc(master, request->crtc_id, buffer.fb, 0, 0,
+			     &connector_id, 1, &mode) == 0);
+	memset(&first, 0xa5, sizeof(first));
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &first) == 0);
+	CHECK(first.id == 1 && first.width == mode.hdisplay && first.height == mode.vdisplay);
+	CHECK(first.format == DRM_FORMAT_XRGB8888 && first.modifier == DRM_FORMAT_MOD_LINEAR);
+	CHECK(first.max_requests == 8 && first.reserved[0] == 0 && first.reserved[1] == 0);
+	CHECK(drmIoctl(files->control_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == -1);
+	CHECK(errno == ENOTTY);
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE ^ (1U << _IOC_SIZESHIFT),
+		       &next) == -1);
+	CHECK(errno == ENOTTY);
+	before = open_files(&highest);
+	for (unsigned int i = 0; i < 128; i++) {
+		CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, (void *)1) == -1);
+		CHECK(errno == EFAULT);
+	}
+	partial = mmap(NULL, page_size * 2, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(partial != MAP_FAILED);
+	CHECK(mprotect((char *)partial + page_size, page_size, PROT_NONE) == 0);
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE,
+		       (char *)partial + page_size - sizeof(first.id)) == -1);
+	CHECK(errno == EFAULT);
+	CHECK(munmap(partial, page_size * 2) == 0);
+	CHECK(open_files(&highest) == before);
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
+	CHECK(!memcmp(&first, &next, sizeof(first)));
+	/* Changed timings create another mode interval without changing visible geometry. */
+	mode.clock++;
+	CHECK(drmModeSetCrtc(master, request->crtc_id, buffer.fb, 0, 0,
+			     &connector_id, 1, &mode) == 0);
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
+	CHECK(next.id == first.id + 1 && next.width == first.width && next.height == first.height);
+	CHECK(drmModeSetCrtc(master, request->crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == -1);
+	CHECK(errno == ENODEV);
+	destroy_buffer(master, &buffer);
+}
+
 int main(int argc, char **argv)
 {
 	struct drm_mode_create_capture_grant request = {}, *read_only;
 	struct drm_capture_grant_files files;
+	struct drm_capture_describe description;
 	struct drm_mode_create_dumb dumb = {};
 	drmVersion *version;
 	drmModeRes *resources;
@@ -147,12 +210,15 @@ int main(int argc, char **argv)
 	CHECK(drmIoctl(files.capture_fd, DRM_IOCTL_MODE_CREATE_DUMB, &dumb) == -1);
 	CHECK(errno == ENOTTY);
 	CHECK(!revoked(files.capture_fd) && !revoked(files.control_fd));
+	describe_output(master, &request, &files);
 	duplicate = fcntl(files.control_fd, F_DUPFD_CLOEXEC, 0);
 	CHECK(duplicate >= 0);
 	CHECK(close(files.control_fd) == 0);
 	CHECK(!revoked(files.capture_fd));
 	CHECK(close(duplicate) == 0);
 	CHECK(revoked(files.capture_fd));
+	CHECK(drmIoctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &description) == -1);
+	CHECK(errno == EKEYREVOKED);
 	CHECK(close(files.capture_fd) == 0);
 
 	CHECK(drmIoctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == 0);
@@ -162,6 +228,6 @@ int main(int argc, char **argv)
 	CHECK(revoked(files.control_fd));
 	CHECK(close(files.control_fd) == 0);
 	CHECK(close(reader) == 0);
-	puts("PASS: creator-bound capture grant publication, rollback and revocation");
+	puts("PASS: capture grant publication, descriptions, rollback and revocation");
 	return 0;
 }

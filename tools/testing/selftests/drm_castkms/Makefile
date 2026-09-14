@@ -9,3 +9,4 @@ include ../lib.mk
 
 $(OUTPUT)/modeset: fixture.c import.c
 $(OUTPUT)/master-lifetime: fixture.c
+$(OUTPUT)/capture-grant: fixture.c

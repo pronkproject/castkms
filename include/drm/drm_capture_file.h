@@ -45,8 +45,9 @@ struct drm_capture_client_owner_ops {
  *
  * Success consumes data; failure leaves it owned by the caller. The file pins
  * ops->owner independently of the authority. All operations may sleep. The file
- * currently observes completed revocation through poll only; it exposes neither
- * pixel operations nor DRM primary-node dispatch. HUP is not GPU completion.
+ * observes completed revocation through poll and offers a description ioctl;
+ * it exposes neither pixel operations nor DRM primary-node dispatch. HUP is
+ * not GPU completion.
  * No descriptor is installed; a publishing adapter must use close-on-exec.
  */
 struct file *drm_capture_client_file_create(

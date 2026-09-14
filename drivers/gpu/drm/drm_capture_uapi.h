@@ -4,6 +4,9 @@
 
 struct drm_device;
 struct drm_file;
+struct file;
+
+long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long arg);
 
 int drm_mode_create_capture_grant_ioctl(struct drm_device *dev, void *data,
 					struct drm_file *file);
