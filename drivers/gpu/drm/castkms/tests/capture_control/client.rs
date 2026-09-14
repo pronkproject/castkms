@@ -4,6 +4,7 @@
 
 mod description;
 mod destinations;
+mod destination_files;
 mod stream_files;
 mod streams;
 
