@@ -90,4 +90,9 @@ struct drm_capture_job *
 drm_capture_authority_claim_stream(struct drm_capture_authority *authority,
 				   struct drm_capture *stream);
 
+/* Same authority checks, claiming only id in stream, without selecting a substitute. */
+struct drm_capture_job *
+drm_capture_authority_claim_request(struct drm_capture_authority *authority,
+				    struct drm_capture *stream, u64 id);
+
 #endif

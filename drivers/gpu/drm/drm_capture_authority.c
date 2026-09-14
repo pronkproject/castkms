@@ -186,9 +186,9 @@ bool drm_capture_authority_remove_stream(struct drm_capture_authority *authority
 }
 EXPORT_SYMBOL_GPL(drm_capture_authority_remove_stream);
 
-struct drm_capture_job *
-drm_capture_authority_claim_stream(struct drm_capture_authority *authority,
-				   struct drm_capture *stream)
+static struct drm_capture_job *
+capture_authority_claim(struct drm_capture_authority *authority,
+			struct drm_capture *stream, const u64 *request_id)
 {
 	struct capture_stream_registration *registration;
 	struct drm_capture_job *job = ERR_PTR(-ENOENT);
@@ -206,10 +206,30 @@ drm_capture_authority_claim_stream(struct drm_capture_authority *authority,
 		}
 		ret = authority->ops->authorize_capture(authority->data, stream);
 		/* A malformed positive callback result must never grant access. */
-		job = ret ? ERR_PTR(ret < 0 ? ret : -EINVAL) : drm_capture_claim(stream);
+		if (ret)
+			job = ERR_PTR(ret < 0 ? ret : -EINVAL);
+		else if (request_id)
+			job = drm_capture_claim_request(stream, *request_id);
+		else
+			job = drm_capture_claim(stream);
 		break;
 	}
 	drm_capture_authority_end(authority);
 	return job;
 }
+
+struct drm_capture_job *
+drm_capture_authority_claim_stream(struct drm_capture_authority *authority,
+				   struct drm_capture *stream)
+{
+	return capture_authority_claim(authority, stream, NULL);
+}
 EXPORT_SYMBOL_GPL(drm_capture_authority_claim_stream);
+
+struct drm_capture_job *
+drm_capture_authority_claim_request(struct drm_capture_authority *authority,
+				    struct drm_capture *stream, u64 id)
+{
+	return capture_authority_claim(authority, stream, &id);
+}
+EXPORT_SYMBOL_GPL(drm_capture_authority_claim_request);
