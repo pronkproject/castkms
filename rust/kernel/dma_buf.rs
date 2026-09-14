@@ -72,6 +72,16 @@ impl DmaBuf {
         self.0.get()
     }
 
+    /// Borrow an initialized native DMA-BUF without acquiring a reference.
+    ///
+    /// # Safety
+    ///
+    /// The pointer must name an initialized DMA-BUF retained throughout `'a`.
+    pub(crate) unsafe fn from_raw<'a>(raw: *mut bindings::dma_buf) -> &'a Self {
+        // SAFETY: The caller provides the live borrow; repr(transparent) preserves layout.
+        unsafe { &*raw.cast() }
+    }
+
     /// Adopt one native reference to an initialized DMA-BUF.
     ///
     /// # Safety
