@@ -4,7 +4,10 @@
 
 use super::*;
 use crate::{
-    drm::preparation::Source,
+    drm::{
+        kms::preparation::with_current_source,
+        preparation::Source, //
+    },
     sync::aref::ARef, //
 };
 use crtc::AsRawCrtc;
@@ -58,22 +61,96 @@ pub(super) fn expand_check(state: &atomic::AtomicStateComposer<TestDriver>) -> R
 }
 
 fn check_installed(dev: &testing::TestDevice<TestDriver>, source: &Source) -> Result {
-    dev.check(|transaction| {
-        let crtc = dev.crtc()?;
-        let _state = transaction.add_crtc_state(crtc)?;
-        // SAFETY: The state guard retains the CRTC lock. The fixture retains the device and
-        // the previously accepted state while the native accessor returns its borrowed source.
-        let installed = unsafe { bindings::drm_atomic_prepare_crtc_source(crtc.as_raw()) };
-        if installed.cast_const() != ptr::from_ref(source).cast() {
-            return Err(EINVAL);
-        }
-        Ok(())
-    })
+    let crtc = dev.crtc()?;
+    let mut calls = 0;
+    // SAFETY: The private fixture owns the initialized CRTC and excludes teardown. The
+    // callback neither takes another modeset lock nor enters a transaction.
+    let result = unsafe {
+        with_current_source(crtc, |accepted| {
+            calls += 1;
+            // The native accessor asserts that the same CRTC's modeset lock is held.
+            let native = bindings::drm_atomic_prepare_crtc_source(crtc.as_raw());
+            if accepted.is_none_or(|accepted| !ptr::eq(accepted, source))
+                || native.cast_const() != ptr::from_ref(source).cast()
+            {
+                return Err(EINVAL);
+            }
+            Ok(())
+        })?
+    };
+    assert_eq!(calls, 1);
+    result
 }
 
 #[kunit_tests(rust_drm_accepted_generations)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn registered_observation_rejects_a_foreign_crtc_without_calling_back() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-generation-control", None)?;
+        let foreign_parent = faux::Registration::new(c"rust-generation-foreign", None)?;
+        let foreign = testing::TestDevice::new(allocate(foreign_parent.as_ref(), &counts, false)?)?;
+        // SAFETY: Every exit drops registration before its owning faux parent.
+        let registration = unsafe {
+            drm::Registration::new_static(
+                parent.as_ref().as_ref(),
+                allocate(parent.as_ref(), &counts, false)?,
+                Ok::<(), Error>(()),
+                0,
+            )?
+        };
+        {
+            let registered = registration.registration_guard().ok_or(ENODEV)?;
+            let mut calls = 0;
+            assert_eq!(
+                registered.with_crtc_preparation_source(foreign.crtc()?, |_| calls += 1),
+                Err(EINVAL)
+            );
+            assert_eq!(calls, 0);
+            // SAFETY: Setup recorded the only CRTC; registration excludes its teardown.
+            let crtc = unsafe {
+                crtc::Crtc::<TestCrtc>::from_raw(registered.crtc.load(Ordering::Relaxed))
+            };
+            registered.with_crtc_preparation_source(crtc, |source| {
+                calls += 1;
+                assert!(source.is_none());
+            })?;
+            assert_eq!(calls, 1);
+        }
+        drop(registration);
+        drop(foreign);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn source_observation_returns_callback_errors_without_replaying() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-generation-observe", None)?;
+        let dev = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let mut calls = 0;
+        let observe_error = |source: Option<&Source>| {
+            calls += 1;
+            assert!(source.is_none());
+            Err::<(), _>(EIO)
+        };
+        // SAFETY: The fixture owns the initialized device. The callback only observes
+        // accounting and does not acquire any other modeset locks.
+        let result = unsafe { with_current_source(dev.crtc()?, observe_error) }?;
+        assert_eq!(result, Err(EIO));
+        let observe = |source: Option<&Source>| {
+            calls += 1;
+            assert!(source.is_none());
+        };
+        // SAFETY: The first helper released its lock, and the same fixture remains live.
+        unsafe { with_current_source(dev.crtc()?, observe) }?;
+        assert_eq!(calls, 2);
+        assert_eq!(counts.accepted_generation.calls.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[test]
     fn devices_without_accounting_report_no_generation() -> Result {
