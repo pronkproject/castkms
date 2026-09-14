@@ -223,4 +223,41 @@ mod cases {
             check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])
         })
     }
+
+    #[test]
+    fn queue_cancellation_preserves_each_terminal_record() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let mut queue = Queue::new(&grantor.capture(), 2)?;
+            let image = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
+            let mut reuse = ManualFence::new()?;
+            queue.queue_to(1, image.clone(), Some(reuse.fence()))?;
+            queue.queue(2)?;
+            check(queue.cancel(0) == Err(EINVAL))?;
+            check(queue.cancel(3) == Err(ENOENT))?;
+            queue.cancel(2)?;
+            fixture.drm.device().host.current()?.flush_for_test();
+            check(queue.advance() == 1)?;
+            queue.cancel(1)?;
+            check(queue.queue(3) == Err(EAGAIN))?;
+            check(queue.advance() == 1)?;
+            check(queue.cancel(1) == Err(EALREADY))?;
+            check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
+            check(queue.queue(3) == Err(EAGAIN))?;
+            for id in [1, 2] {
+                queue.dequeue(|completion| {
+                    check(completion.use_id == id)?;
+                    check(matches!(completion.result, Err(ECANCELED)))
+                })?;
+            }
+            reuse.complete(Ok(()))?;
+            check(queue.advance() == 0)?;
+            check(pixels(image.buffer())?.iter().all(|byte| *byte == 0x73))?;
+            check(queue.cancel(1) == Err(ENOENT))?;
+            queue.queue_to(3, image, None)
+        })
+    }
 }

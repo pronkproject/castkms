@@ -35,6 +35,13 @@ enum Attempt {
 }
 
 impl Attempt {
+    fn cancel(&mut self) -> Result {
+        match self {
+            Self::Private(pending) => pending.cancel(),
+            Self::Destination(output) => output.cancel(),
+        }
+    }
+
     fn try_complete_frame(&mut self) -> Result<Option<Frame>> {
         match self {
             Self::Private(pending) => pending.try_complete_frame(),
@@ -92,6 +99,15 @@ impl Queue {
                 .queue_to(destination, reuse)
                 .map(Attempt::Destination)
         })
+    }
+
+    /// Request cancellation without acknowledging or replacing a terminal result.
+    ///
+    /// Advance the queue to observe the canceled attempt and dequeue its terminal record
+    /// normally. Success is not a source-read completion or an acknowledgment of storage
+    /// reuse. An already terminal record remains unchanged and returns EALREADY.
+    pub(crate) fn cancel(&mut self, use_id: u64) -> Result {
+        self.records.cancel(use_id, Attempt::cancel)
     }
 
     /// Finish available composition without waiting for the worker. Authorization and copying
