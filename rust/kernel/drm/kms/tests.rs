@@ -7,6 +7,7 @@
 
 #[cfg(CONFIG_FAILSLAB)]
 mod allocation;
+mod blobs;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod buffers;
 #[cfg(CONFIG_DRM_CLIENT)]

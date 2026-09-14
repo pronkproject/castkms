@@ -3,6 +3,7 @@
 //! KMS driver abstractions for rust.
 
 pub mod atomic;
+pub mod blob;
 pub mod preparation;
 pub mod connector;
 pub mod crtc;
