@@ -2,6 +2,8 @@
 
 //! Completed host capture copied to independent exported destinations.
 
+mod queued;
+
 use super::*;
 use crate::{
     capture::{
