@@ -4,6 +4,7 @@
 
 use crate::{
     capture::provider::{
+        Frame,
         Request,
         Stream, //
     },
@@ -47,6 +48,15 @@ impl Pending {
     /// inspection for copy failure or revocation. This may sleep while authorizing/copying;
     /// call outside DRM, publication, destination and worker-lifecycle locks.
     pub(crate) fn try_complete(&mut self) -> Result<Option<Request>> {
+        self.try_complete_frame()
+            .map(|frame| frame.map(Frame::into_request))
+    }
+
+    /// Complete an available attempt with its original image metadata.
+    ///
+    /// Readiness, consumption and locking follow [`Self::try_complete`]. Metadata describes
+    /// the image returned by the worker, not the current scene when this method is called.
+    pub(crate) fn try_complete_frame(&mut self) -> Result<Option<Frame>> {
         let request = self.request.as_ref().ok_or(EALREADY)?;
         let outcome = match request.status() {
             Ok(Status::Pending) => self.worker.try_outcome(),
@@ -55,8 +65,8 @@ impl Pending {
         };
         match outcome {
             Ok(None) => Ok(None),
-            Ok(Some(outcome)) => self.complete(Ok(outcome)).map(Some),
-            Err(error) => self.complete(Err(error)).map(Some),
+            Ok(Some(outcome)) => self.complete_frame(Ok(outcome)).map(Some),
+            Err(error) => self.complete_frame(Err(error)).map(Some),
         }
     }
 
@@ -64,20 +74,24 @@ impl Pending {
     ///
     /// An interrupted wait abandons this operation. Callers that need to retain demand across
     /// scheduling decisions may keep the object and use [`Self::try_complete`] instead.
-    pub(crate) fn wait(mut self) -> Result<Request> {
+    pub(crate) fn wait(self) -> Result<Request> {
+        self.wait_frame().map(Frame::into_request)
+    }
+
+    /// Wait and retain the delivered image's metadata, with the same contract as [`Self::wait`].
+    pub(crate) fn wait_frame(mut self) -> Result<Frame> {
         let request = self.request.as_ref().ok_or(EALREADY)?;
         let outcome =
             request.wait_for_provider(self.worker.changed(), || self.worker.try_outcome());
-        self.complete(outcome)
+        self.complete_frame(outcome)
     }
 
-    fn complete(&mut self, outcome: Result<Outcome>) -> Result<Request> {
+    fn complete_frame(&mut self, outcome: Result<Outcome>) -> Result<Frame> {
         let request = self.request.take().ok_or(EALREADY)?;
         match outcome? {
-            Outcome::Image(image) => request.deliver(&self.delivery, &image)?,
-            Outcome::NoScene => return Err(EAGAIN),
-            Outcome::Failed(error) => return Err(error),
+            Outcome::Image(image) => request.deliver_frame(&self.delivery, &image),
+            Outcome::NoScene => Err(EAGAIN),
+            Outcome::Failed(error) => Err(error),
         }
-        Ok(request)
     }
 }
