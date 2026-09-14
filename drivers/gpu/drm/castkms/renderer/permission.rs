@@ -17,7 +17,8 @@ use kernel::{
         device::Registered,
         kms::{
             connector::Connector,
-            crtc::Crtc, //
+            crtc::Crtc,
+            LockedState, //
         },
         Device, //
     },
@@ -126,17 +127,19 @@ impl Access {
 
     /// Check revocation inside the installed-generation control interval.
     ///
-    /// Master, CRTC, object-ID and output locks precede the revocation lock. The callback
+    /// Master, modeset, object-ID and output locks precede the revocation lock. The callback
     /// follows `Target::with_installed`'s restrictions and must not revoke or drop its owner.
     pub(crate) fn with_installed<R>(
         &self,
         registered: &Device<Driver, Registered>,
-        f: impl FnOnce(Current<'_>) -> Result<R>,
+        f: impl FnOnce(Current<'_>, &LockedState<'_, Driver>) -> Result<R>,
     ) -> Result<R> {
         self.policy
             .permission
             .target
-            .with_installed(registered, |current| self.authorize(current, f))
+            .with_installed(registered, |current, locked| {
+                self.authorize(current, |current| f(current, locked))
+            })
     }
 
     fn authorize<R>(

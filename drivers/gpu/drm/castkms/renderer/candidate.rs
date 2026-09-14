@@ -16,6 +16,7 @@ use crate::{
 use kernel::{
     drm::{
         device::Registered,
+        kms::LockedState,
         Device, //
     },
     prelude::*, //
@@ -89,17 +90,18 @@ impl Candidate {
 
     /// Stabilize installed display state, permission and this reservation for handoff.
     ///
-    /// The callback holds master, CRTC, object-ID, output, revocation and startup locks in
-    /// that order. It must not wait, read pixels, enter other DRM operations, cancel this
+    /// The callback holds master, modeset, object-ID, output, revocation and startup locks in
+    /// that order. It must not wait, read pixels, acquire more modeset locks, cancel this
     /// candidate or release final resources. Only the callback may publish a control change;
     /// a returned observation does not reserve a later operation.
     pub(crate) fn with_activation_control<R>(
         &self,
         registered: &Device<Driver, Registered>,
-        f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
+        f: impl FnOnce(display_control::Current<'_>, &LockedState<'_, Driver>) -> Result<R>,
     ) -> Result<R> {
-        self.access
-            .with_installed(registered, |current| self.with_reservation(current, f))
+        self.access.with_installed(registered, |current, locked| {
+            self.with_reservation(current, |current| f(current, locked))
+        })
     }
 
     fn with_reservation<R>(

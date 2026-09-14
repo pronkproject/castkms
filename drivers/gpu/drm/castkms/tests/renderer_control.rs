@@ -106,10 +106,10 @@ mod cases {
             let old = host.configure(device, layout)?;
             old.request()?;
             host.with_change(|change| {
-                candidate.with_activation_control(device, |_| change.disable())
+                candidate.with_activation_control(device, |_, _| change.disable())
             })?;
             host.with_change(|change| {
-                candidate.with_activation_control(device, |_| change.enable())
+                candidate.with_activation_control(device, |_, _| change.enable())
             })?;
             check(old.request() == Err(ENODEV))?;
             check(matches!(host.current(), Err(EAGAIN)))?;
@@ -137,7 +137,7 @@ mod cases {
             )?;
             handle.request()?;
             host.with_change(|change| {
-                candidate.with_activation_control(device, |_| {
+                candidate.with_activation_control(device, |_, _| {
                     change.disable()?;
                     check(handle.request() == Err(ENODEV))?;
                     check(matches!(host.current(), Err(EOPNOTSUPP)))
@@ -168,7 +168,7 @@ mod cases {
             owner.revoke();
             check(
                 host.with_change(|change| {
-                    candidate.with_activation_control(device, |_| change.disable())
+                    candidate.with_activation_control(device, |_, _| change.disable())
                 }) == Err(EKEYREVOKED),
             )?;
             let _request = handle.request_outcome()?;
@@ -184,14 +184,15 @@ mod cases {
             let mut calls = 0;
             for _ in 0..16 {
                 device.atomic_update(|state| state.set_crtc_config(crtc, Some(scanout)))?;
-                candidate.with_activation_control(device, |current| {
+                candidate.with_activation_control(device, |current, locked| {
                     calls += 1;
+                    current.check_source(locked.preparation_source(crtc)?.ok_or(EINVAL)?)?;
                     check(current.configuration().dimensions() == [640, 480])
                 })?;
             }
             owner.revoke();
             check(
-                candidate.with_activation_control(device, |_| {
+                candidate.with_activation_control(device, |_, _| {
                     calls += 1;
                     Ok(())
                 }) == Err(EKEYREVOKED),
@@ -206,12 +207,12 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Candidate::begin(owner.access())?;
             candidate.cancel();
-            check(candidate.with_activation_control(device, |_| Ok(())) == Err(ECANCELED))?;
+            check(candidate.with_activation_control(device, |_, _| Ok(())) == Err(ECANCELED))?;
             drop(candidate);
             let replacement = Candidate::begin(owner.access())?;
-            replacement.with_activation_control(device, |_| Ok(()))?;
+            replacement.with_activation_control(device, |_, _| Ok(()))?;
             drop(file);
-            check(replacement.with_activation_control(device, |_| Ok(())) == Err(EACCES))
+            check(replacement.with_activation_control(device, |_, _| Ok(())) == Err(EACCES))
         })
     }
 
@@ -252,14 +253,14 @@ mod cases {
                 );
             });
             let mut calls = 0;
-            let rejected = candidate.with_activation_control(device, |_| {
+            let rejected = candidate.with_activation_control(device, |_, _| {
                 calls += 1;
                 Ok(())
             });
             drop(restore);
             check(rejected == Err(EAGAIN))?;
             check(calls == 0)?;
-            candidate.with_activation_control(device, |_| {
+            candidate.with_activation_control(device, |_, _| {
                 calls += 1;
                 Ok(())
             })?;

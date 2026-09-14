@@ -54,7 +54,7 @@ mod cases {
         let registered = other._display.registration_guard().ok_or(ENODEV)?;
         let mut calls = 0;
         check(
-            owner.access().with_installed(&registered, |_| {
+            owner.access().with_installed(&registered, |_, _| {
                 calls += 1;
                 Ok(())
             }) == Err(EINVAL),

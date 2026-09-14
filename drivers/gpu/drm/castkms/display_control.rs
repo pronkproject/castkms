@@ -27,6 +27,7 @@ use kernel::{
                 Crtc,
                 CrtcRef, //
             }, //
+            LockedState,
         },
         preparation::Source,
         Device, //
@@ -75,7 +76,7 @@ impl Target {
 
     /// Inspect control only after the latest accepted CRTC state has installed its scene.
     ///
-    /// Registration is followed by master, CRTC, object-ID and output locks, in that order.
+    /// Registration is followed by master, modeset, object-ID and output locks, in that order.
     /// The callback runs once with those locks held, without waiting for commit-tail progress.
     /// It follows `with_current`'s restrictions and must not acquire another modeset lock.
     /// An accepted predecessor that has not installed its scene returns `EAGAIN` instead of
@@ -83,15 +84,19 @@ impl Target {
     pub(crate) fn with_installed<R>(
         &self,
         registered: &Device<Driver, Registered>,
-        f: impl FnOnce(Current<'_>) -> Result<R>,
+        f: impl FnOnce(Current<'_>, &LockedState<'_, Driver>) -> Result<R>,
     ) -> Result<R> {
+        let device: &Device<Driver> = registered;
+        if !core::ptr::eq(self.device(), device) {
+            return Err(EINVAL);
+        }
         let identity = self.master.lock_current_identity().ok_or(EACCES)?;
-        registered.with_crtc_preparation_source(self.crtc.crtc(), |source| {
-            let source = source.ok_or(EAGAIN)?;
+        registered.with_modeset_locks(|locked| {
+            let source = locked.preparation_source(self.crtc.crtc())?.ok_or(EAGAIN)?;
             identity.with_objects(|guard| {
                 self.with_guard(guard, |current| {
                     current.check_source(source)?;
-                    f(current)
+                    f(current, locked)
                 })
             })
         })?
