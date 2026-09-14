@@ -512,8 +512,10 @@ operations. Kernel-issued grants need not join it: their explicit grantor
 still owns revocation, and losing current display control separately denies
 access. The file adapter adds a lifetime restriction, not a new way around
 recipient policy. Completed, authorized private results retain the same
-revocation behavior described above. No capture ioctl or descriptor transport
-is enabled by the adapter.
+revocation behavior described above. The optional shared KMS provider resolves
+file-visible IDs and invokes this adapter; the :doc:`drm-capture` transport
+publishes the resulting capture and control descriptors. The file adapter
+itself does not install descriptors or perform image operations.
 
 Transferring revocation to a control file
 ---------------------------------------
@@ -542,7 +544,8 @@ Poll on the control file reports completion of authority revocation,
 including device shutdown. Ordinary display changes or loss of current
 display control need not terminate a durable grant; current permission
 checks and stream revocation enforce those restrictions separately. The
-adapter adds no public grant-creation or capture ABI.
+public grant-creation operation preserves these same ownership rules. Public
+image negotiation and delivery are not yet exposed on the capture file.
 
 Testing in a disposable virtual machine
 --------------------------------------
@@ -551,6 +554,7 @@ The userspace smoke tests require the libdrm development headers and library::
 
     make -C tools/testing/selftests/drm_castkms
     tools/testing/selftests/drm_castkms/execution /dev/dri/cardN
+    tools/testing/selftests/drm_castkms/capture-grant /dev/dri/cardN
     tools/testing/selftests/drm_castkms/modeset /dev/dri/cardN
 
 Choose the Rust CastKMS node explicitly in an otherwise unused test VM. The
@@ -566,7 +570,13 @@ cannot change the description. The test needs an unused node so its first
 file acquires master; reading the description itself does not require master,
 a capture grant or an active display. Neither file receives pixel access.
 
-The test allocates and maps two local buffers, verifies that a test-only
+The capture-grant test exercises public issuance without displaying or reading
+an image. It checks master-file authority, distinct close-on-exec endpoints,
+creator and control close, duplicate control ownership, read-only request
+memory, partial output faults and descriptor exhaustion. Repeated output
+faults must not leak descriptors or consume the creator's grant quota.
+
+The modeset test allocates and maps two local buffers, verifies that a test-only
 commit leaves the display inactive, enables the output, and submits 48 flips
 including same-framebuffer updates. Each submitted flip must produce exactly
 one event. It then selects a mode with the same dimensions and half the pixel
