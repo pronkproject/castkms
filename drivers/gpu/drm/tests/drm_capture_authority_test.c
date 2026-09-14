@@ -368,7 +368,82 @@ static void drm_capture_authority_concurrent_revoke(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, completion_done(&second.done));
 }
 
+static void expect_selected_claim_error(struct kunit *test,
+					struct drm_capture_authority *authority,
+					struct drm_capture *stream, u64 id, int error)
+{
+	struct drm_capture_job *job = drm_capture_authority_claim_request(authority, stream, id);
+
+	if (!IS_ERR(job)) {
+		drm_capture_complete(job, -ECANCELED);
+		KUNIT_FAIL(test, "selected claim unexpectedly succeeded");
+		return;
+	}
+	KUNIT_EXPECT_EQ(test, PTR_ERR(job), error);
+}
+
+static void drm_capture_authority_selects_only_authorized_request(struct kunit *test)
+{
+	struct authority_context *context;
+	struct drm_capture_authority *authority = authority_create_ops(test, &context, &policy_ops);
+	struct drm_capture *stream = registered_stream(test, authority);
+	struct drm_capture_job *job;
+	struct drm_capture_result result;
+	u64 first, second;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(stream, &first), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(stream, &second), 0);
+	context->policy_status = -EACCES;
+	expect_selected_claim_error(test, authority, stream, second, -EACCES);
+	context->policy_status = 1;
+	expect_selected_claim_error(test, authority, stream, second, -EINVAL);
+	context->policy_status = 0;
+	job = drm_capture_authority_claim_request(authority, stream, second);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	drm_capture_complete(job, 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(stream, first, &result), 0);
+	KUNIT_EXPECT_FALSE(test, result.completed);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(stream, second, &result), 0);
+	KUNIT_EXPECT_TRUE(test, result.completed);
+	KUNIT_EXPECT_EQ(test, result.status, 0);
+	KUNIT_EXPECT_EQ(test, context->policy_calls, 3);
+	expect_selected_claim_error(test, authority, stream, 0, -ENOENT);
+	drm_capture_authority_revoke(authority);
+	expect_selected_claim_error(test, authority, stream, first, -EKEYREVOKED);
+	KUNIT_EXPECT_EQ(test, context->policy_calls, 4);
+}
+
+static void drm_capture_authority_selection_checks_membership(struct kunit *test)
+{
+	struct authority_context *first_context, *second_context;
+	struct drm_capture_authority *first = authority_create_ops(test, &first_context, &policy_ops);
+	struct drm_capture_authority *second = authority_create_ops(test, &second_context, &policy_ops);
+	struct drm_capture *stream = registered_stream(test, first);
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(stream, &id), 0);
+	expect_selected_claim_error(test, second, stream, id, -ENOENT);
+	KUNIT_EXPECT_EQ(test, second_context->policy_calls, 0);
+	KUNIT_EXPECT_TRUE(test, drm_capture_authority_remove_stream(first, stream));
+	expect_selected_claim_error(test, first, stream, id, -ENOENT);
+	KUNIT_EXPECT_EQ(test, first_context->policy_calls, 0);
+}
+
+static void drm_capture_authority_selection_requires_policy(struct kunit *test)
+{
+	struct authority_context *context;
+	struct drm_capture_authority *authority = authority_create(test, &context);
+	struct drm_capture *stream = registered_stream(test, authority);
+	u64 id;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(stream, &id), 0);
+	expect_selected_claim_error(test, authority, stream, id, -EOPNOTSUPP);
+}
+
 static struct kunit_case drm_capture_authority_cases[] = {
+	KUNIT_CASE(drm_capture_authority_selects_only_authorized_request),
+	KUNIT_CASE(drm_capture_authority_selection_checks_membership),
+	KUNIT_CASE(drm_capture_authority_selection_requires_policy),
 	KUNIT_CASE(drm_capture_authority_terminal_cleanup),
 	KUNIT_CASE(drm_capture_authority_revokes_registered_streams),
 	KUNIT_CASE(drm_capture_authority_removes_one_stream),
