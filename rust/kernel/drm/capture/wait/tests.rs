@@ -5,12 +5,53 @@ use crate::{
         Status,
         Stream, //
     },
-    prelude::*, //
+    prelude::*,
+    sync::CondVar, //
 };
 
 #[kunit_tests(rust_drm_capture_wait)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn provider_observation_returns_owned_data_without_claiming() -> Result {
+        let changed = KBox::pin_init(kernel::sync::new_condvar!(), GFP_KERNEL)?;
+        let stream = Stream::new(1, 16)?;
+        let request = stream.queue()?;
+        let value =
+            request.wait_for_provider(&changed, || Ok(Some(KBox::new(42u32, GFP_KERNEL)?)))?;
+        assert_eq!(*value, 42);
+        assert_eq!(request.status()?, Status::Pending);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_requests_do_not_enter_the_provider_callback() -> Result {
+        let changed: Pin<KBox<CondVar>> = KBox::pin_init(kernel::sync::new_condvar!(), GFP_KERNEL)?;
+        let stream = Stream::new(1, 16)?;
+        let request = stream.queue()?;
+        request.cancel()?;
+        let mut observed = false;
+        let result = request.wait_for_provider(&changed, || {
+            observed = true;
+            Ok(Some(()))
+        });
+        assert_eq!(result, Err(ECANCELED));
+        assert!(!observed);
+        assert_eq!(request.status()?, Status::Complete(Err(ECANCELED)));
+        Ok(())
+    }
+
+    #[test]
+    fn provider_error_leaves_the_request_queued() -> Result {
+        let changed = KBox::pin_init(kernel::sync::new_condvar!(), GFP_KERNEL)?;
+        let stream = Stream::new(1, 16)?;
+        let request = stream.queue()?;
+        let result = request.wait_for_provider(&changed, || Err::<Option<()>, _>(ENODEV));
+        assert_eq!(result, Err(ENODEV));
+        assert_eq!(request.status()?, Status::Pending);
+        Ok(())
+    }
 
     #[test]
     fn successful_wait_retains_image_and_queue_credit() -> Result {
