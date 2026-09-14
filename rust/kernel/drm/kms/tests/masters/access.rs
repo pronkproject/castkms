@@ -78,6 +78,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn identity_exclusion_allows_object_checks_inside_modeset_validation() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-modeset-order", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let client = HandleClient::new(&dev)?;
+        make_current(&client)?;
+        let master = client.file().associated_master().ok_or(EINVAL)?;
+        {
+            let identity = master.lock_current_identity().ok_or(EACCES)?;
+            check(identity.with_objects(|_| Err::<(), _>(EIO)) == Err(EIO))?;
+            // SAFETY: The fixture retains its only initialized CRTC, excluding teardown.
+            let crtc =
+                unsafe { crtc::Crtc::<TestCrtc>::from_raw(dev.crtc.load(Ordering::Relaxed)) };
+            // SAFETY: The fixture owns completed KMS setup. The callback takes object-ID
+            // exclusion only after the transaction acquires the CRTC modeset lock.
+            unsafe {
+                atomic::run_check(&dev, |transaction| {
+                    drop(transaction.add_crtc_state(crtc)?);
+                    check(identity.with_objects(|objects| {
+                        objects.holds_object(crtc) && objects.is_master_file(client.file())
+                    }))
+                })
+            }?;
+        }
+        check(master.lock_current().is_some())?;
+        drop(client);
+        check(master.lock_current_identity().is_none())?;
+        Ok(())
+    }
+
+    #[test]
     fn a_master_file_is_distinct_from_clients_sharing_its_identity() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-master-file-role", None)?;

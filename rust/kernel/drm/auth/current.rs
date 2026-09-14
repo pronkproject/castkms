@@ -28,8 +28,9 @@ use crate::{
 ///
 /// # Invariants
 ///
-/// The current task owns the native locks acquired for `master`. The borrowed identity keeps
-/// both the master and its device alive until those locks are released.
+/// The current task holds the native master and object-ID locks. This guard owns both
+/// acquisitions or owns object-ID exclusion inside a borrowed identity guard. The borrowed
+/// identity keeps both the master and its device alive until those locks are released.
 ///
 /// The guard cannot move to another task:
 ///
@@ -52,6 +53,7 @@ use crate::{
 #[must_use]
 pub struct CurrentMasterGuard<'a, D: KmsDriver> {
     master: &'a MasterRef<D>,
+    release_master: bool,
     _task: NotThreadSafe,
 }
 
@@ -70,6 +72,7 @@ impl<D: KmsDriver> MasterRef<D> {
         // remains alive until the non-transferable guard releases them in Drop.
         Some(CurrentMasterGuard {
             master: self,
+            release_master: true,
             _task: NotThreadSafe,
         })
     }
@@ -121,6 +124,75 @@ impl<D: KmsDriver> Drop for CurrentMasterGuard<'_, D> {
     fn drop(&mut self) {
         // SAFETY: The guard owns one successful lock acquisition on this task. Its borrowed
         // identity retains the master and device through the matching unlock.
-        unsafe { bindings::drm_master_unlock_current(self.master.raw.as_ptr()) };
+        if self.release_master {
+            unsafe { bindings::drm_master_unlock_current(self.master.raw.as_ptr()) };
+        } else {
+            // SAFETY: The borrowed identity guard retains the outer master lock. This guard
+            // owns only the object-ID acquisition, which must end before its parent callback.
+            unsafe {
+                bindings::mutex_unlock(&raw mut (*self.master.dev.as_raw()).mode_config.idr_mutex)
+            };
+        }
+    }
+}
+
+/// Current lease-root identity, with object lookup deliberately left unlocked.
+///
+/// This guard holds only the native master mutex. It allows modeset locks to follow that
+/// mutex before [`Self::with_objects`] protects object checks. It establishes neither a
+/// file's master role nor continuing lease membership, output state or pixel permission.
+/// Do not wait for rendering, drop final DRM references or reenter master operations.
+///
+/// # Invariants
+///
+/// The current task owns the native master mutex. The borrowed identity keeps the master
+/// and device live, and object-access callbacks end before this guard releases that mutex.
+#[must_use]
+pub struct MasterIdentityGuard<'a, D: KmsDriver> {
+    master: &'a MasterRef<D>,
+    _task: NotThreadSafe,
+}
+
+impl<D: KmsDriver> MasterRef<D> {
+    /// Stabilize the current lease root before taking modeset and object-ID locks.
+    ///
+    /// Call without master, modeset or object-ID locks held. Returns `None` without a lock
+    /// when the retained identity's root is no longer current. Object access is checked later
+    /// through [`MasterIdentityGuard::with_objects`], not inferred from this result.
+    pub fn lock_current_identity(&self) -> Option<MasterIdentityGuard<'_, D>> {
+        // SAFETY: The identity retains its initialized master and device through acquisition.
+        if !unsafe { bindings::drm_master_lock_current_identity(self.raw.as_ptr()) } {
+            return None;
+        }
+        Some(MasterIdentityGuard {
+            master: self,
+            _task: NotThreadSafe,
+        })
+    }
+}
+
+impl<D: KmsDriver> MasterIdentityGuard<'_, D> {
+    /// Check object access inside the retained master interval, after any modeset locks.
+    ///
+    /// The callback holds the object-ID mutex and follows [`CurrentMasterGuard`]'s restrictions.
+    /// It must not acquire modeset locks, reenter this method or drop the identity guard.
+    /// No object-access guard escapes the callback. Cloned identities do not retain exclusion.
+    pub fn with_objects<R>(&self, f: impl FnOnce(&CurrentMasterGuard<'_, D>) -> R) -> R {
+        // SAFETY: The identity guard retains the initialized device and its outer master lock.
+        unsafe { bindings::mutex_lock(&raw mut (*self.master.dev.as_raw()).mode_config.idr_mutex) };
+        let objects = CurrentMasterGuard {
+            master: self.master,
+            release_master: false,
+            _task: NotThreadSafe,
+        };
+        f(&objects)
+    }
+}
+
+impl<D: KmsDriver> Drop for MasterIdentityGuard<'_, D> {
+    fn drop(&mut self) {
+        // SAFETY: This non-transferable guard owns the acquisition on the current task, and
+        // every borrowed object-access callback has ended before its destructor can run.
+        unsafe { bindings::drm_master_unlock_current_identity(self.master.raw.as_ptr()) };
     }
 }
