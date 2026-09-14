@@ -11,7 +11,10 @@ use core::ptr::NonNull;
 pub(super) mod callbacks;
 mod current;
 
-pub use current::CurrentMasterGuard;
+pub use current::{
+    CurrentMasterGuard,
+    MasterIdentityGuard, //
+};
 
 /// A file's associated master and current-master status sampled together.
 ///
