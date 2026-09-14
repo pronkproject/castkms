@@ -356,6 +356,49 @@ ssize_t drm_capture_copy_result(struct drm_capture *capture, u64 id,
 }
 EXPORT_SYMBOL_GPL(drm_capture_copy_result);
 
+/**
+ * drm_capture_copy_result_range - copy part of a retained final image
+ * @capture: live stream
+ * @id: retained request
+ * @offset: first byte in the fixed-size image
+ * @buffer: kernel storage writable for @size bytes
+ * @size: exact number of bytes to copy
+ *
+ * Copying does not consume the request or release its accounting credit.
+ * All bytes in the range must fit; failure leaves @buffer unchanged. A
+ * zero-length range at the end is valid, but still checks request status.
+ * Repeated calls do not reserve the result against concurrent discard or
+ * shutdown. No mapping or pointer to the private result escapes the lock.
+ *
+ * Return: @size, or a negative errno for a missing, pending, failed or
+ * out-of-bounds result.
+ */
+ssize_t drm_capture_copy_result_range(struct drm_capture *capture, u64 id,
+				     size_t offset, void *buffer, size_t size)
+{
+	struct drm_capture_job *job;
+	ssize_t ret;
+
+	mutex_lock(&capture->lock);
+	job = drm_capture_find(capture, id);
+	if (!job) {
+		ret = -ENOENT;
+	} else if (job->state != DRM_CAPTURE_DONE) {
+		ret = -EAGAIN;
+	} else if (job->status) {
+		ret = job->status;
+	} else if (offset > capture->frame_size || size > capture->frame_size - offset) {
+		ret = -EINVAL;
+	} else {
+		if (size)
+			memcpy(buffer, job->data + offset, size);
+		ret = size;
+	}
+	mutex_unlock(&capture->lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_copy_result_range);
+
 int drm_capture_ack(struct drm_capture *capture, u64 id)
 {
 	struct drm_capture_job *job;
