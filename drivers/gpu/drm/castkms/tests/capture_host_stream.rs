@@ -4,6 +4,7 @@
 
 mod progress;
 mod pending;
+mod queue;
 
 use super::*;
 use crate::{

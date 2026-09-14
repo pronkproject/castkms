@@ -10,6 +10,7 @@ pub(crate) mod destination;
 pub(crate) mod grants;
 pub(crate) mod host;
 pub(crate) mod host_stream;
+pub(crate) mod host_queue;
 pub(crate) mod permission;
 pub(crate) mod provider;
 pub(crate) mod requests;
