@@ -21,6 +21,7 @@ mod wait;
 pub use authority::{
     Admission,
     Authority,
+    ClientOwner,
     ControlOwner,
     Policy,
     Revocation, //
