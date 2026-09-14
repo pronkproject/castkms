@@ -19,6 +19,7 @@ use kernel::{
 enum State {
     Capturing(Pending),
     Copying(Frame),
+    Cancelled,
     Finished,
 }
 
@@ -48,6 +49,22 @@ impl Output {
         }
     }
 
+    /// Cancel an unfinished output without waiting for rendering or destination reuse.
+    ///
+    /// The exclusive borrow excludes a concurrent CPU write by this operation. A private
+    /// image waiting for reuse is discarded without touching the destination. Cancellation
+    /// remains observable once as ECANCELED; it does not finish shared source reads.
+    /// Completed output and repeated cancellation return EALREADY.
+    pub(crate) fn cancel(&mut self) -> Result {
+        match &self.state {
+            State::Capturing(pending) => pending.cancel()?,
+            State::Copying(_) => (),
+            State::Cancelled | State::Finished => return Err(EALREADY),
+        }
+        self.state = State::Cancelled;
+        Ok(())
+    }
+
     /// Observe rendering and attempt copying without waiting for unfinished dependencies.
     ///
     /// Authorization, allocation and CPU copying may sleep; call outside DRM, publication,
@@ -65,6 +82,7 @@ impl Output {
                 }
             },
             State::Copying(frame) => frame,
+            State::Cancelled => return Err(ECANCELED),
             State::Finished => return Err(EALREADY),
         };
         if frame

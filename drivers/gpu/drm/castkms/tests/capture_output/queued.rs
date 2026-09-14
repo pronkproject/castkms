@@ -190,4 +190,37 @@ mod cases {
             queue.queue_to(2, image, None)
         })
     }
+
+    #[test]
+    fn cancellation_never_writes_a_destination_after_reuse_finishes() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let stream = Stream::new(&grantor.capture(), 1)?;
+            for capture_first in [false, true] {
+                let image = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
+                let mut reuse = ManualFence::new()?;
+                let mut output = stream.queue_to(image.clone(), Some(reuse.fence()))?;
+                if capture_first {
+                    fixture.drm.device().host.current()?.flush_for_test();
+                    check(output.try_complete_frame()?.is_none())?;
+                }
+                output.cancel()?;
+                check(output.cancel() == Err(EALREADY))?;
+                reuse.complete(Ok(()))?;
+                fixture.drm.device().host.current()?.flush_for_test();
+                check(matches!(output.try_complete_frame(), Err(ECANCELED)))?;
+                check(matches!(output.try_complete_frame(), Err(EALREADY)))?;
+                check(pixels(image.buffer())?.iter().all(|byte| *byte == 0x73))?;
+            }
+            let image = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
+            let mut output = stream.queue_to(image.clone(), None)?;
+            fixture.drm.device().host.current()?.flush_for_test();
+            let _frame = output.try_complete_frame()?.ok_or(EINVAL)?;
+            check(output.cancel() == Err(EALREADY))?;
+            check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])
+        })
+    }
 }
