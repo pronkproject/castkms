@@ -11,6 +11,19 @@
 
 struct control_context {
 	unsigned int revokes;
+	unsigned int client_releases;
+};
+
+static void client_release(void *data)
+{
+	struct control_context *context = data;
+
+	context->client_releases++;
+}
+
+static const struct drm_capture_client_owner_ops client_ops = {
+	.owner = THIS_MODULE,
+	.release = client_release,
 };
 
 static void control_revoke(void *data)
@@ -127,7 +140,106 @@ static void drm_capture_control_owner_requires_release(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, context->revokes, 0);
 }
 
+static struct file *client_create(struct kunit *test,
+				  struct drm_capture_authority *authority,
+				  struct control_context *context)
+{
+	struct file *file = drm_capture_client_file_create(authority, &client_ops, context);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, file);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, control_file_put, file), 0);
+	return file;
+}
+
+static void drm_capture_client_close_preserves_sibling_authority(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	struct file *control = control_create(test, &authority, &context);
+	struct file *first = client_create(test, authority, context);
+	struct file *second = client_create(test, authority, context);
+	int ret;
+
+	get_file(first);
+	__fput_sync(first);
+	KUNIT_EXPECT_EQ(test, context->client_releases, 0);
+	kunit_release_action(test, control_file_put, first);
+	KUNIT_EXPECT_EQ(test, context->client_releases, 1);
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_revoked(authority));
+	ret = drm_capture_authority_begin(authority);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	if (!ret)
+		drm_capture_authority_end(authority);
+	KUNIT_EXPECT_EQ(test, vfs_poll(second, NULL), 0);
+	kunit_release_action(test, control_file_put, control);
+	KUNIT_EXPECT_EQ(test, context->revokes, 1);
+	KUNIT_EXPECT_EQ(test, vfs_poll(second, NULL), EPOLLHUP);
+	kunit_release_action(test, control_file_put, second);
+	KUNIT_EXPECT_EQ(test, context->client_releases, 2);
+	KUNIT_EXPECT_EQ(test, context->revokes, 1);
+}
+
+static void drm_capture_client_observes_revocation(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	struct file *file;
+	struct poll_wqueues wait;
+
+	control_create(test, &authority, &context);
+	file = client_create(test, authority, context);
+	poll_initwait(&wait);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, &wait.pt), 0);
+	drm_capture_authority_revoke(authority);
+	KUNIT_EXPECT_TRUE(test, wait.triggered);
+	KUNIT_EXPECT_EQ(test, vfs_poll(file, NULL), EPOLLHUP);
+	poll_freewait(&wait);
+	KUNIT_EXPECT_EQ(test, context->client_releases, 0);
+	kunit_release_action(test, control_file_put, file);
+	KUNIT_EXPECT_EQ(test, context->client_releases, 1);
+}
+
+static void drm_capture_client_requires_an_owner_release(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	const struct drm_capture_client_owner_ops missing_release = { .owner = THIS_MODULE };
+	struct file *file;
+
+	control_create(test, &authority, &context);
+	file = drm_capture_client_file_create(authority, NULL, context);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(file));
+	KUNIT_EXPECT_EQ(test, PTR_ERR(file), -EINVAL);
+	file = drm_capture_client_file_create(authority, &missing_release, context);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(file));
+	KUNIT_EXPECT_EQ(test, PTR_ERR(file), -EINVAL);
+	KUNIT_EXPECT_EQ(test, context->client_releases, 0);
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_revoked(authority));
+}
+
+static void drm_capture_client_has_no_primary_or_pixel_dispatch(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	struct file *file;
+
+	control_create(test, &authority, &context);
+	file = client_create(test, authority, context);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->read, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->read_iter, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->write, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->write_iter, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->mmap, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->llseek, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->unlocked_ioctl, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, file->f_op->compat_ioctl, NULL);
+}
+
 static struct kunit_case drm_capture_file_cases[] = {
+	KUNIT_CASE(drm_capture_client_close_preserves_sibling_authority),
+	KUNIT_CASE(drm_capture_client_observes_revocation),
+	KUNIT_CASE(drm_capture_client_requires_an_owner_release),
+	KUNIT_CASE(drm_capture_client_has_no_primary_or_pixel_dispatch),
 	KUNIT_CASE(drm_capture_control_owner_requires_release),
 	KUNIT_CASE(drm_capture_control_last_file_reference),
 	KUNIT_CASE(drm_capture_control_observes_kernel_revoke),
