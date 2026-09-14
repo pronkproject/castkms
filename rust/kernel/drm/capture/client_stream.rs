@@ -2,6 +2,7 @@
 
 //! Owned cleanup for a stream named within an anonymous capture client.
 
+mod cancel;
 mod completion;
 mod output;
 
