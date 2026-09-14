@@ -267,6 +267,23 @@ int drm_capture_client_queue_output(struct file *file, u64 stream, u64 use_id,
 }
 EXPORT_SYMBOL_GPL(drm_capture_client_queue_output);
 
+int drm_capture_client_cancel(struct file *file, u64 stream, u64 use_id)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+	int ret;
+
+	if (!client || !stream || !use_id)
+		return -EINVAL;
+	mutex_lock(&client->lock);
+	if (!client->ops->cancel)
+		ret = -EOPNOTSUPP;
+	else
+		ret = client->ops->cancel(client->data, stream, use_id);
+	mutex_unlock(&client->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_cancel);
+
 struct drm_capture_authority *drm_capture_client_authority(struct file *file)
 {
 	struct drm_capture_client *client = capture_client_from_file(file);

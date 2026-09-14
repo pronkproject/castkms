@@ -167,6 +167,7 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
+        cancel: None,
     };
 
     unsafe extern "C" fn queue_output(

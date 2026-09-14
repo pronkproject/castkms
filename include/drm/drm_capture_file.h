@@ -41,6 +41,8 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
  *           the result and accounting credit unless publication succeeds
  * @queue_output: optionally admit a request for a registered destination; the
  *                borrowed reuse fence must be retained if needed after return
+ * @cancel: optionally request cancellation of one stream-local attempt without
+ *          acknowledging its result or requiring current pixel permission
  *
  * Operations remain immutable until release. The client file does not explicitly
  * revoke its authority before release; provider cleanup must respect other clients.
@@ -66,6 +68,7 @@ struct drm_capture_client_owner_ops {
 	int (*dequeue)(void *data, u64 stream, const struct drm_capture_completion_sink *sink);
 	int (*queue_output)(void *data, u64 stream, u64 use_id, u64 destination,
 			    struct dma_fence *reuse);
+	int (*cancel)(void *data, u64 stream, u64 use_id);
 };
 
 /*
@@ -182,6 +185,18 @@ int drm_capture_client_dequeue(struct file *file, u64 stream,
  */
 int drm_capture_client_queue_output(struct file *file, u64 stream, u64 use_id,
 				    u64 destination, struct dma_fence *reuse);
+
+/*
+ * Request cancellation through a retained client file, including after authority
+ * revocation. Both names must be nonzero. The provider resolves the exact attempt
+ * and reports absent or already terminal requests without replacing their result.
+ * Acceptance is not terminal completion, result acknowledgment or permission to
+ * reuse storage. Outstanding destination access retains its completion duties;
+ * cancellation must not wait for that access or cancel shared composition.
+ * No readiness or accounting state is changed by dispatch. Call outside DRM,
+ * authority, reservation and provider lifecycle locks; do not reenter the client.
+ */
+int drm_capture_client_cancel(struct file *file, u64 stream, u64 use_id);
 
 /**
  * struct drm_capture_control_owner_ops - lifetime retained by a revocation file
