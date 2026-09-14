@@ -38,6 +38,7 @@ module! {
     authors: ["Ray Strode"],
     description: "CastKMS virtual display",
     license: "GPL",
+    imports_ns: ["DMA_BUF"],
 }
 
 // Fields are private and ordered so DRM unplug and atomic shutdown finish before the faux

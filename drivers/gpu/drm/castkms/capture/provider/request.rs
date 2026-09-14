@@ -12,11 +12,13 @@ use kernel::{
     sync::Arc, //
 };
 
+mod output;
+
 /// Drop the native request before releasing the last possible owner of its storage charge.
 #[must_use = "dropping a request abandons demand or its retained result"]
 pub(crate) struct Request {
     native: NativeRequest,
-    _storage: Arc<Storage>,
+    storage: Arc<Storage>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -24,7 +26,7 @@ impl Request {
     pub(super) fn new(storage: &Arc<Storage>) -> Result<Self> {
         Ok(Self {
             native: storage.native.queue()?,
-            _storage: storage.clone(),
+            storage: storage.clone(),
         })
     }
 
