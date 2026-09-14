@@ -3,3 +3,4 @@
 //! File-visible object lookup, without granting current master or capture authority.
 
 mod crtc;
+mod connector;
