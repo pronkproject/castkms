@@ -2,6 +2,8 @@
 
 //! Capture file operations above provider permission and kernel negotiation.
 
+mod resources;
+
 use super::{
     negotiation::Negotiation,
     provider::Capture, //
