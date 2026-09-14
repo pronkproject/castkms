@@ -145,4 +145,70 @@ struct drm_capture_destroy_stream {
 #define DRM_IOCTL_CAPTURE_CREATE_STREAM DRM_IOW(0x01, struct drm_capture_create_stream)
 #define DRM_IOCTL_CAPTURE_DESTROY_STREAM DRM_IOW(0x02, struct drm_capture_destroy_stream)
 
+/**
+ * struct drm_capture_register_destination - Retain caller-owned final-image storage
+ * @id: Nonzero name greater than every previously admitted destination name.
+ * @width: Nonzero visible width in pixels.
+ * @height: Nonzero visible height in pixels.
+ * @format: DRM fourcc, validated by the provider.
+ * @num_planes: Number of active image planes, from one through four.
+ * @modifier: Explicit DRM format modifier, not DRM_FORMAT_MOD_INVALID.
+ * @fds: DMA-BUF descriptors for active planes; inactive entries must be zero.
+ * @strides: Byte strides for active planes; inactive entries must be zero.
+ * @offsets: Byte offsets for active planes; inactive entries must be zero.
+ * @flags: Must be zero.
+ * @reserved: Must be zero.
+ *
+ * All fields are input and valid only on an anonymous capture-client descriptor.
+ * The complete input and buffer references are acquired before provider admission.
+ * Repeated descriptor numbers within this request resolve to the same retained
+ * allocation. No descriptor number is retained as an object identity or closed.
+ * Success retains provider-owned references; failure consumes no name. Closing
+ * or reusing an input descriptor afterward does not replace registered storage.
+ * Duplicate capture descriptors share the same destination namespace, separate
+ * from stream names. UINT64_MAX exhausts further registration with EOVERFLOW.
+ *
+ * Buffers must have been exported with write access. The provider validates the
+ * complete layout and resource limits. Exporter mapping or GPU import may still
+ * fail when storage is used. Registration itself copies no pixels and queues no
+ * frame. It grants no future capture permission and does not exclude competing
+ * users. Callers must arrange destination reuse before writes.
+ * Read-only storage returns EACCES, invalid metadata EINVAL, unsupported layouts
+ * EOPNOTSUPP, unavailable registration slots EBUSY and revoked grants EKEYREVOKED.
+ */
+struct drm_capture_register_destination {
+	__u64 id;
+	__u32 width;
+	__u32 height;
+	__u32 format;
+	__u32 num_planes;
+	__u64 modifier;
+	__s32 fds[4];
+	__u32 strides[4];
+	__u64 offsets[4];
+	__u32 flags;
+	__u32 reserved[3];
+};
+
+/**
+ * struct drm_capture_unregister_destination - Remove one destination name
+ * @id: Nonzero destination name admitted on the same capture client.
+ * @reserved: Must be zero.
+ *
+ * Input only. Removal remains available after revocation; an absent name returns
+ * ENOENT. Removed names are never reused. Accepted operations retain their own
+ * allocation references and completion duties. Success is not a GPU completion
+ * fence and does not revoke an exported allocation. Final client release drops
+ * its remaining registrations without revoking other clients' capture grants.
+ */
+struct drm_capture_unregister_destination {
+	__u64 id;
+	__u64 reserved;
+};
+
+#define DRM_IOCTL_CAPTURE_REGISTER_DESTINATION \
+	DRM_IOW(0x03, struct drm_capture_register_destination)
+#define DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION \
+	DRM_IOW(0x04, struct drm_capture_unregister_destination)
+
 #endif

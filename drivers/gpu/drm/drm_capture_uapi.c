@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <linux/fcntl.h>
+#include <linux/dma-buf.h>
 #include <linux/file.h>
 #include <linux/uaccess.h>
+#include <drm/drm_capture_destination.h>
 #include <drm/drm_capture_grant.h>
 #include <drm/drm_capture_file.h>
 #include <uapi/drm/drm_capture.h>
@@ -51,6 +53,67 @@ static long capture_destroy_stream(struct file *file, void __user *arg)
 	return drm_capture_client_close_stream(file, input.id);
 }
 
+static long capture_register_destination(struct file *file, void __user *arg)
+{
+	struct drm_capture_register_destination input;
+	struct drm_capture_destination destination = {};
+	unsigned int i, previous;
+	int ret;
+
+	static_assert(ARRAY_SIZE(input.fds) == ARRAY_SIZE(destination.planes));
+	if (copy_from_user(&input, arg, sizeof(input)))
+		return -EFAULT;
+	if (!input.id || !input.num_planes || input.num_planes > ARRAY_SIZE(input.fds) ||
+	    input.flags || input.reserved[0] || input.reserved[1] || input.reserved[2])
+		return -EINVAL;
+	for (i = input.num_planes; i < ARRAY_SIZE(input.fds); i++) {
+		if (input.fds[i] || input.strides[i] || input.offsets[i])
+			return -EINVAL;
+	}
+	destination.width = input.width;
+	destination.height = input.height;
+	destination.format = input.format;
+	destination.modifier = input.modifier;
+	destination.num_planes = input.num_planes;
+	for (i = 0; i < input.num_planes; i++) {
+		struct drm_capture_destination_plane *plane = &destination.planes[i];
+
+		/* Resolve a repeated number once, even if another task reuses that fd. */
+		for (previous = 0; previous < i; previous++) {
+			if (input.fds[previous] == input.fds[i])
+				break;
+		}
+		if (previous < i) {
+			plane->buffer = destination.planes[previous].buffer;
+			get_dma_buf(plane->buffer);
+		} else {
+			plane->buffer = dma_buf_get(input.fds[i]);
+			if (IS_ERR(plane->buffer)) {
+				ret = PTR_ERR(plane->buffer);
+				goto put_buffers;
+			}
+		}
+		plane->stride = input.strides[i];
+		plane->offset = input.offsets[i];
+	}
+	ret = drm_capture_client_register_destination(file, input.id, &destination);
+put_buffers:
+	while (i)
+		dma_buf_put(destination.planes[--i].buffer);
+	return ret;
+}
+
+static long capture_unregister_destination(struct file *file, void __user *arg)
+{
+	struct drm_capture_unregister_destination input;
+
+	if (copy_from_user(&input, arg, sizeof(input)))
+		return -EFAULT;
+	if (input.reserved)
+		return -EINVAL;
+	return drm_capture_client_unregister_destination(file, input.id);
+}
+
 long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	void __user *pointer = (void __user *)arg;
@@ -62,6 +125,10 @@ long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long
 		return capture_create_stream(file, pointer);
 	case DRM_IOCTL_CAPTURE_DESTROY_STREAM:
 		return capture_destroy_stream(file, pointer);
+	case DRM_IOCTL_CAPTURE_REGISTER_DESTINATION:
+		return capture_register_destination(file, pointer);
+	case DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION:
+		return capture_unregister_destination(file, pointer);
 	default:
 		return -ENOTTY;
 	}
