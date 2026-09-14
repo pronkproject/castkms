@@ -9,6 +9,7 @@ use super::{
         grants,
         streams, //
     },
+    execution::publication::Publication,
     host_compositor::configuration,
     renderer_startup,
     Driver,
@@ -22,6 +23,7 @@ use kernel::{
 
 #[pin_data]
 pub(super) struct State {
+    pub(super) execution: Arc<Publication>,
     #[pin]
     pub(super) authority: Authority<MasterRef<Driver>>,
     pub(super) output: Arc<Output>,
@@ -39,6 +41,7 @@ impl State {
         startup: Arc<renderer_startup::Startup>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
+            execution: Arc::pin_init(Publication::new(), GFP_KERNEL)?,
             authority <- Authority::new(),
             output,
             host,
@@ -54,6 +57,7 @@ impl State {
         self.capture_streams.close();
         self.authority.close();
         self.output.close();
+        self.execution.close();
     }
 }
 

@@ -5,10 +5,7 @@
 use super::permission::Access;
 use crate::{
     display_control,
-    execution::{
-        self,
-        Description, //
-    },
+    execution::Description,
     host_compositor::compose::Completed,
     host_snapshot::Snapshot,
     image_access,
@@ -46,7 +43,7 @@ impl Candidate {
 
     fn begin_then(access: Access, after_reserve: impl FnOnce() -> Result) -> Result<Self> {
         let configuration = access.with_current(|current| Ok(current.configuration().clone()))?;
-        let execution = execution::describe();
+        let execution = access.device().execution.describe();
         let resources = access.device().startup.begin()?;
         let candidate = Self {
             resources,
@@ -110,7 +107,8 @@ impl Candidate {
         current: display_control::Current<'_>,
         f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
     ) -> Result<R> {
-        if current.configuration() != &self.configuration || execution::describe() != self.execution
+        if current.configuration() != &self.configuration
+            || self.access.device().execution.describe() != self.execution
         {
             return Err(ESTALE);
         }

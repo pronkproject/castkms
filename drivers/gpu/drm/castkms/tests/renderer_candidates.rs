@@ -81,7 +81,7 @@ mod cases {
                 != first_content,
         )?;
         check(
-            crate::execution::describe()
+            fixture.drm.device().execution.describe()
                 == crate::execution::Description {
                     profile: crate::execution::Profile::HostV1,
                     generation: 1,
