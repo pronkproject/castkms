@@ -55,10 +55,19 @@ impl<T> Resources<T> {
         Ok(Self { names, values })
     }
 
+    /// Check whether a name could be inserted, without reserving its name or capacity.
+    ///
+    /// This observation permits construction outside a caller's table lock. Insertion must
+    /// still recheck after reacquiring exclusion; another insertion may invalidate success.
+    pub fn check(&self, id: u64) -> Result {
+        // SAFETY: The shared borrow retains the table and excludes mutation during inspection.
+        slot(unsafe { bindings::drm_capture_resources_check(self.names.0.as_ptr(), id) })?;
+        Ok(())
+    }
+
     /// Validate name and capacity before construction; failure leaves the name retryable.
     pub fn insert(&mut self, id: u64, create: impl FnOnce() -> Result<T>) -> Result {
-        // SAFETY: Exclusive access stabilizes native slots across construction and insertion.
-        slot(unsafe { bindings::drm_capture_resources_check(self.names.0.as_ptr(), id) })?;
+        self.check(id)?;
         let value = create()?;
         // SAFETY: No intervening mutation is possible through the exclusive borrow.
         let index =
