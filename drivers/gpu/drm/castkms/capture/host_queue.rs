@@ -3,7 +3,9 @@
 //! Drive kernel HOST capture through renderer-independent client accounting.
 
 use super::{
+    destination::Image,
     host_stream::{
+        output::Output,
         Pending,
         Stream, //
     },
@@ -18,14 +20,33 @@ use super::{
     }, //
 };
 use kernel::{
+    dma_fence::Fence,
     drm::capture::Status,
-    prelude::*, //
+    prelude::*,
+    sync::{
+        aref::ARef,
+        Arc, //
+    }, //
 };
+
+enum Attempt {
+    Private(Pending),
+    Destination(Output),
+}
+
+impl Attempt {
+    fn try_complete_frame(&mut self) -> Result<Option<Frame>> {
+        match self {
+            Self::Private(pending) => pending.try_complete_frame(),
+            Self::Destination(output) => output.try_complete_frame(),
+        }
+    }
+}
 
 /// Records retire before their stream; neither owns compositor-source access while waiting.
 /// Operations require sleepable context outside DRM, publication and reservation locks.
 pub(crate) struct Queue {
-    records: requests::Queue<Pending, Frame>,
+    records: requests::Queue<Attempt, Frame>,
     stream: Stream,
 }
 
@@ -50,13 +71,33 @@ impl Queue {
     }
 
     pub(crate) fn queue(&mut self, use_id: u64) -> Result {
-        self.records.queue(use_id, || self.stream.queue())
+        self.records
+            .queue(use_id, || self.stream.queue().map(Attempt::Private))
+    }
+
+    /// Retain an output attempt under the same bounded accounting as private capture.
+    ///
+    /// Validate the increasing use ID and reserve its terminal record before admission.
+    /// Failure consumes neither the ID nor queue credit. The owner must exclude competing
+    /// destination access until completion or queue destruction. Waiting for reuse does not
+    /// prevent another available output from completing, nor retain a compositor-source read.
+    pub(crate) fn queue_to(
+        &mut self,
+        use_id: u64,
+        destination: Arc<Image>,
+        reuse: Option<ARef<Fence>>,
+    ) -> Result {
+        self.records.queue(use_id, || {
+            self.stream
+                .queue_to(destination, reuse)
+                .map(Attempt::Destination)
+        })
     }
 
     /// Finish available composition without waiting for the worker. Authorization and copying
     /// may sleep; every error becomes a retained terminal result rather than lost demand.
     pub(crate) fn advance(&mut self) -> usize {
-        self.records.advance(Pending::try_complete_frame)
+        self.records.advance(Attempt::try_complete_frame)
     }
 
     /// Publish a terminal record without returning its credit on a failed output operation.
