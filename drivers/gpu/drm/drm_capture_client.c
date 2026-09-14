@@ -12,6 +12,7 @@
 #include <drm/drm_capture_authority.h>
 #include <drm/drm_capture_destination.h>
 #include <drm/drm_capture_file.h>
+#include <drm/drm_capture_readiness.h>
 #include <drm/drm_fourcc.h>
 
 #include "drm_capture_file_internal.h"
@@ -21,6 +22,7 @@ struct drm_capture_client {
 	/* Serializes mutable provider callbacks, never held by authority revocation. */
 	struct mutex lock;
 	struct drm_capture_authority *authority;
+	struct drm_capture_readiness *readiness;
 	const struct drm_capture_client_owner_ops *ops;
 	void *data;
 };
@@ -31,6 +33,7 @@ static int capture_client_release(struct inode *inode, struct file *file)
 	struct module *owner = client->ops->owner;
 
 	client->ops->release(client->data);
+	drm_capture_readiness_put(client->readiness);
 	mutex_destroy(&client->lock);
 	drm_capture_authority_put(client->authority);
 	kfree(client);
@@ -60,6 +63,18 @@ static struct drm_capture_client *capture_client_from_file(struct file *file)
 		return NULL;
 	return file->private_data;
 }
+
+struct drm_capture_readiness *drm_capture_client_get_readiness(struct file *file)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+
+	if (!client)
+		return ERR_PTR(-EINVAL);
+	if (!client->readiness)
+		return ERR_PTR(-EOPNOTSUPP);
+	return drm_capture_readiness_get(client->readiness);
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_get_readiness);
 
 int drm_capture_client_describe(struct file *file,
 			       struct drm_capture_description *description)
@@ -200,8 +215,11 @@ struct file *drm_capture_client_file_create(
 	mutex_init(&client->lock);
 	client->ops = ops;
 	client->data = data;
+	if (ops->get_readiness)
+		client->readiness = ops->get_readiness(data);
 	file = anon_inode_getfile("drm-capture", &capture_client_fops, client, O_RDONLY);
 	if (IS_ERR(file)) {
+		drm_capture_readiness_put(client->readiness);
 		mutex_destroy(&client->lock);
 		drm_capture_authority_put(client->authority);
 		module_put(ops->owner);

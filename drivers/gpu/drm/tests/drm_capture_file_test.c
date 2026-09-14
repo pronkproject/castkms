@@ -7,11 +7,14 @@
 #include <linux/poll.h>
 #include <drm/drm_capture_authority.h>
 #include <drm/drm_capture_file.h>
+#include <drm/drm_capture_readiness.h>
 #include <kunit/test.h>
 
 struct control_context {
 	unsigned int revokes;
 	unsigned int client_releases;
+	unsigned int readiness_calls;
+	struct drm_capture_readiness *readiness;
 };
 
 static void client_release(void *data)
@@ -25,6 +28,25 @@ static const struct drm_capture_client_owner_ops client_ops = {
 	.owner = THIS_MODULE,
 	.release = client_release,
 };
+
+static struct drm_capture_readiness *client_get_readiness(void *data)
+{
+	struct control_context *context = data;
+
+	context->readiness_calls++;
+	return context->readiness ? drm_capture_readiness_get(context->readiness) : NULL;
+}
+
+static const struct drm_capture_client_owner_ops client_readiness_ops = {
+	.owner = THIS_MODULE,
+	.release = client_release,
+	.get_readiness = client_get_readiness,
+};
+
+static void readiness_put(void *readiness)
+{
+	drm_capture_readiness_put(readiness);
+}
 
 static void control_revoke(void *data)
 {
@@ -260,7 +282,60 @@ static void drm_capture_file_pairs_check_roles_and_authority(struct kunit *test)
 	KUNIT_EXPECT_TRUE(test, drm_capture_files_match(first, first_control));
 }
 
+static void drm_capture_client_retains_readiness(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	struct drm_capture_readiness *retained;
+	struct file *file;
+
+	control_create(test, &authority, &context);
+	context->readiness = drm_capture_readiness_create();
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, context->readiness);
+	KUNIT_ASSERT_EQ(test,
+			kunit_add_action_or_reset(test, readiness_put, context->readiness), 0);
+	file = drm_capture_client_file_create(authority, &client_readiness_ops, context);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, file);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, control_file_put, file), 0);
+	KUNIT_EXPECT_EQ(test, context->readiness_calls, 1);
+	kunit_release_action(test, readiness_put, context->readiness);
+	context->readiness = NULL;
+	retained = drm_capture_client_get_readiness(file);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, retained);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, readiness_put, retained), 0);
+	KUNIT_EXPECT_FALSE(test, drm_capture_readiness_has_results(retained));
+	drm_capture_authority_revoke(authority);
+	kunit_release_action(test, control_file_put, file);
+	KUNIT_EXPECT_EQ(test, context->client_releases, 1);
+	KUNIT_EXPECT_EQ(test, context->readiness_calls, 1);
+	drm_capture_readiness_update(retained, true);
+	KUNIT_EXPECT_TRUE(test, drm_capture_readiness_has_results(retained));
+}
+
+static void drm_capture_client_readiness_checks_role_and_support(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct control_context *context;
+	struct file *control = control_create(test, &authority, &context);
+	struct file *client = client_create(test, authority, context);
+	struct file *without_notification;
+
+	KUNIT_EXPECT_PTR_EQ(test, drm_capture_client_get_readiness(NULL), ERR_PTR(-EINVAL));
+	KUNIT_EXPECT_PTR_EQ(test, drm_capture_client_get_readiness(control), ERR_PTR(-EINVAL));
+	KUNIT_EXPECT_PTR_EQ(test, drm_capture_client_get_readiness(client), ERR_PTR(-EOPNOTSUPP));
+	without_notification =
+		drm_capture_client_file_create(authority, &client_readiness_ops, context);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, without_notification);
+	KUNIT_ASSERT_EQ(test,
+			kunit_add_action_or_reset(test, control_file_put, without_notification), 0);
+	KUNIT_EXPECT_EQ(test, context->readiness_calls, 1);
+	KUNIT_EXPECT_PTR_EQ(test, drm_capture_client_get_readiness(without_notification),
+			    ERR_PTR(-EOPNOTSUPP));
+}
+
 static struct kunit_case drm_capture_file_cases[] = {
+	KUNIT_CASE(drm_capture_client_retains_readiness),
+	KUNIT_CASE(drm_capture_client_readiness_checks_role_and_support),
 	KUNIT_CASE(drm_capture_file_pairs_check_roles_and_authority),
 	KUNIT_CASE(drm_capture_client_close_preserves_sibling_authority),
 	KUNIT_CASE(drm_capture_client_observes_revocation),
