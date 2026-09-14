@@ -16,6 +16,7 @@ use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod authority;
 mod range;
+mod selection;
 mod wait;
 pub use authority::{
     Admission,
