@@ -36,6 +36,16 @@ use core::{
 /// throughout the transferred lifetime. The vtable macro selects the local module.
 #[vtable]
 pub unsafe trait ClientOwner: Send + 'static {
+    /// Request cancellation without acknowledging the attempt or its destination access.
+    ///
+    /// Cleanup remains available after revocation. Success does not publish a terminal
+    /// result or permit storage reuse; terminal publication must follow actual access completion.
+    /// Return ENOENT for an absent request and EALREADY when cancellation cannot change
+    /// its outcome. Do not wait for destination fences or reenter this client.
+    fn cancel(&mut self, _stream: u64, _use_id: u64) -> Result {
+        Err(EOPNOTSUPP)
+    }
+
     /// Admit an output attempt using this client's registered destination.
     ///
     /// Retain the exact destination and an owned reference to any borrowed reuse fence
@@ -167,8 +177,21 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
-        cancel: None,
+        cancel: if O::HAS_CANCEL {
+            Some(Self::cancel)
+        } else {
+            None
+        },
     };
+
+    unsafe extern "C" fn cancel(data: *mut c_void, stream: u64, use_id: u64) -> i32 {
+        // SAFETY: Native dispatch retains the file and exclusively borrows its initialized
+        // KBox<O> under the client mutex for this synchronous callback.
+        let owner = unsafe { &mut *data.cast::<O>() };
+        owner
+            .cancel(stream, use_id)
+            .map_or_else(|error| error.to_errno(), |_| 0)
+    }
 
     unsafe extern "C" fn queue_output(
         data: *mut c_void,
