@@ -22,6 +22,25 @@ struct Counts {
 
 struct TestOwner(Arc<Counts>);
 
+struct NotifyingOwner {
+    readiness: ARef<Readiness>,
+    counts: Arc<Counts>,
+}
+
+impl Drop for NotifyingOwner {
+    fn drop(&mut self) {
+        self.counts.owners.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+// SAFETY: Notification callback and owner destruction belong to LocalModule.
+#[vtable]
+unsafe impl ClientOwner for NotifyingOwner {
+    fn readiness(&self) -> Option<&Readiness> {
+        Some(&self.readiness)
+    }
+}
+
 struct StreamOwner {
     counts: Arc<Counts>,
     active: Option<u64>,
@@ -115,6 +134,42 @@ fn check(condition: bool) -> Result {
 #[kunit_tests(rust_drm_capture_client_file)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn notification_survives_provider_and_file_release() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(Arc::new(TestPolicy(counts.clone()), GFP_KERNEL)?)?;
+        let readiness = Readiness::new()?;
+        let file = authority.create_client_file(NotifyingOwner {
+            readiness: readiness.clone(),
+            counts: counts.clone(),
+        })?;
+        let retained = Readiness::for_client(&file)?;
+        check(!retained.has_results())?;
+        readiness.update(true);
+        check(retained.has_results())?;
+        authority.revoke();
+        check(Readiness::for_client(&file)?.has_results())?;
+        release(file);
+        check(counts.owners.load(Ordering::Relaxed) == 1)?;
+        drop(readiness);
+        retained.update(false);
+        check(!retained.has_results())
+    }
+
+    #[test]
+    fn notification_lookup_rejects_other_roles_and_absent_support() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(Arc::new(TestPolicy(counts.clone()), GFP_KERNEL)?)?;
+        let client = authority.create_client_file(TestOwner(counts.clone()))?;
+        let control = authority.create_control_file()?;
+        let absent = Readiness::for_client(&client).err();
+        let wrong_role = Readiness::for_client(&control).err();
+        release(client);
+        release(control);
+        check(absent == Some(EOPNOTSUPP))?;
+        check(wrong_role == Some(EINVAL))
+    }
 
     #[test]
     fn owned_stream_drop_closes_after_revocation_without_revoking_its_client() -> Result {

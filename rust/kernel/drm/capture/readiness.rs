@@ -4,6 +4,7 @@
 
 use crate::{
     error::from_err_ptr,
+    fs::File,
     prelude::*,
     sync::aref::{
         ARef,
@@ -43,6 +44,18 @@ unsafe impl AlwaysRefCounted for Readiness {
 }
 
 impl Readiness {
+    /// Retain a client's notification without borrowing its provider or retaining its file.
+    ///
+    /// A different endpoint returns EINVAL, and absent notification support returns
+    /// EOPNOTSUPP. Revocation does not prevent observing retained terminal results.
+    pub fn for_client(file: &File) -> Result<ARef<Self>> {
+        // SAFETY: The borrow retains the file throughout native endpoint validation and get.
+        let raw =
+            from_err_ptr(unsafe { bindings::drm_capture_client_get_readiness(file.as_ptr()) })?;
+        // SAFETY: Success transfers one non-null reference with identical representation.
+        Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
+    }
+
     /// Allocate an independently retained notification, initially reporting no results.
     pub fn new() -> Result<ARef<Self>> {
         // SAFETY: Creation takes no borrowed inputs and returns one reference or an error.
