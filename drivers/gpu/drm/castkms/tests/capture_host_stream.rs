@@ -3,6 +3,7 @@
 //! Authorized kernel capture driven by the shared host worker.
 
 mod progress;
+mod pending;
 
 use super::*;
 use crate::{
