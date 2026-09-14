@@ -5,6 +5,7 @@
 //! C header: [`include/drm/drm_connector.h`](srctree/include/drm/drm_connector.h)
 
 mod properties;
+pub use properties::ReadOnlyBlobProperty;
 
 use super::{
     atomic::*, encoder::*, modes::DisplayMode, KmsDriver, ModeConfigGuard, ModeObject,

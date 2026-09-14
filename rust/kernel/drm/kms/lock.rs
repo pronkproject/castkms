@@ -74,6 +74,10 @@ pub struct LockedState<'a, T: KmsDriver> {
 }
 
 impl<T: KmsDriver> LockedState<'_, T> {
+    pub(super) fn device(&self) -> &Device<T> {
+        self.device
+    }
+
     /// Observe the accepted source for a CRTC on this device, without retaining pixel access.
     ///
     /// The source identifies accepted state, not completion of its commit tail. A control
@@ -106,24 +110,39 @@ impl<T: KmsDriver> Device<T, Registered> {
         &self,
         control: impl FnOnce(&LockedState<'_, T>) -> R,
     ) -> Result<R> {
-        pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new(
-            bindings::DRM_MODESET_ACQUIRE_INTERRUPTIBLE,
-        ));
-        loop {
-            // SAFETY: Registration excludes teardown. The pinned context belongs to this
-            // task and is reused only after native backoff on its actual contended lock.
-            let result = unsafe { bindings::drm_modeset_lock_all_ctx(self.as_raw(), ctx.as_raw()) };
-            if result == EDEADLK.to_errno() {
-                // SAFETY: EDEADLK denotes native contention in this initialized context.
-                to_result(unsafe { bindings::drm_modeset_backoff(ctx.as_raw()) })?;
-            } else {
-                to_result(result)?;
-                break;
-            }
-        }
-        Ok(control(&LockedState {
-            device: self,
-            _task: NotThreadSafe,
-        }))
+        // SAFETY: Registration establishes initialized mode objects and excludes teardown.
+        unsafe { with_locked_state(self, control) }
     }
+}
+
+/// Run control on an initialized device, also used by the private runtime consumer.
+///
+/// # Safety
+///
+/// Mode configuration and static object creation must be complete. The caller excludes
+/// teardown and further static object creation for the entire call. The callback has the
+/// locking obligations of `Device::with_modeset_locks`.
+pub(super) unsafe fn with_locked_state<T: KmsDriver, R>(
+    device: &Device<T>,
+    control: impl FnOnce(&LockedState<'_, T>) -> R,
+) -> Result<R> {
+    pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new(
+        bindings::DRM_MODESET_ACQUIRE_INTERRUPTIBLE,
+    ));
+    loop {
+        // SAFETY: Registration excludes teardown. The pinned context belongs to this
+        // task and is reused only after native backoff on its actual contended lock.
+        let result = unsafe { bindings::drm_modeset_lock_all_ctx(device.as_raw(), ctx.as_raw()) };
+        if result == EDEADLK.to_errno() {
+            // SAFETY: EDEADLK denotes native contention in this initialized context.
+            to_result(unsafe { bindings::drm_modeset_backoff(ctx.as_raw()) })?;
+        } else {
+            to_result(result)?;
+            break;
+        }
+    }
+    Ok(control(&LockedState {
+        device,
+        _task: NotThreadSafe,
+    }))
 }
