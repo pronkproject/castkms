@@ -92,7 +92,7 @@ mod cases {
         let results = with_mapping_blocked(&fb, || {
             let mut pending = stream.queue()?;
             drop(stream);
-            Ok((pending.try_complete(), pending.try_complete()))
+            Ok((pending.try_complete_frame(), pending.try_complete_frame()))
         })?;
         worker.flush_for_test();
         check(matches!(results.0, Err(ENOENT)))?;
@@ -128,6 +128,31 @@ mod cases {
         worker.request()?;
         worker.flush_for_test();
         check(worker.last_image().is_some())
+    }
+
+    #[test]
+    fn deferred_completion_does_not_relabel_an_older_image() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let fb = select(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let stream = Stream::new(&grantor.capture(), 2)?;
+        let device = fixture.drm.device();
+        let worker = device.host.current()?;
+        let mut pending = stream.queue()?;
+        worker.flush_for_test();
+        let image = worker.last_image().ok_or(EINVAL)?;
+        let serial = image.content_serial();
+        let time = image.completed_at();
+        drop(image);
+        fixture.select(&fb, false, 0)?;
+        let frame = pending.try_complete_frame()?.ok_or(EINVAL)?;
+        check(frame.metadata().content_serial() == serial)?;
+        check(frame.metadata().completed_at() - time == kernel::time::Delta::ZERO)?;
+        let current = stream.queue()?.wait_frame()?;
+        check(current.metadata().content_serial() != serial)?;
+        check(frame.request().status()? == Status::Complete(Ok(())))
     }
 
     #[test]
