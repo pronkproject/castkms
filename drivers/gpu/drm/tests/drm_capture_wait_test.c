@@ -226,7 +226,192 @@ static void stopping_waiter_leaves_request_pending(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, result.completed);
 }
 
+struct provider_wait {
+	struct capture_fixture *fixture;
+	struct completion observed, done;
+	wait_queue_head_t changed;
+	int ready, error;
+	bool notify_in_callback;
+};
+
+static int provider_ready(void *data)
+{
+	struct provider_wait *wait = data;
+	int ready = READ_ONCE(wait->ready);
+
+	complete_all(&wait->observed);
+	if (wait->notify_in_callback) {
+		wait->notify_in_callback = false;
+		WRITE_ONCE(wait->ready, 1);
+		wake_up_all(&wait->changed);
+	}
+	return ready;
+}
+
+static void init_provider(struct provider_wait *wait, struct capture_fixture *f)
+{
+	*wait = (struct provider_wait) { .fixture = f };
+	init_completion(&wait->observed);
+	init_completion(&wait->done);
+	init_waitqueue_head(&wait->changed);
+}
+
+static int wait_for_provider(void *data)
+{
+	struct provider_wait *wait = data;
+
+	allow_signal(SIGUSR1);
+	wait->error = drm_capture_wait_provider(wait->fixture->capture,
+						wait->fixture->id, &wait->changed,
+						provider_ready, wait);
+	flush_signals(current);
+	complete(&wait->done);
+	while (!kthread_should_stop())
+		schedule_timeout_interruptible(1);
+	return 0;
+}
+
+static struct task_struct *start_provider(struct kunit *test, struct provider_wait *wait,
+					 struct capture_fixture *f)
+{
+	struct task_struct *worker;
+
+	init_provider(wait, f);
+	worker = kthread_run(wait_for_provider, wait, "capture-provider-wait");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, worker);
+	wait_for_completion(&wait->observed);
+	return worker;
+}
+
+static void join_provider(struct kunit *test, struct task_struct *worker,
+			  struct provider_wait *wait, int error)
+{
+	unsigned long finished = wait_for_completion_timeout(&wait->done, HZ);
+
+	if (!finished)
+		send_sig(SIGUSR1, worker, 0);
+	kthread_stop(worker);
+	KUNIT_EXPECT_NE(test, finished, 0);
+	KUNIT_EXPECT_EQ(test, wait->error, error);
+	/* Joining the only waiter makes both queue lists stable for inspection. */
+	KUNIT_EXPECT_FALSE(test, waitqueue_active(&wait->changed));
+	KUNIT_EXPECT_FALSE(test,
+		waitqueue_active(drm_capture_result_waitqueue(wait->fixture->capture)));
+}
+
+static void provider_notification_wakes_without_claiming(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+	struct task_struct *worker = start_provider(test, &wait, f);
+	struct drm_capture_result result;
+
+	WRITE_ONCE(wait.ready, 1);
+	wake_up_all(&wait.changed);
+	join_provider(test, worker, &wait, 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(f->capture, f->id, &result), 0);
+	KUNIT_EXPECT_FALSE(test, result.completed);
+}
+
+static void cancellation_ends_provider_wait(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+	struct task_struct *worker = start_provider(test, &wait, f);
+
+	KUNIT_EXPECT_EQ(test, drm_capture_cancel(f->capture, f->id), 0);
+	join_provider(test, worker, &wait, -ECANCELED);
+}
+
+static void revocation_ends_provider_wait(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+	struct task_struct *worker = start_provider(test, &wait, f);
+
+	drm_capture_revoke(f->capture);
+	join_provider(test, worker, &wait, -EKEYREVOKED);
+}
+
+static void shutdown_ends_provider_wait(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+	struct task_struct *worker = start_provider(test, &wait, f);
+
+	drm_capture_shutdown(f->capture);
+	join_provider(test, worker, &wait, -ENOENT);
+}
+
+static void interrupting_provider_wait_preserves_demand(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+	struct task_struct *worker = start_provider(test, &wait, f);
+	struct drm_capture_result result;
+
+	send_sig(SIGUSR1, worker, 0);
+	join_provider(test, worker, &wait, -ERESTARTSYS);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(f->capture, f->id, &result), 0);
+	KUNIT_EXPECT_FALSE(test, result.completed);
+}
+
+static void notification_during_observation_is_not_lost(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+	struct task_struct *worker;
+
+	init_provider(&wait, f);
+	wait.notify_in_callback = true;
+	worker = kthread_run(wait_for_provider, &wait, "capture-provider-gap");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, worker);
+	join_provider(test, worker, &wait, 0);
+}
+
+static void stopping_provider_wait_preserves_demand(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+	struct task_struct *worker = start_provider(test, &wait, f);
+	struct drm_capture_result result;
+
+	KUNIT_EXPECT_EQ(test, kthread_stop(worker), 0);
+	KUNIT_EXPECT_TRUE(test, completion_done(&wait.done));
+	KUNIT_EXPECT_EQ(test, wait.error, -ERESTARTSYS);
+	KUNIT_ASSERT_EQ(test, drm_capture_query(f->capture, f->id, &result), 0);
+	KUNIT_EXPECT_FALSE(test, result.completed);
+}
+
+static void provider_failure_and_terminal_results_are_preserved(struct kunit *test)
+{
+	struct capture_fixture *f = new_fixture(test, false);
+	struct provider_wait wait;
+
+	init_provider(&wait, f);
+	wait.ready = -EIO;
+	KUNIT_EXPECT_EQ(test, drm_capture_wait_provider(f->capture, f->id, &wait.changed,
+						      provider_ready, &wait), -EIO);
+	KUNIT_EXPECT_TRUE(test, completion_done(&wait.observed));
+	reinit_completion(&wait.observed);
+	f->job = drm_capture_claim(f->capture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->job);
+	drm_capture_complete(f->job, 0);
+	f->job = NULL;
+	KUNIT_EXPECT_EQ(test, drm_capture_wait_provider(f->capture, f->id, &wait.changed,
+						      provider_ready, &wait), -EALREADY);
+	KUNIT_EXPECT_FALSE(test, completion_done(&wait.observed));
+}
+
 static struct kunit_case capture_wait_cases[] = {
+	KUNIT_CASE(provider_notification_wakes_without_claiming),
+	KUNIT_CASE(cancellation_ends_provider_wait),
+	KUNIT_CASE(revocation_ends_provider_wait),
+	KUNIT_CASE(shutdown_ends_provider_wait),
+	KUNIT_CASE(interrupting_provider_wait_preserves_demand),
+	KUNIT_CASE(notification_during_observation_is_not_lost),
+	KUNIT_CASE(stopping_provider_wait_preserves_demand),
+	KUNIT_CASE(provider_failure_and_terminal_results_are_preserved),
 	KUNIT_CASE(completion_wakes_without_consuming_result),
 	KUNIT_CASE(producer_error_is_not_a_wait_error),
 	KUNIT_CASE(queued_cancellation_wakes_wait),
