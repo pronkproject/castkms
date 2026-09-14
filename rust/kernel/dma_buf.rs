@@ -44,6 +44,21 @@ impl DmaBuf {
         unsafe { (*self.as_raw()).size }
     }
 
+    /// Whether the retained DMA-BUF file was exported with write access.
+    ///
+    /// Check this on the acquired buffer when accepting a userspace destination, not
+    /// by looking up its descriptor a second time. Descriptor reuse cannot substitute
+    /// another file for the retained allocation. This is file access metadata only:
+    /// it grants neither capture permission nor exclusive or synchronized pixel access.
+    pub fn is_writable(&self) -> bool {
+        // SAFETY: The buffer retains its immutable file pointer. Read the mode word as
+        // READ_ONCE because unrelated mode bits may change concurrently. FMODE_WRITE
+        // itself is fixed when the native file is initialized.
+        // FIXME(read_once): Replace with read_once when available on the Rust side.
+        let mode = unsafe { core::ptr::addr_of!((*(*self.as_raw()).file).f_mode).read_volatile() };
+        mode & bindings::FMODE_WRITE != 0
+    }
+
     pub(crate) fn as_raw(&self) -> *mut bindings::dma_buf {
         self.0.get()
     }
@@ -73,3 +88,6 @@ unsafe impl AlwaysRefCounted for DmaBuf {
         unsafe { bindings::dma_buf_put(object.cast().as_ptr()) };
     }
 }
+
+#[cfg(CONFIG_KUNIT)]
+mod tests;
