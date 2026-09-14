@@ -694,6 +694,33 @@ references through teardown without reading pixels. The shared export fixture
 has its own handle-cleanup and invalid-dimension tests. Those VM cases do not
 qualify a physical GPU's buffers or a userspace compositor's submission path.
 
+Checking the renderer transition contract
+----------------------------------------
+
+The standalone model checks the intended transition from the built-in renderer
+to a userspace renderer without loading a kernel module::
+
+    tools/testing/selftests/drm_castkms/takeover-model.py
+
+It keeps the built-in renderer active while a candidate prepares private
+storage and completes a test rendering operation. Display content may change
+throughout preparation. Activation depends on current authority, display
+configuration, capabilities and registered resources, not on the desktop
+remaining unchanged. An accepted display update must finish installation before
+activation; an update not yet accepted must pass current validation when it is
+submitted. The model also checks retrying an activation whose reply
+was lost, delayed native work after candidate failure, and an independent bound
+on that retained work. Exhausting candidate capacity must not stop built-in
+rendering. The model's capacities are test parameters, not kernel limits.
+
+These checks describe a serialized contract for the subsequent kernel
+implementation. They do not establish that its locks or ioctl paths implement
+that contract. Native submissions and completions are controlled test events;
+the model does not prove recovery of an unreported submission after a crash or
+enforce a renderer's release promise inside a GPU driver. Orderly handback,
+exporting images and hardware/media qualification remain separate work.
+A successful test rendering operation is not a captured display frame.
+
 Building without another display driver
 --------------------------------------
 
