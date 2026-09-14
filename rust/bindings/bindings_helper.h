@@ -47,6 +47,7 @@
 #include <drm/drm_capture.h>
 #include <drm/drm_capture_authority.h>
 #include <drm/drm_capture_creator.h>
+#include <drm/drm_capture_resources.h>
 #include <drm/drm_capture_destination.h>
 #include <drm/drm_capture_file.h>
 #include <drm/drm_capture_grant.h>
