@@ -376,6 +376,15 @@ impl connector::DriverConnector for Connector {
 
 #[vtable]
 impl KmsDriver for Driver {
+    fn create_capture_grant(
+        dev: &Device<Self, kernel::drm::device::Registered>,
+        _: &Self::RegistrationData<'_>,
+        file: &kernel::drm::file::File<Self::File>,
+        target: kernel::drm::capture::Target,
+    ) -> Result<kernel::drm::capture::FilePair> {
+        crate::file::File::create_capture_files(dev, file, target)
+    }
+
     type FramebufferData = super::provenance::Provenance;
     fn framebuffer_data(
         _: &Device<Self>,

@@ -14,7 +14,6 @@ use kernel::{
 #[vtable]
 unsafe impl ClientOwner for Capture {}
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Capture {
     /// Transfer this handle without retaining its grantor or the DRM file that created it.
     ///

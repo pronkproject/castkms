@@ -14,7 +14,6 @@ use kernel::{
 #[vtable]
 unsafe impl ControlOwner for Grantor {}
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Grantor {
     /// Transfer revocation and creator tracking without installing a descriptor.
     ///

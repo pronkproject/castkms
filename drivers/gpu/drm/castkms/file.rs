@@ -16,6 +16,11 @@ use crate::{
 use kernel::{
     drm::{
         self,
+        capture::{
+            FilePair,
+            Target, //
+        },
+        device::Registered,
         kms::{
             connector::Connector,
             crtc::Crtc, //
@@ -42,8 +47,18 @@ impl drm::file::DriverFile for File {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl File {
+    /// Resolve the issuing file's IDs before entering the existing grant policy boundary.
+    pub(crate) fn create_capture_files(
+        dev: &drm::Device<Driver, Registered>,
+        file: &drm::file::File<Self>,
+        target: Target,
+    ) -> Result<FilePair> {
+        let crtc = dev.lookup_crtc(file, target.crtc_id())?;
+        let connector = dev.lookup_connector(file, target.connector_id())?;
+        Self::create_capture_grant(file, crtc.crtc(), &connector)?.into_files()
+    }
+
     /// Issue through a current master file without granting any public ioctl by implication.
     ///
     /// The file role and exact display objects are checked separately. Allocate the provider
