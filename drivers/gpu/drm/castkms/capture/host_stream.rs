@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Synchronous kernel capture using the output's shared host compositor.
+//! Kernel capture using the output's shared host compositor.
+
+mod pending;
+
+pub(crate) use pending::Pending;
 
 use super::provider::{
     self,
@@ -8,19 +12,19 @@ use super::provider::{
     Description,
     Request, //
 };
-use crate::host_compositor::worker::{
-    Handle,
-    Outcome, //
+use crate::host_compositor::worker::Handle;
+use kernel::{
+    prelude::*,
+    sync::Arc, //
 };
-use kernel::prelude::*;
 
 /// Authorized delivery whose scheduling is private to the adapter.
 ///
-/// Capture requires an exclusive borrow to keep deliveries ordered on one stream.
+/// Queued operations retain independent observations and identify their exact requests.
 /// Different streams share composition without sharing consumable notifications.
 /// Returned results own independent storage, not a private compositor image or source read.
 pub(crate) struct Stream {
-    delivery: provider::Stream,
+    delivery: Arc<provider::Stream>,
     worker: Handle,
 }
 
@@ -40,12 +44,23 @@ impl Stream {
     /// Stale descriptions do not configure a worker or start composition. The returned
     /// stream still checks current authorization at each delivery.
     pub(crate) fn from_description(description: &Description, capacity: u32) -> Result<Self> {
-        let delivery = description.create_stream(capacity)?;
+        let delivery = Arc::new(description.create_stream(capacity)?, GFP_KERNEL)?;
         let device = delivery.device();
         let worker = device
             .host
             .configure_checked(device, delivery.layout(), || delivery.check_current())?;
         Ok(Self { delivery, worker })
+    }
+
+    /// Queue bounded demand without waiting or retaining a compositor-source claim.
+    ///
+    /// The returned operation is independently owned and may complete out of queue order.
+    /// Dropping it abandons only its request, not shared composition. Closing this stream
+    /// stops delivery through surviving operations; their references do not preserve access.
+    pub(crate) fn queue(&self) -> Result<Pending> {
+        let request = self.delivery.queue()?;
+        let worker = self.worker.request_outcome()?;
+        Ok(Pending::new(self.delivery.clone(), request, worker))
     }
 
     /// Capture one attempt, with no automatic retries or assumed frame cadence.
@@ -57,12 +72,12 @@ impl Stream {
     /// An inactive or unpublished output returns EAGAIN. Active blank output produces
     /// an ordinary authorized image, with no framebuffer content revision.
     pub(crate) fn capture(&mut self) -> Result<Request> {
-        let request = self.delivery.queue()?;
-        match self.worker.request_outcome()?.wait()? {
-            Outcome::Image(image) => self.delivery.deliver(&image)?,
-            Outcome::NoScene => return Err(EAGAIN),
-            Outcome::Failed(error) => return Err(error),
-        }
-        Ok(request)
+        self.queue()?.wait()
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.delivery.close();
     }
 }
