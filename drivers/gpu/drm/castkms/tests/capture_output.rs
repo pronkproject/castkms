@@ -6,6 +6,7 @@ mod queued;
 mod client;
 mod blocked;
 mod file;
+mod aliases;
 
 use super::*;
 use crate::{

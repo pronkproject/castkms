@@ -72,7 +72,8 @@ impl Stream {
 
     /// Queue an attempt for a retained destination matching this stream's fixed layout.
     ///
-    /// Reject incompatible storage before reserving capture credit or scheduling rendering.
+    /// Reject incompatible storage and known current-source aliases before reserving capture
+    /// credit or scheduling rendering. This is not exclusion against later source selection.
     /// The caller must exclude conflicting destination access until the returned output
     /// completes. Dropping output requests cancellation but does not drain detached access.
     /// An unfinished reuse fence retains no source claim, and the
@@ -88,6 +89,7 @@ impl Stream {
         if !destination.buffer().is_writable() {
             return Err(EACCES);
         }
+        self.delivery.check_destination(destination.buffer())?;
         Ok(Output::new(self.queue()?, destination, reuse))
     }
 

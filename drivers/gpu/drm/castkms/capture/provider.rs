@@ -35,6 +35,7 @@ use crate::{
     Driver, //
 };
 use kernel::{
+    dma_buf::DmaBuf,
     drm::{
         capture::{
             Authority,
@@ -222,6 +223,20 @@ impl Stream {
 
     pub(crate) fn queue(&self) -> Result<Request> {
         Request::new(&self.storage)
+    }
+
+    /// Reject a known source alias before admitting destination work.
+    ///
+    /// The caller must still exclude competing destination users throughout delivery.
+    /// No authority, source or storage reservation escapes this metadata observation.
+    pub(super) fn check_destination(&self, buffer: &DmaBuf) -> Result {
+        self.capture.policy.permission.with_current(|current| {
+            if current.configuration() != &self.configuration {
+                return Err(ESTALE);
+            }
+            let _admission = self.capture.authority.begin()?;
+            current.check_destination(buffer)
+        })
     }
 
     /// Claim authorized delivery before copying, without retaining a compositor source.
