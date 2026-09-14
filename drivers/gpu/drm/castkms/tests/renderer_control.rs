@@ -97,6 +97,35 @@ mod cases {
     use super::*;
 
     #[test]
+    fn fresh_host_allocation_never_reopens_the_retired_worker() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            let host = device.host.clone();
+            let layout = crate::host_compositor::layout::Layout::new(640, 480)?;
+            let old = host.configure(device, layout)?;
+            old.request()?;
+            host.with_change(|change| {
+                candidate.with_activation_control(device, |_| change.disable())
+            })?;
+            host.with_change(|change| {
+                candidate.with_activation_control(device, |_| change.enable())
+            })?;
+            check(old.request() == Err(ENODEV))?;
+            check(matches!(host.current(), Err(EAGAIN)))?;
+            let fresh = host.configure(device, layout)?;
+            let request = fresh.request_outcome()?;
+            check(matches!(
+                request.wait()?,
+                crate::host_compositor::worker::Outcome::Image(_)
+            ))?;
+            host.with_change(|change| change.enable())?;
+            check(fresh.last_image().is_some())?;
+            check(old.request() == Err(ENODEV))
+        })
+    }
+
+    #[test]
     fn host_cutoff_runs_inside_control_and_cleanup_runs_afterward() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
