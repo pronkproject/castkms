@@ -5,15 +5,19 @@
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/poll.h>
 #include <linux/slab.h>
 
 #include <drm/drm_capture_authority.h>
 #include <drm/drm_capture_file.h>
+#include <drm/drm_fourcc.h>
 
 #include "drm_capture_file_internal.h"
 
 struct drm_capture_client {
+	/* Serializes mutable provider callbacks, never held by authority revocation. */
+	struct mutex lock;
 	struct drm_capture_authority *authority;
 	const struct drm_capture_client_owner_ops *ops;
 	void *data;
@@ -25,6 +29,7 @@ static int capture_client_release(struct inode *inode, struct file *file)
 	struct module *owner = client->ops->owner;
 
 	client->ops->release(client->data);
+	mutex_destroy(&client->lock);
 	drm_capture_authority_put(client->authority);
 	kfree(client);
 	module_put(owner);
@@ -44,6 +49,40 @@ static const struct file_operations capture_client_fops = {
 	.release = capture_client_release,
 	.poll = capture_client_poll,
 };
+
+int drm_capture_client_describe(struct file *file,
+			       struct drm_capture_description *description)
+{
+	struct drm_capture_description result = {};
+	struct drm_capture_client *client;
+	int ret;
+
+	if (!file || file->f_op != &capture_client_fops || !description)
+		return -EINVAL;
+	client = file->private_data;
+	mutex_lock(&client->lock);
+	if (drm_capture_authority_revoked(client->authority)) {
+		ret = -EKEYREVOKED;
+		goto unlock;
+	}
+	if (!client->ops->describe) {
+		ret = -EOPNOTSUPP;
+		goto unlock;
+	}
+	ret = client->ops->describe(client->data, &result);
+	if (ret < 0)
+		goto unlock;
+	if (ret || !result.id || !result.width || !result.height || !result.format ||
+	    !result.max_requests || result.modifier == DRM_FORMAT_MOD_INVALID) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+	*description = result;
+unlock:
+	mutex_unlock(&client->lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_describe);
 
 struct drm_capture_authority *drm_capture_client_authority(struct file *file)
 {
@@ -72,10 +111,12 @@ struct file *drm_capture_client_file_create(
 		return ERR_PTR(-ENODEV);
 	}
 	client->authority = drm_capture_authority_get(authority);
+	mutex_init(&client->lock);
 	client->ops = ops;
 	client->data = data;
 	file = anon_inode_getfile("drm-capture", &capture_client_fops, client, O_RDONLY);
 	if (IS_ERR(file)) {
+		mutex_destroy(&client->lock);
 		drm_capture_authority_put(client->authority);
 		module_put(ops->owner);
 		kfree(client);
