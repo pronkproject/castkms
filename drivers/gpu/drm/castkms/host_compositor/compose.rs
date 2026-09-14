@@ -22,7 +22,11 @@ use crate::{
 use kernel::{
     drm::auth::MasterRef,
     prelude::*,
-    sync::Arc, //
+    sync::Arc,
+    time::{
+        Instant,
+        Monotonic, //
+    }, //
 };
 
 /// A full private image whose compositor source is no longer claimed or retained.
@@ -36,6 +40,7 @@ pub(crate) struct Completed {
     configuration: Option<Configuration>,
     layout: Layout,
     content: Option<ContentSerial>,
+    completed_at: Instant<Monotonic>,
     owner: Option<MasterRef<Driver>>,
 }
 
@@ -69,6 +74,13 @@ impl Completed {
 
     pub(crate) fn content_serial(&self) -> Option<ContentSerial> {
         self.content
+    }
+
+    /// Time private CPU composition finished, not a KMS presentation timestamp.
+    ///
+    /// Reusing or copying the completed image does not make its pixels more recent.
+    pub(crate) fn completed_at(&self) -> Instant<Monotonic> {
+        self.completed_at
     }
 
     pub(crate) fn owner(&self) -> Option<&MasterRef<Driver>> {
@@ -127,6 +139,7 @@ pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Comple
         configuration,
         layout,
         content,
+        completed_at: Instant::now(),
         owner,
     }))
 }

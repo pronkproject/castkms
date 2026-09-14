@@ -20,6 +20,34 @@ mod cases {
     use super::*;
 
     #[test]
+    fn completion_time_stays_with_the_private_image() -> Result {
+        use kernel::time::{
+            Delta,
+            Instant,
+            Monotonic, //
+        };
+
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        let before = Instant::<Monotonic>::now();
+        let image = compose::current(&fixture.drm.device().output, &pool)?.ok_or(EINVAL)?;
+        let captured = image.completed_at();
+        check(captured - before >= Delta::ZERO)?;
+        check(Instant::<Monotonic>::now() - captured >= Delta::ZERO)?;
+        fixture.select(&fb, false, 0)?;
+        let later = compose::current(&fixture.drm.device().output, &pool)?.ok_or(EINVAL)?;
+        check(later.completed_at() - captured >= Delta::ZERO)?;
+        check(image.completed_at() - captured == Delta::ZERO)?;
+        Ok(())
+    }
+
+    #[test]
     fn completed_pixels_do_not_retain_the_source_read() -> Result {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
