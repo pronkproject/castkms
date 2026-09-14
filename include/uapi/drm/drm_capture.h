@@ -134,8 +134,10 @@ struct drm_capture_create_stream {
  * returns EINVAL. Cleanup remains available after revocation or a modeset.
  * Final client-file release also releases its remaining streams.
  *
- * Successful destruction is not a native completion or buffer-release fence.
- * Previously accepted execution retains its independent completion ownership.
+ * Success ends every destination write admitted through this stream before
+ * returning. Buffers may still have other users: this is not a compositor-source,
+ * presentation or downstream-consumer fence. Closing a descriptor alone does
+ * not acknowledge this boundary; other references or active calls may survive.
  */
 struct drm_capture_destroy_stream {
 	__u64 id;

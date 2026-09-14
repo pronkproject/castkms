@@ -79,6 +79,8 @@ pub unsafe trait ClientOwner: Send + 'static {
     /// Removed names must never be reused. Preserve native completion ownership
     /// independently of result delivery. Return ENOENT when the entry is absent;
     /// other errors must leave cleanup retryable. Do not reenter the client file.
+    /// Successful closure requires every destination write admitted by that stream to
+    /// have ended; shared rendering and downstream storage users remain independent.
     fn close_stream(&mut self, _id: u64) -> Result {
         Err(EOPNOTSUPP)
     }
@@ -143,6 +145,7 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
+        queue_output: None,
     };
 
     unsafe extern "C" fn dequeue(

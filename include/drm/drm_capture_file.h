@@ -9,6 +9,7 @@ struct drm_capture_authority;
 struct drm_capture_destination;
 struct drm_capture_completion_sink;
 struct drm_capture_readiness;
+struct dma_fence;
 struct file;
 struct module;
 
@@ -38,6 +39,8 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
  *                          revocation, without canceling accepted native uses
  * @dequeue: optionally publish one terminal result from a named stream; retain
  *           the result and accounting credit unless publication succeeds
+ * @queue_output: optionally admit a request for a registered destination; the
+ *                borrowed reuse fence must be retained if needed after return
  *
  * Operations remain immutable until release. The client file does not explicitly
  * revoke its authority before release; provider cleanup must respect other clients.
@@ -61,6 +64,8 @@ struct drm_capture_client_owner_ops {
 				    const struct drm_capture_destination *destination);
 	int (*unregister_destination)(void *data, u64 id);
 	int (*dequeue)(void *data, u64 stream, const struct drm_capture_completion_sink *sink);
+	int (*queue_output)(void *data, u64 stream, u64 use_id, u64 destination,
+			    struct dma_fence *reuse);
 };
 
 /*
@@ -123,6 +128,9 @@ int drm_capture_client_open_stream(struct file *file, u64 id, u64 offer, u32 cap
  * Close through the provider even after authority revocation. No new pixel
  * access is authorized. The provider owns stream cleanup and must preserve
  * outstanding native completion duties independently of result delivery.
+ * Success requires every destination write admitted by this stream to have
+ * ended before return. Other failures must leave cleanup retryable. This does
+ * not wait for shared rendering or another consumer's use of the same storage.
  * Retain file and call outside locks needed by cleanup. No descriptor is closed.
  */
 int drm_capture_client_close_stream(struct file *file, u64 id);
@@ -160,6 +168,20 @@ int drm_capture_client_unregister_destination(struct file *file, u64 id);
  */
 int drm_capture_client_dequeue(struct file *file, u64 stream,
 			       const struct drm_capture_completion_sink *sink);
+
+/*
+ * Admit output using client-local stream/destination names and a nonzero request
+ * name that increases within the stream. Retain file and optional reuse fence
+ * throughout the call. Success consumes no caller reference and leaves no output
+ * publication that could fail. The provider retains accepted storage and reuse
+ * dependencies, checks permission and capacity, and consumes no name on failure.
+ * Submission requires queue, dequeue, stream-close and readiness support.
+ * The caller must exclude conflicting destination access until terminal output
+ * or successful explicit stream destruction. Reuse waits must not retain source
+ * access. Call outside DRM, authority, reservation and provider lifecycle locks.
+ */
+int drm_capture_client_queue_output(struct file *file, u64 stream, u64 use_id,
+				    u64 destination, struct dma_fence *reuse);
 
 /**
  * struct drm_capture_control_owner_ops - lifetime retained by a revocation file

@@ -246,6 +246,27 @@ int drm_capture_client_dequeue(struct file *file, u64 stream,
 }
 EXPORT_SYMBOL_GPL(drm_capture_client_dequeue);
 
+int drm_capture_client_queue_output(struct file *file, u64 stream, u64 use_id,
+				    u64 destination, struct dma_fence *reuse)
+{
+	struct drm_capture_client *client = capture_client_from_file(file);
+	int ret;
+
+	if (!client || !stream || !use_id || !destination)
+		return -EINVAL;
+	mutex_lock(&client->lock);
+	if (drm_capture_authority_revoked(client->authority))
+		ret = -EKEYREVOKED;
+	else if (!client->ops->queue_output || !client->ops->dequeue ||
+		 !client->ops->close_stream || !client->readiness)
+		ret = -EOPNOTSUPP;
+	else
+		ret = client->ops->queue_output(client->data, stream, use_id, destination, reuse);
+	mutex_unlock(&client->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_capture_client_queue_output);
+
 struct drm_capture_authority *drm_capture_client_authority(struct file *file)
 {
 	struct drm_capture_client *client = capture_client_from_file(file);
