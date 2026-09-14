@@ -3,6 +3,7 @@
 //! Destination waits preserve private pixels without preserving compositor reads.
 
 use super::*;
+use crate::capture::host_queue::Queue;
 use crate::capture::host_stream::output::Output;
 use kernel::sync::Arc;
 
@@ -118,6 +119,75 @@ mod cases {
             check(matches!(output.try_complete_frame(), Err(ENOENT)))?;
             check(matches!(output.try_complete_frame(), Err(EALREADY)))?;
             check(pixels(image.buffer())?.iter().all(|byte| *byte == 0x73))
+        })
+    }
+
+    #[test]
+    fn ready_output_bypasses_reuse_wait_and_survives_failed_publication() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let mut queue = Queue::new(&grantor.capture(), 2)?;
+            let first = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
+            let second = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
+            let mut reuse = ManualFence::new()?;
+            queue.queue_to(1, first.clone(), Some(reuse.fence()))?;
+            queue.queue_to(2, second.clone(), None)?;
+            check(queue.queue_to(3, first.clone(), None) == Err(EAGAIN))?;
+            fixture.drm.device().host.current()?.flush_for_test();
+            check(queue.advance() == 1)?;
+            check(pixels(first.buffer())?.iter().all(|byte| *byte == 0x73))?;
+            check(pixels(second.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])?;
+            check(
+                queue.dequeue::<()>(|completion| {
+                    check(completion.use_id == 2)?;
+                    completion.result?;
+                    Err(EFAULT)
+                }) == Err(EFAULT),
+            )?;
+            check(queue.queue_to(3, second.clone(), None) == Err(EAGAIN))?;
+            check(queue.advance() == 0)?;
+            queue.dequeue(|completion| {
+                check(completion.use_id == 2)?;
+                check(completion.result?.metadata().layout() == second.layout())
+            })?;
+            reuse.complete(Ok(()))?;
+            check(queue.advance() == 1)?;
+            queue.dequeue(|completion| {
+                check(completion.use_id == 1)?;
+                completion.result.map(|_| ())
+            })?;
+            check(pixels(first.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])?;
+            check(queue.queue_to(2, second.clone(), None) == Err(ESTALE))?;
+            queue.queue_to(3, second, None)
+        })
+    }
+
+    #[test]
+    fn failed_output_keeps_its_terminal_record_until_acknowledged() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let mut queue = Queue::new(&grantor.capture(), 1)?;
+            let image = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
+            let mut reuse = ManualFence::new()?;
+            queue.queue_to(1, image.clone(), Some(reuse.fence()))?;
+            reuse.complete(Err(EAGAIN))?;
+            fixture.drm.device().host.current()?.flush_for_test();
+            check(queue.advance() == 1)?;
+            check(queue.advance() == 0)?;
+            check(queue.queue_to(2, image.clone(), None) == Err(EAGAIN))?;
+            check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
+            queue.dequeue(|completion| {
+                check(completion.use_id == 1)?;
+                check(matches!(completion.result, Err(EAGAIN)))
+            })?;
+            check(pixels(image.buffer())?.iter().all(|byte| *byte == 0x73))?;
+            queue.queue_to(2, image, None)
         })
     }
 }
