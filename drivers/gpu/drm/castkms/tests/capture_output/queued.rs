@@ -11,6 +11,38 @@ mod cases {
     use super::*;
 
     #[test]
+    fn ineligible_destination_does_not_consume_stream_capacity() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let stream = Stream::new(&grantor.capture(), 1)?;
+            let wrong = Arc::new(destination(fixture, Layout::new(639, 480)?)?, GFP_KERNEL)?;
+            check(matches!(stream.queue_to(wrong, None), Err(EINVAL)))?;
+            let read_only = Arc::new(
+                Image::new(
+                    fixture.drm.export_dumb_read_only(640, 480, 32)?,
+                    Layout::new(640, 480)?,
+                    fourcc::XRGB8888,
+                    fourcc::FORMAT_MOD_LINEAR,
+                    2560,
+                    0,
+                )?,
+                GFP_KERNEL,
+            )?;
+            check(matches!(stream.queue_to(read_only, None), Err(EACCES)))?;
+            let image = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
+            let mut output = stream.queue_to(image.clone(), None)?;
+            check(matches!(stream.queue_to(image.clone(), None), Err(EAGAIN)))?;
+            fixture.drm.device().host.current()?.flush_for_test();
+            let frame = output.try_complete_frame()?.ok_or(EINVAL)?;
+            check(frame.metadata().layout() == image.layout())?;
+            check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])
+        })
+    }
+
+    #[test]
     fn reuse_wait_retains_the_original_image_without_a_source_read() -> Result {
         with_exporter(|fixture| {
             let _connector = fixture.drm.publish_connector_identity()?;
