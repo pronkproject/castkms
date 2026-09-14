@@ -2,6 +2,8 @@
 
 //! Generic destination metadata through native PRIME exports, without pixel access.
 
+mod client;
+
 use super::*;
 use crate::{
     dma_buf::DmaBuf,
@@ -107,6 +109,39 @@ mod cases {
             } else {
                 Err(EINVAL)
             }
+        })
+    }
+
+    #[test]
+    fn native_conversion_does_not_read_inactive_plane_storage() -> Result {
+        with_buffer(false, |buffer| {
+            let mut raw = core::mem::MaybeUninit::<bindings::drm_capture_destination>::uninit();
+            let pointer = raw.as_mut_ptr();
+            // SAFETY: Initialize the scalar fields and the sole active plane in exclusive
+            // storage. Inactive plane entries deliberately remain uninitialized.
+            unsafe {
+                (&raw mut (*pointer).width).write(16);
+                (&raw mut (*pointer).height).write(16);
+                (&raw mut (*pointer).format).write(fourcc::XRGB8888);
+                (&raw mut (*pointer).modifier).write(0);
+                (&raw mut (*pointer).num_planes).write(1);
+                (&raw mut (*pointer).planes[0]).write(bindings::drm_capture_destination_plane {
+                    buffer: buffer.as_raw(),
+                    stride: 64,
+                    offset: 128,
+                });
+            }
+            // SAFETY: Required metadata is initialized and stable. The active buffer
+            // remains borrowed throughout this callback, longer than the copied view.
+            let destination = unsafe { Destination::from_raw(pointer) }?;
+            let plane = destination.plane(0).ok_or(EINVAL)?;
+            if destination.num_planes() != 1
+                || plane.offset() != 128
+                || !core::ptr::eq(plane.buffer(), buffer)
+            {
+                return Err(EINVAL);
+            }
+            Ok(())
         })
     }
 }

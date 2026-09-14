@@ -94,13 +94,53 @@ impl<'a> Destination<'a> {
                 offset: plane.offset,
             };
         }
-        // SAFETY: Each active pointer borrows a live DMA-BUF for 'a and all metadata is
-        // initialized. Native validation reads only metadata and retained file access mode.
-        to_result(unsafe { bindings::drm_capture_destination_validate(&raw) })?;
+        // SAFETY: Each active pointer borrows a live DMA-BUF for 'a and all metadata is initialized.
+        unsafe { Self::from_raw(&raw) }
+    }
+
+    /// Copy active metadata while borrowing the caller's native buffers.
+    ///
+    /// # Safety
+    ///
+    /// `raw` must remain valid and stable during the call. Its scalar fields and active
+    /// planes must be initialized; every non-null active buffer must be initialized and
+    /// retained for `'a`. Inactive planes need not be initialized.
+    pub(crate) unsafe fn from_raw(raw: *const bindings::drm_capture_destination) -> Result<Self> {
+        if raw.is_null() {
+            return Err(EINVAL);
+        }
+        // SAFETY: The caller initializes the scalar metadata and keeps it stable.
+        let count = unsafe { (*raw).num_planes };
+        if count == 0 || count > bindings::DRM_CAPTURE_DESTINATION_MAX_PLANES {
+            return Err(EINVAL);
+        }
+        // SAFETY: Read only initialized scalar fields, never inactive native plane entries.
+        let mut copied = unsafe {
+            bindings::drm_capture_destination {
+                width: (*raw).width,
+                height: (*raw).height,
+                format: (*raw).format,
+                modifier: (*raw).modifier,
+                num_planes: count,
+                ..Default::default()
+            }
+        };
+        for index in 0..count as usize {
+            // SAFETY: Only active, initialized plane fields are read. No buffer reference
+            // is acquired and no borrow of the caller's metadata survives this copy.
+            copied.planes[index] = unsafe { (*raw).planes[index] };
+        }
+        // SAFETY: Copied active pointers borrow live buffers for 'a and all copied metadata
+        // is initialized. Validation reads only metadata and retained file access mode.
+        to_result(unsafe { bindings::drm_capture_destination_validate(&copied) })?;
         Ok(Self {
-            raw,
+            raw: copied,
             _buffers: PhantomData,
         })
+    }
+
+    pub(super) fn as_raw(&self) -> *const bindings::drm_capture_destination {
+        &self.raw
     }
 
     /// Visible image dimensions in pixels.
