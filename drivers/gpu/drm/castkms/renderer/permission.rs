@@ -14,6 +14,7 @@ use crate::{
 use kernel::{
     drm::{
         auth::CurrentMasterGuard,
+        device::Registered,
         kms::{
             connector::Connector,
             crtc::Crtc, //
@@ -117,16 +118,40 @@ impl Access {
     /// The callback follows Target::with_current's restrictions and must not revoke or
     /// release its owner. No returned observation authorizes a later unchecked operation.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce(Current<'_>) -> Result<R>) -> Result<R> {
+        self.policy
+            .permission
+            .target
+            .with_current(|current| self.authorize(current, f))
+    }
+
+    /// Check revocation inside the installed-generation control interval.
+    ///
+    /// Master, CRTC, object-ID and output locks precede the revocation lock. The callback
+    /// follows `Target::with_installed`'s restrictions and must not revoke or drop its owner.
+    pub(crate) fn with_installed<R>(
+        &self,
+        registered: &Device<Driver, Registered>,
+        f: impl FnOnce(Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        self.policy
+            .permission
+            .target
+            .with_installed(registered, |current| self.authorize(current, f))
+    }
+
+    fn authorize<R>(
+        &self,
+        current: Current<'_>,
+        f: impl FnOnce(Current<'_>) -> Result<R>,
+    ) -> Result<R> {
         let permission = &self.policy.permission;
-        permission.target.with_current(|current| {
-            if permission.target.device().authority.interval()? != permission.interval {
-                return Err(ESTALE);
-            }
-            let revoked = self.policy.revoked.lock();
-            if *revoked {
-                return Err(EKEYREVOKED);
-            }
-            f(current)
-        })
+        if permission.target.device().authority.interval()? != permission.interval {
+            return Err(ESTALE);
+        }
+        let revoked = self.policy.revoked.lock();
+        if *revoked {
+            return Err(EKEYREVOKED);
+        }
+        f(current)
     }
 }

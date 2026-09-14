@@ -44,6 +44,25 @@ mod cases {
     use super::*;
 
     #[test]
+    fn installed_control_requires_the_permissions_own_device_registration() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        enable(&fixture)?;
+        let owner = owner(&fixture, &file)?;
+        let other = CastKms::new(c"castkms-renderer-registration")?;
+        let registered = other._display.registration_guard().ok_or(ENODEV)?;
+        let mut calls = 0;
+        check(
+            owner.access().with_installed(&registered, |_| {
+                calls += 1;
+                Ok(())
+            }) == Err(EINVAL),
+        )?;
+        check(calls == 0)
+    }
+
+    #[test]
     fn startup_control_does_not_require_or_grant_image_ownership() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
