@@ -16,6 +16,7 @@ use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod authority;
 mod client_stream;
+mod client_destination;
 mod description;
 mod destination;
 mod files;
@@ -27,6 +28,7 @@ pub use files::FilePair;
 pub use description::Description;
 pub use destination::{Destination, DestinationPlane};
 pub use client_stream::ClientStream;
+pub use client_destination::ClientDestination;
 pub use grant::Target;
 pub use authority::{
     Admission,

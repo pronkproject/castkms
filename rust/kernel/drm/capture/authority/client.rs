@@ -7,7 +7,10 @@ use super::{
     Policy, //
 };
 use crate::{
-    drm::capture::Description,
+    drm::capture::{
+        Description,
+        Destination, //
+    },
     error::from_err_ptr,
     fs::File,
     prelude::*,
@@ -58,6 +61,24 @@ pub unsafe trait ClientOwner: Send + 'static {
     fn close_stream(&mut self, _id: u64) -> Result {
         Err(EOPNOTSUPP)
     }
+
+    /// Register borrowed destination storage under a new, increasing client-local name.
+    ///
+    /// Check current capture permission, complete image layout and resource limits.
+    /// Retained buffers need owned references; the description itself is borrowed only
+    /// for this callback. Registration grants no future pixel authority or reuse exclusion.
+    /// Failure must not consume the name. Native dispatch requires the cleanup callback too.
+    fn register_destination(&mut self, _id: u64, _destination: &Destination<'_>) -> Result {
+        Err(EOPNOTSUPP)
+    }
+
+    /// Remove a destination name even after revocation, preserving accepted use ownership.
+    ///
+    /// Removed names must never be reused. Return ENOENT for an absent entry; other errors
+    /// must leave cleanup retryable. No operation may reenter the same client file.
+    fn unregister_destination(&mut self, _id: u64) -> Result {
+        Err(EOPNOTSUPP)
+    }
 }
 
 struct Callbacks<O>(PhantomData<O>);
@@ -81,8 +102,16 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
-        register_destination: None,
-        unregister_destination: None,
+        register_destination: if O::HAS_REGISTER_DESTINATION {
+            Some(Self::register_destination)
+        } else {
+            None
+        },
+        unregister_destination: if O::HAS_UNREGISTER_DESTINATION {
+            Some(Self::unregister_destination)
+        } else {
+            None
+        },
     };
 
     unsafe extern "C" fn release(data: *mut c_void) {
@@ -124,6 +153,36 @@ impl<O: ClientOwner> Callbacks<O> {
         // and final destruction while this exclusive borrow of the transferred O exists.
         let owner = unsafe { &mut *data.cast::<O>() };
         match owner.close_stream(id) {
+            Ok(()) => 0,
+            Err(error) => error.to_errno(),
+        }
+    }
+
+    unsafe extern "C" fn register_destination(
+        data: *mut c_void,
+        id: u64,
+        raw: *const bindings::drm_capture_destination,
+    ) -> i32 {
+        // SAFETY: Native dispatch supplies stable metadata and retains all active buffers
+        // throughout the callback. The description is not retained beyond this call.
+        let destination = match unsafe { Destination::from_raw(raw) } {
+            Ok(destination) => destination,
+            Err(error) => return error.to_errno(),
+        };
+        // SAFETY: Native dispatch retains the file and serializes every callback with its
+        // client mutex. The creation-time KBox<O> remains exclusively borrowed here.
+        let owner = unsafe { &mut *data.cast::<O>() };
+        match owner.register_destination(id, &destination) {
+            Ok(()) => 0,
+            Err(error) => error.to_errno(),
+        }
+    }
+
+    unsafe extern "C" fn unregister_destination(data: *mut c_void, id: u64) -> i32 {
+        // SAFETY: File retention and the client mutex exclude concurrent access and final
+        // destruction of the transferred KBox<O> throughout this exclusive borrow.
+        let owner = unsafe { &mut *data.cast::<O>() };
+        match owner.unregister_destination(id) {
             Ok(()) => 0,
             Err(error) => error.to_errno(),
         }
