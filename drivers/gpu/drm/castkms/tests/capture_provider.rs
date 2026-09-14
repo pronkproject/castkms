@@ -2,6 +2,8 @@
 
 //! Kernel-issued host capture with real display authority and independent result storage.
 
+mod frames;
+
 use super::*;
 use crate::{
     capture::{

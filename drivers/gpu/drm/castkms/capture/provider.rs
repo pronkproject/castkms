@@ -9,11 +9,13 @@
 mod creator;
 mod control_file;
 mod description;
+mod frame;
 mod request;
 mod storage;
 
 pub(crate) use creator::Creator;
 pub(crate) use description::Description;
+pub(crate) use frame::Frame;
 pub(crate) use request::Request;
 
 use super::{
