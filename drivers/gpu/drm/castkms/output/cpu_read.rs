@@ -38,6 +38,7 @@ impl<S: Clone + Unpin, C: Clone + Unpin> Output<S, C> {
     /// acquire reservation locks without keeping source retirement pending.
     /// Configuration is retained with the candidate scene and passed to `read`; an update
     /// during the callback cannot pair the source pixels with a later configuration.
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn with_prepared_cpu_scene<P, R>(
         &self,
         prepare: impl FnOnce(&S) -> Result<P>,

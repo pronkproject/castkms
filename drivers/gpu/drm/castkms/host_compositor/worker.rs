@@ -101,7 +101,14 @@ impl WorkItem for Worker {
             State::Open { progress, .. } => progress.starting(),
             State::Closed => return,
         };
-        let outcome = match compose::current(&worker.output, &worker.pool) {
+        let outcome = match compose::current_checked(&worker.output, &worker.pool, || {
+            let state = worker.state.lock();
+            if matches!(*state, State::Closed) {
+                Err(ENODEV)
+            } else {
+                Ok(state)
+            }
+        }) {
             Ok(Some(image)) => match Arc::new(image, GFP_KERNEL) {
                 Ok(image) => Outcome::Image(image),
                 Err(error) => Outcome::Failed(error.into()),
@@ -123,6 +130,15 @@ impl WorkItem for Worker {
 /// No claim is taken by queueing; the callback chooses the then-current scene.
 pub(crate) struct Owner {
     worker: Arc<Worker>,
+}
+
+/// Detached cached results, released outside locks needed for buffer or device cleanup.
+///
+/// This owns no source claim and does not drain a running worker. Already admitted reads
+/// remain owned by that worker until it finishes; the worker owner still drains on close.
+#[must_use = "release detached results outside modeset, publication and reservation locks"]
+pub(crate) struct RetiredResults {
+    _state: State,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -157,11 +173,21 @@ impl Owner {
         self.worker.work.flush();
     }
 
-    /// Stop new requests and drain work outside locks needed for mapping or source retirement.
-    pub(crate) fn close(&self) {
+    /// Stop new requests and source claims without waiting for an already admitted read.
+    ///
+    /// Source admission checks this same state after mapping preparation and retains its
+    /// guard across the native claim. Cutoff therefore rejects a worker that has started
+    /// but has not claimed yet. Detached results must be released outside outer locks;
+    /// close or owner destruction still drains work and closes its private pool.
+    pub(crate) fn stop_admission(&self) -> RetiredResults {
         let retired = core::mem::replace(&mut *self.worker.state.lock(), State::Closed);
         self.worker.changed.notify_all();
-        drop(retired);
+        RetiredResults { _state: retired }
+    }
+
+    /// Stop new requests and drain work outside locks needed for mapping or source retirement.
+    pub(crate) fn close(&self) {
+        drop(self.stop_admission());
         self.worker.work.flush();
         self.worker.pool.close();
     }

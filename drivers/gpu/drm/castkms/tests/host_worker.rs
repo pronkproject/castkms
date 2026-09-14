@@ -15,6 +15,56 @@ mod cases {
     use super::*;
 
     #[test]
+    fn admission_cutoff_detaches_results_without_releasing_their_storage() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let handle = owner.handle();
+        handle.request()?;
+        owner.flush();
+        check(handle.last_image().is_some())?;
+        let retired = owner.stop_admission();
+        check(handle.request() == Err(ENODEV))?;
+        check(handle.last_image().is_none())?;
+        check(handle.take_outcome().is_none())?;
+        owner.close();
+        check(matches!(
+            fixture.host_budget.reserve(16 * 1024 * 1024),
+            Err(EBUSY)
+        ))?;
+        drop(retired);
+        let _whole_budget = fixture.host_budget.reserve(16 * 1024 * 1024)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cutoff_ends_pending_observation_before_the_owner_is_drained() -> Result {
+        let fixture = Fixture::new()?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(3, 2)?,
+        )?;
+        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let request = owner.handle().request_outcome()?;
+        let retired = owner.stop_admission();
+        check(matches!(request.try_outcome(), Err(ENODEV)))?;
+        check(matches!(request.wait(), Err(ENODEV)))?;
+        check(owner.handle().request() == Err(ENODEV))?;
+        drop(owner.stop_admission());
+        drop(retired);
+        owner.flush();
+        check(owner.handle().take_outcome().is_none())?;
+        Ok(())
+    }
+
+    #[test]
     fn the_last_shared_image_keeps_its_storage_charge_after_shutdown() -> Result {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
