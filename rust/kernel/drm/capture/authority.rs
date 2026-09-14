@@ -10,6 +10,7 @@ pub use revocation::Revocation;
 
 use super::{
     Job,
+    Request,
     Stream, //
 };
 use crate::{
@@ -209,6 +210,26 @@ impl<P: Policy> Authority<P> {
         })?;
         Ok(Job {
             // SAFETY: Successful claim transfers an initialized job with unique storage ownership.
+            ptr: unsafe { NonNull::new_unchecked(raw) },
+        })
+    }
+
+    /// Claim exactly the retained request through current membership and provider policy.
+    ///
+    /// The request carries its own stream; a numeric ID cannot be paired with a different
+    /// stream. The same policy-lock and CPU-storage obligations as [`Self::claim`] apply.
+    /// Denial or an unavailable request never selects another queued request.
+    pub fn claim_request(&self, request: &Request) -> Result<Job> {
+        // SAFETY: The authority and request retain the native objects through serialized claim.
+        let raw = from_err_ptr(unsafe {
+            bindings::drm_capture_authority_claim_request(
+                self.raw.get(),
+                request.stream.0.get(),
+                request.id,
+            )
+        })?;
+        Ok(Job {
+            // SAFETY: Successful claim transfers exclusive native job ownership.
             ptr: unsafe { NonNull::new_unchecked(raw) },
         })
     }
