@@ -721,6 +721,27 @@ enforce a renderer's release promise inside a GPU driver. Orderly handback,
 exporting images and hardware/media qualification remain separate work.
 A successful test rendering operation is not a captured display frame.
 
+The companion model starts with an active GPU renderer and checks orderly
+return to built-in rendering::
+
+    tools/testing/selftests/drm_castkms/handback-model.py
+
+A handback request does not change accepted display capabilities. Installing
+its tagged host-compatible update installs the validation gate, while normal
+scene publication remains a separate event. CPU composition must not read the
+previous GPU-only scene between those events. Host publication rejects stale
+authority, worker identity, configuration and canceled requests, but does not
+require content to stop changing. Canceling a pending handback preserves the
+installed scene and lifts its gate in a new capability epoch.
+
+The model checks that host publication stops new GPU claims before the worker
+receives permission to stop. Existing claims still need release acknowledgment
+with complete native coverage; those native operations may finish afterward.
+Worker loss before acknowledgment is terminal rather than a successful return
+to host execution. The scheduler admits one update at a time through acceptance,
+installation and publication. That bound isolates the ordering decisions; it
+is not the driver's queue depth, a concurrent-locking proof, or GPU validation.
+
 Building without another display driver
 --------------------------------------
 
