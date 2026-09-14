@@ -3,6 +3,7 @@
 #define __DRM_CAPTURE_FILE_H__
 
 #include <linux/types.h>
+#include <drm/drm_capture_description.h>
 
 struct drm_capture_authority;
 struct file;
@@ -19,13 +20,21 @@ bool drm_capture_files_match(struct file *capture, struct file *control);
  * struct drm_capture_client_owner_ops - lifetime retained by a capture client file
  * @owner: module containing callbacks and the transferred data's destruction code
  * @release: destroy transferred client state outside authority locks
+ * @describe: optionally describe the currently offered final-image configuration;
+ *            zero succeeds, a negative errno fails without publishing output
  *
  * Operations remain immutable until release. The client file does not explicitly
  * revoke its authority before release; provider cleanup must respect other clients.
+ * Describe calls are serialized for each client, outside authority admission
+ * locks. The callback may sleep and must check current provider permission.
+ * It must not reenter operations on the same client. Final release runs after
+ * every callback has returned; mutable client data needs no additional lock
+ * when accessed only through these callbacks.
  */
 struct drm_capture_client_owner_ops {
 	struct module *owner;
 	void (*release)(void *data);
+	int (*describe)(void *data, struct drm_capture_description *description);
 };
 
 /*
@@ -43,6 +52,17 @@ struct drm_capture_client_owner_ops {
 struct file *drm_capture_client_file_create(
 	struct drm_capture_authority *authority,
 	const struct drm_capture_client_owner_ops *ops, void *data);
+
+/*
+ * Describe through an owned client file without accessing userspace memory.
+ * Retain file throughout the call. A different endpoint returns -EINVAL, an
+ * absent provider operation returns -EOPNOTSUPP, and terminal revocation
+ * returns -EKEYREVOKED. Success copies validated metadata to description;
+ * failure leaves it unchanged. Call outside DRM and authority locks.
+ * Success is an observation, not permission for a later stream or pixel access.
+ */
+int drm_capture_client_describe(struct file *file,
+			       struct drm_capture_description *description);
 
 /**
  * struct drm_capture_control_owner_ops - lifetime retained by a revocation file

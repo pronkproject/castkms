@@ -36,6 +36,7 @@ impl<O: ClientOwner> Callbacks<O> {
     const OPS: bindings::drm_capture_client_owner_ops = bindings::drm_capture_client_owner_ops {
         owner: crate::module::this_module::<O::OwnerModule>().as_ptr(),
         release: Some(Self::release),
+        describe: None,
     };
 
     unsafe extern "C" fn release(data: *mut c_void) {
