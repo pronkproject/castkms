@@ -2,11 +2,12 @@
 
 //! Kernel capture using the output's shared host compositor.
 
-mod pending;
 pub(crate) mod output;
+mod pending;
 
 pub(crate) use pending::Pending;
 
+use super::destination::Image;
 use super::provider::{
     self,
     Capture,
@@ -15,9 +16,14 @@ use super::provider::{
 };
 use crate::host_compositor::worker::Handle;
 use kernel::{
+    dma_fence::Fence,
     prelude::*,
-    sync::Arc, //
+    sync::{
+        aref::ARef,
+        Arc, //
+    }, //
 };
+use output::Output;
 
 /// Authorized delivery whose scheduling is private to the adapter.
 ///
@@ -62,6 +68,26 @@ impl Stream {
         let request = self.delivery.queue()?;
         let worker = self.worker.request_outcome()?;
         Ok(Pending::new(self.delivery.clone(), request, worker))
+    }
+
+    /// Queue an attempt for a retained destination matching this stream's fixed layout.
+    ///
+    /// Reject incompatible storage before reserving capture credit or scheduling rendering.
+    /// The caller must exclude conflicting destination access until the returned output
+    /// completes or is dropped. An unfinished reuse fence retains no source claim, and the
+    /// fence's completion does not replace the caller's duty to exclude subsequent users.
+    pub(crate) fn queue_to(
+        &self,
+        destination: Arc<Image>,
+        reuse: Option<ARef<Fence>>,
+    ) -> Result<Output> {
+        if destination.layout() != self.delivery.layout() {
+            return Err(EINVAL);
+        }
+        if !destination.buffer().is_writable() {
+            return Err(EACCES);
+        }
+        Ok(Output::new(self.queue()?, destination, reuse))
     }
 
     /// Capture one attempt, with no automatic retries or assumed frame cadence.
