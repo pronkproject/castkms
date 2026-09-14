@@ -9,7 +9,6 @@ use kernel::{
     sync::aref::ARef, //
 };
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Client {
     /// Cancel one request through its named stream without resolving its destination again.
     ///

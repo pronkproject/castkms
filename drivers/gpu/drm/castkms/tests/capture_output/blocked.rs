@@ -13,7 +13,12 @@ use core::{
 };
 use kernel::{
     bindings,
-    drm::capture::ClientOwner,
+    drm::capture::{
+        ClientOwner,
+        ClientStream,
+        Description,
+        Readiness, //
+    },
     error::{
         from_err_ptr,
         to_result, //
@@ -194,6 +199,43 @@ fn gate(fence: &ManualFence) -> Result<Arc<Gate>> {
 #[kunit_tests(rust_castkms_capture_blocked_output)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn revoked_file_cancels_blocked_access_without_acknowledging_reuse() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let creator = fixture.drm.master_file()?;
+            let _fb = select(fixture, &creator)?;
+            let grantor = grant(fixture, &creator)?;
+            let mut fence = ManualFence::new()?;
+            let gate = gate(&fence)?;
+            let (image, backing) = destination_with_gate(fixture, gate.clone())?;
+            super::super::file::with_client(grantor.capture(), |file| {
+                let _registered = super::super::file::register(file, 1, &image)?;
+                let mut stream = ClientStream::open(file, 1, Description::query(file)?.id(), 1)?;
+                let readiness = Readiness::for_client(file)?;
+                stream.queue_output(1, 1, None)?;
+                wait_for(|| gate.entered.load(Ordering::Acquire))?;
+                drop(grantor);
+                stream.cancel(1)?;
+                check(stream.cancel(1) == Err(EALREADY))?;
+                check(stream.dequeue(|_| Ok(())) == Err(EAGAIN))?;
+                check(!readiness.has_results())?;
+                check(stream.close() == Err(EBUSY))?;
+                check(stream.queue_output(2, 1, None) == Err(EKEYREVOKED))?;
+                check(!gate.unmapped.load(Ordering::Acquire))?;
+                fence.complete(Ok(()))?;
+                wait_for(|| readiness.has_results())?;
+                stream.dequeue(|completion| {
+                    check(completion.use_id() == 1)?;
+                    check(matches!(completion.result(), Err(ECANCELED)))
+                })?;
+                check(gate.unmapped.load(Ordering::Acquire))?;
+                stream.close()?;
+                check(pixels(&backing)?.iter().all(|byte| *byte == 0x73))
+            })
+        })
+    }
 
     #[test]
     fn a_late_implicit_fence_does_not_lock_out_sibling_streams() -> Result {
