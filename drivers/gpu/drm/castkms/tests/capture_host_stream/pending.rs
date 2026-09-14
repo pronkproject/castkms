@@ -81,6 +81,30 @@ mod cases {
     use super::*;
 
     #[test]
+    fn cancellation_ends_delivery_before_shared_composition_can_map() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let fb = select(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let stream = Stream::new(&grantor.capture(), 1)?;
+        let worker = fixture.drm.device().host.current()?;
+        let outcome = with_mapping_blocked(&fb, || {
+            let mut pending = stream.queue()?;
+            pending.cancel()?;
+            check(pending.cancel() == Err(EALREADY))?;
+            check(matches!(stream.queue(), Err(EAGAIN)))?;
+            let outcome = pending.try_complete_frame();
+            check(matches!(pending.try_complete_frame(), Err(EALREADY)))?;
+            Ok(outcome)
+        })?;
+        worker.flush_for_test();
+        check(matches!(outcome, Err(ECANCELED)))?;
+        let replacement = stream.queue()?.wait_frame()?;
+        check(replacement.request().status()? == Status::Complete(Ok(())))
+    }
+
+    #[test]
     fn closed_demand_is_observable_before_composition_can_map() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
