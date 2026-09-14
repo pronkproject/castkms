@@ -10,6 +10,8 @@ mod allocation;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod buffers;
 #[cfg(CONFIG_DRM_CLIENT)]
+mod cpu_writes;
+#[cfg(CONFIG_DRM_CLIENT)]
 mod connector_entries;
 mod connector_refs;
 mod events;

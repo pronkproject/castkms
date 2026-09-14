@@ -14,6 +14,8 @@ use crate::{
 };
 use core::ptr::NonNull;
 
+pub mod cpu_access;
+
 /// A shared DMA buffer whose native file owns its reference count.
 ///
 /// # Invariants
