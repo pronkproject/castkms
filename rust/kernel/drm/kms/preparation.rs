@@ -79,17 +79,27 @@ pub(super) unsafe fn with_current_source<C: DriverCrtc, R>(
         }
     }
     let _unlock = Unlock(lock);
-    // SAFETY: The modeset lock stabilizes the current state and its source pointer. Teardown
-    // is excluded, and the callback cannot retain the borrowed source beyond this call.
-    let source = unsafe {
+    // SAFETY: The modeset lock stabilizes the source and teardown is excluded by the caller.
+    let source = unsafe { current_source(crtc) };
+    Ok(observe(source))
+}
+
+/// Borrow initialized CRTC state while its modeset lock is held.
+///
+/// # Safety
+///
+/// The caller must exclude teardown and hold the CRTC's modeset lock for every use of
+/// the returned reference, not merely this function call. No pixel access is granted.
+pub(super) unsafe fn current_source<C: DriverCrtc>(crtc: &Crtc<C>) -> Option<&Source> {
+    // SAFETY: The caller stabilizes the initialized state and its retained source pointer.
+    unsafe {
         let state = (*crtc.as_raw()).state;
         if state.is_null() {
             None
         } else {
             NonNull::new((*state).prepare_source).map(|source| &*source.cast::<Source>().as_ptr())
         }
-    };
-    Ok(observe(source))
+    }
 }
 
 impl<T: KmsDriver> UnregisteredKmsDevice<'_, T> {

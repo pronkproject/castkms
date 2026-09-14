@@ -24,6 +24,7 @@ mod events;
 mod framebuffers;
 mod generations;
 mod inspection;
+mod locks;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod masters;
 mod plane_assignments;

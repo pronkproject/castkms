@@ -19,39 +19,7 @@ use core::{cell::Cell, marker::*, mem::ManuallyDrop, ops::*, ptr::NonNull};
 
 mod input;
 pub use input::PlaneInput;
-
-// The acquire context contains intrusive lists and belongs to its initializing task. Keep it
-// pinned inside the transaction runner, where neither it nor its locks can escape the callback.
-#[pin_data(PinnedDrop)]
-struct ModesetAcquireContext {
-    #[pin]
-    raw: Opaque<bindings::drm_modeset_acquire_ctx>,
-    _task: NotThreadSafe,
-}
-
-impl ModesetAcquireContext {
-    fn new() -> impl PinInit<Self> {
-        pin_init!(Self {
-            raw <- Opaque::ffi_init(|slot| {
-                // SAFETY: The slot is pinned, writable storage for the acquire context.
-                unsafe { bindings::drm_modeset_acquire_init(slot, 0) };
-            }),
-            _task: NotThreadSafe,
-        })
-    }
-}
-
-#[pinned_drop]
-impl PinnedDrop for ModesetAcquireContext {
-    fn drop(self: Pin<&mut Self>) {
-        // SAFETY: The context is initialized on this task and outlives every transaction using
-        // it. All temporary state has been released before dropping locks and finalizing it.
-        unsafe {
-            bindings::drm_modeset_drop_locks(self.raw.get());
-            bindings::drm_modeset_acquire_fini(self.raw.get());
-        }
-    }
-}
+use super::lock::ModesetAcquireContext;
 
 impl<T: KmsDriver> Device<T, Registered> {
     /// Build and submit a blocking atomic update from the kernel.
@@ -120,14 +88,14 @@ unsafe fn run_transaction<T: KmsDriver>(
     mut update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
     check_only: bool,
 ) -> Result {
-    pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new());
+    pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new(0));
     loop {
         let (result, retry) = {
             // SAFETY: The caller guarantees completed KMS initialization and a live device.
             let raw = NonNull::new(unsafe { bindings::drm_atomic_commit_alloc(dev.as_raw()) })
                 .ok_or(ENOMEM)?;
             // SAFETY: This unpublished allocation is exclusively owned by the runner.
-            unsafe { (*raw.as_ptr()).acquire_ctx = ctx.raw.get() };
+            unsafe { (*raw.as_ptr()).acquire_ctx = ctx.as_raw() };
             // SAFETY: Transfer the allocation's reference to the composer with its initialized
             // acquire context already attached. Its drop runs before the context is destroyed.
             // No access to this state survives the callback or commit.
@@ -136,7 +104,7 @@ unsafe fn run_transaction<T: KmsDriver>(
             // A callback that accidentally consumes EDEADLK must still back off, never commit a
             // partial transaction. Only actual contention calls the native slow-lock path.
             // SAFETY: The initialized context belongs exclusively to this task.
-            let contended = unsafe { !(*ctx.raw.get()).contended.is_null() };
+            let contended = unsafe { !(*ctx.as_raw()).contended.is_null() };
             let result = if contended {
                 Err(EDEADLK)
             } else {
@@ -154,7 +122,7 @@ unsafe fn run_transaction<T: KmsDriver>(
             };
             // The driver may discover contention during validation, after the callback returned.
             // SAFETY: Validation uses this task's initialized context synchronously.
-            let retry = unsafe { !(*ctx.raw.get()).contended.is_null() };
+            let retry = unsafe { !(*ctx.as_raw()).contended.is_null() };
             // SAFETY: No operation uses the acquire pointer after commit returns. Remove the
             // stack pointer even if DRM still holds another reference to the completed transaction.
             unsafe { (*raw.as_ptr()).acquire_ctx = core::ptr::null_mut() };
@@ -163,7 +131,7 @@ unsafe fn run_transaction<T: KmsDriver>(
         };
         if retry {
             // SAFETY: Temporary states are gone, and this task owns a contended acquire context.
-            to_result(unsafe { bindings::drm_modeset_backoff(ctx.raw.get()) })?;
+            to_result(unsafe { bindings::drm_modeset_backoff(ctx.as_raw()) })?;
         } else {
             return result;
         }

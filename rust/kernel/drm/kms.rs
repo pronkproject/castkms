@@ -9,6 +9,8 @@ pub mod crtc;
 pub mod encoder;
 pub mod framebuffer;
 mod lookup;
+mod lock;
+pub use lock::LockedState;
 pub mod modes;
 pub mod plane;
 pub mod vblank;
