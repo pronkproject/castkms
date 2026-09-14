@@ -4,9 +4,32 @@
 #include <linux/file.h>
 #include <linux/uaccess.h>
 #include <drm/drm_capture_grant.h>
+#include <drm/drm_capture_file.h>
 #include <uapi/drm/drm_capture.h>
 
 #include "drm_capture_uapi.h"
+
+long drm_capture_client_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct drm_capture_describe output = {};
+	struct drm_capture_description description;
+	int ret;
+
+	if (cmd != DRM_IOCTL_CAPTURE_DESCRIBE)
+		return -ENOTTY;
+	ret = drm_capture_client_describe(file, &description);
+	if (ret)
+		return ret;
+	output.id = description.id;
+	output.width = description.width;
+	output.height = description.height;
+	output.format = description.format;
+	output.max_requests = description.max_requests;
+	output.modifier = description.modifier;
+	if (copy_to_user((void __user *)arg, &output, sizeof(output)))
+		return -EFAULT;
+	return 0;
+}
 
 int drm_mode_create_capture_grant_ioctl(struct drm_device *dev, void *data,
 					struct drm_file *file)

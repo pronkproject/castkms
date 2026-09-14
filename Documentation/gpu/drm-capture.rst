@@ -4,8 +4,9 @@ DRM capture grants
 
 The experimental capture interface separates permission to receive a final
 output image from modesetting, source-buffer access and rendering. Its current
-public operation creates a grant; image negotiation and delivery operations
-are not yet exposed on the returned capture file. The interface assignments
+public operations create a grant and describe an offered image configuration;
+stream creation and image delivery are not yet exposed on the returned file.
+The interface assignments
 are development ABI, not upstream allocations.
 
 Issuing a grant
@@ -34,6 +35,31 @@ reservations and unpublished files. A partial user-memory copy may leave
 numbers in output storage, but callers must ignore all output on failure.
 Neither number identifies a published capture file until the ioctl succeeds.
 
+Describing an image configuration
+================================
+
+``DRM_IOCTL_CAPTURE_DESCRIBE`` asks the capture file's provider what image
+configuration it currently offers. The reply gives its visible dimensions,
+DRM pixel format and modifier, maximum requests per stream, and a name for
+that offer. It does not allocate images or start rendering. Destination
+allocation details, including strides and exporter compatibility, still need
+separate validation before delivery.
+
+The name belongs to that client, not to a kernel address or a global authority
+registry. Repeated queries keep the same name while the configuration is
+unchanged. An ordinary content update does not change it, but a new mode or
+route interval does, even when the dimensions stay the same. Stream creation
+must subsequently recheck both the named configuration and current permission;
+remembering the name does not preserve either. Existing streams retain their
+own lifetime rules when another offer is queried.
+
+All fields are output, including reserved fields returned as zero. A bad
+output pointer may cause a partial copy, so callers must ignore the reply on
+failure. Retrying describes the current configuration without consuming the
+previous offer or any image-storage credit. A revoked grant returns
+``EKEYREVOKED``. Providers may reject a description when the output is inactive
+or its current content is outside the recipient's permission.
+
 Kernel providers
 ================
 
@@ -48,6 +74,13 @@ which receives registered device access and an open file of the nominated
 driver type. ``Device::create_capture_grant`` returns a checked ``FilePair``.
 Ordinary kernel capture consumers continue using authority, stream and request
 operations directly without manufacturing a DRM file or userspace descriptors.
+
+Client owners optionally implement ``describe``. The native file layer serializes
+callbacks and checks the returned metadata; the provider checks current display
+permission. ``drm_capture_client_describe()`` and Rust ``Description::query()``
+perform the same query entirely in kernel memory. CastKMS's file callback uses
+its transport-independent negotiation object above the permission provider,
+so exposing the ioctl does not introduce another policy implementation.
 
 Drivers without capture leave the provider absent. This is not a requirement
 for native GPU drivers used by a userspace renderer, and it does not enable

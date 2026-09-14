@@ -231,8 +231,9 @@ static void drm_capture_client_has_no_primary_or_pixel_dispatch(struct kunit *te
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->write_iter, NULL);
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->mmap, NULL);
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->llseek, NULL);
-	KUNIT_EXPECT_PTR_EQ(test, file->f_op->unlocked_ioctl, NULL);
-	KUNIT_EXPECT_PTR_EQ(test, file->f_op->compat_ioctl, NULL);
+	KUNIT_ASSERT_NOT_NULL(test, file->f_op->unlocked_ioctl);
+	KUNIT_EXPECT_EQ(test, file->f_op->unlocked_ioctl(file, 0, 0), -ENOTTY);
+	KUNIT_EXPECT_TRUE(test, file->f_op->compat_ioctl == compat_ptr_ioctl);
 }
 
 static void drm_capture_file_pairs_check_roles_and_authority(struct kunit *test)
