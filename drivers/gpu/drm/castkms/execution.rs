@@ -6,6 +6,8 @@ pub(crate) mod host;
 
 pub(crate) mod property;
 pub(crate) mod publication;
+mod prepared;
+pub(crate) use prepared::Prepared;
 
 /// The initial renderer profile, before delegated execution is available.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
