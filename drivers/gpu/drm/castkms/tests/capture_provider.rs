@@ -63,6 +63,34 @@ mod cases {
     use super::*;
 
     #[test]
+    fn explicit_close_stops_retained_stream_owners() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = selected_framebuffer(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let capture = grantor.capture();
+        let stream = Arc::new(capture.stream(2)?, GFP_KERNEL)?;
+        let retained = stream.clone();
+        let sibling = capture.stream(1)?;
+        let complete = stream.queue()?;
+        let queued = stream.queue()?;
+        let image =
+            compose::current(&fixture.drm.device().output, &pool(&fixture)?)?.ok_or(EINVAL)?;
+        stream.deliver(&image)?;
+        stream.close();
+        stream.close();
+        drop(stream);
+        check(complete.status() == Err(ENOENT))?;
+        check(queued.status() == Err(ENOENT))?;
+        check(matches!(retained.queue(), Err(EKEYREVOKED)))?;
+        check(retained.deliver(&image) == Err(ENOENT))?;
+        let sibling_request = sibling.queue()?;
+        sibling.deliver(&image)?;
+        check(sibling_request.status()? == Status::Complete(Ok(())))
+    }
+
+    #[test]
     fn selected_delivery_does_not_consume_other_demand() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;

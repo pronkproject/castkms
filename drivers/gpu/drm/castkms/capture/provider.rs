@@ -240,12 +240,17 @@ impl Stream {
             f()
         })
     }
+
+    /// End delivery even when asynchronous operations retain the stream's storage owner.
+    pub(crate) fn close(&self) {
+        // Close discards results even if revocation already removed membership.
+        self.storage.native.shutdown();
+        self.capture.authority.remove_stream(&self.storage.native);
+    }
 }
 
 impl Drop for Stream {
     fn drop(&mut self) {
-        // Close has the same result-discard semantics even if revocation removed membership.
-        self.storage.native.shutdown();
-        self.capture.authority.remove_stream(&self.storage.native);
+        self.close();
     }
 }
