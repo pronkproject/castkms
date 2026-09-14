@@ -79,6 +79,7 @@ drm-y := \
 	drm_capture_authority.o \
 	drm_capture_creator.o \
 	drm_capture_resources.o \
+	drm_capture_readiness.o \
 	drm_capture_client.o \
 	drm_capture_destination.o \
 	drm_capture_grant.o \
