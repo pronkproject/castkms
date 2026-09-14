@@ -4,7 +4,22 @@
 
 use super::*;
 use crate::capture::provider::Capture;
+use kernel::drm::{
+    capture::Target,
+    kms::{
+        connector::AsRawConnector,
+        crtc::AsRawCrtc,
+        testing::RegisteredMasterFile, //
+    }, //
+};
 use kernel::fs::File as ClientEndpoint;
+
+fn registered_target(file: &RegisteredMasterFile<'_, Driver>) -> Result<Target> {
+    let crtc = file.crtc()?;
+    let connector = file.connector()?;
+    // SAFETY: The registered file and returned references retain initialized mode objects.
+    unsafe { Target::new((*crtc.as_raw()).base.id, (*connector.as_raw()).base.id) }
+}
 
 #[derive(Clone)]
 struct ClientFile(Option<ARef<ClientEndpoint>>);
@@ -37,6 +52,51 @@ impl Drop for ClientFile {
 #[kunit_tests(rust_castkms_capture_client)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn generic_issuance_keeps_creator_close_separate_from_client_close() -> Result {
+        let display = CastKms::new(c"castkms-file-grant")?;
+        let dev = display._display.registration_guard().ok_or(ENODEV)?;
+        let creator = RegisteredMasterFile::new(&dev)?;
+        let target = registered_target(&creator)?;
+        let (client, control) = dev
+            .create_capture_grant(creator.file(), target)?
+            .into_files();
+        let client = ClientFile(Some(client));
+        let control = ControlFile(Some(control));
+        check(!client.is_revoked()?)?;
+        drop(client);
+        check(!control.is_revoked()?)?;
+        drop(creator);
+        check(control.is_revoked()?)
+    }
+
+    #[test]
+    fn generic_issuance_rejects_foreign_files_and_wrong_object_types() -> Result {
+        let display = CastKms::new(c"castkms-grant-target")?;
+        let foreign = CastKms::new(c"castkms-grant-foreign")?;
+        let dev = display._display.registration_guard().ok_or(ENODEV)?;
+        let other = foreign._display.registration_guard().ok_or(ENODEV)?;
+        let creator = RegisteredMasterFile::new(&dev)?;
+        let target = registered_target(&creator)?;
+        check(matches!(
+            other.create_capture_grant(creator.file(), target),
+            Err(EINVAL)
+        ))?;
+        let swapped = Target::new(target.connector_id(), target.crtc_id())?;
+        check(matches!(
+            dev.create_capture_grant(creator.file(), swapped),
+            Err(ENOENT)
+        ))?;
+        let (client, control) = dev
+            .create_capture_grant(creator.file(), target)?
+            .into_files();
+        let client = ClientFile(Some(client));
+        let control = ControlFile(Some(control));
+        drop(creator);
+        check(client.is_revoked()?)?;
+        check(control.is_revoked()?)
+    }
 
     #[test]
     fn assembled_pair_keeps_revocation_in_the_control_endpoint() -> Result {

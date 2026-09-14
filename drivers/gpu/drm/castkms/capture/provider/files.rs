@@ -8,7 +8,6 @@ use kernel::{
     prelude::*, //
 };
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Grantor {
     /// Transfer this grant into checked endpoints without installing descriptors.
     ///
