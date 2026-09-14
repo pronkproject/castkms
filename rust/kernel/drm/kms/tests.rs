@@ -315,7 +315,7 @@ impl drm::Driver for TestDriver {
         name: c"rust_kms_test",
         desc: c"Rust KMS runtime tests",
     };
-    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>] = &[];
 
     fn master_changed(dev: &Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
         match master {

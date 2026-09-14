@@ -4,7 +4,11 @@
 //!
 //! C header: [`include/drm/drm_ioctl.h`](srctree/include/drm/drm_ioctl.h)
 
-use crate::ioctl;
+use crate::{
+    drm::Driver,
+    ioctl, //
+};
+use core::marker::PhantomData;
 
 const BASE: u32 = uapi::DRM_IOCTL_BASE as u32;
 
@@ -36,8 +40,42 @@ pub const fn IOWR<T>(nr: u32) -> u32 {
     ioctl::_IOWR::<T>(BASE, nr)
 }
 
-/// Descriptor type for DRM ioctls. Use the `declare_drm_ioctls!{}` macro to construct them.
-pub type DrmIoctlDescriptor = bindings::drm_ioctl_desc;
+/// An ioctl descriptor whose callbacks belong to one DRM driver.
+///
+/// Use [`crate::declare_drm_ioctls`] to declare a table. A descriptor cannot be assigned
+/// to another driver even when its ioctl numbers and argument layouts happen to match.
+///
+/// # Invariants
+///
+/// The native callback accepts devices and files belonging to `D`, and its argument
+/// layout, registration-data lifetime and callback module match that driver's table.
+#[repr(transparent)]
+pub struct DrmIoctlDescriptor<D: Driver + ?Sized> {
+    raw: bindings::drm_ioctl_desc,
+    _driver: PhantomData<fn(*mut D) -> *mut D>,
+}
+
+// SAFETY: Descriptors expose no mutation. Native dispatch reads their immutable scalar
+// metadata and function pointers; callback synchronization belongs to the declared handler.
+unsafe impl<D: Driver + ?Sized> Sync for DrmIoctlDescriptor<D> {}
+
+impl<D: Driver + ?Sized> DrmIoctlDescriptor<D> {
+    /// Construct a driver-bound descriptor for a checked declaration.
+    ///
+    /// # Safety
+    ///
+    /// The callback must accept exactly `D`'s device, file and registration data, without
+    /// retaining callback-local borrows. The command must describe its complete argument
+    /// layout, and the handler's code and static data must live as long as the driver table.
+    /// The name must point to an immutable, nul-terminated string with that same lifetime.
+    #[doc(hidden)]
+    pub const unsafe fn from_raw(raw: bindings::drm_ioctl_desc) -> Self {
+        Self {
+            raw,
+            _driver: PhantomData,
+        }
+    }
+}
 
 /// This is for ioctl which are used for rendering, and require that the file descriptor is either
 /// for a render node, or if it’s a legacy/primary node, then it must be authenticated.
@@ -113,7 +151,7 @@ pub mod internal {
 #[macro_export]
 macro_rules! declare_drm_ioctls {
     ( $(($cmd:ident, $struct:ident, $flags:expr, $func:expr)),* $(,)? ) => {
-        const IOCTLS: &'static [$crate::drm::ioctl::DrmIoctlDescriptor] = {
+        const IOCTLS: &'static [$crate::drm::ioctl::DrmIoctlDescriptor<Self>] = {
             use $crate::uapi::*;
             const _:() = {
                 let i: u32 = $crate::uapi::DRM_COMMAND_BASE;
@@ -128,8 +166,17 @@ macro_rules! declare_drm_ioctls {
                 )*
             };
 
-            let ioctls = &[$(
-                $crate::drm::ioctl::internal::drm_ioctl_desc {
+            &[$({
+                // Bind the callback to the declaring driver, not merely the type inferred
+                // from the callback itself. Each borrow remains local to native dispatch.
+                let _: for<'a> fn(
+                    &'a $crate::drm::Device<Self, $crate::drm::Registered>,
+                    &'a <Self as $crate::drm::Driver>::RegistrationData<'a>,
+                    &'a mut $crate::uapi::$struct,
+                    &'a $crate::drm::File<<Self as $crate::drm::Driver>::File>,
+                ) -> $crate::error::Result<u32> = $func;
+
+                let raw = $crate::drm::ioctl::internal::drm_ioctl_desc {
                     cmd: $crate::macros::concat_idents!(DRM_IOCTL_, $cmd) as u32,
                     func: {
                         #[allow(non_snake_case)]
@@ -148,9 +195,8 @@ macro_rules! declare_drm_ioctls {
                             // registered via `drm_dev_register()` at some point; the DRM core
                             // guarantees this for ioctl dispatch callbacks.
                             //
-                            // FIXME: Currently there is nothing enforcing that the types of the
-                            // dev/file match the current driver these ioctls are being declared
-                            // for, and it's not clear how to enforce this within the type system.
+                            // The declaration checks the handler against the owning driver.
+                            // Its inferred device type therefore matches native dispatch.
                             let dev: &$crate::drm::device::Device<_, $crate::drm::Ioctl> =
                                 $crate::drm::device::Device::from_raw(raw_dev);
 
@@ -209,9 +255,12 @@ macro_rules! declare_drm_ioctls {
                     name: $crate::str::as_char_ptr_in_const_context(
                         $crate::c_str!(::core::stringify!($cmd)),
                     ),
-                }
-            ),*];
-            ioctls
+                };
+                // SAFETY: The type check binds device, file and registration data to Self.
+                // The command-size assertion and callback establish argument layout and
+                // callback-local borrows; the driver retains its static callback table.
+                unsafe { $crate::drm::ioctl::DrmIoctlDescriptor::<Self>::from_raw(raw) }
+            }),*]
         };
     };
 }

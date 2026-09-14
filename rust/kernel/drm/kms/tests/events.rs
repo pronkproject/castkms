@@ -137,7 +137,7 @@ impl drm::Driver for EventDriver {
         name: c"rust_kms_events",
         desc: c"Rust KMS event tests",
     };
-    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>] = &[];
 }
 
 #[vtable]
