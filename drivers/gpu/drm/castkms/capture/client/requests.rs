@@ -28,7 +28,8 @@ impl Client {
     /// consumes neither that ID nor capacity. Current permission is checked by the stream.
     /// Call outside DRM, publication, worker-lifecycle and reservation locks. The recipient
     /// must exclude competing access to its destination until the output completes or the
-    /// stream closes; a registered name or reuse fence alone does not establish exclusion.
+    /// stream explicitly closes successfully; dropping the client alone is not that barrier.
+    /// A registered name or reuse fence alone does not establish exclusion.
     pub(crate) fn queue_to(
         &mut self,
         stream: u64,

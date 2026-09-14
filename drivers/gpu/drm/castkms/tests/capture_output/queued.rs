@@ -6,6 +6,40 @@ use super::*;
 use crate::capture::host_queue::Queue;
 use crate::capture::host_stream::output::Output;
 use kernel::sync::Arc;
+use kernel::time::{
+    delay::fsleep,
+    Delta,
+    Instant,
+    Monotonic, //
+};
+
+fn wait_output(output: &mut Output) -> Result<crate::capture::provider::Frame> {
+    let start = Instant::<Monotonic>::now();
+    loop {
+        if let Some(frame) = output.try_complete_frame()? {
+            return Ok(frame);
+        }
+        if start.elapsed() >= Delta::from_millis(1000) {
+            return Err(ETIMEDOUT);
+        }
+        fsleep(Delta::from_millis(1));
+    }
+}
+
+fn advance_one(queue: &mut Queue) -> Result {
+    let start = Instant::<Monotonic>::now();
+    loop {
+        match queue.advance() {
+            0 => (),
+            1 => return Ok(()),
+            _ => return Err(EINVAL),
+        }
+        if start.elapsed() >= Delta::from_millis(1000) {
+            return Err(ETIMEDOUT);
+        }
+        fsleep(Delta::from_millis(1));
+    }
+}
 
 #[kunit_tests(rust_castkms_capture_queued_output)]
 mod cases {
@@ -37,7 +71,7 @@ mod cases {
             let mut output = stream.queue_to(image.clone(), None)?;
             check(matches!(stream.queue_to(image.clone(), None), Err(EAGAIN)))?;
             fixture.drm.device().host.current()?.flush_for_test();
-            let frame = output.try_complete_frame()?.ok_or(EINVAL)?;
+            let frame = wait_output(&mut output)?;
             check(frame.metadata().layout() == image.layout())?;
             check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])
         })
@@ -73,7 +107,7 @@ mod cases {
             }
             fixture.select(&fb, false, 0)?;
             reuse.complete(Ok(()))?;
-            let frame = output.try_complete_frame()?.ok_or(EINVAL)?;
+            let frame = wait_output(&mut output)?;
             check(frame.metadata().layout() == image.layout())?;
             check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])?;
             check(matches!(output.try_complete_frame(), Err(EALREADY)))
@@ -137,7 +171,7 @@ mod cases {
             queue.queue_to(2, second.clone(), None)?;
             check(queue.queue_to(3, first.clone(), None) == Err(EAGAIN))?;
             fixture.drm.device().host.current()?.flush_for_test();
-            check(queue.advance() == 1)?;
+            advance_one(&mut queue)?;
             check(pixels(first.buffer())?.iter().all(|byte| *byte == 0x73))?;
             check(pixels(second.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])?;
             check(
@@ -154,7 +188,7 @@ mod cases {
                 check(completion.result?.metadata().layout() == second.layout())
             })?;
             reuse.complete(Ok(()))?;
-            check(queue.advance() == 1)?;
+            advance_one(&mut queue)?;
             queue.dequeue(|completion| {
                 check(completion.use_id == 1)?;
                 completion.result.map(|_| ())
@@ -178,7 +212,7 @@ mod cases {
             queue.queue_to(1, image.clone(), Some(reuse.fence()))?;
             reuse.complete(Err(EAGAIN))?;
             fixture.drm.device().host.current()?.flush_for_test();
-            check(queue.advance() == 1)?;
+            advance_one(&mut queue)?;
             check(queue.advance() == 0)?;
             check(queue.queue_to(2, image.clone(), None) == Err(EAGAIN))?;
             check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
@@ -218,7 +252,7 @@ mod cases {
             let image = Arc::new(destination(fixture, Layout::new(640, 480)?)?, GFP_KERNEL)?;
             let mut output = stream.queue_to(image.clone(), None)?;
             fixture.drm.device().host.current()?.flush_for_test();
-            let _frame = output.try_complete_frame()?.ok_or(EINVAL)?;
+            let _frame = wait_output(&mut output)?;
             check(output.cancel() == Err(EALREADY))?;
             check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])
         })
@@ -240,10 +274,10 @@ mod cases {
             check(queue.cancel(3) == Err(ENOENT))?;
             queue.cancel(2)?;
             fixture.drm.device().host.current()?.flush_for_test();
-            check(queue.advance() == 1)?;
+            advance_one(&mut queue)?;
             queue.cancel(1)?;
             check(queue.queue(3) == Err(EAGAIN))?;
-            check(queue.advance() == 1)?;
+            advance_one(&mut queue)?;
             check(queue.cancel(1) == Err(EALREADY))?;
             check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
             check(queue.queue(3) == Err(EAGAIN))?;

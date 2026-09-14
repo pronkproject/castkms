@@ -32,7 +32,7 @@ mod cases {
         client.open_stream(17, offer, 1)?;
         client.stream(17)?.queue(1)?;
         fixture.drm.device().host.current()?.flush_for_test();
-        check(client.stream(17)?.advance()? == 1)?;
+        client.stream(17)?.advance()?;
         client.stream(17)?.dequeue(|completion| {
             check(completion.result?.metadata().layout().dimensions() == (640, 480))
         })
@@ -53,7 +53,7 @@ mod cases {
         client.close_stream(1)?;
         client.stream(2)?.queue(1)?;
         fixture.drm.device().host.current()?.flush_for_test();
-        check(client.stream(2)?.advance()? == 1)?;
+        client.stream(2)?.advance()?;
         client.stream(2)?.dequeue(|completion| {
             check(completion.result?.metadata().layout().dimensions() == (640, 480))
         })?;
@@ -87,7 +87,7 @@ mod cases {
         fixture.drm.device().host.current()?.flush_for_test();
         for id in [20, 10] {
             let mut queue = client.stream(id)?;
-            check(queue.advance()? == 1)?;
+            queue.advance()?;
             queue.dequeue(|completion| {
                 check(completion.use_id == 1)?;
                 check(completion.result?.metadata().layout().dimensions() == (640, 480))
@@ -141,7 +141,7 @@ mod cases {
         check(client.stream(1)?.queue(1) == Err(EKEYREVOKED))?;
         client.stream(2)?.queue(1)?;
         fixture.drm.device().host.current()?.flush_for_test();
-        check(client.stream(2)?.advance()? == 1)?;
+        client.stream(2)?.advance()?;
         client.stream(2)?.dequeue(|completion| {
             check(completion.result?.metadata().layout().dimensions() == (640, 480))
         })

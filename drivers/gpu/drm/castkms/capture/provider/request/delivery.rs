@@ -18,7 +18,6 @@ use kernel::{
     sync::Arc, //
 };
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Request {
     /// Retain the delivered image's description, without relabeling it after a later update.
     ///

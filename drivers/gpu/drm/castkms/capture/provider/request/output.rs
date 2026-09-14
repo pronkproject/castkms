@@ -57,6 +57,14 @@ impl Request {
         destination: &Image,
         reuse: Option<&Fence>,
     ) -> Result<bool> {
+        self.try_copy_to_destination_unless(destination, reuse, || false)
+    }
+
+    /// Observe currently acquired dependencies without entering an exporter callback.
+    ///
+    /// A true result is not exclusion: a racing submission may still make subsequent CPU
+    /// access block. Callers must isolate that access from queue and teardown operations.
+    pub(crate) fn destination_ready(&self, destination: &Image, reuse: Option<&Fence>) -> Result<bool> {
         let layout = self.storage.layout();
         if destination.layout() != layout {
             return Err(EINVAL);
@@ -76,12 +84,35 @@ impl Request {
                 return Ok(false);
             }
         }
+        Ok(true)
+    }
 
+    /// Stop abandoned delivery before writing, including after a blocking exporter returns.
+    ///
+    /// Cancellation is observed between bounded copies, not an abort of exporter callbacks.
+    /// A caller must retain storage until this operation returns, even after cancellation.
+    pub(crate) fn try_copy_to_destination_unless(
+        &self,
+        destination: &Image,
+        reuse: Option<&Fence>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<bool> {
+        if cancelled() {
+            return Err(ECANCELED);
+        }
+        if !self.destination_ready(destination, reuse)? {
+            return Ok(false);
+        }
+
+        let layout = self.storage.layout();
         let mut row = KVVec::new();
         row.resize(layout.pitch(), 0, GFP_KERNEL)?;
         let mut write = Write::new(destination.buffer())?;
         let zeros = [0; 256];
         for y in 0..layout.dimensions().1 as usize {
+            if cancelled() {
+                return Err(ECANCELED);
+            }
             self.native
                 .copy_result_range(y * layout.pitch(), &mut row)?;
             let offset = destination.offset() + y * destination.pitch();

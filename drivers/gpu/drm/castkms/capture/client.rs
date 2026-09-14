@@ -18,7 +18,8 @@ use kernel::{
     drm::capture::{
         ClientOwner,
         Description,
-        Destination, //
+        Destination,
+        Readiness, //
     },
     prelude::*,
     sync::Arc, //
@@ -67,6 +68,8 @@ impl Client {
     ///
     /// Cleanup remains available after revocation or a modeset. Pending results are
     /// abandoned through normal queue destruction; shared composition is not canceled.
+    /// Detached destination access returns EBUSY instead of blocking closure. Admission
+    /// stays closed while cancellation and cleanup remain available for retry.
     /// Call outside DRM, publication, worker-lifecycle and reservation locks.
     pub(crate) fn close_stream(&mut self, id: u64) -> Result {
         self.streams.remove(id)
@@ -102,6 +105,10 @@ impl Client {
 // SAFETY: The callback trampolines, client destructor and dependencies belong to CastKMS.
 #[vtable]
 unsafe impl ClientOwner for Client {
+    fn readiness(&self) -> Option<&Readiness> {
+        Some(self.streams.readiness())
+    }
+
     fn register_destination(&mut self, id: u64, destination: &Destination<'_>) -> Result {
         if destination.num_planes() != 1 {
             return Err(EOPNOTSUPP);

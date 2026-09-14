@@ -13,7 +13,6 @@ use kernel::drm::capture::Job;
 ///
 /// This is not a copy into an exported DMA-BUF: its owner could observe bytes before completion.
 /// Cancellation or revocation may still suppress delivery when the job is completed.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) fn complete(image: &Completed, mut job: Job) {
     let pixels = job.data_mut();
     let status = image.copy_pixels(pixels);

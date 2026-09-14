@@ -65,6 +65,18 @@ impl<P, T> Queue<P, T> {
             .any(|record| matches!(record.state, State::Ready(_)))
     }
 
+    /// Visit pending owners without removing records or changing accounting state.
+    ///
+    /// The visitor may request cancellation, but only normal completion observation
+    /// makes a terminal record available for publication.
+    pub(crate) fn for_each_pending(&mut self, mut visit: impl FnMut(&mut P)) {
+        for record in &mut self.records {
+            if let State::Pending(pending) = &mut record.state {
+                visit(pending);
+            }
+        }
+    }
+
     /// Admit a pending operation only after validating its ID and reserving its terminal record.
     ///
     /// Zero is invalid. Once u64::MAX has been accepted, a new stream incarnation is needed.

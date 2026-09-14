@@ -33,7 +33,6 @@ use kernel::{
 ///
 /// Attribution describes the accepted scene; it does not authorize a capture recipient.
 /// The pool slot remains occupied until this image is dropped, independently of KMS.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Completed {
     slot: Slot,
     output: Identity,
