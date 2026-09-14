@@ -8,6 +8,7 @@ use super::{
 };
 use crate::{
     drm::capture::{
+        Completion,
         Description,
         Destination,
         Readiness, //
@@ -34,6 +35,16 @@ use core::{
 /// throughout the transferred lifetime. The vtable macro selects the local module.
 #[vtable]
 pub unsafe trait ClientOwner: Send + 'static {
+    /// Publish one terminal result without acknowledging it on publication failure.
+    ///
+    /// The closure is synchronous and called at most once. Return its result unchanged;
+    /// success must acknowledge exactly that record, while failure retains it and its
+    /// accounting credit for retry. Return EAGAIN when no result is available. All destination
+    /// access for a published attempt must have ended, including on terminal failure.
+    fn dequeue(&mut self, _stream: u64, _publish: impl FnOnce(Completion) -> Result) -> Result {
+        Err(EOPNOTSUPP)
+    }
+
     /// Supply a notification to retain independently of this owner's mutable state.
     ///
     /// Called once before the client file is published, never during polling. The file
@@ -127,8 +138,33 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
-        dequeue: None,
+        dequeue: if O::HAS_DEQUEUE {
+            Some(Self::dequeue)
+        } else {
+            None
+        },
     };
+
+    unsafe extern "C" fn dequeue(
+        data: *mut c_void,
+        stream: u64,
+        sink: *const bindings::drm_capture_completion_sink,
+    ) -> i32 {
+        // SAFETY: Native dispatch retains the client and exclusively borrows its initialized
+        // KBox<O> under the operation mutex. The checked sink lives through this call.
+        let owner = unsafe { &mut *data.cast::<O>() };
+        // SAFETY: The native dispatcher supplies a live, immutable callback-local sink.
+        let sink = unsafe { &*sink };
+        let Some(publish) = sink.publish else {
+            return EINVAL.to_errno();
+        };
+        let result = owner.dequeue(stream, |completion| {
+            // SAFETY: The native publisher borrows the complete local metadata and its own
+            // context synchronously. Neither borrow escapes this closure.
+            crate::error::to_result(unsafe { publish(sink.data, &completion.raw()) })
+        });
+        result.map_or_else(|error| error.to_errno(), |_| 0)
+    }
 
     unsafe extern "C" fn get_readiness(data: *mut c_void) -> *mut bindings::drm_capture_readiness {
         // SAFETY: Creation exclusively owns the initialized KBox<O> before file publication.
