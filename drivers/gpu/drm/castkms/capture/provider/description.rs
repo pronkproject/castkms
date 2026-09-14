@@ -30,6 +30,11 @@ pub(crate) struct Description {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Description {
+    /// Historical mode and route identity, without preserving permission to open a stream.
+    pub(crate) fn configuration(&self) -> &Configuration {
+        &self.configuration
+    }
+
     pub(crate) fn layout(&self) -> Layout {
         self.layout
     }

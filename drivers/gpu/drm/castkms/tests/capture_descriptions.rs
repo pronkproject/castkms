@@ -2,6 +2,8 @@
 
 //! Layout negotiation remains tied to its grant and the accepted display configuration.
 
+mod negotiation;
+
 use super::*;
 use crate::capture::{
     host_stream::Stream,
