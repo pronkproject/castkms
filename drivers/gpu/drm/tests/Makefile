@@ -56,6 +56,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_capture_description_test.o \
 	drm_capture_destination_test.o \
 	drm_capture_client_stream_test.o \
+	drm_capture_client_completion_test.o \
 	drm_capture_grant_test.o \
 	drm_cmdline_parser_test.o \
 	drm_connector_test.o \

@@ -127,6 +127,7 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
+        dequeue: None,
     };
 
     unsafe extern "C" fn get_readiness(data: *mut c_void) -> *mut bindings::drm_capture_readiness {
