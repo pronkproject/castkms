@@ -58,8 +58,12 @@ impl Startup {
     }
 
     fn check(&self, identity: &Arc<()>) -> Result {
+        self.with_current(identity, || Ok(()))
+    }
+
+    fn with_current<R>(&self, identity: &Arc<()>, f: impl FnOnce() -> Result<R>) -> Result<R> {
         match &*self.state.lock() {
-            State::Reserved(current) if Arc::ptr_eq(current, identity) => Ok(()),
+            State::Reserved(current) if Arc::ptr_eq(current, identity) => f(),
             State::Closed => Err(ENODEV),
             _ => Err(ECANCELED),
         }
@@ -96,6 +100,16 @@ impl Candidate {
     /// Observe whether the reservation is current, without authorizing an operation.
     pub(crate) fn check(&self) -> Result {
         self.startup.check(&self.identity)
+    }
+
+    /// Run a bounded control operation while excluding cancellation and replacement.
+    ///
+    /// The callback holds the startup lock after any caller-owned display and permission
+    /// locks. It must not reenter startup operations, read pixels, wait for work, acquire
+    /// outer locks or release final DRM references. Success does not itself activate a
+    /// renderer or transfer ownership of the reservation.
+    pub(crate) fn with_current<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.startup.with_current(&self.identity, f)
     }
 
     pub(crate) fn cancel(&self) {
@@ -173,3 +187,6 @@ impl Drop for Owner {
         self.close();
     }
 }
+
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+mod tests;
