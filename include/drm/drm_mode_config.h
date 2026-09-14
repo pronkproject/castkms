@@ -37,6 +37,8 @@ struct drm_atomic_commit;
 struct drm_mode_fb_cmd2;
 struct drm_format_info;
 struct drm_display_mode;
+struct drm_capture_target;
+struct drm_capture_files;
 
 /**
  * struct drm_mode_config_funcs - basic driver provided mode setting functions
@@ -45,6 +47,25 @@ struct drm_display_mode;
  * involve drivers.
  */
 struct drm_mode_config_funcs {
+	/**
+	 * @create_capture_grant:
+	 *
+	 * Optional issuance of creator-bound final-image capture. The provider
+	 * validates the current master file and both target objects, retains
+	 * capture policy, and binds revocation to the creating file's lifetime.
+	 * Success does not authorize later source reads without current checks.
+	 *
+	 * Called for an open file on the registered device, without modeset or
+	 * capture admission locks. Return zero with one owned reference in each
+	 * matching endpoint, or a negative errno.
+	 * Any non-NULL output field must own a reference, including on failure;
+	 * the dispatcher releases returned files if issuance is unsuccessful.
+	 * Do not install descriptors. Drivers without capture leave this NULL.
+	 */
+	int (*create_capture_grant)(struct drm_device *dev, struct drm_file *file,
+				    const struct drm_capture_target *target,
+				    struct drm_capture_files *files);
+
 	/**
 	 * @fb_create:
 	 *
