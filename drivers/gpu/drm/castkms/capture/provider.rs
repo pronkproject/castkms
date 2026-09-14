@@ -2,7 +2,7 @@
 
 //! Kernel-issued capture of independently completed host images.
 //!
-//! Native authority and raw streams remain private. The only delivery method validates
+//! Native authority and raw streams remain private. Each delivery operation validates
 //! current display access and image ownership before claiming a job, then copies outside
 //! policy locks. No operation exports source buffers or represents asynchronous GPU access.
 
@@ -60,9 +60,9 @@ unsafe impl NativePolicy for Policy {
     }
 
     fn authorize_capture(&self, _: &NativeStream) -> Result {
-        // Stream::deliver is the only authority claim site. It validates the stream interval
-        // and completed image under Permission::with_current before entering native admission,
-        // and retains those outer locks across this callback and the native claim.
+        // Both delivery operations validate the stream interval and completed image through
+        // Stream::with_image before entering native admission. They retain the outer policy
+        // locks across this callback and the native claim.
         Ok(())
     }
 }
@@ -226,15 +226,19 @@ impl Stream {
     /// Success means one job was claimed and completed; its retained result reports any
     /// copy failure or intervening revocation. Denial leaves queued demand unchanged.
     pub(crate) fn deliver(&self, image: &Completed) -> Result {
-        let job = self.capture.policy.permission.with_current(|current| {
+        let job = self.with_image(image, || self.capture.authority.claim(&self.storage.native))?;
+        host::complete(image, job);
+        Ok(())
+    }
+
+    fn with_image<R>(&self, image: &Completed, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.capture.policy.permission.with_current(|current| {
             if current.configuration() != &self.configuration {
                 return Err(ESTALE);
             }
             current.check_image(image)?;
-            self.capture.authority.claim(&self.storage.native)
-        })?;
-        host::complete(image, job);
-        Ok(())
+            f()
+        })
     }
 }
 
