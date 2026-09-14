@@ -7,6 +7,35 @@ struct file;
 struct module;
 
 /**
+ * struct drm_capture_client_owner_ops - lifetime retained by a capture client file
+ * @owner: module containing callbacks and the transferred data's destruction code
+ * @release: destroy transferred client state outside authority locks
+ *
+ * Operations remain immutable until release. The client file does not explicitly
+ * revoke its authority before release; provider cleanup must respect other clients.
+ */
+struct drm_capture_client_owner_ops {
+	struct module *owner;
+	void (*release)(void *data);
+};
+
+/*
+ * Retain already-authorized client state in an anonymous file, without acquiring
+ * revocation ownership. Final fput releases data and an ordinary authority
+ * reference; other authority owners remain usable. The final authority put still
+ * performs normal authority cleanup. Cloned files share one client lifetime.
+ *
+ * Success consumes data; failure leaves it owned by the caller. The file pins
+ * ops->owner independently of the authority. All operations may sleep. The file
+ * currently observes completed revocation through poll only; it exposes neither
+ * pixel operations nor DRM primary-node dispatch. HUP is not GPU completion.
+ * No descriptor is installed; a publishing adapter must use close-on-exec.
+ */
+struct file *drm_capture_client_file_create(
+	struct drm_capture_authority *authority,
+	const struct drm_capture_client_owner_ops *ops, void *data);
+
+/**
  * struct drm_capture_control_owner_ops - lifetime retained by a revocation file
  * @owner: module containing the callbacks and owner data's destruction code
  * @release: destroy the transferred data after revocation, outside authority locks
