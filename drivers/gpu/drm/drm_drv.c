@@ -1246,6 +1246,7 @@ static const struct file_operations drm_stub_fops = {
 
 static void drm_core_exit(void)
 {
+	drm_capture_delivery_exit();
 	drm_ras_genl_family_unregister();
 	drm_privacy_screen_lookup_exit();
 	drm_panic_exit();
@@ -1286,6 +1287,10 @@ static int __init drm_core_init(void)
 	drm_privacy_screen_lookup_init();
 
 	ret = drm_ras_genl_family_register();
+	if (ret < 0)
+		goto error;
+
+	ret = drm_capture_delivery_init();
 	if (ret < 0)
 		goto error;
 

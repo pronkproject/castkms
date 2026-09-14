@@ -291,4 +291,8 @@ void drm_framebuffer_print_info(struct drm_printer *p, unsigned int indent,
 				const struct drm_framebuffer *fb);
 void drm_framebuffer_debugfs_init(struct drm_device *dev);
 
+/* drm_capture_delivery.c */
+int drm_capture_delivery_init(void);
+void drm_capture_delivery_exit(void);
+
 #endif /* __DRM_INTERNAL_H__ */

@@ -18,6 +18,7 @@ mod authority;
 mod client_stream;
 mod client_destination;
 mod description;
+pub mod delivery;
 mod destination;
 mod files;
 pub(crate) mod grant;

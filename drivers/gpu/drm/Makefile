@@ -75,6 +75,7 @@ drm-y := \
 	drm_bridge.o \
 	drm_cache.o \
 	drm_capture.o \
+	drm_capture_delivery.o \
 	drm_capture_wait.o \
 	drm_capture_authority.o \
 	drm_capture_creator.o \
