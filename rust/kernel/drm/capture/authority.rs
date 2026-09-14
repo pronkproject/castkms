@@ -5,6 +5,12 @@
 mod file;
 mod client;
 mod revocation;
+mod creator;
+
+pub use creator::{
+    Creator,
+    Registration, //
+};
 
 pub use file::ControlOwner;
 pub use client::ClientOwner;

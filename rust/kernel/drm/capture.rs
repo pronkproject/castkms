@@ -35,6 +35,8 @@ pub use authority::{
     Authority,
     ClientOwner,
     ControlOwner,
+    Creator,
+    Registration,
     Policy,
     Revocation, //
 };
