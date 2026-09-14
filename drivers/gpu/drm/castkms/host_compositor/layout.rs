@@ -19,7 +19,6 @@ pub(crate) struct Layout {
     size: usize,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Layout {
     pub(crate) fn new(width: u32, height: u32) -> Result<Self> {
         if width == 0 || height == 0 || width > 1920 || height > 1080 {
