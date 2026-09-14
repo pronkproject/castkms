@@ -33,6 +33,44 @@ mod cases {
     use super::*;
 
     #[test]
+    fn cancellation_waits_for_terminal_observation_and_acknowledgment() -> Result {
+        let mut queue = Queue::<bool, u32>::new(2)?;
+        queue.queue(1, || Ok(false))?;
+        queue.queue(2, || Ok(false))?;
+        check(queue.cancel(0, |_| Err(EIO)) == Err(EINVAL))?;
+        check(queue.cancel(3, |_| Err(EIO)) == Err(ENOENT))?;
+        check(queue.cancel(1, |_| Err(EBUSY)) == Err(EBUSY))?;
+        check(queue.advance(|_| Ok(None)) == 0)?;
+        queue.cancel(1, |cancelled| {
+            *cancelled = true;
+            Ok(())
+        })?;
+        check(queue.dequeue(|_| Ok(())) == Err(EAGAIN))?;
+        check(queue.queue(3, || Ok(false)) == Err(EAGAIN))?;
+        check(
+            queue.advance(
+                |cancelled| {
+                    if *cancelled {
+                        Err(ECANCELED)
+                    } else {
+                        Ok(None)
+                    }
+                },
+            ) == 1,
+        )?;
+        check(queue.cancel(1, |_| Err(EIO)) == Err(EALREADY))?;
+        check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
+        check(queue.queue(3, || Ok(false)) == Err(EAGAIN))?;
+        queue.dequeue(|completion| {
+            check(completion.use_id == 1)?;
+            check(matches!(completion.result, Err(ECANCELED)))
+        })?;
+        check(queue.cancel(1, |_| Err(EIO)) == Err(ENOENT))?;
+        queue.queue(3, || Ok(false))?;
+        check(queue.advance(|_| Ok(Some(7))) == 2)
+    }
+
+    #[test]
     fn failed_publication_retains_payloads_until_queue_close() -> Result {
         let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
         let mut queue = Queue::<Tracked, Tracked>::new(2)?;
