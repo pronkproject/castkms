@@ -52,6 +52,8 @@ impl<O: ClientOwner> Callbacks<O> {
         } else {
             None
         },
+        open_stream: None,
+        close_stream: None,
     };
 
     unsafe extern "C" fn release(data: *mut c_void) {
