@@ -29,10 +29,10 @@ mod cases {
             let replacement = client.destination(12)?;
             check(client.queue_to(1, 2, 11, None) == Err(ENOENT))?;
             fixture.drm.device().host.current()?.flush_for_test();
-            check(client.stream(1)?.advance() == 0)?;
+            check(client.stream(1)?.advance()? == 0)?;
             check(pixels(original.buffer())?.iter().all(|byte| *byte == 0x73))?;
             reuse.complete(Ok(()))?;
-            check(client.stream(1)?.advance() == 1)?;
+            check(client.stream(1)?.advance()? == 1)?;
             client.stream(1)?.dequeue(|completion| {
                 check(completion.use_id == 1)?;
                 completion.result.map(|_| ())
@@ -65,7 +65,7 @@ mod cases {
             client.queue_to(1, 10, 2, None)?;
             check(client.queue_to(1, 10, 2, None) == Err(ESTALE))?;
             drop(grantor);
-            check(client.stream(1)?.advance() == 1)?;
+            check(client.stream(1)?.advance()? == 1)?;
             client.stream(1)?.dequeue(|completion| {
                 check(completion.use_id == 10)?;
                 check(matches!(completion.result, Err(EKEYREVOKED)))
@@ -97,13 +97,13 @@ mod cases {
             client.queue_to(2, 7, 2, None)?;
             client.unregister_destination(1)?;
             fixture.drm.device().host.current()?.flush_for_test();
-            check(client.stream(1)?.advance() == 0)?;
-            check(client.stream(2)?.advance() == 1)?;
+            check(client.stream(1)?.advance()? == 0)?;
+            check(client.stream(2)?.advance()? == 1)?;
             check(client.cancel(3, 7) == Err(ENOENT))?;
             check(client.cancel(1, 8) == Err(ENOENT))?;
             client.cancel(1, 7)?;
             drop(grantor);
-            check(client.stream(1)?.advance() == 1)?;
+            check(client.stream(1)?.advance()? == 1)?;
             check(client.cancel(1, 7) == Err(EALREADY))?;
             check(client.cancel(2, 7) == Err(EALREADY))?;
             client.stream(1)?.dequeue(|completion| {
@@ -115,7 +115,7 @@ mod cases {
                 completion.result.map(|_| ())
             })?;
             reuse.complete(Ok(()))?;
-            check(client.stream(1)?.advance() == 0)?;
+            check(client.stream(1)?.advance()? == 0)?;
             check(pixels(first.buffer())?.iter().all(|byte| *byte == 0x73))?;
             check(pixels(second.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])?;
             client.close_stream(1)?;
