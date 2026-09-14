@@ -9,6 +9,9 @@ use crate::{
         self,
         Description, //
     },
+    host_compositor::compose::Completed,
+    host_snapshot::Snapshot,
+    image_access,
     renderer_startup,
     scene::Configuration, //
 };
@@ -85,6 +88,41 @@ impl Candidate {
             self.resources.check()?;
             f(current)
         })
+    }
+
+    /// Copy an optional image into independent private storage after checking ownership.
+    ///
+    /// Current authority, display configuration and reservation are checked on both sides.
+    /// Copying holds no policy lock and claims no compositor source. A returned snapshot
+    /// retains its historical origin; it is neither an export nor permission to activate.
+    /// Descriptor delivery must separately authorize its recipient at installation.
+    pub(crate) fn snapshot(&self, image: &Completed) -> Result<Snapshot> {
+        self.snapshot_then(image, || Ok(()))
+    }
+
+    fn snapshot_then(
+        &self,
+        image: &Completed,
+        after_copy: impl FnOnce() -> Result,
+    ) -> Result<Snapshot> {
+        self.with_current_control(|control| {
+            image_access::Current::new(control)?.check_image(image)
+        })?;
+        let snapshot = self.resources.snapshot(self.access.device(), image)?;
+        after_copy()?;
+        self.with_current_control(|control| {
+            image_access::Current::new(control)?.check_snapshot(&snapshot)
+        })?;
+        Ok(snapshot)
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn snapshot_then_for_test(
+        &self,
+        image: &Completed,
+        after_copy: impl FnOnce() -> Result,
+    ) -> Result<Snapshot> {
+        self.snapshot_then(image, after_copy)
     }
 
     /// Cancel only this reservation; retained objects cannot cancel its replacement.
