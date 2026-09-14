@@ -97,6 +97,57 @@ mod cases {
     use super::*;
 
     #[test]
+    fn host_cutoff_runs_inside_control_and_cleanup_runs_afterward() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            let host = device.host.clone();
+            let handle = host.configure(
+                device,
+                crate::host_compositor::layout::Layout::new(640, 480)?,
+            )?;
+            handle.request()?;
+            host.with_change(|change| {
+                candidate.with_activation_control(device, |_| {
+                    change.disable()?;
+                    check(handle.request() == Err(ENODEV))?;
+                    check(matches!(host.current(), Err(EOPNOTSUPP)))
+                })
+            })?;
+            check(handle.take_outcome().is_none())?;
+            check(matches!(
+                host.configure(
+                    device,
+                    crate::host_compositor::layout::Layout::new(640, 480)?,
+                ),
+                Err(EOPNOTSUPP)
+            ))?;
+            check(crate::execution::describe().profile == crate::execution::Profile::HostV1)
+        })
+    }
+
+    #[test]
+    fn rejected_display_control_preserves_host_worker_admission() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            let host = device.host.clone();
+            let handle = host.configure(
+                device,
+                crate::host_compositor::layout::Layout::new(640, 480)?,
+            )?;
+            owner.revoke();
+            check(
+                host.with_change(|change| {
+                    candidate.with_activation_control(device, |_| change.disable())
+                }) == Err(EKEYREVOKED),
+            )?;
+            let _request = handle.request_outcome()?;
+            check(host.current().is_ok())
+        })
+    }
+
+    #[test]
     fn installed_control_survives_content_updates_and_observes_revocation() -> Result {
         with_display(|device, crtc, connector, scanout, file| {
             let owner = owner(&file, crtc, connector)?;
