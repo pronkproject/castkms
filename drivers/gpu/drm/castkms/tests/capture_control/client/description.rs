@@ -10,9 +10,7 @@ use kernel::drm::{
 };
 
 fn files(grantor: Grantor) -> Result<(ClientFile, ControlFile)> {
-    let (client, control) = grantor
-        .into_files_with(|capture| Ok(Client::new(capture)))?
-        .into_files();
+    let (client, control) = grantor.into_files_with(Client::new)?.into_files();
     Ok((ClientFile(Some(client)), ControlFile(Some(control))))
 }
 
@@ -70,11 +68,7 @@ mod cases {
         let creator = fixture.drm.master_file()?;
         let _fb = select(&fixture, &creator)?;
         let grantor = grant(&fixture, &creator)?;
-        let sibling = ClientFile(Some(
-            grantor
-                .capture()
-                .into_client_file_with(|capture| Ok(Client::new(capture)))?,
-        ));
+        let sibling = ClientFile(Some(grantor.capture().into_client_file_with(Client::new)?));
         let (client, control) = files(grantor)?;
         let first = describe(&client)?;
         check(describe(&sibling)? == first)?;

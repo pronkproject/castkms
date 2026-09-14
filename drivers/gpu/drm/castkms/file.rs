@@ -57,7 +57,7 @@ impl File {
         let crtc = dev.lookup_crtc(file, target.crtc_id())?;
         let connector = dev.lookup_connector(file, target.connector_id())?;
         Self::create_capture_grant(file, crtc.crtc(), &connector)?
-            .into_files_with(|capture| Ok(crate::capture::client::Client::new(capture)))
+            .into_files_with(crate::capture::client::Client::new)
     }
 
     /// Issue through a current master file without granting any public ioctl by implication.
