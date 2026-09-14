@@ -100,45 +100,53 @@ impl<T: KmsDriver> TestDevice<T> {
     /// callback finish before private-device shutdown. No capture grant is created.
     pub fn master_file(&self) -> Result<MasterFile<'_, T>> {
         let client = Client::new(self)?;
-        let dev = self.device().as_raw();
-        let file = client.file().as_raw();
-        let raw = allocate_master(dev)?;
-        // SAFETY: The native constructor returned one reference on this retained device.
-        let _identity = unsafe { MasterRef::from_owned_raw(raw, self.device()) };
-        {
-            // SAFETY: The fixture and internal client retain the initialized native device.
-            let mutex = unsafe { &raw mut (*dev).master_mutex };
-            // SAFETY: The retained device keeps its initialized mutex alive throughout this scope.
-            unsafe { bindings::mutex_lock(mutex) };
-            let _unlock = ScopeGuard::new(move || {
-                // SAFETY: This scope owns one acquisition on the same task and live device.
-                unsafe { bindings::mutex_unlock(mutex) };
-            });
-            // SAFETY: The master mutex stabilizes device ownership. The freshly opened client
-            // has no master association and has not been exposed through this fixture API.
-            if unsafe { !(*dev).master.is_null() || !(*file).master.is_null() } {
-                return Err(EBUSY);
-            }
-            // SAFETY: Install independently retained file/device references under native locks.
-            // The file lookup spinlock protects association readers. The immutable driver
-            // callback runs after installation, under the native master-set lock contract.
-            // Native client close releases both references and performs master-drop cleanup.
-            unsafe {
-                bindings::spin_lock(&raw mut (*file).master_lookup_lock);
-                (*file).master = bindings::drm_master_get(raw.as_ptr());
-                bindings::spin_unlock(&raw mut (*file).master_lookup_lock);
-                (*file).is_master = true;
-                (*file).authenticated = true;
-                (*dev).master = bindings::drm_master_get(raw.as_ptr());
-                if let Some(callback) = (*(*dev).driver).master_set {
-                    callback(dev, file, true);
-                }
-                (*file).was_master = true;
-            }
-        }
+        install_master(&client)?;
         Ok(MasterFile {
             client,
             _fixture: self,
         })
     }
+}
+
+// Both fixture types own an initialized internal primary file during installation.
+pub(super) fn install_master<T: KmsDriver>(client: &Client<T>) -> Result {
+    let dev = client.file().device_raw();
+    let file = client.file().as_raw();
+    let raw = allocate_master(dev)?;
+    // SAFETY: The initialized typed client retains its matching DRM device.
+    let device = unsafe { crate::drm::Device::<T>::from_raw(dev) };
+    // SAFETY: The native constructor returned one reference on this retained device.
+    let _identity = unsafe { MasterRef::from_owned_raw(raw, device) };
+    {
+        // SAFETY: The fixture and internal client retain the initialized native device.
+        let mutex = unsafe { &raw mut (*dev).master_mutex };
+        // SAFETY: The retained device keeps its initialized mutex alive throughout this scope.
+        unsafe { bindings::mutex_lock(mutex) };
+        let _unlock = ScopeGuard::new(move || {
+            // SAFETY: This scope owns one acquisition on the same task and live device.
+            unsafe { bindings::mutex_unlock(mutex) };
+        });
+        // SAFETY: The master mutex stabilizes device ownership. The freshly opened client
+        // has no master association and has not been exposed through this fixture API.
+        if unsafe { !(*dev).master.is_null() || !(*file).master.is_null() } {
+            return Err(EBUSY);
+        }
+        // SAFETY: Install independently retained file/device references under native locks.
+        // The file lookup spinlock protects association readers. The immutable driver
+        // callback runs after installation, under the native master-set lock contract.
+        // Native client close releases both references and performs master-drop cleanup.
+        unsafe {
+            bindings::spin_lock(&raw mut (*file).master_lookup_lock);
+            (*file).master = bindings::drm_master_get(raw.as_ptr());
+            bindings::spin_unlock(&raw mut (*file).master_lookup_lock);
+            (*file).is_master = true;
+            (*file).authenticated = true;
+            (*dev).master = bindings::drm_master_get(raw.as_ptr());
+            if let Some(callback) = (*(*dev).driver).master_set {
+                callback(dev, file, true);
+            }
+            (*file).was_master = true;
+        }
+    }
+    Ok(())
 }
