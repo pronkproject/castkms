@@ -19,12 +19,12 @@ use kernel::{
     drm::capture::{
         ClientOwner,
         Description,
-        Destination, //
+        Destination,
+        Resources, //
     },
     prelude::*,
     sync::Arc, //
 };
-use resources::Resources;
 
 /// The shared file dispatcher exclusively borrows operation state for each callback.
 /// No grantor or creating DRM file is retained by this client.
