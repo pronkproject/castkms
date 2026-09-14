@@ -61,6 +61,13 @@ impl DmaBuf {
         mode & bindings::FMODE_WRITE != 0
     }
 
+    /// Borrow native dependency metadata without excluding new submissions or granting access.
+    pub fn reservation(&self) -> &crate::dma_resv::Reservation {
+        // SAFETY: DMA-BUF retains its initialized reservation for its entire lifetime.
+        // The reservation pointer is fixed at export and the result borrows that owner.
+        unsafe { crate::dma_resv::Reservation::from_raw((*self.as_raw()).resv) }
+    }
+
     pub(crate) fn as_raw(&self) -> *mut bindings::dma_buf {
         self.0.get()
     }
