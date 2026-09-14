@@ -682,6 +682,18 @@ unsafe impl<T: ?Sized, const ID: u64> Send for DelayedWork<T, ID> {}
 unsafe impl<T: ?Sized, const ID: u64> Sync for DelayedWork<T, ID> {}
 
 impl<T: ?Sized, const ID: u64> DelayedWork<T, ID> {
+    /// Run pending delayed work without waiting for its timer, then wait for completion.
+    ///
+    /// Returns whether a pending instance was waited for. Prevent further enqueueing first
+    /// when the caller needs the worker to remain idle after return. Call in sleepable
+    /// context, outside locks needed by the callback, and never from that callback itself.
+    /// The queued owner reference is consumed by normal execution, not by this operation.
+    pub fn flush(&self) -> bool {
+        // SAFETY: The borrowed delayed work is initialized and remains pinned and live
+        // throughout the native operation, which serializes with its timer and callback.
+        unsafe { bindings::flush_delayed_work(self.dwork.get()) }
+    }
+
     /// Creates a new instance of [`DelayedWork`].
     #[inline]
     pub fn new(
