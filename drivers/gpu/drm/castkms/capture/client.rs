@@ -57,6 +57,16 @@ impl Client {
     pub(crate) fn stream(&mut self, id: u64) -> Result<Stream<'_>> {
         Ok(Stream::new(self.streams.get_mut(id)?))
     }
+
+    /// Close one stream without revoking the client or making its name reusable.
+    ///
+    /// Cleanup remains available after revocation or a modeset. Pending results are
+    /// abandoned through normal queue destruction; shared composition is not canceled.
+    /// Call outside DRM, publication, worker-lifecycle and reservation locks.
+    pub(crate) fn close_stream(&mut self, id: u64) -> Result {
+        drop(self.streams.remove(id)?);
+        Ok(())
+    }
 }
 
 // SAFETY: The callback trampolines, client destructor and dependencies belong to CastKMS.
