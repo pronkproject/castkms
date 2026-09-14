@@ -24,6 +24,22 @@ mod cases {
     use super::*;
 
     #[test]
+    fn checking_does_not_reserve_a_name_or_capacity() -> Result {
+        let mut table = Resources::new(1)?;
+        check(table.check(0) == Err(EINVAL))?;
+        table.check(8)?;
+        table.check(8)?;
+        table.insert(9, || Ok(3))?;
+        check(table.check(8) == Err(ESTALE))?;
+        check(table.check(10) == Err(EBUSY))?;
+        check(table.insert(8, || Ok(4)) == Err(ESTALE))?;
+        table.remove(9)?;
+        table.check(10)?;
+        table.insert(10, || Ok(5))?;
+        check(*table.get(10)? == 5)
+    }
+
+    #[test]
     fn invalid_names_and_capacity_do_not_construct_resources() -> Result {
         check(matches!(Resources::<u32>::new(0), Err(EINVAL)))?;
         let calls = Cell::new(0);
