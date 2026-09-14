@@ -76,6 +76,27 @@ impl<P, T> Queue<P, T> {
         Ok(())
     }
 
+    /// Ask the owner of a pending attempt to cancel without acknowledging its record.
+    ///
+    /// Success reports acceptance of cancellation, not completion or safe storage reuse.
+    /// The normal observer must still produce the terminal result after active access has
+    /// ended. The callback must retain any outstanding completion duties in the pending
+    /// owner. Missing IDs return ENOENT and already terminal records return EALREADY.
+    pub(crate) fn cancel(&mut self, use_id: u64, cancel: impl FnOnce(&mut P) -> Result) -> Result {
+        if use_id == 0 {
+            return Err(EINVAL);
+        }
+        let record = self
+            .records
+            .iter_mut()
+            .find(|record| record.use_id == use_id)
+            .ok_or(ENOENT)?;
+        match &mut record.state {
+            State::Pending(pending) => cancel(pending),
+            State::Ready(_) => Err(EALREADY),
+        }
+    }
+
     /// Observe pending operations once each, retaining every terminal outcome.
     ///
     /// The adapter decides whether observation waits or accesses pixels. Errors occupy
