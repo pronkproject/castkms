@@ -304,7 +304,71 @@ static void drm_capture_discard_survives_close(struct kunit *test)
 	drm_capture_complete(job, -EIO);
 }
 
+static void drm_capture_result_ranges(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	u8 source[16], pixels[4];
+	u64 id, next;
+	unsigned int i;
+
+	for (i = 0; i < sizeof(source); i++)
+		source[i] = i;
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_publish_snapshot(capture, source, sizeof(source)), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 5, pixels, 4), 4);
+	KUNIT_EXPECT_MEMEQ(test, pixels, source + 5, 4);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 12, pixels, 4), 4);
+	KUNIT_EXPECT_MEMEQ(test, pixels, source + 12, 4);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 16, NULL, 0), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(capture, &next), -EAGAIN);
+	drm_capture_revoke(capture);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 0, pixels, 4), 4);
+	KUNIT_EXPECT_MEMEQ(test, pixels, source, 4);
+	KUNIT_EXPECT_EQ(test, drm_capture_ack(capture, id), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 0, pixels, 4), -ENOENT);
+}
+
+static void drm_capture_rejected_ranges_preserve_output(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	u8 source[16] = { 0 }, pixels[4];
+	u64 id;
+
+	memset(pixels, 0xa9, sizeof(pixels));
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_publish_snapshot(capture, source, sizeof(source)), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 13, pixels, 4), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 17, pixels, 0), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, SIZE_MAX, pixels, 4),
+			-EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 1, pixels, SIZE_MAX),
+			-EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(pixels, 0xa9, sizeof(pixels)), NULL);
+}
+
+static void drm_capture_incomplete_ranges_preserve_output(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture_job *job;
+	u8 pixels[4];
+	u64 id;
+
+	memset(pixels, 0xa9, sizeof(pixels));
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 0, pixels, 4), -EAGAIN);
+	job = drm_capture_claim(capture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 0, pixels, 4), -EAGAIN);
+	drm_capture_complete(job, -EIO);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 0, pixels, 4), -EIO);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result_range(capture, id, 16, NULL, 0), -EIO);
+	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(pixels, 0xa9, sizeof(pixels)), NULL);
+}
+
 static struct kunit_case drm_capture_cases[] = {
+	KUNIT_CASE(drm_capture_result_ranges),
+	KUNIT_CASE(drm_capture_rejected_ranges_preserve_output),
+	KUNIT_CASE(drm_capture_incomplete_ranges_preserve_output),
 	KUNIT_CASE(drm_capture_credits),
 	KUNIT_CASE(drm_capture_revoke_claimed),
 	KUNIT_CASE(drm_capture_cancel_claimed),

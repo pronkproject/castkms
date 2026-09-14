@@ -57,6 +57,9 @@ int drm_capture_wait_result(struct drm_capture *capture, u64 id,
 int drm_capture_ack(struct drm_capture *capture, u64 id);
 ssize_t drm_capture_copy_result(struct drm_capture *capture, u64 id,
 				void *buffer, size_t size);
+/* Copy an exact range of a successful result without acknowledging it. */
+ssize_t drm_capture_copy_result_range(struct drm_capture *capture, u64 id,
+				     size_t offset, void *buffer, size_t size);
 
 /*
  * Claim chooses the oldest queued request without waiting. The returned job
