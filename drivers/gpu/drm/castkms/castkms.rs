@@ -102,7 +102,7 @@ impl drm::Driver for Driver {
         name: c"castkms",
         desc: c"CastKMS virtual display",
     };
-    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>] = &[];
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
         dev.capture_streams.revoke_all();

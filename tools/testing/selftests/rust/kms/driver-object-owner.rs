@@ -44,5 +44,5 @@ impl<D: drm::Driver + 'static> drm::Driver for Replacement<D> {
     type Object = gem::Object<LocalObject<D>>;
 
     const INFO: drm::DriverInfo = D::INFO;
-    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>] = &[];
 }

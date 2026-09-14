@@ -198,7 +198,8 @@ impl<T: drm::Driver> UnregisteredDevice<T> {
         desc: crate::str::as_char_ptr_in_const_context(T::INFO.desc).cast_mut(),
 
         driver_features: Self::compute_features(),
-        ioctls: T::IOCTLS.as_ptr(),
+        // Transparent descriptors retain driver typing until this native table boundary.
+        ioctls: T::IOCTLS.as_ptr().cast(),
         num_ioctls: T::IOCTLS.len() as i32,
         fops: &Self::GEM_FOPS,
     };

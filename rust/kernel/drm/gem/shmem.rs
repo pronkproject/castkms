@@ -880,7 +880,7 @@ mod tests {
         type Kms = core::marker::PhantomData<Self>;
 
         const INFO: drm::DriverInfo = INFO;
-        const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+        const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>] = &[];
     }
 
     fn create_drm_dev() -> Result<(faux::Registration, UnregisteredDevice<KunitDriver>)> {

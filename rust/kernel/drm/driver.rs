@@ -113,8 +113,10 @@ pub trait AllocImpl: super::private::Sealed + drm::gem::IntoGEMObject {
 ///
 /// This trait must be implemented by drivers in order to create a `struct drm_device` and `struct
 /// drm_driver` to be registered in the DRM subsystem.
+/// Driver types are static callback identities; binding-scoped data belongs in
+/// [`RegistrationData`](Self::RegistrationData).
 #[vtable]
-pub trait Driver {
+pub trait Driver: 'static {
     /// Context data associated with the DRM driver
     type Data: Sync + Send;
 
@@ -147,7 +149,7 @@ pub trait Driver {
     const INFO: DriverInfo;
 
     /// IOCTL list. See `kernel::drm::ioctl::declare_drm_ioctls!{}`.
-    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor];
+    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>];
 
     /// Sets the `DRIVER_RENDER` feature for this driver.
     ///

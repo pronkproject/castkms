@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
-// error-pattern: error\[E0271\]
+// error-pattern: error\[E0308\]
 #![no_std]
 
 use core::marker::PhantomData;
 use kernel::{
     device,
-    drm::{self, gem, Device},
-    prelude::*,
+    drm::{
+        self,
+        gem,
+        Device, //
+    },
+    prelude::*, //
 };
 
-pub struct Replacement<D: drm::Driver + 'static>(PhantomData<fn() -> D>);
-pub struct LocalFile<D: drm::Driver + 'static>(PhantomData<fn() -> D>);
-pub struct LocalObject<D: drm::Driver + 'static>(PhantomData<fn() -> D>);
+pub struct Replacement<D: drm::Driver>(PhantomData<fn() -> D>);
+pub struct LocalFile<D: drm::Driver>(PhantomData<fn() -> D>);
+pub struct LocalObject<D: drm::Driver>(PhantomData<fn() -> D>);
 
-impl<D: drm::Driver + 'static> drm::file::DriverFile for LocalFile<D> {
+impl<D: drm::Driver> drm::file::DriverFile for LocalFile<D> {
     type Driver = Replacement<D>;
     fn open(_: &Device<Self::Driver>) -> Result<Pin<KBox<Self>>> {
         Ok(KBox::new(Self(PhantomData), GFP_KERNEL)?.into())
@@ -21,7 +25,7 @@ impl<D: drm::Driver + 'static> drm::file::DriverFile for LocalFile<D> {
 }
 
 #[vtable]
-impl<D: drm::Driver + 'static> gem::DriverObject for LocalObject<D> {
+impl<D: drm::Driver> gem::DriverObject for LocalObject<D> {
     type OwnerModule = D::OwnerModule;
     type Driver = Replacement<D>;
     type Args = ();
@@ -31,18 +35,18 @@ impl<D: drm::Driver + 'static> gem::DriverObject for LocalObject<D> {
 }
 
 #[vtable]
-impl<D: drm::Driver + 'static> drm::Driver for Replacement<D> {
+impl<D: drm::Driver> drm::Driver for Replacement<D> {
     type OwnerModule = D::OwnerModule;
     type Data = [u64; 8];
     type RegistrationData<'a> = ();
     type ParentDevice<C: device::DeviceContext> = D::ParentDevice<C>;
     type Kms = PhantomData<Self>;
-    #[cfg(negative)]
-    type File = D::File;
-    #[cfg(not(negative))]
     type File = LocalFile<D>;
     type Object = gem::Object<LocalObject<D>>;
 
     const INFO: drm::DriverInfo = D::INFO;
+    #[cfg(negative)]
+    const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>] = D::IOCTLS;
+    #[cfg(not(negative))]
     const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor<Self>] = &[];
 }
