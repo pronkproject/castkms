@@ -66,6 +66,54 @@ mod cases {
     use super::*;
 
     #[test]
+    fn selected_requests_keep_stream_and_authority_identity() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let policy = policy(&counts, true)?;
+        let authority = Authority::new(policy.clone())?;
+        let first = Stream::new(1, 4)?;
+        let second = Stream::new(1, 4)?;
+        authority.begin()?.add_stream(&first)?;
+        let first_request = first.queue()?;
+        let second_request = second.queue()?;
+        assert!(matches!(
+            authority.claim_request(&second_request),
+            Err(ENOENT)
+        ));
+        assert_eq!(counts.approvals.load(Ordering::Relaxed), 0);
+        policy.allow.store(false, Ordering::Relaxed);
+        assert!(matches!(
+            authority.claim_request(&first_request),
+            Err(EACCES)
+        ));
+        assert_eq!(first_request.status()?, Status::Pending);
+        policy.allow.store(true, Ordering::Relaxed);
+        authority.claim_request(&first_request)?.complete(Ok(()));
+        assert_eq!(first_request.status()?, Status::Complete(Ok(())));
+        assert_eq!(second_request.status()?, Status::Pending);
+        assert!(matches!(
+            authority.claim_request(&first_request),
+            Err(EALREADY)
+        ));
+        authority.revoke();
+        assert!(matches!(
+            authority.claim_request(&first_request),
+            Err(EKEYREVOKED)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn selection_without_policy_does_not_claim() -> Result {
+        let authority = Authority::new(Arc::new(NoClaims, GFP_KERNEL)?)?;
+        let stream = Stream::new(1, 4)?;
+        authority.begin()?.add_stream(&stream)?;
+        let request = stream.queue()?;
+        assert!(matches!(authority.claim_request(&request), Err(EOPNOTSUPP)));
+        assert_eq!(request.status()?, Status::Pending);
+        Ok(())
+    }
+
+    #[test]
     fn final_reference_revokes_and_releases_provider_once() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let authority = Authority::new(policy(&counts, true)?)?;
