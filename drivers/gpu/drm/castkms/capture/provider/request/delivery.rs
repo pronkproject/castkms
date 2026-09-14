@@ -3,7 +3,10 @@
 //! Authorized delivery into the exact retained request, independent of queue order.
 
 use super::{
-    super::Stream,
+    super::{
+        Frame,
+        Stream, //
+    },
     Request, //
 };
 use crate::{
@@ -17,6 +20,16 @@ use kernel::{
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Request {
+    /// Retain the delivered image's description, without relabeling it after a later update.
+    ///
+    /// The request is abandoned on failure. Metadata is prepared before claiming delivery;
+    /// success carries the request's terminal status, not an unconditional pixel-validity claim.
+    pub(crate) fn deliver_frame(self, stream: &Stream, image: &Completed) -> Result<Frame> {
+        let frame = Frame::new(self, image)?;
+        frame.request().deliver(stream, image)?;
+        Ok(frame)
+    }
+
     /// Deliver only into this request after validating its stream and current image permission.
     ///
     /// A foreign stream is rejected even when it has the same layout, authority and numeric
