@@ -27,7 +27,7 @@ pub(super) fn encode(description: Description) -> [u8; 16] {
     bytes
 }
 
-/// Publish only the fixed initial profile; no runtime capability transition is exposed.
+/// Attach the initial description before publishing the device.
 pub(super) fn attach(
     connector: &UnregisteredConnector<Connector>,
     description: Description,

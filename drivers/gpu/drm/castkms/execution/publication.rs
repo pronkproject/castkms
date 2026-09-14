@@ -5,15 +5,30 @@
 use super::{
     property,
     Description, //
+    Prepared,
+    Profile,
 };
-use crate::display::Connector;
+use crate::{
+    display::Connector,
+    Driver, //
+};
 use kernel::{
-    drm::kms::connector::{
-        ReadOnlyBlobProperty,
-        UnregisteredConnector, //
+    drm::{
+        device::Registered,
+        kms::{
+            connector::{
+                ReadOnlyBlobProperty,
+                UnregisteredConnector, //
+            },
+            LockedState, //
+        },
+        Device, //
     },
     prelude::*,
-    sync::Mutex, //
+    sync::{
+        Arc,
+        Mutex, //
+    }, //
 };
 
 struct State {
@@ -42,13 +57,15 @@ impl Drop for Attachment<'_> {
 /// Registration ownership closes this device-retaining property before final DRM teardown.
 #[pin_data]
 pub(crate) struct Publication {
+    origin: Arc<()>,
     #[pin]
     state: Mutex<State>,
 }
 
 impl Publication {
-    pub(crate) fn new() -> impl PinInit<Self> {
-        pin_init!(Self {
+    pub(crate) fn new() -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
+            origin: Arc::new((), GFP_KERNEL)?,
             state <- kernel::new_mutex!(State {
                 description: super::initial(),
                 slot: Slot::Empty,
@@ -86,6 +103,57 @@ impl Publication {
     /// Observe metadata only; retaining it preserves neither authority nor an active renderer.
     pub(crate) fn describe(&self) -> Description {
         self.state.lock().description
+    }
+
+    /// Allocate a new description before entering display or renderer control locks.
+    ///
+    /// Preparation alone changes no capability. Publication rechecks origin, generation,
+    /// device and shutdown state; the caller separately authorizes the renderer handoff.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn prepare(
+        &self,
+        device: &Device<Driver, Registered>,
+        profile: Profile,
+    ) -> Result<Prepared> {
+        let expected = {
+            let state = self.state.lock();
+            match state.slot {
+                Slot::Ready(_) => state.description,
+                Slot::Closed => return Err(ENODEV),
+                _ => return Err(EAGAIN),
+            }
+        };
+        Prepared::new(device, self.origin.clone(), expected, profile)
+    }
+
+    /// Publish prepared metadata during authorized control, retaining retired ownership.
+    ///
+    /// The caller coordinates actual renderer admission and execution eligibility within
+    /// the same control interval. This operation alone starts no renderer or source read.
+    /// Neither allocation nor native reference release occurs under the publication mutex.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn publish(
+        &self,
+        locked: &LockedState<'_, Driver>,
+        prepared: &mut Prepared,
+    ) -> Result {
+        if !Arc::ptr_eq(&self.origin, &prepared.origin) {
+            return Err(EINVAL);
+        }
+        let change = prepared.pending.ok_or(EALREADY)?;
+        let mut state = self.state.lock();
+        if state.description != change.expected {
+            return Err(ESTALE);
+        }
+        let property = match &mut state.slot {
+            Slot::Ready(property) => property,
+            Slot::Closed => return Err(ENODEV),
+            _ => return Err(EAGAIN),
+        };
+        property.replace_blob(locked, &mut prepared.blob)?;
+        state.description = change.next;
+        prepared.pending = None;
+        Ok(())
     }
 
     /// Release the control handle outside its mutex, preserving the installed native blob.

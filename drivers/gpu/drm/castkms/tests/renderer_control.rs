@@ -2,6 +2,8 @@
 
 //! Renderer control on registered displays, with real master and atomic callbacks.
 
+mod publication;
+
 use super::*;
 use crate::renderer::{
     candidate::Candidate,
@@ -31,6 +33,19 @@ fn with_display(
     ) -> Result,
 ) -> Result {
     let display = CastKms::new(c"castkms-renderer-control")?;
+    with_registered_display(&display, f)
+}
+
+fn with_registered_display(
+    display: &CastKms,
+    f: impl FnOnce(
+        &Device<Driver, Registered>,
+        &Crtc<display::Crtc>,
+        &Connector<display::Connector>,
+        &CrtcScanout<'_, Driver>,
+        RegisteredMasterFile<'_, Driver>,
+    ) -> Result,
+) -> Result {
     let registered = display._display.registration_guard().ok_or(ENODEV)?;
     let file = RegisteredMasterFile::new(&registered)?;
     let crtc = file.crtc()?.to_owned_ref();
