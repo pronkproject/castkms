@@ -41,6 +41,16 @@ impl Pending {
         }
     }
 
+    /// Cancel delivery without waiting for or canceling shared composition.
+    ///
+    /// The request keeps its accounting credit until its terminal outcome is observed or
+    /// this pending owner is dropped. Cancellation does not complete a compositor read.
+    /// Observe the outcome normally; an already terminal native request returns EALREADY
+    /// without replacing its original result. Call outside locks needed by delivery.
+    pub(crate) fn cancel(&self) -> Result {
+        self.request.as_ref().ok_or(EALREADY)?.cancel()
+    }
+
     /// Complete an available attempt without waiting for composition.
     ///
     /// `None` leaves demand pending. Any other result consumes the operation; a repeated
