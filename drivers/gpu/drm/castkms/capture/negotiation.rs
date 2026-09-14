@@ -38,7 +38,6 @@ pub(crate) struct Negotiation {
     offer: Option<Offer>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Negotiation {
     pub(crate) fn new(capture: Capture) -> Self {
         Self {

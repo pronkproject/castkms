@@ -29,7 +29,6 @@ pub(crate) struct Pool {
     images: Mutex<Option<[Option<Image>; 2]>>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Pool {
     pub(crate) fn new(
         device: &Device<Driver>,

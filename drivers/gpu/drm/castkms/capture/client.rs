@@ -72,6 +72,14 @@ impl Client {
 // SAFETY: The callback trampolines, client destructor and dependencies belong to CastKMS.
 #[vtable]
 unsafe impl ClientOwner for Client {
+    fn open_stream(&mut self, id: u64, offer: u64, capacity: u32) -> Result {
+        Client::open_stream(self, id, offer, capacity)
+    }
+
+    fn close_stream(&mut self, id: u64) -> Result {
+        Client::close_stream(self, id)
+    }
+
     fn describe(&mut self) -> Result<Description> {
         let offer = self.negotiation.describe()?;
         let image = offer.description();
