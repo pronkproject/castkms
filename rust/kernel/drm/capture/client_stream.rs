@@ -15,10 +15,12 @@ use core::num::NonZeroU64;
 /// Retain the client file and request closure of one admitted stream on drop.
 ///
 /// The stream name is never reused within that file, so delayed cleanup cannot select
-/// a replacement. Closing does not revoke the grant or wait for native GPU completion.
+/// a replacement. Successful explicit closure ends that stream's destination writes,
+/// without revoking the grant or waiting for shared rendering and downstream consumers.
 /// Every operation and drop requires sleepable context outside DRM, authority, provider
 /// lifecycle and reservation locks. Use explicit close to observe provider errors; drop
 /// attempts cleanup, but a failing provider may retain resources until client destruction.
+/// Dropping a file reference alone is not acknowledgment that destination access has ended.
 #[must_use = "dropping the handle requests closure of its client stream"]
 pub struct ClientStream {
     client: ARef<File>,
