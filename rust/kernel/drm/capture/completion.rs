@@ -44,6 +44,34 @@ impl Completion {
     pub fn result(&self) -> Result<Instant<Monotonic>> {
         self.result
     }
+
+    pub(super) fn raw(self) -> bindings::drm_capture_completion {
+        let (status, completed_at) = match self.result {
+            Ok(time) => (0, time.as_nanos()),
+            Err(error) => (error.to_errno(), 0),
+        };
+        bindings::drm_capture_completion {
+            use_id: self.use_id(),
+            status,
+            completed_at,
+        }
+    }
+
+    pub(super) fn from_raw(raw: &bindings::drm_capture_completion) -> Result<Self> {
+        if raw.completed_at < 0 || raw.status > 0 || raw.status < -(bindings::MAX_ERRNO as i32) {
+            return Err(EINVAL);
+        }
+        let result = if raw.status == 0 {
+            // SAFETY: The signed native timestamp was checked to be nonnegative.
+            Ok(unsafe { Instant::<Monotonic>::from_ktime(raw.completed_at) })
+        } else {
+            if raw.completed_at != 0 {
+                return Err(EINVAL);
+            }
+            Err(Error::from_errno(raw.status))
+        };
+        Self::new(raw.use_id, result)
+    }
 }
 
 #[cfg(CONFIG_KUNIT)]

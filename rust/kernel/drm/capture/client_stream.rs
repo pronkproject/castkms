@@ -2,6 +2,8 @@
 
 //! Owned cleanup for a stream named within an anonymous capture client.
 
+mod completion;
+
 use crate::{
     error::to_result,
     fs::File,

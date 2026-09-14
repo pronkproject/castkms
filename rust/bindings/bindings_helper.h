@@ -45,6 +45,7 @@
 #include <drm/drm_auth.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_capture.h>
+#include <drm/drm_capture_completion.h>
 #include <drm/drm_capture_delivery.h>
 #include <drm/drm_capture_authority.h>
 #include <drm/drm_capture_creator.h>
