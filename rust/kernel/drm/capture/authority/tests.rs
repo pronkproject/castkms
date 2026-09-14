@@ -66,6 +66,39 @@ mod cases {
     use super::*;
 
     #[test]
+    fn creator_close_revokes_while_registration_retains_policy() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(policy(&counts, true)?)?;
+        let creator = Creator::new(1)?;
+        let registration = creator.register(&authority)?;
+        drop(authority);
+        drop(creator);
+        assert_eq!(counts.revokes.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.releases.load(Ordering::Relaxed), 0);
+        drop(registration);
+        assert_eq!(counts.releases.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn removing_creator_tracking_does_not_revoke() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let authority = Authority::new(policy(&counts, true)?)?;
+        assert!(matches!(Creator::new(0), Err(EINVAL)));
+        let creator = Creator::new(1)?;
+        let registration = creator.register(&authority)?;
+        assert!(matches!(creator.register(&authority), Err(EBUSY)));
+        drop(registration);
+        drop(creator);
+        assert!(!authority.is_revoked());
+        assert_eq!(counts.revokes.load(Ordering::Relaxed), 0);
+        drop(authority);
+        assert_eq!(counts.revokes.load(Ordering::Relaxed), 1);
+        assert_eq!(counts.releases.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
+
+    #[test]
     fn selected_requests_keep_stream_and_authority_identity() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let policy = policy(&counts, true)?;

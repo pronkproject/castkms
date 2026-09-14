@@ -96,6 +96,16 @@ driver type. ``Device::create_capture_grant`` returns a checked ``FilePair``.
 Ordinary kernel capture consumers continue using authority, stream and request
 operations directly without manufacturing a DRM file or userspace descriptors.
 
+Creator lifetime is available to C and Rust providers independently of files.
+``drm_capture_creator_create()`` allocates a bounded collection of grants;
+``drm_capture_creator_register()`` retains an already-authorized grant in that
+collection. Closing the creator revokes the remaining grants outside the
+tracking lock. Removing a registration only removes tracking; it does not
+revoke the grant. Registrations may survive creator close without extending
+the lifetime that allows new grants. Rust ``Creator`` and ``Registration``
+provide the corresponding unique owners and perform cleanup on drop.
+The provider chooses the limit and authorizes issuance before registration.
+
 Client owners optionally implement ``describe``. The native file layer serializes
 callbacks and checks the returned metadata; the provider checks current display
 permission. ``drm_capture_client_describe()`` and Rust ``Description::query()``
