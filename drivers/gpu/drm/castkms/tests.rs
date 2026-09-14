@@ -26,6 +26,8 @@ mod capture_control;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod capture_descriptions;
 #[cfg(CONFIG_DRM_CLIENT)]
+mod capture_destinations;
+#[cfg(CONFIG_DRM_CLIENT)]
 mod capture_files;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod capture_host_stream;
