@@ -9,7 +9,10 @@ use super::{
 };
 use kernel::{
     prelude::*,
-    sync::Arc, //
+    sync::{
+        Arc,
+        CondVar, //
+    }, //
 };
 
 /// Observe an attempt that started after this request was queued, without claiming a source.
@@ -34,6 +37,11 @@ impl Request {
             State::Open { progress, .. } => Ok(progress.observe(self.requested)),
             State::Closed => Err(ENODEV),
         }
+    }
+
+    /// Notifications for outcome changes and worker shutdown; register before observing.
+    pub(crate) fn changed(&self) -> &CondVar {
+        &self.worker.changed
     }
 
     /// Wait outside DRM, source, worker-lifecycle and buffer reservation locks.
