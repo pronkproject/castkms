@@ -9,7 +9,10 @@ use kernel::{
         Status, //
     },
     prelude::*,
-    sync::Arc, //
+    sync::{
+        Arc,
+        CondVar, //
+    }, //
 };
 
 mod output;
@@ -38,6 +41,14 @@ impl Request {
     /// The outer result describes waiting; the inner result describes capture validity.
     pub(crate) fn wait(&self) -> Result<Result> {
         self.native.wait()
+    }
+
+    pub(crate) fn wait_for_provider<T>(
+        &self,
+        changed: &CondVar,
+        observe: impl FnMut() -> Result<Option<T>>,
+    ) -> Result<T> {
+        self.native.wait_for_provider(changed, observe)
     }
 
     pub(crate) fn copy_result(&self, pixels: &mut [u8]) -> Result<usize> {
