@@ -54,7 +54,6 @@ enum Publication<S, C> {
 }
 
 /// Coherent descriptions borrowed under the publication lock, without permission to read pixels.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(super) struct Accepted<'a, S, C> {
     pub(super) source: &'a Source,
     pub(super) scene: Option<&'a S>,
@@ -142,7 +141,6 @@ impl<S: Unpin, C: Unpin> Output<S, C> {
     /// acquire modeset locks or release objects whose destruction can enter DRM. It may
     /// acquire inner admission locks when the caller's lock order permits it. Descriptions
     /// may be cloned, but a retained description alone does not grant future access.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(super) fn with_accepted<R>(
         &self,
         observe: impl FnOnce(Option<Accepted<'_, S, C>>) -> R,

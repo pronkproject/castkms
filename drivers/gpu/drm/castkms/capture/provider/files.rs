@@ -21,6 +21,7 @@ impl Grantor {
     /// retains permission independently. Failure consumes the grant and revokes it through
     /// normal owner cleanup; call outside DRM, admission and provider cleanup locks.
     /// Pair identity does not replace authorization at issuance or later capture operations.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn into_files(self) -> Result<FilePair> {
         self.into_files_with(Ok)
     }
