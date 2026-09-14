@@ -28,6 +28,48 @@ mod cases {
     use super::*;
 
     #[test]
+    fn shared_dequeue_preserves_image_time_and_terminal_capture_errors() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let mut client = Client::new(grantor.capture())?;
+            let readiness: ARef<Readiness> = client.readiness().ok_or(EINVAL)?.into();
+            let offer = client.describe()?.id();
+            client.open_stream(1, offer, 1)?;
+            client.register_destination(1, destination(fixture, Layout::new(640, 480)?)?)?;
+            client.queue_to(1, 1, 1, None)?;
+            wait_for_results(&readiness)?;
+            let mut produced_at = None;
+            check(
+                client.stream(1)?.dequeue::<()>(|completion| {
+                    produced_at = Some(completion.result?.metadata().completed_at());
+                    Err(EFAULT)
+                }) == Err(EFAULT),
+            )?;
+            check(client.dequeue(1, |_| Err(EFAULT)) == Err(EFAULT))?;
+            check(readiness.has_results())?;
+            client.dequeue(1, |completion| {
+                check(completion.use_id() == 1)?;
+                check((completion.result()? - produced_at.ok_or(EINVAL)?).as_nanos() == 0)
+            })?;
+            check(!readiness.has_results())?;
+            let mut reuse = ManualFence::new()?;
+            reuse.complete(Err(EAGAIN))?;
+            client.queue_to(1, 2, 1, Some(reuse.fence()))?;
+            wait_for_results(&readiness)?;
+            client.dequeue(1, |completion| {
+                check(completion.use_id() == 2)?;
+                check(matches!(completion.result(), Err(EAGAIN)))
+            })?;
+            check(client.dequeue(1, |_| Err(EIO)) == Err(EAGAIN))?;
+            client.close_stream(1)?;
+            check(client.dequeue(1, |_| Err(EIO)) == Err(ENOENT))
+        })
+    }
+
+    #[test]
     fn background_delivery_keeps_readiness_until_successful_dequeue() -> Result {
         with_exporter(|fixture| {
             let _connector = fixture.drm.publish_connector_identity()?;

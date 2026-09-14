@@ -196,6 +196,54 @@ mod cases {
     use super::*;
 
     #[test]
+    fn a_late_implicit_fence_does_not_lock_out_sibling_streams() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let file = fixture.drm.master_file()?;
+            let _fb = select(fixture, &file)?;
+            let grantor = grant(fixture, &file)?;
+            let mut client = Client::new(grantor.capture())?;
+            let offer = client.describe()?.id();
+            client.open_stream(1, offer, 1)?;
+            client.open_stream(2, offer, 1)?;
+            let mut fence = ManualFence::new()?;
+            let gate = gate(&fence)?;
+            let (image, backing) = destination_with_gate(fixture, gate.clone())?;
+            client.register_destination(1, image)?;
+            client.register_destination(2, destination(fixture, Layout::new(640, 480)?)?)?;
+            client.queue_to(1, 1, 1, None)?;
+            wait_for(|| gate.entered.load(Ordering::Acquire))?;
+            check(client.stream(1)?.advance()? == 0)?;
+            let source: ARef<Source> = fixture
+                .drm
+                .device()
+                .output
+                .inspect_accepted(|accepted| accepted.map(|(source, _)| source.into()))
+                .ok_or(EINVAL)?;
+            {
+                let admission = source.hold_admission()?;
+                check(admission.prepared()?.is_some())?;
+            }
+            client.queue_to(2, 1, 2, None)?;
+            wait_for(|| client.readiness().is_some_and(|ready| ready.has_results()))?;
+            client.dequeue(2, |completion| completion.result().map(|_| ()))?;
+            client.cancel(1, 1)?;
+            check(client.cancel(1, 1) == Err(EALREADY))?;
+            check(client.close_stream(1) == Err(EBUSY))?;
+            check(client.queue_to(1, 2, 1, None) == Err(ESHUTDOWN))?;
+            client.close_stream(2)?;
+            check(!gate.unmapped.load(Ordering::Acquire))?;
+            fence.complete(Ok(()))?;
+            wait_for(|| client.readiness().is_some_and(|ready| ready.has_results()))?;
+            client.dequeue(1, |completion| {
+                check(matches!(completion.result(), Err(ECANCELED)))
+            })?;
+            client.close_stream(1)?;
+            check(pixels(&backing)?.iter().all(|byte| *byte == 0x73))
+        })
+    }
+
+    #[test]
     fn final_file_release_detaches_without_waiting_for_destination_access() -> Result {
         with_exporter(|fixture| {
             let _connector = fixture.drm.publish_connector_identity()?;

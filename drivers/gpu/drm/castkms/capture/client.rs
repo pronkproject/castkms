@@ -17,6 +17,7 @@ use super::{
 use kernel::{
     drm::capture::{
         ClientOwner,
+        Completion,
         Description,
         Destination,
         Readiness, //
@@ -105,6 +106,15 @@ impl Client {
 // SAFETY: The callback trampolines, client destructor and dependencies belong to CastKMS.
 #[vtable]
 unsafe impl ClientOwner for Client {
+    fn dequeue(&mut self, stream: u64, publish: impl FnOnce(Completion) -> Result) -> Result {
+        self.stream(stream)?.dequeue(|completion| {
+            publish(Completion::new(
+                completion.use_id,
+                completion.result.map(|frame| frame.metadata().completed_at()),
+            )?)
+        })
+    }
+
     fn readiness(&self) -> Option<&Readiness> {
         Some(self.streams.readiness())
     }
