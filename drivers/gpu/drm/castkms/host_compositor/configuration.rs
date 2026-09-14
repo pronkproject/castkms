@@ -61,7 +61,22 @@ impl Configuration {
         device: &Device<Driver>,
         layout: Layout,
     ) -> Result<worker::Handle> {
+        self.configure_checked(device, layout, || Ok(()))
+    }
+
+    /// Revalidate a consumer after excluding other worker replacements.
+    ///
+    /// The callback runs before reusing or removing any worker. It may inspect display
+    /// control, but must not reenter lifecycle operations or retain their outer locks.
+    /// A rejected consumer leaves the current worker and its storage untouched.
+    pub(crate) fn configure_checked(
+        &self,
+        device: &Device<Driver>,
+        layout: Layout,
+        check: impl FnOnce() -> Result,
+    ) -> Result<worker::Handle> {
         let _change = self.lifecycle.lock();
+        check()?;
         let retired = {
             let mut state = self.state.lock();
             let State::Open(active) = &mut *state else {
