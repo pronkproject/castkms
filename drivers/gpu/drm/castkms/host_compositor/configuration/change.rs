@@ -40,6 +40,21 @@ impl Configuration {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Change<'_> {
+    /// Allow fresh lazy HOST allocation without reviving a retired worker.
+    ///
+    /// This changes resources only. The handback caller must independently validate the
+    /// installed framebuffer's HOST eligibility and coordinate the execution profile.
+    /// An already enabled worker is preserved; shutdown is never reopened.
+    pub(crate) fn enable(&self) -> Result {
+        let mut state = self.configuration.state.lock();
+        match &*state {
+            State::Disabled => *state = State::Open(None),
+            State::Open(_) => (),
+            State::Closed => return Err(ENODEV),
+        }
+        Ok(())
+    }
+
     /// Disable lazy HOST allocation and stop the current worker's source admission.
     ///
     /// This does not wait for already admitted CPU reads or destroy their cached images.
