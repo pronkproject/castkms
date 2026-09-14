@@ -35,6 +35,10 @@ enum Attempt {
 }
 
 impl Attempt {
+    fn is_delivering(&self) -> bool {
+        matches!(self, Self::Destination(output) if output.is_delivering())
+    }
+
     fn cancel(&mut self) -> Result {
         match self {
             Self::Private(pending) => pending.cancel(),
@@ -55,6 +59,7 @@ impl Attempt {
 pub(crate) struct Queue {
     records: requests::Queue<Attempt, Frame>,
     stream: Stream,
+    closing: bool,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -74,10 +79,14 @@ impl Queue {
         Ok(Self {
             records: requests::Queue::new(capacity as usize)?,
             stream,
+            closing: false,
         })
     }
 
     pub(crate) fn queue(&mut self, use_id: u64) -> Result {
+        if self.closing {
+            return Err(ESHUTDOWN);
+        }
         self.records
             .queue(use_id, || self.stream.queue().map(Attempt::Private))
     }
@@ -86,7 +95,8 @@ impl Queue {
     ///
     /// Validate the increasing use ID and reserve its terminal record before admission.
     /// Failure consumes neither the ID nor queue credit. The owner must exclude competing
-    /// destination access until completion or queue destruction. Waiting for reuse does not
+    /// destination access until completion or successful try_close. Queue destruction alone
+    /// abandons observation without draining detached access. Waiting for reuse does not
     /// prevent another available output from completing, nor retain a compositor-source read.
     pub(crate) fn queue_to(
         &mut self,
@@ -94,6 +104,9 @@ impl Queue {
         destination: Arc<Image>,
         reuse: Option<ARef<Fence>>,
     ) -> Result {
+        if self.closing {
+            return Err(ESHUTDOWN);
+        }
         self.records.queue(use_id, || {
             self.stream
                 .queue_to(destination, reuse)
@@ -110,10 +123,36 @@ impl Queue {
         self.records.cancel(use_id, Attempt::cancel)
     }
 
-    /// Finish available composition without waiting for the worker. Authorization and copying
-    /// may sleep; every error becomes a retained terminal result rather than lost demand.
+    /// Stop new admission and request cancellation without waiting on destination access.
+    ///
+    /// EBUSY leaves cleanup retryable while detached access retains its storage. Success
+    /// acknowledges that no accepted destination write can occur after queue destruction.
+    pub(crate) fn try_close(&mut self) -> Result {
+        self.closing = true;
+        let mut active = false;
+        self.records.for_each_pending(|attempt| {
+            let _ = attempt.cancel();
+            active |= attempt.is_delivering();
+        });
+        if active {
+            Err(EBUSY)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Observe completion and dispatch available output without entering destination exporters.
+    /// Authorization and private copying may sleep; terminal errors remain accounted results.
     pub(crate) fn advance(&mut self) -> usize {
         self.records.advance(Attempt::try_complete_frame)
+    }
+
+    pub(crate) fn has_pending(&self) -> bool {
+        self.records.has_pending()
+    }
+
+    pub(crate) fn has_results(&self) -> bool {
+        self.records.has_results()
     }
 
     /// Publish a terminal record without returning its credit on a failed output operation.

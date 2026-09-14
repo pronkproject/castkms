@@ -2,6 +2,8 @@
 
 //! One retained destination for a private capture attempt, without source access while waiting.
 
+mod delivery;
+
 use super::Pending;
 use crate::capture::{
     destination::Image,
@@ -18,7 +20,8 @@ use kernel::{
 
 enum State {
     Capturing(Pending),
-    Copying(Frame),
+    Captured(Frame),
+    Delivering(delivery::Handle),
     Cancelled,
     Finished,
 }
@@ -26,8 +29,9 @@ enum State {
 /// A single output attempt retaining its exact storage and explicit reuse dependency.
 ///
 /// Waiting for reuse retains a private capture result, never compositor storage. The
-/// owner must exclude conflicting access to the destination until completion or drop.
-/// Dropping pending output abandons its capture request without canceling shared rendering.
+/// owner must exclude conflicting access until actual completion. Drop abandons observation
+/// and requests cancellation, but does not acknowledge completion of detached destination
+/// access. No compositor source is retained by that access.
 #[must_use = "dropping output abandons the pending delivery"]
 pub(crate) struct Output {
     state: State,
@@ -51,23 +55,31 @@ impl Output {
 
     /// Cancel an unfinished output without waiting for rendering or destination reuse.
     ///
-    /// The exclusive borrow excludes a concurrent CPU write by this operation. A private
-    /// image waiting for reuse is discarded without touching the destination. Cancellation
-    /// remains observable once as ECANCELED; it does not finish shared source reads.
+    /// A private image waiting for reuse is discarded without touching the destination.
+    /// Detached access observes cancellation after exporter calls return; its eventual result
+    /// remains pending until access ends. Cancellation does not finish shared source reads.
     /// Completed output and repeated cancellation return EALREADY.
     pub(crate) fn cancel(&mut self) -> Result {
         match &self.state {
             State::Capturing(pending) => pending.cancel()?,
-            State::Copying(_) => (),
+            State::Captured(_) => (),
+            State::Delivering(delivery) => {
+                return delivery.cancel();
+            }
             State::Cancelled | State::Finished => return Err(EALREADY),
         }
         self.state = State::Cancelled;
         Ok(())
     }
 
-    /// Observe rendering and attempt copying without waiting for unfinished dependencies.
+    /// Whether detached access still prevents acknowledgment of storage reuse.
+    pub(crate) fn is_delivering(&self) -> bool {
+        matches!(&self.state, State::Delivering(delivery) if delivery.is_running())
+    }
+
+    /// Observe rendering and dispatch copying without entering destination exporters.
     ///
-    /// Authorization, allocation and CPU copying may sleep; call outside DRM, publication,
+    /// Authorization, allocation and private copying may sleep; call outside DRM, publication,
     /// reservation and worker-lifecycle locks. `None` preserves the exact pending attempt.
     /// A frame is returned only after its destination write and cache maintenance finish.
     /// Every error consumes the attempt, even EAGAIN; subsequent calls return EALREADY.
@@ -81,17 +93,34 @@ impl Output {
                     return Ok(None);
                 }
             },
-            State::Copying(frame) => frame,
+            State::Captured(frame) => frame,
+            State::Delivering(delivery) => match delivery.take_result() {
+                None => {
+                    self.state = State::Delivering(delivery);
+                    return Ok(None);
+                }
+                Some((frame, result)) => {
+                    if result? {
+                        return Ok(Some(frame));
+                    }
+                    frame
+                }
+            },
             State::Cancelled => return Err(ECANCELED),
             State::Finished => return Err(EALREADY),
         };
         if frame
             .request()
-            .try_copy_to_destination(&self.destination, self.reuse.as_deref())?
+            .destination_ready(&self.destination, self.reuse.as_deref())?
         {
-            Ok(Some(frame))
+            self.state = State::Delivering(delivery::Handle::new(
+                frame,
+                self.destination.clone(),
+                self.reuse.clone(),
+            )?);
+            Ok(None)
         } else {
-            self.state = State::Copying(frame);
+            self.state = State::Captured(frame);
             Ok(None)
         }
     }

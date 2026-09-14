@@ -74,7 +74,8 @@ impl Stream {
     ///
     /// Reject incompatible storage before reserving capture credit or scheduling rendering.
     /// The caller must exclude conflicting destination access until the returned output
-    /// completes or is dropped. An unfinished reuse fence retains no source claim, and the
+    /// completes. Dropping output requests cancellation but does not drain detached access.
+    /// An unfinished reuse fence retains no source claim, and the
     /// fence's completion does not replace the caller's duty to exclude subsequent users.
     pub(crate) fn queue_to(
         &self,

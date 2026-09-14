@@ -34,7 +34,6 @@ use kernel::{
 };
 
 /// A worker result, not a grant-authorized capture completion.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 #[derive(Clone)]
 pub(crate) enum Outcome {
     Image(Arc<Completed>),
