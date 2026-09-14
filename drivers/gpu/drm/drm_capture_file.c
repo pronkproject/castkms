@@ -11,6 +11,8 @@
 #include <drm/drm_capture_authority.h>
 #include <drm/drm_capture_file.h>
 
+#include "drm_capture_file_internal.h"
+
 struct drm_capture_control {
 	struct drm_capture_authority *authority;
 	const struct drm_capture_control_owner_ops *ops;
@@ -44,6 +46,18 @@ static const struct file_operations drm_capture_control_fops = {
 	.release = drm_capture_control_release,
 	.poll = drm_capture_control_poll,
 };
+
+bool drm_capture_files_match(struct file *capture, struct file *control)
+{
+	struct drm_capture_authority *authority = drm_capture_client_authority(capture);
+	struct drm_capture_control *owner;
+
+	if (!authority || !control || control->f_op != &drm_capture_control_fops)
+		return false;
+	owner = control->private_data;
+	return owner->authority == authority;
+}
+EXPORT_SYMBOL_GPL(drm_capture_files_match);
 
 static struct file *control_file_create(struct drm_capture_authority *authority,
 				       const struct drm_capture_control_owner_ops *ops,

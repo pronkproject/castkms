@@ -235,7 +235,32 @@ static void drm_capture_client_has_no_primary_or_pixel_dispatch(struct kunit *te
 	KUNIT_EXPECT_PTR_EQ(test, file->f_op->compat_ioctl, NULL);
 }
 
+static void drm_capture_file_pairs_check_roles_and_authority(struct kunit *test)
+{
+	struct drm_capture_authority *first_authority, *second_authority;
+	struct control_context *first_context, *second_context;
+	struct file *first_control = control_create(test, &first_authority, &first_context);
+	struct file *second_control = control_create(test, &second_authority, &second_context);
+	struct file *first = client_create(test, first_authority, first_context);
+	struct file *second = client_create(test, second_authority, second_context);
+
+	KUNIT_EXPECT_TRUE(test, drm_capture_files_match(first, first_control));
+	KUNIT_EXPECT_TRUE(test, drm_capture_files_match(second, second_control));
+	KUNIT_EXPECT_FALSE(test, drm_capture_files_match(first, second_control));
+	KUNIT_EXPECT_FALSE(test, drm_capture_files_match(second, first_control));
+	KUNIT_EXPECT_FALSE(test, drm_capture_files_match(first_control, first));
+	KUNIT_EXPECT_FALSE(test, drm_capture_files_match(first, first));
+	KUNIT_EXPECT_FALSE(test, drm_capture_files_match(first_control, first_control));
+	KUNIT_EXPECT_FALSE(test, drm_capture_files_match(NULL, first_control));
+	KUNIT_EXPECT_FALSE(test, drm_capture_files_match(first, NULL));
+	KUNIT_EXPECT_FALSE(test, drm_capture_authority_revoked(first_authority));
+	KUNIT_EXPECT_EQ(test, first_context->client_releases, 0);
+	drm_capture_authority_revoke(first_authority);
+	KUNIT_EXPECT_TRUE(test, drm_capture_files_match(first, first_control));
+}
+
 static struct kunit_case drm_capture_file_cases[] = {
+	KUNIT_CASE(drm_capture_file_pairs_check_roles_and_authority),
 	KUNIT_CASE(drm_capture_client_close_preserves_sibling_authority),
 	KUNIT_CASE(drm_capture_client_observes_revocation),
 	KUNIT_CASE(drm_capture_client_requires_an_owner_release),

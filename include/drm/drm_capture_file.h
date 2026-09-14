@@ -2,9 +2,18 @@
 #ifndef __DRM_CAPTURE_FILE_H__
 #define __DRM_CAPTURE_FILE_H__
 
+#include <linux/types.h>
+
 struct drm_capture_authority;
 struct file;
 struct module;
+
+/*
+ * Check endpoint roles and shared authority without granting permission or
+ * creating another revocation owner. Both file references must remain live.
+ * A matching revoked pair still matches; this is not an admission check.
+ */
+bool drm_capture_files_match(struct file *capture, struct file *control);
 
 /**
  * struct drm_capture_client_owner_ops - lifetime retained by a capture client file
