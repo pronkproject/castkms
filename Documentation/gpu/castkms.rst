@@ -104,6 +104,17 @@ than an activation token. HOST remains active, and the candidate has no live
 source claim. Canceling or dropping the operation releases its reservation;
 revoking its issuer stops authorization but does not replace operation cleanup.
 
+The candidate may request a fresh private copy of a completed host image.
+That operation additionally checks pixel ownership and the image's original
+output and configuration. Copying runs outside the locks that protect display
+and permission changes; the operation repeats its checks afterward while those
+locks are held again. Revocation, cancellation or a changed display interval
+discards the private result and returns its storage credit. Ordinary content
+updates do not relabel or invalidate an otherwise authorized earlier image.
+Returning a copy neither installs a descriptor nor activates execution;
+exposing it requires a separate decision about its recipient at descriptor
+installation.
+
 ``castkms.rs`` owns the virtual parent device and DRM registration. Destruction
 unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;
