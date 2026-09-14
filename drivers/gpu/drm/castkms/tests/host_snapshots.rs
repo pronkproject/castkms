@@ -94,6 +94,7 @@ mod cases {
         let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, layout)?;
         let image = compose::current(output, &pool)?.ok_or(EINVAL)?;
         let serial = image.content_serial();
+        let completed_at = image.completed_at();
         let configuration = image.configuration().cloned();
         let budget = Budget::new()?;
         let snapshot = Snapshot::new(fixture.drm.device(), &budget, &image)?;
@@ -111,6 +112,7 @@ mod cases {
         let replacement = compose::current(output, &pool)?.ok_or(EINVAL)?;
         check(replacement.content_serial() != serial)?;
         check(snapshot.content_serial() == serial)?;
+        check(snapshot.completed_at() - completed_at == kernel::time::Delta::ZERO)?;
         check(snapshot.configuration() == configuration.as_ref())?;
         check(snapshot.output_identity() == output.identity())?;
         check(snapshot.owner() == Some(&master))?;

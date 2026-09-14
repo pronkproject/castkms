@@ -30,7 +30,11 @@ use kernel::{
         SysMem, //
     },
     prelude::*,
-    sync::Arc, //
+    sync::Arc,
+    time::{
+        Instant,
+        Monotonic, //
+    }, //
 };
 
 /// One output's startup copies, including allocations retained after a failed candidate.
@@ -57,6 +61,7 @@ pub(crate) struct Snapshot {
     output: Identity,
     configuration: Option<Configuration>,
     content: Option<ContentSerial>,
+    completed_at: Instant<Monotonic>,
     owner: Option<MasterRef<Driver>>,
 }
 
@@ -82,6 +87,7 @@ impl Snapshot {
             output: image.output_identity().clone(),
             configuration: image.configuration().cloned(),
             content: image.content_serial(),
+            completed_at: image.completed_at(),
             owner: image.owner().cloned(),
         })
     }
@@ -100,6 +106,11 @@ impl Snapshot {
 
     pub(crate) fn content_serial(&self) -> Option<ContentSerial> {
         self.content
+    }
+
+    /// Completion time of the original image, not when this independent copy was made.
+    pub(crate) fn completed_at(&self) -> Instant<Monotonic> {
+        self.completed_at
     }
 
     pub(crate) fn owner(&self) -> Option<&MasterRef<Driver>> {
