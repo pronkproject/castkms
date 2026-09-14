@@ -4,20 +4,93 @@
 
 use super::{
     crtc::{
+        AsRawCrtc,
         AsRawCrtcStatePrivate,
+        Crtc,
         CrtcAtomicCommit,
         DriverCrtc, //
     },
     KmsDriver,
+    ModeObject,
     UnregisteredKmsDevice, //
 };
 use crate::{
-    drm::preparation::Source,
+    drm::{
+        device::{
+            Device,
+            Registered, //
+        },
+        preparation::Source, //
+    },
     error::to_result,
     prelude::*,
     sync::aref::ARef, //
 };
 use core::ptr::NonNull;
+
+impl<T: KmsDriver> Device<T, Registered> {
+    /// Observe the accepted CRTC generation while excluding another atomic state swap.
+    ///
+    /// The callback runs exactly once after acquiring the CRTC's modeset lock, or not at all
+    /// if locking is interrupted or the CRTC belongs to another device. It must not acquire
+    /// other modeset locks, submit transactions, wait for a commit tail, or release final DRM
+    /// references. Call without any modeset locks held.
+    ///
+    /// `None` denotes that no preparation source has been initialized. A source identifies
+    /// accepted state, not completion of its commit tail or installation of a driver's scene.
+    /// The callback may compare it with a separately locked publication before changing driver
+    /// control state.
+    /// Neither observation nor retaining the source grants access to pixels.
+    pub fn with_crtc_preparation_source<C: DriverCrtc<Driver = T>, R>(
+        &self,
+        crtc: &Crtc<C>,
+        observe: impl FnOnce(Option<&Source>) -> R,
+    ) -> Result<R> {
+        if self.as_raw() != crtc.drm_dev().as_raw() {
+            return Err(EINVAL);
+        }
+        // SAFETY: Registration excludes teardown and the identity check establishes that the
+        // CRTC belongs to this initialized device.
+        unsafe { with_current_source(crtc, observe) }
+    }
+}
+
+/// Observe one initialized CRTC, also used by the unregistered runtime consumer.
+///
+/// # Safety
+///
+/// CRTC setup, including its initial state, must be complete. The caller must exclude
+/// teardown and object creation for the call. The callback has the locking obligations of
+/// `Device::with_crtc_preparation_source`.
+pub(super) unsafe fn with_current_source<C: DriverCrtc, R>(
+    crtc: &Crtc<C>,
+    observe: impl FnOnce(Option<&Source>) -> R,
+) -> Result<R> {
+    // SAFETY: The caller retains the initialized CRTC and excludes cleanup of its mutex.
+    let lock = unsafe { &raw mut (*crtc.as_raw()).mutex };
+    // SAFETY: No acquire context is needed for this single, non-nested modeset lock.
+    to_result(unsafe { bindings::drm_modeset_lock_single_interruptible(lock) })?;
+    struct Unlock(*mut bindings::drm_modeset_lock);
+    impl Drop for Unlock {
+        fn drop(&mut self) {
+            // SAFETY: The owner is created only after successful acquisition on this task,
+            // remains local to the call and is dropped before the CRTC borrow ends.
+            unsafe { bindings::drm_modeset_unlock(self.0) };
+        }
+    }
+    let _unlock = Unlock(lock);
+    // SAFETY: The modeset lock stabilizes the current state and its source pointer. Teardown
+    // is excluded, and the callback cannot retain the borrowed source beyond this call.
+    let source = unsafe {
+        let state = (*crtc.as_raw()).state;
+        if state.is_null() {
+            None
+        } else {
+            NonNull::new((*state).prepare_source).map(|source| &*source.cast::<Source>().as_ptr())
+        }
+    };
+    Ok(observe(source))
+}
 
 impl<T: KmsDriver> UnregisteredKmsDevice<'_, T> {
     /// Enable preparation before creating CRTCs during single-threaded setup.
