@@ -15,12 +15,14 @@ use crate::{
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod authority;
+mod description;
 mod files;
 pub(crate) mod grant;
 mod range;
 mod selection;
 mod wait;
 pub use files::FilePair;
+pub use description::Description;
 pub use grant::Target;
 pub use authority::{
     Admission,
