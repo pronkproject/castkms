@@ -245,6 +245,45 @@ out:
 }
 EXPORT_SYMBOL_GPL(drm_capture_claim);
 
+/**
+ * drm_capture_claim_request - claim one queued request by its stream-local ID
+ * @capture: retained stream whose final-image scope the provider has approved
+ * @id: request to claim, never an instruction to choose another request
+ *
+ * This has the same job ownership and completion contract as drm_capture_claim().
+ * It does not authorize the provider or check authority membership. An
+ * authority-managed provider must use its authority's claim operation instead.
+ * The caller stabilizes any additional policy across the claim.
+ *
+ * Return: An exclusively owned job, -EKEYREVOKED for a stopped stream,
+ * -ENOENT for an absent or discarded request, or -EALREADY if it is not queued.
+ */
+struct drm_capture_job *drm_capture_claim_request(struct drm_capture *capture, u64 id)
+{
+	struct drm_capture_job *job;
+
+	mutex_lock(&capture->lock);
+	if (capture->revoked || capture->closed) {
+		job = ERR_PTR(-EKEYREVOKED);
+		goto out;
+	}
+	job = drm_capture_find(capture, id);
+	if (!job) {
+		job = ERR_PTR(-ENOENT);
+		goto out;
+	}
+	if (job->state != DRM_CAPTURE_QUEUED) {
+		job = ERR_PTR(-EALREADY);
+		goto out;
+	}
+	job->state = DRM_CAPTURE_CLAIMED;
+	kref_get(&capture->ref);
+out:
+	mutex_unlock(&capture->lock);
+	return job;
+}
+EXPORT_SYMBOL_GPL(drm_capture_claim_request);
+
 void *drm_capture_job_data(struct drm_capture_job *job)
 {
 	return job->data;

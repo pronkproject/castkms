@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/err.h>
+#include <linux/limits.h>
 #include <linux/module.h>
 #include <drm/drm_capture.h>
 #include <kunit/test.h>
@@ -365,7 +366,78 @@ static void drm_capture_incomplete_ranges_preserve_output(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(pixels, 0xa9, sizeof(pixels)), NULL);
 }
 
+static void drm_capture_claim_selected_request(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 2);
+	struct drm_capture_job *job;
+	u64 first, second;
+	u8 pixels[16];
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &first), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &second), 0);
+	job = drm_capture_claim_request(capture, second);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	memset(drm_capture_job_data(job), 0x29, sizeof(pixels));
+	drm_capture_complete(job, 0);
+	capture_expect_status(test, capture, first, false, -EINPROGRESS);
+	capture_expect_status(test, capture, second, true, 0);
+	KUNIT_EXPECT_EQ(test, drm_capture_copy_result(capture, second, pixels, sizeof(pixels)),
+			sizeof(pixels));
+	KUNIT_EXPECT_PTR_EQ(test, memchr_inv(pixels, 0x29, sizeof(pixels)), NULL);
+	job = drm_capture_claim(capture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	drm_capture_complete(job, -EIO);
+	capture_expect_status(test, capture, first, true, -EIO);
+}
+
+static void drm_capture_selected_claim_does_not_substitute(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 2);
+	struct drm_capture_job *job;
+	u64 first, second, replacement;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &first), 0);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &second), 0);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, 0)), -ENOENT);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, U64_MAX)), -ENOENT);
+	KUNIT_ASSERT_EQ(test, drm_capture_cancel(capture, first), 0);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, first)), -EALREADY);
+	KUNIT_ASSERT_EQ(test, drm_capture_discard(capture, first), 0);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, first)), -ENOENT);
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &replacement), 0);
+	KUNIT_EXPECT_GT(test, replacement, second);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, first)), -ENOENT);
+	capture_expect_status(test, capture, second, false, -EINPROGRESS);
+	capture_expect_status(test, capture, replacement, false, -EINPROGRESS);
+	job = drm_capture_claim_request(capture, second);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, second)), -EALREADY);
+	drm_capture_complete(job, 0);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, second)), -EALREADY);
+}
+
+static void drm_capture_selected_claim_retains_storage(struct kunit *test)
+{
+	struct drm_capture *capture = capture_create(test, 1);
+	struct drm_capture_job *job;
+	u64 id, next;
+
+	KUNIT_ASSERT_EQ(test, drm_capture_queue(capture, &id), 0);
+	job = drm_capture_claim_request(capture, id);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, job);
+	KUNIT_EXPECT_EQ(test, drm_capture_discard(capture, id), 0);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, id)), -ENOENT);
+	KUNIT_EXPECT_EQ(test, drm_capture_queue(capture, &next), -EAGAIN);
+	drm_capture_shutdown(capture);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(drm_capture_claim_request(capture, id)), -EKEYREVOKED);
+	memset(drm_capture_job_data(job), 0x45, 16);
+	drm_capture_complete(job, 0);
+}
+
 static struct kunit_case drm_capture_cases[] = {
+	KUNIT_CASE(drm_capture_claim_selected_request),
+	KUNIT_CASE(drm_capture_selected_claim_does_not_substitute),
+	KUNIT_CASE(drm_capture_selected_claim_retains_storage),
 	KUNIT_CASE(drm_capture_result_ranges),
 	KUNIT_CASE(drm_capture_rejected_ranges_preserve_output),
 	KUNIT_CASE(drm_capture_incomplete_ranges_preserve_output),

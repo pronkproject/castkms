@@ -69,6 +69,8 @@ ssize_t drm_capture_copy_result_range(struct drm_capture *capture, u64 id,
  * the provider fills the job. Never retain the data pointer after completion.
  */
 struct drm_capture_job *drm_capture_claim(struct drm_capture *capture);
+/* Claim only the named request; never fall back to another queued request. */
+struct drm_capture_job *drm_capture_claim_request(struct drm_capture *capture, u64 id);
 void *drm_capture_job_data(struct drm_capture_job *job);
 size_t drm_capture_job_size(struct drm_capture_job *job);
 void drm_capture_complete(struct drm_capture_job *job, int status);
