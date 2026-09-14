@@ -120,6 +120,14 @@ Rust ``ClientStream`` retains the file and attempts closure on drop. Explicit
 close errors remain retryable. CastKMS forwards these callbacks to its
 transport-independent client registry, also used by direct kernel consumers.
 
+Both C and Rust providers can use ``drm_capture_resources`` for stream and
+destination names. The table reserves a fixed number of slots and rejects
+zero, repeated or decreasing names. Failed construction does not consume a
+name; removal makes a slot available without making its old name reusable.
+The provider serializes access and owns the values in those slots, including
+their cleanup. Rust ``Resources<T>`` pairs that native table with typed values
+and exclusive borrows. Neither layer infers capture permission from a name.
+
 Drivers without capture leave the provider absent. This is not a requirement
 for native GPU drivers used by a userspace renderer, and it does not enable
 preparation or delegated rendering on another modesetting driver.

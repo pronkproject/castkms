@@ -24,6 +24,8 @@ pub(crate) mod grant;
 mod range;
 mod selection;
 mod wait;
+mod resources;
+pub use resources::Resources;
 pub use files::FilePair;
 pub use description::Description;
 pub use destination::{Destination, DestinationPlane};
