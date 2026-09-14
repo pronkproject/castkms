@@ -62,7 +62,7 @@ mod cases {
         let registered = other._display.registration_guard().ok_or(ENODEV)?;
         let mut calls = 0;
         check(
-            target.with_installed(&registered, |_| {
+            target.with_installed(&registered, |_, _| {
                 calls += 1;
                 Ok(())
             }) == Err(EINVAL),

@@ -43,7 +43,7 @@ mod cases {
         let registered = other._display.registration_guard().ok_or(ENODEV)?;
         let mut calls = 0;
         check(
-            candidate.with_activation_control(&registered, |_| {
+            candidate.with_activation_control(&registered, |_, _| {
                 calls += 1;
                 Ok(())
             }) == Err(EINVAL),
