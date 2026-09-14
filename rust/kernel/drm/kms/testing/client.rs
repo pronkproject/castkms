@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
-//! Owned internal DRM clients for private test devices, without registered client callbacks.
+//! Owned internal DRM clients for test devices, without registered client callbacks.
 
 use super::{
     KmsDriver,
     TestDevice, //
 };
 use crate::{
-    drm::file::File,
+    drm::{
+        device::{
+            Device,
+            Registered, //
+        },
+        file::File, //
+    },
     error::to_result,
     prelude::*,
     types::Opaque, //
@@ -21,13 +27,22 @@ pub(super) struct Client<T: KmsDriver> {
 
 impl<T: KmsDriver> Client<T> {
     pub(super) fn new(device: &TestDevice<T>) -> Result<Self> {
+        Self::new_on(device.device())
+    }
+
+    pub(super) fn new_registered(device: &Device<T, Registered>) -> Result<Self> {
+        Self::new_on(device)
+    }
+
+    // Both entry points retain completed KMS setup through native client initialization.
+    fn new_on(device: &Device<T>) -> Result<Self> {
         let raw = KBox::new(Opaque::new(Default::default()), GFP_KERNEL)?;
         // SAFETY: The fixture owns completed mode setup; the zeroed client has stable storage.
         // Successful initialization retains its own device/file references. No client callbacks
         // are registered, and native initialization unwinds its own failures.
         to_result(unsafe {
             bindings::drm_client_init(
-                device.device().as_raw(),
+                device.as_raw(),
                 raw.get(),
                 c"rust-kms-test-client".as_char_ptr(),
                 core::ptr::null(),
