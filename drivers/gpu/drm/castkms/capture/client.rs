@@ -18,7 +18,8 @@ use super::{
 use kernel::{
     drm::capture::{
         ClientOwner,
-        Description, //
+        Description,
+        Destination, //
     },
     prelude::*,
     sync::Arc, //
@@ -103,6 +104,28 @@ impl Client {
 // SAFETY: The callback trampolines, client destructor and dependencies belong to CastKMS.
 #[vtable]
 unsafe impl ClientOwner for Client {
+    fn register_destination(&mut self, id: u64, destination: &Destination<'_>) -> Result {
+        if destination.num_planes() != 1 {
+            return Err(EOPNOTSUPP);
+        }
+        let [width, height] = destination.dimensions();
+        let layout = crate::host_compositor::layout::Layout::new(width, height)?;
+        let plane = destination.plane(0).ok_or(EINVAL)?;
+        let image = Image::new(
+            plane.buffer().into(),
+            layout,
+            destination.format(),
+            destination.modifier(),
+            plane.stride() as usize,
+            plane.offset().try_into().map_err(|_| EOVERFLOW)?,
+        )?;
+        Client::register_destination(self, id, image)
+    }
+
+    fn unregister_destination(&mut self, id: u64) -> Result {
+        Client::unregister_destination(self, id)
+    }
+
     fn open_stream(&mut self, id: u64, offer: u64, capacity: u32) -> Result {
         Client::open_stream(self, id, offer, capacity)
     }
