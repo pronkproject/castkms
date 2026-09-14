@@ -15,6 +15,7 @@ use crate::{
 use core::{mem::ManuallyDrop, ptr::NonNull};
 
 mod authority;
+mod range;
 mod wait;
 pub use authority::{
     Admission,
