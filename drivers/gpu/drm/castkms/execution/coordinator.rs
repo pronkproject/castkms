@@ -2,16 +2,66 @@
 
 //! Device-wide exclusion for complete-cohort scene acceptance.
 
-use super::validation::{Contract, SceneView, Validation};
+use super::validation::{Contract, Epoch, SceneView, Validation};
+use crate::scene::Configuration;
 use kernel::{
     prelude::*,
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
+#[expect(
+    dead_code,
+    reason = "scope metadata is consumed by tagged installation"
+)]
+struct Pending {
+    token: u64,
+    owner: Arc<()>,
+    configuration: Configuration,
+    target: Contract,
+    epoch: Epoch,
+}
+
+struct Output {
+    validation: Validation,
+    pending: Option<Pending>,
+}
+
 struct State {
-    outputs: KVec<Validation>,
+    outputs: KVec<Output>,
     count: usize,
     closed: bool,
+    next_token: u64,
+}
+
+/// A cancellation owner containing no device, framebuffer or native DRM reference.
+/// Drop outside the coordinator lock. The metadata slot does not retain this owner.
+#[must_use = "dropping the reservation cancels its transition"]
+pub(crate) struct Reservation {
+    coordinator: Arc<Coordinator>,
+    output: usize,
+    token: u64,
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Reservation {
+    pub(crate) fn token(&self) -> u64 {
+        self.token
+    }
+
+    pub(crate) fn check(&self) -> Result {
+        let guard = self.coordinator.lock();
+        guard.pending(self.output, self.token).map(|_| ())
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let retired = {
+            let mut guard = self.coordinator.lock();
+            guard.cancel(self.output, self.token)
+        };
+        drop(retired);
+    }
 }
 
 /// Modeset locks precede this lock; native preparation locks follow it.
@@ -37,12 +87,16 @@ impl Coordinator {
                     }
                     let mut outputs = KVec::with_capacity(count, GFP_KERNEL)?;
                     for _ in 0..count {
-                        outputs.push(Validation::new(Contract::Host), GFP_KERNEL)?;
+                        outputs.push(Output {
+                            validation: Validation::new(Contract::Host),
+                            pending: None,
+                        }, GFP_KERNEL)?;
                     }
                     outputs
                 },
                 count,
                 closed: false,
+                next_token: 1,
             }),
         })
     }
@@ -61,6 +115,40 @@ impl Coordinator {
         drop(retired);
     }
 
+    /// Called only inside authorized renderer control. Registration does not restrict
+    /// animation; the final tagged native installation will establish that restriction.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn reserve(
+        self: &Arc<Self>,
+        output: usize,
+        owner: Arc<()>,
+        configuration: Configuration,
+        target: Contract,
+    ) -> Result<Reservation> {
+        let mut guard = self.lock();
+        if guard.0.closed {
+            return Err(ENODEV);
+        }
+        let token = guard.0.next_token.checked_add(1).ok_or(EOVERFLOW)?;
+        let slot = guard.0.outputs.get_mut(output).ok_or(EINVAL)?;
+        if slot.pending.is_some() {
+            return Err(EBUSY);
+        }
+        slot.pending = Some(Pending {
+            token,
+            owner,
+            configuration,
+            target,
+            epoch: slot.validation.epoch(),
+        });
+        guard.0.next_token = token;
+        Ok(Reservation {
+            coordinator: self.clone(),
+            output,
+            token,
+        })
+    }
+
     /// Exercise gate enforcement without exposing an unauthenticated production setter.
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn gate_for_test(&self, output: usize, proposal: u64, target: Contract) -> Result {
@@ -68,7 +156,7 @@ impl Coordinator {
         if guard.0.closed {
             return Err(ENODEV);
         }
-        let validation = guard.0.outputs.get_mut(output).ok_or(EINVAL)?;
+        let validation = &mut guard.0.outputs.get_mut(output).ok_or(EINVAL)?.validation;
         let epoch = validation.epoch();
         validation
             .prepare(epoch, proposal, target, SceneView::Disabled)?
@@ -88,6 +176,7 @@ impl Coordinator {
                 .outputs
                 .get_mut(output)
                 .ok_or(EINVAL)?
+                .validation
                 .cancel(proposal)
         };
         drop(retired);
@@ -96,6 +185,31 @@ impl Coordinator {
 }
 
 impl Guard<'_> {
+    fn pending(&self, output: usize, token: u64) -> Result<&Pending> {
+        if self.0.closed {
+            return Err(ENODEV);
+        }
+        let slot = self.0.outputs.get(output).ok_or(EINVAL)?;
+        slot.pending
+            .as_ref()
+            .filter(|pending| pending.token == token)
+            .ok_or(ESTALE)
+    }
+
+    fn cancel(&mut self, output: usize, token: u64) -> (Option<Pending>, Option<Contract>) {
+        let Some(slot) = self.0.outputs.get_mut(output) else {
+            return (None, None);
+        };
+        if !slot
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.token == token)
+        {
+            return (None, None);
+        }
+        (slot.pending.take(), slot.validation.cancel(token))
+    }
+
     pub(crate) fn check(&self, output: usize, scene: SceneView<'_>) -> Result {
         if output >= self.0.count {
             return Err(EINVAL);
@@ -108,7 +222,12 @@ impl Guard<'_> {
                 SceneView::Enabled { .. } => Err(ENODEV),
             };
         }
-        self.0.outputs.get(output).ok_or(EINVAL)?.check(scene)
+        self.0
+            .outputs
+            .get(output)
+            .ok_or(EINVAL)?
+            .validation
+            .check(scene)
     }
 }
 
@@ -117,6 +236,42 @@ impl Guard<'_> {
 mod tests {
     use super::*;
     use kernel::sync::Arc;
+
+    fn configuration() -> Result<Configuration> {
+        Configuration::new(1, [640, 480], 60000, 0)
+    }
+
+    #[test]
+    fn reservations_are_unique_across_outputs_and_cancellation() -> Result {
+        let coordinator = Arc::pin_init(Coordinator::new(2), GFP_KERNEL)?;
+        let owner = Arc::new((), GFP_KERNEL)?;
+        let first = coordinator.reserve(0, owner.clone(), configuration()?, Contract::Host)?;
+        let second = coordinator.reserve(1, owner.clone(), configuration()?, Contract::Host)?;
+        assert_ne!(first.token(), second.token());
+        assert!(matches!(
+            coordinator.reserve(0, owner.clone(), configuration()?, Contract::Host),
+            Err(EBUSY)
+        ));
+        assert!(matches!(
+            coordinator.lock().pending(1, first.token()),
+            Err(ESTALE)
+        ));
+        let token = first.token();
+        drop(first);
+        let replacement = coordinator.reserve(0, owner, configuration()?, Contract::Host)?;
+        assert!(replacement.token() > token);
+        {
+            let mut guard = coordinator.lock();
+            let retired = guard.cancel(0, token);
+            assert!(retired.0.is_none());
+        }
+        replacement.check()?;
+        second.check()?;
+        coordinator.close();
+        assert_eq!(replacement.check(), Err(ENODEV));
+        assert_eq!(second.check(), Err(ENODEV));
+        Ok(())
+    }
 
     #[test]
     fn output_bounds_match_device_construction() -> Result {
