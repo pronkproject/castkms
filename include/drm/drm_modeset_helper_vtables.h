@@ -1496,6 +1496,30 @@ static inline void drm_plane_helper_add(struct drm_plane *plane,
  */
 struct drm_mode_config_helper_funcs {
 	/**
+	 * @atomic_commit_install:
+	 *
+	 * Optional serialization around software state installation. The swap
+	 * helpers invoke this after predecessor waits and before acquiring any
+	 * preparation cancellation lock. The caller still owns the modeset locks.
+	 * TEST_ONLY updates never invoke this hook. Async plane updates are not
+	 * supported when this hook is present.
+	 *
+	 * Revalidate driver state under driver locks, then call @install exactly
+	 * once with the supplied arguments while retaining those locks. Return
+	 * its result unchanged. On rejection, return an error without calling
+	 * @install. Do not wait, release modeset locks, retain the continuation,
+	 * or return an error after successful installation. Driver-side state
+	 * changes must be committed only if @install succeeds.
+	 *
+	 * The continuation includes preparation validation and may still fail
+	 * without installing state. The hook does not authorize source access or
+	 * establish commit-tail completion.
+	 */
+	int (*atomic_commit_install)(struct drm_atomic_commit *state,
+				     int (*install)(struct drm_atomic_commit *state,
+						    void *data), void *data);
+
+	/**
 	 * @atomic_commit_tail:
 	 *
 	 * This hook is used by the default atomic_commit() hook implemented in

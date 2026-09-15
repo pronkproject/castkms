@@ -11,6 +11,7 @@
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_colorop.h>
 #include <drm/drm_device.h>
+#include <drm/drm_modeset_helper_vtables.h>
 #include <kunit/test.h>
 
 /* Isolated state-pointer installation, without driver callbacks or registration. */
@@ -41,6 +42,26 @@ struct swap_fixture {
 	struct drm_prepare_ticket *ticket;
 	struct drm_prepare_attempt *attempt;
 	struct drm_prepare_retirement_guard *guard;
+	unsigned int install_calls;
+	int install_error;
+	bool cancel_at_install;
+};
+
+static int driver_install(struct drm_atomic_commit *state,
+			  int (*install)(struct drm_atomic_commit *, void *), void *data)
+{
+	struct swap_fixture *f = container_of(state, struct swap_fixture, state);
+
+	f->install_calls++;
+	if (f->install_error)
+		return f->install_error;
+	if (f->cancel_at_install)
+		drm_prepare_ticket_cancel(f->ticket);
+	return install(state, data);
+}
+
+static const struct drm_mode_config_helper_funcs install_helpers = {
+	.atomic_commit_install = driver_install,
 };
 
 static struct swap_fixture *new_fixture(struct kunit *test)
@@ -394,7 +415,83 @@ static void async_preparation_leaves_state_and_ticket_unchanged(struct kunit *te
 	KUNIT_EXPECT_NOT_NULL(test, f->guard);
 }
 
+static void driver_install_is_after_predecessor_waits(struct kunit *test)
+{
+	struct swap_fixture *f = new_fixture(test);
+
+	f->dev.mode_config.helper_private = &install_helpers;
+	f->interrupt = true;
+	run_swap(test, f);
+	KUNIT_ASSERT_EQ(test, f->result, -ERESTARTSYS);
+	KUNIT_EXPECT_EQ(test, f->install_calls, 0);
+	expect_uninstalled(test, f);
+
+	/* run_swap unblocks predecessors before joining the interrupted worker. */
+	f->interrupt = false;
+	f->install_error = -ESTALE;
+	run_swap(test, f);
+	KUNIT_ASSERT_EQ(test, f->result, -ESTALE);
+	KUNIT_EXPECT_EQ(test, f->install_calls, 1);
+	expect_uninstalled(test, f);
+	f->install_error = 0;
+	run_swap(test, f);
+	KUNIT_ASSERT_EQ(test, f->result, 0);
+	KUNIT_EXPECT_EQ(test, f->install_calls, 2);
+	expect_installed(test, f);
+}
+
+static void driver_install_precedes_preparation_cancellation_lock(struct kunit *test)
+{
+	struct swap_fixture *f = new_fixture(test);
+
+	prepare_fixture(test, f);
+	f->dev.mode_config.helper_private = &install_helpers;
+	f->stall = false;
+	f->cancel_at_install = true;
+	run_swap(test, f);
+	KUNIT_ASSERT_EQ(test, f->result, -ECANCELED);
+	KUNIT_EXPECT_EQ(test, f->install_calls, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
+	expect_uninstalled(test, f);
+}
+
+static void driver_rejection_preserves_preparation_for_retry(struct kunit *test)
+{
+	struct swap_fixture *f = new_fixture(test);
+
+	prepare_fixture(test, f);
+	f->dev.mode_config.helper_private = &install_helpers;
+	f->stall = false;
+	f->install_error = -EAGAIN;
+	run_swap(test, f);
+	KUNIT_ASSERT_EQ(test, f->result, -EAGAIN);
+	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(f->ticket), DRM_PREPARE_TICKET_READY);
+	KUNIT_EXPECT_PTR_EQ(test, f->guard, NULL);
+	expect_uninstalled(test, f);
+	f->install_error = 0;
+	run_swap(test, f);
+	KUNIT_ASSERT_EQ(test, f->result, 0);
+	KUNIT_EXPECT_NOT_NULL(test, f->guard);
+	expect_installed(test, f);
+}
+
+static void async_commit_cannot_bypass_install_hook(struct kunit *test)
+{
+	struct swap_fixture *f = new_fixture(test);
+
+	f->dev.mode_config.helper_private = &install_helpers;
+	f->state.async_update = true;
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_commit(&f->dev, &f->state, true), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_swap_state(&f->state, false), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->install_calls, 0);
+	expect_uninstalled(test, f);
+}
+
 static struct kunit_case cases[] = {
+	KUNIT_CASE(driver_rejection_preserves_preparation_for_retry),
+	KUNIT_CASE(async_commit_cannot_bypass_install_hook),
+	KUNIT_CASE(driver_install_is_after_predecessor_waits),
+	KUNIT_CASE(driver_install_precedes_preparation_cancellation_lock),
 	KUNIT_CASE(each_interrupted_predecessor_leaves_all_state_uninstalled),
 	KUNIT_CASE(completed_predecessors_allow_installation_with_a_signal),
 	KUNIT_CASE(no_stall_skips_pending_predecessors),

@@ -2262,6 +2262,11 @@ int drm_atomic_helper_commit(struct drm_device *dev,
 	int ret;
 
 	if (state->async_update) {
+		const struct drm_mode_config_helper_funcs *funcs =
+			dev->mode_config.helper_private;
+
+		if (funcs && funcs->atomic_commit_install)
+			return -EOPNOTSUPP;
 		if (state->preparation)
 			return -EOPNOTSUPP;
 		ret = drm_atomic_helper_prepare_planes(dev, state);
@@ -3366,6 +3371,26 @@ static int install_prepared_state(void *data)
 	return 0;
 }
 
+static int install_with_driver(struct drm_atomic_commit *state,
+			       int (*install)(struct drm_atomic_commit *, void *),
+			       void *data)
+{
+	const struct drm_mode_config_helper_funcs *funcs =
+		state->dev->mode_config.helper_private;
+
+	if (funcs && funcs->atomic_commit_install) {
+		if (state->async_update)
+			return -EOPNOTSUPP;
+		return funcs->atomic_commit_install(state, install, data);
+	}
+	return install(state, data);
+}
+
+static int install_attached_preparation(struct drm_atomic_commit *state, void *data)
+{
+	return drm_atomic_commit_preparation_install(state, install_prepared_state);
+}
+
 /**
  * drm_atomic_helper_swap_state - store atomic state into current sw state
  * @state: atomic state
@@ -3416,9 +3441,25 @@ int drm_atomic_helper_swap_state(struct drm_atomic_commit *state, bool stall)
 		if (ret)
 			return ret;
 	}
-	return drm_atomic_commit_preparation_install(state, install_prepared_state);
+	return install_with_driver(state, install_attached_preparation, NULL);
 }
 EXPORT_SYMBOL(drm_atomic_helper_swap_state);
+
+struct explicit_preparation {
+	struct drm_prepare_attempt *attempt;
+	const struct drm_prepare_output_generation *outputs;
+	unsigned int count;
+	struct drm_prepare_retirement_guard **guard;
+};
+
+static int install_explicit_preparation(struct drm_atomic_commit *state, void *data)
+{
+	struct explicit_preparation *prepared = data;
+
+	return drm_prepare_attempt_commit(prepared->attempt, prepared->outputs,
+					  prepared->count, install_prepared_state,
+					  state, prepared->guard);
+}
 
 /**
  * drm_atomic_helper_swap_state_prepared - install state with reserved preparation
@@ -3459,6 +3500,7 @@ int drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool 
 					unsigned int count,
 					struct drm_prepare_retirement_guard **guard)
 {
+	struct explicit_preparation prepared = { attempt, outputs, count, guard };
 	int ret;
 
 	if (state->preparation)
@@ -3470,8 +3512,7 @@ int drm_atomic_helper_swap_state_prepared(struct drm_atomic_commit *state, bool 
 		if (ret)
 			return ret;
 	}
-	return drm_prepare_attempt_commit(attempt, outputs, count, install_prepared_state,
-					  state, guard);
+	return install_with_driver(state, install_explicit_preparation, &prepared);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_helper_swap_state_prepared);
 
