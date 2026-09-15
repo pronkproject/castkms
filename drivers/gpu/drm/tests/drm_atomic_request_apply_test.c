@@ -21,6 +21,7 @@ struct apply_fixture {
 	struct drm_atomic_commit *state;
 	unsigned int validations;
 	int validation_error;
+	const struct drm_crtc_funcs *original_crtc_funcs;
 };
 
 static void finish_state(void *data)
@@ -642,7 +643,61 @@ static void plane_color_is_reapplied_to_current_state(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->validations, 2);
 }
 
+static int set_test_scalar(struct drm_crtc *crtc, struct drm_crtc_state *state,
+			   struct drm_property *property, u64 value)
+{
+	/* The minimal fixture uses an otherwise unused state bit as its payload. */
+	state->self_refresh_active = value;
+	return 0;
+}
+
+static void restore_crtc_funcs(void *data)
+{
+	struct apply_fixture *f = data;
+
+	f->crtc->funcs = f->original_crtc_funcs;
+}
+
+static void private_scalar_is_reapplied_only_after_opt_in(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->crtc->base, .type = DRM_ATOMIC_REQUEST_SCALAR, .scalar = 1,
+	};
+	struct drm_crtc_funcs *funcs;
+	struct drm_atomic_request *request;
+	struct drm_property *unmarked;
+	unsigned int i;
+
+	funcs = kunit_kmalloc(test, sizeof(*funcs), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, funcs);
+	*funcs = *f->crtc->funcs;
+	funcs->atomic_set_property = set_test_scalar;
+	f->original_crtc_funcs = f->crtc->funcs;
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, restore_crtc_funcs, f), 0);
+	f->crtc->funcs = funcs;
+	unmarked = drm_property_create_range(f->dev, DRM_MODE_PROP_ATOMIC, "PRIVATE", 0, 1);
+	KUNIT_ASSERT_NOT_NULL(test, unmarked);
+	drm_object_attach_property(&f->crtc->base, unmarked, 0);
+	entry.property = unmarked;
+	request = new_request(test, f, &entry, 1);
+	KUNIT_EXPECT_EQ(test, apply_request(request, f->state, validate_request, f), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, f->validations, 0);
+	entry.property = drm_property_create_replayable_range(f->dev, "REPLAYABLE", 0, 1);
+	KUNIT_ASSERT_NOT_NULL(test, entry.property);
+	drm_object_attach_property(&f->crtc->base, entry.property, 0);
+	request = new_request(test, f, &entry, 1);
+	for (i = 0; i < 2; i++) {
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		KUNIT_EXPECT_TRUE(test, drm_atomic_get_new_crtc_state(f->state, f->crtc)->self_refresh_active);
+		KUNIT_EXPECT_FALSE(test, f->crtc->state->self_refresh_active);
+		drm_atomic_commit_clear(f->state);
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static struct kunit_case apply_tests[] = {
+	KUNIT_CASE(private_scalar_is_reapplied_only_after_opt_in),
 	KUNIT_CASE(plane_color_is_reapplied_to_current_state),
 	KUNIT_CASE(rotation_is_reapplied_to_current_state),
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),

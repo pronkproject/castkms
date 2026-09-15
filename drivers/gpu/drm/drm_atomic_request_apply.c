@@ -26,7 +26,9 @@ bool drm_atomic_request_supports_property(struct drm_mode_object *object,
 	if (object->type == DRM_MODE_OBJECT_CRTC)
 		return property == config->prop_mode_id ||
 		       property == config->prop_active ||
-		       drm_atomic_is_crtc_color_property(obj_to_crtc(object), property);
+		       drm_atomic_is_crtc_color_property(obj_to_crtc(object), property) ||
+		       (property->atomic_replay_scalar &&
+			obj_to_crtc(object)->funcs->atomic_set_property);
 	if (object->type == DRM_MODE_OBJECT_CONNECTOR)
 		return property == config->prop_crtc_id;
 	return false;
@@ -86,7 +88,14 @@ static int apply_entry(struct drm_atomic_commit *state,
 		if (drm_atomic_is_crtc_color_property(crtc_state->crtc, entry->property))
 			return drm_atomic_set_color_property_for_crtc(crtc_state, entry->property,
 								     entry->blob);
-		return drm_atomic_set_mode_prop_for_crtc(crtc_state, entry->blob);
+		if (entry->property == state->dev->mode_config.prop_mode_id)
+			return drm_atomic_set_mode_prop_for_crtc(crtc_state, entry->blob);
+		if (entry->property->atomic_replay_scalar &&
+		    entry->type == DRM_ATOMIC_REQUEST_SCALAR &&
+		    crtc_state->crtc->funcs->atomic_set_property)
+			return crtc_state->crtc->funcs->atomic_set_property(crtc_state->crtc,
+					crtc_state, entry->property, entry->scalar);
+		return -EOPNOTSUPP;
 	case DRM_MODE_OBJECT_CONNECTOR:
 		connector_state = drm_atomic_get_connector_state(state,
 								obj_to_connector(entry->object));
@@ -118,7 +127,8 @@ static int apply_entry(struct drm_atomic_commit *state,
  * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H, SRC_X/Y/W/H, rotation,
  * COLOR_ENCODING and COLOR_RANGE, controller
  * MODE_ID/ACTIVE and DEGAMMA_LUT/CTM/GAMMA_LUT, and connector CRTC_ID.
- * Driver-private properties and asynchronous-flip validation are not supported.
+ * Driver-private CRTC ranges explicitly marked as replayable scalars are also
+ * supported. Other private properties and asynchronous flips are not supported.
  * No check or commit runs.
  *
  * Locks remain in the caller's acquire context on every return. On error the
