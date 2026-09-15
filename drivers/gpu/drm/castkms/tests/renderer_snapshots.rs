@@ -335,6 +335,9 @@ mod cases {
     #[test]
     fn retained_copies_share_a_budget_across_authorized_candidates() -> Result {
         let fixture = Fixture::new()?;
+        let _pressure = fixture.drm.device().startup.reserve_for_test(
+            fixture.drm.device(), (512 - 16) * 1024 * 1024,
+        )?;
         let _connector = fixture.drm.publish_connector_identity()?;
         let file = fixture.drm.master_file()?;
         let owner = owner(&fixture, &file)?;

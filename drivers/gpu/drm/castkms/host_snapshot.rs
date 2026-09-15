@@ -50,8 +50,19 @@ use kernel::{
 pub(crate) struct Budget(Arc<gem::budget::Budget>);
 
 impl Budget {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn reserve_for_test(&self, device: &Device<Driver>, bytes: usize) -> Result<impl Sized> {
+        // An unmapped shmem object reserves credit without populating pixel pages.
+        gem::Object::new_budgeted(device, &self.0, bytes)
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn limited_for_test(bytes: usize) -> Result<Self> {
+        Ok(Self(gem::budget::Budget::new(bytes)?))
+    }
+
     pub(crate) fn new() -> Result<Self> {
-        Ok(Self(gem::budget::Budget::new(16 * 1024 * 1024)?))
+        Ok(Self(gem::budget::Budget::new(512 * 1024 * 1024)?))
     }
 }
 
