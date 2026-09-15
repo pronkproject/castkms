@@ -233,6 +233,32 @@ impl Active {
             _ => Err(EIO),
         }
     }
+
+    /// Run an operation while this exact active incarnation cannot be invalidated.
+    ///
+    /// The callback holds the startup lock and must not reenter startup control, wait for
+    /// work, acquire outer locks or release final DRM references.
+    pub(crate) fn with_current<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        match &*self.startup.state.lock() {
+            State::Active(current) if Arc::ptr_eq(current, &self.identity) => f(),
+            State::Closed => Err(ENODEV),
+            _ => Err(EIO),
+        }
+    }
+
+    /// Require ownership transferred from the named candidate before running an operation.
+    pub(crate) fn with_candidate<R>(
+        &self,
+        candidate: &Candidate,
+        f: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
+        if !Arc::ptr_eq(&self.startup, &candidate.startup)
+            || !Arc::ptr_eq(&self.identity, &candidate.identity)
+        {
+            return Err(EINVAL);
+        }
+        self.with_current(f)
+    }
 }
 
 impl Drop for Active {

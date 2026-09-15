@@ -4,7 +4,10 @@
 
 use super::*;
 use crate::execution::Profile;
-use kernel::dma_fence::testing::ManualFence;
+use kernel::{
+    dma_fence::testing::ManualFence,
+    sync::aref::ARef, //
+};
 
 #[kunit_tests(rust_castkms_renderer_publication)]
 mod cases {
@@ -74,6 +77,91 @@ mod cases {
             check(matches!(device.startup.begin(), Err(EBUSY)))?;
             drop(active);
             check(matches!(device.startup.begin(), Err(EBUSY)))
+        })
+    }
+
+    #[test]
+    fn active_renderer_claim_retires_only_after_explicit_release() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            candidate.submit_private_probe(None)?;
+            let (active, _, description) = candidate.activate(device)?;
+            let source = device
+                .output
+                .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                .ok_or(EINVAL)?;
+            check(candidate.claim_source(&active, candidate.execution()).err() == Some(ESTALE))?;
+            let job = candidate.claim_source(&active, description)?;
+            check(job.scene().primary().is_some())?;
+            source.seal();
+            check(source.prepared()?.is_none())?;
+            job.release_without_access();
+            check(source.prepared()?.is_some())
+        })
+    }
+
+    #[test]
+    fn dropped_renderer_job_fails_source_preparation() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            candidate.submit_private_probe(None)?;
+            let (active, _, description) = candidate.activate(device)?;
+            let source = device
+                .output
+                .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                .ok_or(EINVAL)?;
+            let job = candidate.claim_source(&active, description)?;
+            source.seal();
+            drop(job);
+            check(matches!(source.prepared(), Err(EIO)))
+        })
+    }
+
+    #[test]
+    fn cpu_renderer_release_completes_source_preparation() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            candidate.submit_private_probe(None)?;
+            let (active, _, description) = candidate.activate(device)?;
+            let source = device
+                .output
+                .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                .ok_or(EINVAL)?;
+            let job = candidate.claim_source(&active, description)?;
+            source.seal();
+            job.release_cpu();
+            let prepared = source.prepared()?.ok_or(EAGAIN)?;
+            check(prepared.completion()?.is_none())
+        })
+    }
+
+    #[test]
+    fn submitted_renderer_release_transfers_native_completion() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            candidate.submit_private_probe(None)?;
+            let (active, _, description) = candidate.activate(device)?;
+            let source = device
+                .output
+                .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                .ok_or(EINVAL)?;
+            let job = candidate.claim_source(&active, description)?;
+            let mut completion = ManualFence::new()?;
+            let fence = completion.fence();
+            source.seal();
+            job.release_submitted(&fence);
+            let prepared = source.prepared()?.ok_or(EAGAIN)?;
+            let retained = prepared.completion()?.ok_or(EINVAL)?;
+            check(matches!(retained.status(), kernel::dma_fence::Status::Pending))?;
+            completion.complete(Ok(()))?;
+            check(matches!(
+                retained.status(),
+                kernel::dma_fence::Status::Complete(Ok(()))
+            ))
         })
     }
 
