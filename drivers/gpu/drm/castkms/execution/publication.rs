@@ -135,6 +135,7 @@ impl Publication {
         expected: Description,
         worker: &Arc<()>,
         profile: Arc<super::capabilities::Profile>,
+        reserve: impl FnOnce() -> Result<super::coordinator::Reservation>,
     ) -> Result<super::proposal::Registration> {
         let mut state = self.state.lock();
         match state.slot {
@@ -149,14 +150,17 @@ impl Publication {
             return Err(EBUSY);
         }
         let generation = super::proposal::next_generation(state.next_proposal)?;
+        let reservation = reserve()?;
         let description = super::proposal::DescriptionSnapshot {
             generation,
+            transition: reservation.token(),
             expected,
             profile,
         };
         state.pending = Some(super::proposal::Entry {
             description: description.clone(),
             worker: worker.clone(),
+            reservation,
         });
         state.next_proposal = generation;
         Ok(super::proposal::Registration {
@@ -175,7 +179,7 @@ impl Publication {
                 if entry.description.generation == generation
                     && entry.description.expected == state.description =>
             {
-                Ok(())
+                entry.reservation.check()
             }
             _ => Err(ESTALE),
         }
