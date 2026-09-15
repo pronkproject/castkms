@@ -2,7 +2,23 @@
 
 //! Bounded complete-scene encoding and transactional descriptor publication.
 
-use kernel::{drm::kms::colorop::Operation, prelude::*, uapi};
+use super::{job::Plane, session::Session};
+use crate::scene::Kind;
+use kernel::{
+    drm::{
+        fourcc,
+        kms::{
+            colorop::Operation,
+            plane::{ColorEncoding, ColorRange},
+        },
+    },
+    fs::{file::FileDescriptorReservation, File},
+    prelude::*,
+    sync::aref::ARef,
+    transmute::FromBytes,
+    uaccess::{UserPtr, UserSlice},
+    uapi,
+};
 
 const MAX_BYTES: usize = uapi::DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES as usize;
 
@@ -20,6 +36,17 @@ const _: () = {
             == uapi::DRM_CASTKMS_RENDERER_SCENE_MAX_COLOR_OPS as usize
     );
 };
+
+#[repr(C)]
+struct Request {
+    result: u64,
+    capacity: u32,
+    flags: u32,
+    reserved: u64,
+}
+
+// SAFETY: All fields are integers accepting every bit pattern.
+unsafe impl FromBytes for Request {}
 
 struct Encoding {
     bytes: KVec<u8>,
@@ -92,6 +119,162 @@ impl Encoding {
         }
         Ok(())
     }
+}
+
+fn reserve(
+    outputs: &mut KVec<(FileDescriptorReservation, ARef<File>)>,
+    file: ARef<File>,
+) -> Result<i32> {
+    let reservation =
+        FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
+    let fd = reservation
+        .reserved_fd()
+        .try_into()
+        .map_err(|_| EOVERFLOW)?;
+    outputs.push((reservation, file), GFP_KERNEL)?;
+    Ok(fd)
+}
+
+pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
+    const {
+        assert!(
+            core::mem::size_of::<Request>()
+                == core::mem::size_of::<uapi::drm_castkms_renderer_dequeue_scene>()
+        );
+        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_scene>() == 48);
+        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_layer>() == 144);
+    }
+    let request = UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Request>())
+        .reader()
+        .read::<Request>()?;
+    if request.result == 0
+        || request.flags != 0
+        || request.reserved != 0
+        || request.capacity as usize > MAX_BYTES
+    {
+        return Err(EINVAL);
+    }
+    let address = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
+    let pending = session.begin_source()?;
+    let scene = pending.scene_description()?;
+    let mut encoded = Encoding::new()?;
+    let mut outputs = KVec::with_capacity(scene.layers.len() * 4 + 1, GFP_KERNEL)?;
+    let producer = match pending.producer_completion()? {
+        Some(fence) => reserve(&mut outputs, fence.create_sync_file()?)?,
+        None => -1,
+    };
+    encoded.word(uapi::DRM_CASTKMS_RENDERER_SCENE_VERSION)?;
+    encoded.word(0)?;
+    encoded.wide(pending.id())?;
+    encoded.wide(scene.content_serial)?;
+    for dimension in scene.output {
+        encoded.word(dimension)?;
+    }
+    encoded.word(scene.layers.len() as u32)?;
+    encoded.word(producer as u32)?;
+    encoded.word(0)?;
+    encoded.word(0)?;
+    // Retain one export per distinct GEM object, including aliases across layers.
+    let mut buffers = KVec::with_capacity(scene.layers.len() * 4, GFP_KERNEL)?;
+    for layer in &scene.layers {
+        let start = encoded.bytes.len();
+        let framebuffer = layer.framebuffer();
+        let geometry = layer.geometry();
+        let operations = layer
+            .color
+            .as_ref()
+            .map_or(&[][..], |color| color.operations());
+        encoded.word(0)?;
+        encoded.word(match layer.kind {
+            Kind::Primary => 0,
+            Kind::Overlay => 1,
+            Kind::Cursor => 2,
+        })?;
+        encoded.word(layer.zpos)?;
+        encoded.word(framebuffer.format())?;
+        encoded.wide(framebuffer.modifier().unwrap_or(fourcc::FORMAT_MOD_INVALID))?;
+        encoded.word(framebuffer.width())?;
+        encoded.word(framebuffer.height())?;
+        for value in geometry.source {
+            encoded.word(value)?;
+        }
+        for value in geometry.position {
+            encoded.word(value as u32)?;
+        }
+        for value in geometry.destination {
+            encoded.word(value)?;
+        }
+        encoded.word(match layer.yuv.0 {
+            ColorEncoding::Bt601 => 0,
+            ColorEncoding::Bt709 => 1,
+            ColorEncoding::Bt2020 => 2,
+        })?;
+        encoded.word(match layer.yuv.1 {
+            ColorRange::Limited => 0,
+            ColorRange::Full => 1,
+        })?;
+        encoded.word(framebuffer.plane_count() as u32)?;
+        encoded.word(operations.len() as u32)?;
+        for index in 0..4 {
+            let (fd, pitch, offset) = if index < framebuffer.plane_count() {
+                let plane = Plane::new(layer, index)?;
+                let previous = buffers.iter().find(
+                    |(old, _): &&(Plane<'_>, ARef<kernel::dma_buf::DmaBuf>)| {
+                        plane.shares_storage_with(old)
+                    },
+                );
+                let buffer = match previous {
+                    Some((_, buffer)) => buffer.clone(),
+                    None => plane.export()?,
+                };
+                let fd = reserve(&mut outputs, buffer.to_file())?;
+                let metadata = (fd, plane.pitch, plane.offset);
+                buffers.push((plane, buffer), GFP_KERNEL)?;
+                metadata
+            } else {
+                (-1, 0, 0)
+            };
+            encoded.word(fd as u32)?;
+            encoded.word(pitch)?;
+            encoded.word(offset)?;
+            encoded.word(0)?;
+        }
+        for operation in operations {
+            encoded.operation(operation)?;
+        }
+        encoded.patch(start, encoded.bytes.len() - start)?;
+    }
+    let mut output_count = 0;
+    if let Some(color) = scene.color {
+        let (degamma, matrix, gamma) = color.description();
+        if let Some(lut) = degamma {
+            encoded.lut(lut)?;
+            output_count += 1;
+        }
+        if let Some(matrix) = matrix {
+            encoded.matrix(matrix)?;
+            output_count += 1;
+        }
+        if let Some(lut) = gamma {
+            encoded.lut(lut)?;
+            output_count += 1;
+        }
+    }
+    encoded.patch(40, output_count)?;
+    encoded.patch(4, encoded.bytes.len())?;
+    if encoded.bytes.len() > request.capacity as usize {
+        return Err(ENOSPC);
+    }
+    UserSlice::new(UserPtr::from_addr(address), encoded.bytes.len())
+        .writer()
+        .write_slice(&encoded.bytes)?;
+    drop(buffers);
+    drop(scene);
+    pending.publish(move || {
+        for (reservation, file) in outputs {
+            reservation.fd_install(file);
+        }
+    })
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
