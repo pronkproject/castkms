@@ -344,6 +344,7 @@ impl Crtc {
             state.configuration.clone(),
         );
         if old.configuration != state.configuration {
+            transaction.drm_dev().startup.cancel_current();
             if let Some(configuration) = &old.configuration {
                 transaction
                     .drm_dev()

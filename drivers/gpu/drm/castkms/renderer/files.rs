@@ -5,7 +5,8 @@
 use super::{
     client_file,
     permission::Owner,
-    revoker_file, //
+    revoker_file,
+    session::Session, //
 };
 use kernel::{
     fs::File,
@@ -27,8 +28,9 @@ impl Files {
     /// unique owner and revokes every access handle, including duplicated renderer files.
     /// Failure publishes no descriptor and revokes through normal owner cleanup.
     pub(crate) fn new(owner: Owner) -> Result<Self> {
-        let renderer = client_file::create(owner.access())?;
-        let revoker = revoker_file::create(owner)?;
+        let session = Session::new(owner.access())?;
+        let renderer = client_file::create(session.clone())?;
+        let revoker = revoker_file::create(owner, session)?;
         Ok(Self { renderer, revoker })
     }
 

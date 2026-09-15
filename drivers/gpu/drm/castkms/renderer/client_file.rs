@@ -2,7 +2,7 @@
 
 //! Anonymous renderer endpoint retaining access without its revocation owner.
 
-use super::permission::Access;
+use super::session::Session;
 use crate::{execution::Profile, CastKms};
 use core::{ffi::c_void, ptr::NonNull};
 use kernel::{
@@ -11,8 +11,8 @@ use kernel::{
     fs::File,
     module::this_module,
     prelude::*,
-    sync::aref::ARef, //
-    transmute::AsBytes,
+    sync::{aref::ARef, Arc}, //
+    transmute::{AsBytes, FromBytes},
     uaccess::{UserPtr, UserSlice},
     uapi,
 };
@@ -29,8 +29,44 @@ struct Query {
 // SAFETY: Query contains only integers and has no padding.
 unsafe impl AsBytes for Query {}
 
+#[repr(C)]
+struct Begin {
+    expected_generation: u64,
+    result: u64,
+    flags: u32,
+    reserved: [u32; 3],
+}
+
+// SAFETY: Every bit pattern is valid for Begin's integer fields.
+unsafe impl FromBytes for Begin {}
+
+#[repr(C)]
+struct BeginResult {
+    candidate_id: u64,
+    execution_generation: u64,
+    profile: u32,
+    width: u32,
+    height: u32,
+    refresh_millihz: u32,
+    mode_flags: u32,
+    reserved: u32,
+}
+
+// SAFETY: BeginResult contains only integers and has no padding.
+unsafe impl AsBytes for BeginResult {}
+
+#[repr(C)]
+struct Abort {
+    candidate_id: u64,
+    flags: u32,
+    reserved: u32,
+}
+
+// SAFETY: Every bit pattern is valid for Abort's integer fields.
+unsafe impl FromBytes for Abort {}
+
 struct ClientFile {
-    access: Access,
+    session: Arc<Session>,
 }
 
 impl ClientFile {
@@ -43,8 +79,8 @@ impl ClientFile {
         ..pin_init::zeroed()
     };
 
-    fn new(access: Access) -> Result<ARef<File>> {
-        let holder = KBox::into_raw(KBox::new(Self { access }, GFP_KERNEL)?);
+    fn new(session: Arc<Session>) -> Result<ARef<File>> {
+        let holder = KBox::into_raw(KBox::new(Self { session }, GFP_KERNEL)?);
         // SAFETY: The immutable operations table belongs to this module and describes
         // the exact allocation transferred as private data.
         let file = from_err_ptr(unsafe {
@@ -72,7 +108,9 @@ impl ClientFile {
     unsafe extern "C" fn release(_: *mut bindings::inode, file: *mut bindings::file) -> i32 {
         // SAFETY: Successful creation transfers one ClientFile allocation and final
         // release returns its private data exactly once.
-        drop(unsafe { KBox::from_raw((*file).private_data.cast::<Self>()) });
+        let holder = unsafe { KBox::from_raw((*file).private_data.cast::<Self>()) };
+        holder.session.close();
+        drop(holder);
         0
     }
 
@@ -88,6 +126,8 @@ impl ClientFile {
     fn dispatch(&self, cmd: u32, arg: usize) -> Result {
         match cmd {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_QUERY => self.query(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER => self.begin(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER => self.abort(arg),
             _ => Err(ENOTTY),
         }
     }
@@ -99,16 +139,11 @@ impl ClientFile {
                     == core::mem::size_of::<uapi::drm_castkms_renderer_query>()
             )
         };
-        let description = self
-            .access
-            .with_current(|_| Ok(self.access.device().execution.describe()))?;
-        let profile = match description.profile {
-            Profile::HostV1 => uapi::DRM_CASTKMS_EXECUTION_HOST_V1,
-        };
+        let description = self.session.description()?;
         let query = Query {
             version: uapi::DRM_CASTKMS_RENDERER_VERSION,
             flags: 0,
-            profile,
+            profile: profile_value(description.profile),
             reserved: 0,
             generation: description.generation,
         };
@@ -116,8 +151,71 @@ impl ClientFile {
             .writer()
             .write(&query)
     }
+
+    fn begin(&self, arg: usize) -> Result {
+        const {
+            assert!(
+                core::mem::size_of::<Begin>()
+                    == core::mem::size_of::<uapi::drm_castkms_renderer_begin_takeover>()
+            );
+            assert!(
+                core::mem::size_of::<BeginResult>()
+                    == core::mem::size_of::<uapi::drm_castkms_renderer_takeover>()
+            )
+        };
+        let mut reader =
+            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Begin>()).reader();
+        let request = reader.read::<Begin>()?;
+        if request.expected_generation == 0
+            || request.result == 0
+            || request.flags != 0
+            || request.reserved.iter().any(|field| *field != 0)
+        {
+            return Err(EINVAL);
+        }
+        let pending = self.session.begin(request.expected_generation)?;
+        let configuration = pending.configuration()?;
+        let execution = pending.execution()?;
+        let result = BeginResult {
+            candidate_id: pending.id(),
+            execution_generation: execution.generation,
+            profile: profile_value(execution.profile),
+            width: configuration.dimensions()[0],
+            height: configuration.dimensions()[1],
+            refresh_millihz: configuration.refresh_millihz(),
+            mode_flags: configuration.mode_flags(),
+            reserved: 0,
+        };
+        let address = request.result.try_into().map_err(|_| EOVERFLOW)?;
+        UserSlice::new(UserPtr::from_addr(address), core::mem::size_of_val(&result))
+            .writer()
+            .write(&result)?;
+        pending.publish()
+    }
+
+    fn abort(&self, arg: usize) -> Result {
+        const {
+            assert!(
+                core::mem::size_of::<Abort>()
+                    == core::mem::size_of::<uapi::drm_castkms_renderer_abort_takeover>()
+            )
+        };
+        let mut reader =
+            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Abort>()).reader();
+        let request = reader.read::<Abort>()?;
+        if request.candidate_id == 0 || request.flags != 0 || request.reserved != 0 {
+            return Err(EINVAL);
+        }
+        self.session.abort(request.candidate_id)
+    }
 }
 
-pub(super) fn create(access: Access) -> Result<ARef<File>> {
-    ClientFile::new(access)
+fn profile_value(profile: Profile) -> u32 {
+    match profile {
+        Profile::HostV1 => uapi::DRM_CASTKMS_EXECUTION_HOST_V1,
+    }
+}
+
+pub(super) fn create(session: Arc<Session>) -> Result<ARef<File>> {
+    ClientFile::new(session)
 }

@@ -132,12 +132,71 @@ struct drm_castkms_renderer_query {
 	__u64 generation;
 };
 
+/**
+ * struct drm_castkms_renderer_takeover - published candidate description
+ * @candidate_id: nonzero name for later operations on this candidate
+ * @execution_generation: execution generation observed while reserving
+ * @profile: current DRM_CASTKMS_EXECUTION_* profile
+ * @width: current output width in pixels
+ * @height: current output height in pixels
+ * @refresh_millihz: current display refresh in millihertz
+ * @mode_flags: current DRM_MODE_FLAG_* values
+ * @reserved: returned as zero
+ *
+ * This is configuration metadata, not permission to access source pixels.
+ */
+struct drm_castkms_renderer_takeover {
+	__u64 candidate_id;
+	__u64 execution_generation;
+	__u32 profile;
+	__u32 width;
+	__u32 height;
+	__u32 refresh_millihz;
+	__u32 mode_flags;
+	__u32 reserved;
+};
+
+/**
+ * struct drm_castkms_renderer_begin_takeover - reserve candidate startup
+ * @expected_generation: current HOST execution generation from query
+ * @result: pointer to writable struct drm_castkms_renderer_takeover storage
+ * @flags: must be zero
+ * @reserved: must be zero
+ *
+ * Only one candidate may be reserved for an output. HOST execution and capture
+ * remain active. Success returns a candidate description after all fallible
+ * user-memory access. Failure publishes no candidate; output memory may have
+ * been partially written and must not be used.
+ */
+struct drm_castkms_renderer_begin_takeover {
+	__u64 expected_generation;
+	__u64 result;
+	__u32 flags;
+	__u32 reserved[3];
+};
+
+/**
+ * struct drm_castkms_renderer_abort_takeover - release one candidate
+ * @candidate_id: candidate returned by BEGIN_TAKEOVER
+ * @flags: must be zero
+ * @reserved: must be zero
+ *
+ * Aborting never changes the active execution profile.
+ */
+struct drm_castkms_renderer_abort_takeover {
+	__u64 candidate_id;
+	__u32 flags;
+	__u32 reserved;
+};
+
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
 #define DRM_CASTKMS_CREATE_RENDERER_CONTROL 0x01
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
 #define DRM_CASTKMS_MONITOR_ATTACH 0x02
 #define DRM_CASTKMS_MONITOR_DETACH 0x03
 #define DRM_CASTKMS_RENDERER_QUERY 0x04
+#define DRM_CASTKMS_RENDERER_BEGIN_TAKEOVER 0x05
+#define DRM_CASTKMS_RENDERER_ABORT_TAKEOVER 0x06
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
@@ -159,6 +218,12 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY,
 			struct drm_castkms_renderer_query),
+	DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_BEGIN_TAKEOVER,
+			struct drm_castkms_renderer_begin_takeover),
+	DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_ABORT_TAKEOVER,
+			struct drm_castkms_renderer_abort_takeover),
 };
 
 #define DRM_CASTKMS_EXECUTION_VERSION 1
