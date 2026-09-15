@@ -134,6 +134,66 @@ impl Image {
         Ok(())
     }
 
+    /// Composite ordered planes while the caller holds their synchronous CPU read claim.
+    pub(super) fn composite(
+        &mut self,
+        sources: &[super::framebuffer::Mapping],
+        output_color: Option<&crate::color::OutputColor>,
+    ) -> Result {
+        if sources.len() == 1
+            && sources[0].format == kernel::drm::fourcc::XRGB8888
+            && sources[0].color.is_none()
+            && output_color.is_none()
+        {
+            return self.copy_from(&sources[0]);
+        }
+        let (width, height) = self.dimensions();
+        if sources
+            .iter()
+            .any(|source| source.geometry.output != [width, height])
+        {
+            return Err(EINVAL);
+        }
+        for y in 0..height {
+            let row = self.row(y)?;
+            for x in 0..width {
+                let mut background = [0u32; 3];
+                for source in sources {
+                    let Some((sx, sy)) = source.geometry.sample(x, y) else {
+                        continue;
+                    };
+                    let mut pixel = crate::formats::pixel16(
+                        source.format,
+                        sx,
+                        sy,
+                        source.yuv,
+                        |p, x, y, b| source.read(p, x, y, b),
+                    )?;
+                    let alpha = crate::formats::alpha16(source.format, sx, sy, |p, x, y, b| {
+                        source.read(p, x, y, b)
+                    })?;
+                    if let Some(color) = &source.color {
+                        pixel = color.apply(pixel);
+                    }
+                    for channel in 0..3 {
+                        background[channel] = (pixel[channel]
+                            + ((u64::from(background[channel]) * u64::from(65535 - alpha) + 32767)
+                                / 65535) as u32)
+                            .min(65535);
+                    }
+                }
+                if let Some(output_color) = output_color {
+                    background = output_color.apply(background);
+                }
+                let [r, g, b] = background.map(|channel| (channel * 255 + 32767) / 65535);
+                let pixel = (r << 16) | (g << 8) | b;
+                let offset = x as usize * 4;
+                io_project!(row, [try: offset..offset + 4]).copy_from_slice(&pixel.to_le_bytes());
+            }
+        }
+        Ok(())
+    }
+
     /// Copy an opaque source while the caller holds its synchronous CPU read claim.
     pub(super) fn copy_from(&mut self, source: &super::framebuffer::Mapping) -> Result {
         let (width, height) = self.dimensions();

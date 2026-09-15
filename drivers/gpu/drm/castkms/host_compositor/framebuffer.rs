@@ -74,6 +74,11 @@ impl Framebuffer {
             )?;
         }
         Ok(Mapping {
+            yuv: (
+                kernel::drm::kms::plane::ColorEncoding::Bt601,
+                kernel::drm::kms::plane::ColorRange::Limited,
+            ),
+            color: None,
             geometry: self.geometry,
             planes,
             width: self.image.width(),
@@ -97,6 +102,11 @@ struct MappedPlane {
 
 /// Prepared mappings retain storage but do not grant permission to read a scene.
 pub(super) struct Mapping {
+    pub(super) yuv: (
+        kernel::drm::kms::plane::ColorEncoding,
+        kernel::drm::kms::plane::ColorRange,
+    ),
+    pub(super) color: Option<kernel::sync::Arc<crate::color::Pipeline>>,
     pub(super) geometry: Geometry,
     planes: KVec<MappedPlane>,
     pub(super) width: u32,
