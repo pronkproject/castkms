@@ -84,7 +84,7 @@ impl Slot {
 
     pub(super) fn copy_from(
         &mut self,
-        source: &kernel::drm::kms::framebuffer::FramebufferVMapOwned<crate::gem::Object>,
+        source: &super::framebuffer::Mapping,
     ) -> Result {
         self.image.as_mut().ok_or(EIO)?.copy_from(source)
     }
