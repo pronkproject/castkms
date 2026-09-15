@@ -106,8 +106,9 @@ int drm_capture_client_describe(struct file *file,
 	ret = client->ops->describe(client->data, &result);
 	if (ret < 0)
 		goto unlock;
-	if (ret || !result.id || !result.width || !result.height || !result.format ||
-	    !result.max_requests || result.modifier == DRM_FORMAT_MOD_INVALID) {
+	if (ret || !result.id || !result.width || !result.height ||
+	    !result.refresh_millihz || !result.format || !result.max_requests ||
+	    result.modifier == DRM_FORMAT_MOD_INVALID) {
 		ret = -EINVAL;
 		goto unlock;
 	}
