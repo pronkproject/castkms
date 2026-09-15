@@ -118,6 +118,25 @@ mod cases {
     use super::*;
 
     #[test]
+    fn packed_channel_order_decodes_red() -> Result {
+        use drm::fourcc::*;
+        for (format, bytes) in [
+            (ARGB8888, 0x80ff0000u64),
+            (ABGR8888, 0x800000ff),
+            (RGBA8888, 0xff000080),
+            (BGRA8888, 0x0000ff80),
+        ] {
+            let pixel = formats::pixel(format, 0, 0, |plane, x, y, out| {
+                check(plane == 0 && x == 0 && y == 0)?;
+                out.copy_from_slice(&bytes.to_le_bytes()[..out.len()]);
+                Ok(())
+            })?;
+            check(pixel == 0xff0000)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn every_format_decodes_padded_odd_width_storage() -> Result {
         for &format in formats::FORMATS {
             white_image(format, true)?;
