@@ -418,7 +418,7 @@ impl KmsDriver for Driver {
     ) -> Result<ModeConfigInfo> {
         Ok(ModeConfigInfo {
             min_resolution: (1, 1),
-            max_resolution: (1920, 1080),
+            max_resolution: (8192, 8192),
             max_cursor: (0, 0),
             preferred_depth: 24,
             preferred_fourcc: Some(fourcc::XRGB8888),
