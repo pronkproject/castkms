@@ -45,4 +45,11 @@ impl Proposal {
     )> {
         self.candidate.activate_proposal(device, &self.registration)
     }
+
+    pub(crate) fn handback(
+        &self,
+        device: &kernel::drm::Device<crate::Driver, kernel::drm::device::Registered>,
+    ) -> Result<crate::execution::Description> {
+        self.candidate.handback(device, &self.registration)
+    }
 }
