@@ -67,9 +67,13 @@ impl kernel::Module for CastKms {
 
 impl CastKms {
     fn new(name: &CStr) -> Result<Self> {
+        Self::new_outputs(name, 1)
+    }
+
+    fn new_outputs(name: &CStr, output_count: u32) -> Result<Self> {
         let parent =
             faux::Registration::new_with_dma_mask(name, None, kernel::dma::DmaMask::new::<64>())?;
-        let state = device::Owner::new()?;
+        let state = device::Owner::new_outputs(output_count)?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
         // SAFETY: After successful construction, field drop order unplugs DRM before parent
