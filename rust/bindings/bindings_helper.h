@@ -29,6 +29,7 @@
 #include <linux/hrtimer_types.h>
 
 #if IS_ENABLED(CONFIG_RUST_SND_PCM)
+#include <sound/control.h>
 #include <sound/core.h>
 #include <sound/info.h>
 #include <sound/pcm.h>
