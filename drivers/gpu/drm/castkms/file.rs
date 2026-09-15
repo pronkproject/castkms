@@ -62,6 +62,18 @@ impl File {
         Self::issue_renderer_control_then(file, crtc, connector, || Ok(()))
     }
 
+    /// Resolve file-visible IDs before issuing anonymous renderer endpoints.
+    pub(crate) fn create_renderer_files(
+        dev: &drm::Device<Driver, Registered>,
+        file: &drm::file::File<Self>,
+        crtc_id: u32,
+        connector_id: u32,
+    ) -> Result<crate::renderer::files::Files> {
+        let crtc = dev.lookup_crtc(file, crtc_id)?;
+        let connector = dev.lookup_connector(file, connector_id)?;
+        Self::issue_renderer_control(file, crtc.crtc(), &connector)?.into_files()
+    }
+
     fn issue_renderer_control_then(
         file: &drm::file::File<Self>,
         crtc: &Crtc<display::Crtc>,
