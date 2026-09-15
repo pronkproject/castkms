@@ -45,6 +45,10 @@ module! {
     license: "GPL",
     imports_ns: ["DMA_BUF"],
     params: {
+        enable_cursor: bool {
+            default: true,
+            description: "Enable cursor planes",
+        },
         max_outputs: u32 {
             default: 8,
             description: "Number of virtual display outputs (1-8)",
@@ -70,7 +74,7 @@ impl Drop for CastKms {
 impl kernel::Module for CastKms {
     fn init(_: &'static ThisModule) -> Result<Self> {
         Self::new_features(c"castkms", module_parameters::max_outputs.value(),
-            false, false, false)
+            module_parameters::enable_cursor.value(), false, false)
     }
 }
 
@@ -82,7 +86,7 @@ impl CastKms {
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     fn new_outputs(name: &CStr, output_count: u32) -> Result<Self> {
-        Self::new_features(name, output_count, false, false, false)
+        Self::new_features(name, output_count, true, false, false)
     }
 
     fn new_features(name: &CStr, output_count: u32, enable_cursor: bool, enable_overlay: bool, enable_plane_pipeline: bool) -> Result<Self> {
@@ -110,6 +114,7 @@ type Output = output::Output<scene::Scene, Option<scene::Configuration>>;
 
 #[vtable]
 impl drm::Driver for Driver {
+    const FEAT_CURSOR_HOTSPOT: bool = true;
     type Data = Arc<device::State>;
     type RegistrationData<'a> = ();
     type File = File;
