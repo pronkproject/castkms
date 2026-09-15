@@ -83,7 +83,7 @@ impl Session {
 
     pub(crate) fn description(&self) -> Result<Description> {
         self.access
-            .with_current(|_| Ok(self.access.device().execution.describe()))
+            .with_current(|_| Ok(self.access.display().execution.describe()))
     }
 
     pub(crate) fn begin(&self, expected_generation: u64) -> Result<Pending<'_>> {
