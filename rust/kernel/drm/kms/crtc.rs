@@ -544,6 +544,13 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
         self.enable_color_mgmt(0, false, gamma_size)
     }
 
+    /// Advertise a legacy gamma ramp size before registering the CRTC.
+    pub fn set_gamma_size(&self, size: u32) -> Result {
+        let size = i32::try_from(size).map_err(|_| EINVAL)?;
+        // SAFETY: Setup owns the initialized CRTC, and the native helper owns ramp storage.
+        to_result(unsafe { bindings::drm_mode_crtc_set_gamma_size(self.as_raw(), size) })
+    }
+
     /// Enable colour management on this CRTC, creating the `DEGAMMA_LUT`, `CTM` and `GAMMA_LUT`
     /// properties that userspace can program.
     ///
@@ -1127,6 +1134,7 @@ impl<'a, T: FromRawCrtcState> CrtcStateMutator<'a, T> {
         // no other reference to it exists.
         unsafe { (*self.as_raw()).set_mode_changed(changed) };
     }
+
 }
 
 impl<'a, T: DriverCrtcState> CrtcStateMutator<'a, CrtcState<T>> {
