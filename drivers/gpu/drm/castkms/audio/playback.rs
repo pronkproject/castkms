@@ -6,7 +6,7 @@ mod clock;
 mod link;
 pub(crate) use link::Gate;
 
-use super::RATE;
+use super::{FRAME_BYTES, PERIOD_FRAMES, RATE};
 use kernel::time::hrtimer::HrTimerExpires;
 use kernel::{
     prelude::*,
@@ -22,12 +22,20 @@ use kernel::{
 };
 
 const TIMER_INTERVAL_US: i64 = 1_000;
+const MAX_READ_FRAMES: usize = 4 * PERIOD_FRAMES;
+
+#[derive(Default)]
+pub(super) struct Cursor {
+    generation: u64,
+    frames: u64,
+}
 
 struct Runtime {
     stream: Option<pcm::Stream>,
     parameters: pcm::Parameters,
     clock: clock::Playback,
     closed: bool,
+    generation: u64,
     notified: u64,
     link_generation: u64,
 }
@@ -56,7 +64,7 @@ impl Playback {
                     stream: None,
                     parameters: pcm::Parameters { buffer_frames: 0, period_frames: 1 },
                     clock: clock::Playback::new(RATE as _), closed: false,
-                    notified: 0, link_generation: 0,
+                    generation: 0, notified: 0, link_generation: 0,
                 }),
                 timer <- HrTimer::new(),
                 handle <- kernel::new_mutex!(None),
@@ -68,6 +76,47 @@ impl Playback {
     pub(super) fn availability(&self) -> (bool, u64) {
         let link = self.link.state.lock();
         (link.enabled, link.generation)
+    }
+
+    /// Copy the newest played samples, supplying silence while playback is idle.
+    pub(super) fn read(&self, cursor: &mut Cursor, output: &mut [u8]) -> Result {
+        if output.len() % FRAME_BYTES != 0 || output.len() / FRAME_BYTES > MAX_READ_FRAMES {
+            return Err(EINVAL);
+        }
+        let link = self.link.state.lock();
+        let state = self.runtime.lock();
+        if state.closed {
+            return Err(ENODEV);
+        }
+        output.fill(0);
+        if !link.enabled || state.link_generation != link.generation {
+            return Ok(());
+        }
+        let Some(stream) = &state.stream else {
+            return Ok(());
+        };
+        let position = state.clock.position(now());
+        if cursor.generation != state.generation {
+            cursor.generation = state.generation;
+            cursor.frames = 0;
+        }
+        let count = position
+            .saturating_sub(cursor.frames)
+            .min(state.parameters.buffer_frames as u64)
+            .min((output.len() / FRAME_BYTES) as u64) as usize;
+        cursor.frames = position;
+        if count == 0 {
+            return Ok(());
+        }
+        let offset = if state.clock.running() {
+            output.len() - count * FRAME_BYTES
+        } else {
+            0
+        };
+        stream.copy_frames(
+            position - count as u64,
+            &mut output[offset..offset + count * FRAME_BYTES],
+        )
     }
 }
 
@@ -85,6 +134,7 @@ impl Operations for Playback {
         if parameters.buffer_frames == 0 || parameters.period_frames == 0 {
             return Err(EINVAL);
         }
+        state.generation = state.generation.checked_add(1).ok_or(EOVERFLOW)?;
         state.clock.prepare();
         state.notified = 0;
         state.parameters = parameters;
@@ -218,6 +268,24 @@ mod tests {
         let state = gate.state.lock();
         assert!(state.enabled);
         assert_eq!(state.generation, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn private_read_limits_are_driver_policy() -> Result {
+        let playback = Playback::new(Gate::new(true)?)?;
+        let mut cursor = Cursor::default();
+        assert_eq!(playback.read(&mut cursor, &mut [0; 3]), Err(EINVAL));
+        let mut samples = KVec::with_capacity((MAX_READ_FRAMES + 1) * FRAME_BYTES, GFP_KERNEL)?;
+        samples.resize((MAX_READ_FRAMES + 1) * FRAME_BYTES, 0xff, GFP_KERNEL)?;
+        assert_eq!(playback.read(&mut cursor, &mut samples), Err(EINVAL));
+        playback.read(&mut cursor, &mut samples[..FRAME_BYTES])?;
+        assert_eq!(&samples[..FRAME_BYTES], &[0; FRAME_BYTES]);
+        playback.disconnect();
+        assert_eq!(
+            playback.read(&mut cursor, &mut samples[..FRAME_BYTES]),
+            Err(ENODEV)
+        );
         Ok(())
     }
 
