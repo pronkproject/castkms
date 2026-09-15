@@ -69,6 +69,24 @@ fn check_mode(flags: u32, writable: bool) -> Result {
     }
 }
 
+fn check_file_owner(flags: u32, writable: bool) -> Result {
+    let buffer = exported(flags)?;
+    let file = buffer.to_file();
+    drop(buffer);
+    // SAFETY: The independently retained file is live. Its access mode is fixed
+    // when the DMA-BUF is exported.
+    let mode = unsafe { core::ptr::addr_of!((*file.as_ptr()).f_mode).read_volatile() };
+    let matches = (mode & bindings::FMODE_WRITE != 0) == writable;
+    drop(file);
+    // SAFETY: All local file owners have been released and no locks are held.
+    unsafe { bindings::flush_delayed_fput() };
+    if matches {
+        Ok(())
+    } else {
+        Err(EINVAL)
+    }
+}
+
 #[kunit_tests(rust_dma_buf_export_access)]
 mod cases {
     use super::*;
@@ -86,5 +104,11 @@ mod cases {
     #[test]
     fn read_write_export_retains_file_write_access() -> Result {
         check_mode(bindings::O_RDWR, true)
+    }
+
+    #[test]
+    fn file_owner_outlives_dma_buf_owner() -> Result {
+        check_file_owner(bindings::O_RDONLY, false)?;
+        check_file_owner(bindings::O_RDWR, true)
     }
 }

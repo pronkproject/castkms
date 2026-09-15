@@ -8,6 +8,7 @@
 use crate::{
     bindings,
     error::from_err_ptr,
+    fs::File,
     prelude::*,
     sync::aref::{ARef, AlwaysRefCounted},
     types::Opaque,
@@ -66,6 +67,20 @@ impl DmaBuf {
         // SAFETY: DMA-BUF retains its initialized reservation for its entire lifetime.
         // The reservation pointer is fixed at export and the result borrows that owner.
         unsafe { crate::dma_resv::Reservation::from_raw((*self.as_raw()).resv) }
+    }
+
+    /// Acquire the native file reference used for descriptor installation.
+    ///
+    /// The returned owner retains the DMA-BUF independently. It preserves the
+    /// exporter's file access mode and grants no additional pixel authority.
+    pub fn to_file(&self) -> ARef<File> {
+        // SAFETY: The live DMA-BUF retains its immutable file pointer. Acquire one
+        // native reference before constructing an independently owned file handle.
+        unsafe {
+            let file = (*self.as_raw()).file;
+            bindings::get_file(file);
+            ARef::from_raw(NonNull::new_unchecked(file.cast()))
+        }
     }
 
     pub(crate) fn as_raw(&self) -> *mut bindings::dma_buf {

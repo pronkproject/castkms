@@ -17,7 +17,7 @@ use crate::{
             AllocOps, //
         },
     },
-    error::to_result,
+    error::{from_err_ptr, to_result},
     prelude::*,
     sync::aref::ARef,
     types::Opaque,
@@ -30,6 +30,24 @@ use core::{
 
 #[cfg(CONFIG_RUST_DRM_GEM_SHMEM_HELPER)]
 pub mod shmem;
+
+/// File access granted by a newly exported DMA-BUF.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExportAccess {
+    /// Permit recipients to read but not write the exported file.
+    ReadOnly,
+    /// Permit recipients to read and write the exported file.
+    ReadWrite,
+}
+
+impl ExportAccess {
+    fn flags(self) -> u32 {
+        match self {
+            Self::ReadOnly => bindings::O_RDONLY,
+            Self::ReadWrite => bindings::O_RDWR,
+        }
+    }
+}
 
 // Native GEM initialization asserts page alignment instead of returning an error. Validate
 // before allocating a payload, and leave rounding to callers so its size matches the object.
@@ -223,6 +241,27 @@ impl<T: DriverObject, Ctx: DeviceContext> IntoGEMObject for Object<T, Ctx> {
 
 /// Base operations shared by all GEM object classes
 pub trait BaseObject: IntoGEMObject {
+    /// Export this object as a retained DMA-BUF without installing a descriptor.
+    ///
+    /// Exporting storage grants neither pixel authority nor synchronized access.
+    /// Callers must establish those contracts before installing the DMA-BUF file.
+    fn export_dma_buf(&self, access: ExportAccess) -> Result<ARef<crate::dma_buf::DmaBuf>> {
+        let object = self.as_raw();
+        // SAFETY: Initialized GEM objects retain an immutable, non-null operations table.
+        // Invoke the object's export operation when supplied, matching the native PRIME
+        // handle path; otherwise use the standard helper.
+        let export = unsafe { (*(*object).funcs).export };
+        let raw = from_err_ptr(unsafe {
+            match export {
+                Some(export) => export(object, access.flags() as i32),
+                None => bindings::drm_gem_prime_export(object, access.flags() as i32),
+            }
+        })?;
+        let raw = NonNull::new(raw).ok_or(ENOMEM)?;
+        // SAFETY: Successful PRIME export transfers one initialized DMA-BUF reference.
+        Ok(unsafe { crate::dma_buf::DmaBuf::from_owned_raw(raw) })
+    }
+
     /// Retain the original DMA-BUF of a PRIME import, or return `None` for local storage.
     ///
     /// Same-device PRIME import may reuse a local object, which still returns `None` here.

@@ -1043,6 +1043,34 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn local_object_export_preserves_requested_access() -> Result {
+        use gem::{BaseObject, ExportAccess};
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-prime-export", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let object = gem::shmem::Object::<TestObject>::new(
+            &dev,
+            4096,
+            gem::shmem::ObjectConfig::default(),
+            (),
+        )?;
+        let read_only = object.export_dma_buf(ExportAccess::ReadOnly)?;
+        let read_write = object.export_dma_buf(ExportAccess::ReadWrite)?;
+        assert!(!read_only.is_writable());
+        assert!(read_write.is_writable());
+        drop(object);
+        drop(dev);
+        drop(read_only);
+        drop(read_write);
+        // SAFETY: All local DMA-BUF owners have been released and no locks are held.
+        unsafe { bindings::flush_delayed_fput() };
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
     fn foreign_import_rejection_releases_attachment() -> Result {
