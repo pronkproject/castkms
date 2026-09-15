@@ -120,16 +120,14 @@ mod cases {
     #[test]
     fn driver_bounds_match_the_host_dimensions() -> Result {
         let fixture = Fixture::new()?;
-        let full_hd = native(&fixture, 1920 * 1080 * 4, 1920, 1080, 7680, 0, false)?;
-        check(
-            HostFramebuffer::new(&full_hd, geometry(1920, 1080))?.dimensions() == (1920, 1080),
-        )?;
+        let uhd = native(&fixture, 3840 * 2160 * 4, 3840, 2160, 15360, 0, false)?;
+        check(HostFramebuffer::new(&uhd, geometry(3840, 2160))?.dimensions() == (3840, 2160))?;
         check(matches!(
-            native(&fixture, 8192, 1921, 1, 7684, 0, false),
+            native(&fixture, 4096, 8193, 1, 32772, 0, false),
             Err(EINVAL)
         ))?;
         check(matches!(
-            native(&fixture, 9 * 1024 * 1024, 1920, 1081, 7680, 0, false),
+            native(&fixture, 4096, 1, 8193, 4, 0, false),
             Err(EINVAL)
         ))?;
         Ok(())
