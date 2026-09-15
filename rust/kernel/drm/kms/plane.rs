@@ -821,6 +821,11 @@ impl Rect {
 /// This is implemented internally by DRM, and provides many of the basic methods for working with
 /// the atomic state of [`Plane`]s.
 pub trait RawPlaneState: AsRawPlaneState {
+    /// Requested stacking position; equal positions are ordered by plane object ID.
+    fn zpos(&self) -> u32 {
+        self.as_raw().zpos
+    }
+
     /// Return the plane that this plane state belongs to.
     fn plane(&self) -> &Self::Plane {
         // SAFETY: The index is initialized by the time we expose Plane objects to users, and is
@@ -1260,6 +1265,27 @@ pub struct PlaneStateMutator<'a, T: FromRawPlaneState> {
 }
 
 impl<'a, T: FromRawPlaneState> PlaneStateMutator<'a, T> {
+    /// Set an adjustable stacking position within the plane's advertised range.
+    pub fn set_zpos(&mut self, zpos: u32) -> Result {
+        // SAFETY: The guard owns unpublished state; setup made its property immutable
+        // as an object, while the advertised range permits changing the state's value.
+        unsafe {
+            let raw = self.as_raw_mut();
+            let property = (*raw.plane).zpos_property;
+            if property.is_null() || (*property).flags & bindings::DRM_MODE_PROP_IMMUTABLE != 0 {
+                return Err(EOPNOTSUPP);
+            }
+            if (*property).num_values != 2 || (*property).values.is_null()
+                || u64::from(zpos) < *(*property).values
+                || u64::from(zpos) > *(*property).values.add(1)
+            {
+                return Err(EINVAL);
+            }
+            raw.zpos = zpos;
+        }
+        Ok(())
+    }
+
     /// Retain the producer fence currently attached to this exclusively borrowed candidate.
     ///
     /// Capture it during validation if its error status is needed after commit: native wait
