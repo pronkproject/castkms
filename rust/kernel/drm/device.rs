@@ -182,6 +182,9 @@ impl<T: drm::Driver> UnregisteredDevice<T> {
 
         if Device::<T>::has_kms() {
             features |= drm::driver::FEAT_MODESET | drm::driver::FEAT_ATOMIC;
+            if T::FEAT_CURSOR_HOTSPOT {
+                features |= bindings::drm_driver_feature_DRIVER_CURSOR_HOTSPOT;
+            }
         }
 
         features
