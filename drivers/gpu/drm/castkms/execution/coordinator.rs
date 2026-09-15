@@ -52,6 +52,35 @@ impl Reservation {
         let guard = self.coordinator.lock();
         guard.pending(self.output, self.token).map(|_| ())
     }
+
+    /// The caller holds current authority, modeset, publication and startup exclusion.
+    /// Its compatibility check observes the latest installed-and-published scene.
+    /// Publication must perform every fallible step before making execution visible.
+    pub(crate) fn activate<R>(
+        &self,
+        configuration: &Configuration,
+        check: impl FnMut(&Contract) -> Result,
+        publish: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
+        let (result, retired, pending) = {
+            let mut guard = self.coordinator.lock();
+            let pending = guard.pending(self.output, self.token)?;
+            if !pending.gated {
+                return Err(EAGAIN);
+            }
+            if pending.configuration.as_ref() != Some(configuration) {
+                return Err(ESTALE);
+            }
+            let slot = guard.0.outputs.get_mut(self.output).ok_or(EINVAL)?;
+            let activation = slot.validation.prepare_activation(self.token, check)?;
+            let result = publish()?;
+            let retired = activation.commit();
+            (result, retired, slot.pending.take())
+        };
+        drop(retired);
+        drop(pending);
+        Ok(result)
+    }
 }
 
 impl Drop for Reservation {
