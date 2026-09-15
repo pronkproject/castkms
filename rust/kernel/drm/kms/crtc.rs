@@ -893,6 +893,11 @@ pub(super) use private::AsRawCrtcState as AsRawCrtcStatePrivate;
 /// This is implemented internally by DRM, and provides many of the basic methods for working with
 /// the atomic state of [`Crtc`]s.
 pub trait RawCrtcState: AsRawCrtcState {
+    /// Whether output color properties changed in this atomic candidate.
+    fn color_mgmt_changed(&self) -> bool {
+        // SAFETY: The state is live and immutable for this borrow.
+        unsafe { (*self.as_raw()).color_mgmt_changed() }
+    }
     /// Return the CRTC that owns this state.
     fn crtc(&self) -> &Self::Crtc {
         // SAFETY:
@@ -963,6 +968,30 @@ pub trait RawCrtcState: AsRawCrtcState {
         // SAFETY: `ColorLut` is transparent over `drm_color_lut`; the blob holds `n` contiguous
         // entries valid for the state's lifetime.
         Some(unsafe { core::slice::from_raw_parts(data.cast::<ColorLut>(), n) })
+    }
+
+    /// Validate output color blob layouts and LUT bounds before borrowing their values.
+    fn validate_color_mgmt(&self, maximum: usize) -> Result {
+        // SAFETY: The immutable state retains its property blob for this borrow.
+        let (gamma, degamma, ctm) = unsafe {
+            let state = &*self.as_raw();
+            (state.gamma_lut, state.degamma_lut, state.ctm)
+        };
+        for blob in [gamma, degamma] {
+            if blob.is_null() { continue; }
+            // SAFETY: A non-null blob belongs to the live state.
+            let length = unsafe { (*blob).length };
+            if length == 0 || length % mem::size_of::<ColorLut>() != 0
+                || length / mem::size_of::<ColorLut>() > maximum
+            {
+                return Err(EINVAL);
+            }
+        }
+        // SAFETY: A non-null CTM blob is retained by the live state.
+        if !ctm.is_null() && unsafe { (*ctm).length } != mem::size_of::<ColorCtm>() {
+            return Err(EINVAL);
+        }
+        Ok(())
     }
 
     /// Returns the CRTC's degamma LUT for this state as an array of [`ColorLut`] entries, or
