@@ -143,4 +143,42 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn color_only_plane_updates_apply_the_selected_matrices() -> Result {
+        use kernel::drm::kms::colorop::Operation;
+        let fixture = Fixture::new_features(c"castkms-plane-color", 1, true, true)?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        let overlay = small_image(&fixture, 0xffff0000)?;
+        configure(&fixture, 2, &overlay, [0, 0], [2, 2])?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        let mut swap = [0; 12];
+        swap[2] = 1 << 32;
+        swap[5] = 1 << 32;
+        swap[8] = 1 << 32;
+        fixture.drm.update(|transaction| {
+            let mut state = transaction.add_plane_state(fixture.drm.plane_at(2)?)?;
+            state.select_color_pipeline(Some(0))?;
+            state.set_color_operation(1, Operation::Matrix(swap))
+        })?;
+        check(pixels(&fixture, &pool)? == [0xff, 0xff, 0, 0])?;
+        fixture.drm.update(|transaction| {
+            transaction
+                .add_plane_state(fixture.drm.plane_at(2)?)?
+                .set_color_operation(2, Operation::Matrix(swap))
+        })?;
+        check(pixels(&fixture, &pool)? == [0xff0000, 0xff0000, 0, 0])?;
+        fixture.drm.update(|transaction| {
+            transaction
+                .add_plane_state(fixture.drm.plane_at(2)?)?
+                .select_color_pipeline(None)
+        })?;
+        check(pixels(&fixture, &pool)? == [0xff0000, 0xff0000, 0, 0])?;
+        Ok(())
+    }
+
 }
