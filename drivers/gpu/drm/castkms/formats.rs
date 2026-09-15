@@ -55,6 +55,7 @@ pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
         | ARGB2101010 | XBGR2101010 | ABGR2101010 => 32,
         RGB888 | BGR888 => 24,
         RGB565 | BGR565 => 16,
+        XRGB16161616 | ARGB16161616 | XBGR16161616 | ABGR16161616 => 64,
         _ => return Err(EINVAL),
     };
     Ok(Plane {
@@ -109,6 +110,16 @@ pub(crate) fn pixel(
             scale(word & 31, 5),
             scale((word >> 5) & 63, 6),
             scale((word >> 11) & 31, 5),
+        ),
+        XRGB16161616 | ARGB16161616 => (
+            scale((word >> 32) & 65535, 16),
+            scale((word >> 16) & 65535, 16),
+            scale(word & 65535, 16),
+        ),
+        XBGR16161616 | ABGR16161616 => (
+            scale(word & 65535, 16),
+            scale((word >> 16) & 65535, 16),
+            scale((word >> 32) & 65535, 16),
         ),
         _ => return Err(EINVAL),
     };

@@ -133,6 +133,10 @@ mod cases {
             (XBGR2101010, 0x3ff),
             (ARGB2101010, 0xbff00000),
             (ABGR2101010, 0x800003ff),
+            (XRGB16161616, 0x0000ffff00000000),
+            (ARGB16161616, 0x8000ffff00000000),
+            (XBGR16161616, 0x000000000000ffff),
+            (ABGR16161616, 0x800000000000ffff),
         ] {
             let pixel = formats::pixel(format, 0, 0, |plane, x, y, out| {
                 check(plane == 0 && x == 0 && y == 0)?;
