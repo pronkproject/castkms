@@ -55,6 +55,27 @@ mod cases {
     use super::*;
 
     #[test]
+    fn activation_replaces_both_contracts_only_after_publication() -> Result {
+        let mut validation = Validation::new(Contract::Host);
+        assert!(matches!(validation.prepare_activation(2, |contract| contract.check(SceneView::Disabled)), Err(ESTALE)));
+        let epoch = validation.epoch();
+        validation.prepare(epoch, 2, renderer([16384; 2])?, SceneView::Disabled)?.commit();
+        let gated = validation.epoch();
+        drop(validation.prepare_activation(2, |contract| contract.check(SceneView::Disabled))?);
+        assert_eq!(validation.epoch(), gated);
+        let scene = Scene::blank(None);
+        let large = SceneView::Enabled { scene: &scene, output: [16384; 2] };
+        assert_eq!(validation.check(large), Err(EOPNOTSUPP));
+        let retired = validation.prepare_activation(2, |contract| contract.check(SceneView::Disabled))?.commit();
+        assert_ne!(validation.epoch(), gated);
+        validation.check(large)?;
+        assert!(validation.cancel(2).is_none());
+        assert!(matches!(validation.prepare_activation(2, |contract| contract.check(SceneView::Disabled)), Err(ESTALE)));
+        drop(retired);
+        Ok(())
+    }
+
+    #[test]
     fn renderer_contract_does_not_inherit_host_dimensions() -> Result {
         let scene = Scene::blank(None);
         let view = SceneView::Enabled {
