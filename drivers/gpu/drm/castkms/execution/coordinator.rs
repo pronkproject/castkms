@@ -149,6 +149,28 @@ impl Coordinator {
         })
     }
 
+    /// Retire reservations issued by one permission owner. Call while excluding
+    /// that owner's authorization callbacks, before reporting revocation complete.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn revoke_owner(&self, owner: &Arc<()>) {
+        self.invalidate_where(|pending| Arc::ptr_eq(&pending.owner, owner));
+    }
+
+    fn invalidate_where(&self, matches: impl Fn(&Pending) -> bool) {
+        let mut retired: [_; crate::device::MAX_OUTPUTS as usize] =
+            core::array::from_fn(|_| (None, None));
+        {
+            let mut guard = self.lock();
+            for (index, slot) in guard.0.outputs.iter_mut().enumerate() {
+                if let Some(pending) = slot.pending.as_ref().filter(|pending| matches(pending)) {
+                    let token = pending.token;
+                    retired[index] = (slot.pending.take(), slot.validation.cancel(token));
+                }
+            }
+        }
+        drop(retired);
+    }
+
     /// Exercise gate enforcement without exposing an unauthenticated production setter.
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn gate_for_test(&self, output: usize, proposal: u64, target: Contract) -> Result {
@@ -270,6 +292,26 @@ mod tests {
         coordinator.close();
         assert_eq!(replacement.check(), Err(ENODEV));
         assert_eq!(second.check(), Err(ENODEV));
+        Ok(())
+    }
+
+    #[test]
+    fn revocation_retires_only_matching_permission_owners() -> Result {
+        let coordinator = Arc::pin_init(Coordinator::new(3), GFP_KERNEL)?;
+        let owner = Arc::new((), GFP_KERNEL)?;
+        let other = Arc::new((), GFP_KERNEL)?;
+        let first = coordinator.reserve(0, owner.clone(), configuration()?, Contract::Host)?;
+        let second = coordinator.reserve(1, owner.clone(), configuration()?, Contract::Host)?;
+        let third = coordinator.reserve(2, other, configuration()?, Contract::Host)?;
+        coordinator.gate_for_test(0, first.token(), Contract::Host)?;
+        coordinator.revoke_owner(&owner);
+        assert_eq!(first.check(), Err(ESTALE));
+        assert_eq!(second.check(), Err(ESTALE));
+        third.check()?;
+        let replacement = coordinator.reserve(0, owner, configuration()?, Contract::Host)?;
+        coordinator.gate_for_test(0, replacement.token(), Contract::Host)?;
+        drop(first);
+        replacement.check()?;
         Ok(())
     }
 
