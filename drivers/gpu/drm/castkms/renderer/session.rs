@@ -114,6 +114,22 @@ impl Session {
         Ok(())
     }
 
+    /// Retain the named candidate for a pixel operation without holding the session lock.
+    pub(super) fn candidate(&self, id: u64) -> Result<Arc<Candidate>> {
+        let state = self.state.lock();
+        if state.closed {
+            return Err(EKEYREVOKED);
+        }
+        match &state.slot {
+            Slot::Active {
+                id: current,
+                candidate,
+            } if *current == id => Ok(candidate.clone()),
+            Slot::Publishing => Err(EBUSY),
+            _ => Err(ENOENT),
+        }
+    }
+
     pub(super) fn close(&self) {
         let candidate = {
             let mut state = self.state.lock();

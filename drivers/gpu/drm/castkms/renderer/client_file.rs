@@ -8,7 +8,11 @@ use core::{ffi::c_void, ptr::NonNull};
 use kernel::{
     bindings,
     error::from_err_ptr,
-    fs::File,
+    drm::fourcc,
+    fs::{
+        file::FileDescriptorReservation,
+        File, //
+    },
     module::this_module,
     prelude::*,
     sync::{aref::ARef, Arc}, //
@@ -64,6 +68,34 @@ struct Abort {
 
 // SAFETY: Every bit pattern is valid for Abort's integer fields.
 unsafe impl FromBytes for Abort {}
+
+#[repr(C)]
+struct GetSnapshot {
+    candidate_id: u64,
+    result: u64,
+    flags: u32,
+    reserved: [u32; 3],
+}
+
+// SAFETY: Every bit pattern is valid for GetSnapshot's integer fields.
+unsafe impl FromBytes for GetSnapshot {}
+
+#[repr(C)]
+struct SnapshotResult {
+    dma_buf_fd: i32,
+    format: u32,
+    modifier: u64,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    offset: u32,
+    content_serial: u64,
+    flags: u32,
+    reserved: u32,
+}
+
+// SAFETY: SnapshotResult contains only integers and has no padding.
+unsafe impl AsBytes for SnapshotResult {}
 
 struct ClientFile {
     session: Arc<Session>,
@@ -128,6 +160,7 @@ impl ClientFile {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_QUERY => self.query(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER => self.begin(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER => self.abort(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT => self.get_snapshot(arg),
             _ => Err(ENOTTY),
         }
     }
@@ -207,6 +240,58 @@ impl ClientFile {
             return Err(EINVAL);
         }
         self.session.abort(request.candidate_id)
+    }
+
+    fn get_snapshot(&self, arg: usize) -> Result {
+        const {
+            assert!(
+                core::mem::size_of::<GetSnapshot>()
+                    == core::mem::size_of::<uapi::drm_castkms_renderer_get_snapshot>()
+            );
+            assert!(
+                core::mem::size_of::<SnapshotResult>()
+                    == core::mem::size_of::<uapi::drm_castkms_renderer_snapshot>()
+            )
+        };
+        let mut reader =
+            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<GetSnapshot>()).reader();
+        let request = reader.read::<GetSnapshot>()?;
+        if request.candidate_id == 0
+            || request.result == 0
+            || request.flags != 0
+            || request.reserved.iter().any(|field| *field != 0)
+        {
+            return Err(EINVAL);
+        }
+        let candidate = self.session.candidate(request.candidate_id)?;
+        let snapshot = candidate.snapshot_current()?;
+        let file = snapshot.export_file()?;
+        let descriptor = FileDescriptorReservation::get_unused_fd_flags(
+            kernel::fs::file::flags::O_CLOEXEC,
+        )?;
+        let layout = snapshot.layout();
+        let (width, height) = layout.dimensions();
+        let result = SnapshotResult {
+            dma_buf_fd: descriptor
+                .reserved_fd()
+                .try_into()
+                .map_err(|_| EOVERFLOW)?,
+            format: fourcc::XRGB8888,
+            modifier: fourcc::FORMAT_MOD_LINEAR,
+            width,
+            height,
+            pitch: layout.pitch().try_into().map_err(|_| EOVERFLOW)?,
+            offset: 0,
+            content_serial: snapshot.content_serial_value(),
+            flags: 0,
+            reserved: 0,
+        };
+        let address = request.result.try_into().map_err(|_| EOVERFLOW)?;
+        UserSlice::new(UserPtr::from_addr(address), core::mem::size_of_val(&result))
+            .writer()
+            .write(&result)?;
+        candidate.publish_snapshot(&snapshot, || descriptor.fd_install(file))?;
+        Ok(())
     }
 }
 
