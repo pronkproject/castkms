@@ -39,6 +39,64 @@ mod cases {
     }
 
     #[test]
+    fn host_handback_uses_a_gate_without_releasing_old_source_reads() -> Result {
+        for disable in [false, true] {
+            with_display(|device, crtc, connector, _, file| {
+                let owner = owner(&file, crtc, connector)?;
+                let first = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                first.submit_private_probe(None)?;
+                let proposal = first.propose_profile(linear_profile()?)?;
+                device.atomic_update(|mut transaction| {
+                    transaction
+                        .add_crtc_state(crtc)?
+                        .tag_transition(proposal.describe().transition);
+                    Ok(())
+                })?;
+                let (old, _, description) = proposal.activate(device)?;
+                let incoming = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                let handback = incoming.propose_host()?;
+                check(handback.handback(device) == Err(EAGAIN))?;
+                old.check()?;
+                device.atomic_update(|mut transaction| {
+                    if disable {
+                        transaction.as_mut().set_crtc_config(crtc, None)?;
+                    }
+                    transaction
+                        .add_crtc_state(crtc)?
+                        .tag_transition(handback.describe().transition);
+                    Ok(())
+                })?;
+                let job = if disable {
+                    None
+                } else {
+                    Some(first.claim_source(&old, description, None)?)
+                };
+                let source = device
+                    .output
+                    .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                    .ok_or(EINVAL)?;
+                let host = handback.handback(device)?;
+                check(
+                    host.profile == Profile::HostV1
+                        && host.generation == description.generation + 1,
+                )?;
+                check(old.check() == Err(EIO))?;
+                device.execution.check_host()?;
+                let next = device.startup.begin()?;
+                drop(old);
+                next.check()?;
+                source.seal();
+                if let Some(job) = job {
+                    check(source.prepared()?.is_none())?;
+                    job.release_without_access();
+                }
+                check(source.prepared()?.is_some())
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn replacing_a_negotiated_worker_retains_its_outstanding_source_read() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;

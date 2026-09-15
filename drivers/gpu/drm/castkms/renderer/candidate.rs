@@ -286,6 +286,50 @@ impl Candidate {
         self.activate_inner(registered, Some(proposal))
     }
 
+    pub(super) fn handback(
+        &self,
+        registered: &Device<Driver, Registered>,
+        proposal: &crate::execution::proposal::Registration,
+    ) -> Result<Description> {
+        let device: &Device<Driver> = registered;
+        if !core::ptr::eq(self.access.device(), device) {
+            return Err(EINVAL);
+        }
+        if !matches!(
+            proposal.description().profile,
+            crate::execution::validation::Contract::Host
+        ) {
+            return Err(EINVAL);
+        }
+        let mut prepared = self
+            .access
+            .display()
+            .execution
+            .prepare(registered, Profile::HostV1)?;
+        let description = prepared.description()?;
+        // Resource lifecycle exclusion precedes display control; no drain occurs under DRM locks.
+        self.access.display().host.with_change(|change| {
+            self.access
+                .with_installed_transition(registered, |current, locked| {
+                    if self.access.display().execution.describe() != self.execution {
+                        return Err(ESTALE);
+                    }
+                    self.resources.handback(|| {
+                        proposal.check()?;
+                        change.enable()?;
+                        self.access.display().execution.publish_proposal(
+                            locked,
+                            &mut prepared,
+                            proposal.description().generation,
+                            current.configuration(),
+                            |contract| current.check_contract(contract),
+                        )
+                    })
+                })
+        })?;
+        Ok(description)
+    }
+
     fn activate_inner(
         &self,
         registered: &Device<Driver, Registered>,
