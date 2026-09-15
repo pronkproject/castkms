@@ -75,6 +75,26 @@ impl Target {
         self.crtc.drm_dev()
     }
 
+    /// Stabilize ownership of one static output pair without requiring an active video mode.
+    ///
+    /// Audio authority may survive disabled video; delivery is gated separately. No scene,
+    /// source-storage or renderer permission is implied. The callback runs under native
+    /// master and object-ID locks and must not acquire modeset or monitor-description locks.
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    pub(crate) fn with_output_objects<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        let guard = self.master.lock_current().ok_or(EACCES)?;
+        if !guard.holds_object(self.crtc.crtc())
+            || !guard.holds_object(&*self.connector)
+            || !kernel::sync::Arc::ptr_eq(
+                &self.crtc.crtc().display.monitor,
+                &self.connector.monitor,
+            )
+        {
+            return Err(EACCES);
+        }
+        f()
+    }
+
     /// Inspect control only after the latest accepted CRTC state has installed its scene.
     ///
     /// Registration is followed by master, modeset, object-ID and output locks, in that order.
