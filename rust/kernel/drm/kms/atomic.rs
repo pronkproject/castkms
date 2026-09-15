@@ -333,9 +333,11 @@ impl<T: KmsDriver> AtomicState<T> {
     /// lands. A per-CRTC callback that consults committed state instead sees each sibling at its
     /// old value, so two heads that both rise in one commit each find the other still low, pass
     /// individually, and break the shared limit together.
-    pub fn for_each_new_crtc_state<F>(&self, mut f: F)
+    ///
+    /// References may be retained for the read-only borrow of the transaction.
+    pub fn for_each_new_crtc_state<'a, F>(&'a self, mut f: F)
     where
-        F: FnMut(&Crtc<T::Crtc>, &OpaqueCrtcState<T>),
+        F: FnMut(&'a Crtc<T::Crtc>, &'a OpaqueCrtcState<T>),
     {
         // SAFETY: `state` is initialized via our type invariants, and `crtcs` together with the
         // device's `num_crtc` are invariant for as long as we hold a reference to it.
@@ -523,9 +525,11 @@ impl<T: KmsDriver> AtomicStateReader<T> {
     }
 
     /// Invoke `f` for every CRTC with a published new state in this commit.
-    pub fn for_each_new_crtc_state<F>(&self, f: F)
+    ///
+    /// References may be retained for the reader borrow, but not across installation.
+    pub fn for_each_new_crtc_state<'a, F>(&'a self, f: F)
     where
-        F: FnMut(&Crtc<T::Crtc>, &OpaqueCrtcState<T>),
+        F: FnMut(&'a Crtc<T::Crtc>, &'a OpaqueCrtcState<T>),
     {
         self.0.for_each_new_crtc_state(f)
     }
