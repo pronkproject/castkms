@@ -45,12 +45,25 @@ mod cases {
     }
 
     #[test]
+    fn control_interval_cancellation_cannot_cancel_its_replacement() -> Result {
+        let fixture = Fixture::new()?;
+        let startup = &fixture.drm.device().startup;
+        let first = startup.begin()?;
+        startup.cancel_current();
+        check(first.check() == Err(ECANCELED))?;
+        let second = startup.begin()?;
+        first.cancel();
+        drop(first);
+        second.check()
+    }
+
+    #[test]
     fn different_outputs_have_independent_candidates() -> Result {
         let first = Fixture::new()?;
         let second = Fixture::new_named(c"castkms-startup-other")?;
+        let other_image = image(&second)?;
         let a = first.drm.device().startup.begin()?;
         let b = second.drm.device().startup.begin()?;
-        let other_image = image(&second)?;
         check(matches!(
             a.snapshot(first.drm.device(), &other_image),
             Err(EINVAL)

@@ -18,6 +18,12 @@ _Static_assert(sizeof(struct drm_castkms_create_renderer_control) == 32,
 	       "renderer creation ABI");
 _Static_assert(sizeof(struct drm_castkms_renderer_query) == 24,
 	       "renderer query ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_takeover) == 40,
+	       "renderer takeover ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_begin_takeover) == 32,
+	       "renderer begin ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_abort_takeover) == 16,
+	       "renderer abort ABI");
 
 static unsigned int open_files(void)
 {
@@ -73,11 +79,46 @@ static struct drm_castkms_renderer_query query_renderer(int fd)
 	return query;
 }
 
+static struct drm_castkms_renderer_takeover begin_takeover(int fd,
+						   uint64_t generation)
+{
+	struct drm_castkms_renderer_takeover result;
+	struct drm_castkms_renderer_begin_takeover request = {
+		.expected_generation = generation,
+		.result = (uintptr_t)&result,
+	};
+
+	memset(&result, 0xa5, sizeof(result));
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
+		    &request) == 0);
+	CHECK(result.candidate_id != 0);
+	CHECK(result.execution_generation == generation);
+	CHECK(result.profile == DRM_CASTKMS_EXECUTION_HOST_V1);
+	CHECK(result.width != 0 && result.height != 0);
+	CHECK(result.refresh_millihz != 0);
+	CHECK(result.reserved == 0);
+	return result;
+}
+
+static void abort_takeover(int fd, uint64_t candidate_id)
+{
+	struct drm_castkms_renderer_abort_takeover request = {
+		.candidate_id = candidate_id,
+	};
+
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER,
+		    &request) == 0);
+}
+
 int main(int argc, char **argv)
 {
 	struct drm_castkms_create_renderer_control request = {};
 	struct drm_castkms_renderer_files files;
+	struct drm_castkms_renderer_files next_files;
 	struct drm_castkms_renderer_query first, next;
+	struct drm_castkms_renderer_takeover candidate, replacement;
+	struct drm_castkms_renderer_begin_takeover begin = {};
+	struct drm_castkms_renderer_abort_takeover abort = {};
 	drmModeConnector *connector;
 	drmModeRes *resources;
 	struct buffer buffer;
@@ -155,6 +196,33 @@ int main(int argc, char **argv)
 	expect_ioctl_error(files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_QUERY ^
 			   (1U << _IOC_SIZESHIFT), &next, ENOTTY);
+	begin.expected_generation = first.generation + 1;
+	begin.result = (uintptr_t)&candidate;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
+			   &begin, ESTALE);
+	begin.expected_generation = first.generation;
+	begin.result = 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
+			   &begin, EFAULT);
+	candidate = begin_takeover(files.renderer_fd, first.generation);
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
+			   &begin, EBUSY);
+	abort.candidate_id = candidate.candidate_id + 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER,
+			   &abort, ENOENT);
+	abort.candidate_id = candidate.candidate_id;
+	abort.flags = 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER,
+			   &abort, EINVAL);
+	abort.flags = 0;
+	abort_takeover(files.renderer_fd, candidate.candidate_id);
+	replacement = begin_takeover(files.renderer_fd, first.generation);
+	CHECK(replacement.candidate_id > candidate.candidate_id);
 
 	duplicate = fcntl(files.revoke_fd, F_DUPFD_CLOEXEC, 0);
 	CHECK(duplicate >= 0);
@@ -167,6 +235,9 @@ int main(int argc, char **argv)
 	CHECK(close(files.renderer_fd) == 0);
 
 	files = create_renderer(fd, &request);
+	first = query_renderer(files.renderer_fd);
+	candidate = begin_takeover(files.renderer_fd, first.generation);
+	CHECK(candidate.candidate_id != 0);
 	duplicate = fcntl(files.renderer_fd, F_DUPFD_CLOEXEC, 0);
 	CHECK(duplicate >= 0);
 	CHECK(close(files.renderer_fd) == 0);
@@ -180,8 +251,14 @@ int main(int argc, char **argv)
 
 	request.files = (uintptr_t)&files;
 	files = create_renderer(peer, &request);
-	query_renderer(files.renderer_fd);
+	first = query_renderer(files.renderer_fd);
+	candidate = begin_takeover(files.renderer_fd, first.generation);
 	CHECK(close(files.renderer_fd) == 0);
+	next_files = create_renderer(peer, &request);
+	candidate = begin_takeover(next_files.renderer_fd, first.generation);
+	abort_takeover(next_files.renderer_fd, candidate.candidate_id);
+	CHECK(close(next_files.renderer_fd) == 0);
+	CHECK(close(next_files.revoke_fd) == 0);
 	CHECK(close(files.revoke_fd) == 0);
 	destroy_buffer(fd, &buffer);
 	CHECK(close(peer) == 0);
