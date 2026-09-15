@@ -143,6 +143,14 @@ mod cases {
     }
 
     #[test]
+    fn full_range_white_is_opaque_in_every_format() -> Result {
+        for &format in formats::FORMATS {
+            white_image_in_range(format, true, ColorRange::Full)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn packed_channel_order_decodes_red() -> Result {
         use drm::fourcc::*;
         for (format, bytes) in [
