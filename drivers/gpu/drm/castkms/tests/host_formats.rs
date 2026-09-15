@@ -165,4 +165,22 @@ mod cases {
         }
         Ok(())
     }
+
+    #[test]
+    fn monochrome_pixels_are_most_significant_bit_first() -> Result {
+        for (format, values) in [
+            (drm::fourcc::R1, [0xffffff, 0]),
+            (drm::fourcc::R2, [0xaaaaaa, 0x555555]),
+            (drm::fourcc::R4, [0x999999, 0x666666]),
+        ] {
+            for (x, expected) in values.into_iter().enumerate() {
+                let pixel = formats::pixel(format, x, 0, |_, _, _, out| {
+                    out[0] = 0x96;
+                    Ok(())
+                })?;
+                check(pixel == expected)?;
+            }
+        }
+        Ok(())
+    }
 }
