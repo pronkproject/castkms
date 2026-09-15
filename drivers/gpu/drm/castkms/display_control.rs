@@ -77,10 +77,9 @@ impl Target {
 
     /// Stabilize ownership of one static output pair without requiring an active video mode.
     ///
-    /// Audio authority may survive disabled video; delivery is gated separately. No scene,
+    /// Metadata and audio authority may survive disabled video. No scene,
     /// source-storage or renderer permission is implied. The callback runs under native
     /// master and object-ID locks and must not acquire modeset or monitor-description locks.
-    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
     pub(crate) fn with_output_objects<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
         let guard = self.master.lock_current().ok_or(EACCES)?;
         if !guard.holds_object(self.crtc.crtc())

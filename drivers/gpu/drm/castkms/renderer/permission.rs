@@ -142,6 +142,20 @@ impl Access {
             .with_current(|current| self.authorize(current, f))
     }
 
+    /// Authorize output-scoped metadata without requiring enabled video or a scene.
+    pub(crate) fn with_output<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.policy.permission.target.with_output_objects(|| {
+            if self.device().authority.interval()? != self.policy.permission.interval {
+                return Err(ESTALE);
+            }
+            let revoked = self.policy.revoked.lock();
+            if *revoked {
+                return Err(EKEYREVOKED);
+            }
+            f()
+        })
+    }
+
     /// Check revocation inside the installed-generation control interval.
     ///
     /// Master, modeset, object-ID and output locks precede the revocation lock. The callback
