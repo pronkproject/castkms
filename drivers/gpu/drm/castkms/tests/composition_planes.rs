@@ -393,6 +393,88 @@ mod cases {
     }
 
     #[test]
+    fn renderer_description_retains_layer_geometry_and_color() -> Result {
+        use kernel::drm::kms::{
+            colorop::Operation,
+            plane::{ColorEncoding, ColorRange},
+        };
+        let fixture = Fixture::new()?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        let mut scene = fixture
+            .drm
+            .device()
+            .output
+            .inspect(|scene| scene.cloned())
+            .ok_or(EINVAL)?;
+        let image = small_image(&fixture, 0xff123456)?;
+        let mut operations = KVec::new();
+        operations.push(Operation::SrgbEotf, GFP_KERNEL)?;
+        operations.push(Operation::Matrix([7; 12]), GFP_KERNEL)?;
+        let color = crate::color::Pipeline::new(operations)?;
+        for (index, kind) in [(8, scene::Kind::Overlay), (9, scene::Kind::Cursor)] {
+            scene.set_layer(
+                index,
+                Some(Arc::new(
+                    scene::Primary {
+                        framebuffer: image.clone(),
+                        geometry: scene::Geometry {
+                            source: [1 << 15, 0, 1 << 16, 2 << 16],
+                            position: [-1, 3],
+                            destination: [4, 5],
+                            output: [640, 480],
+                        },
+                        producer: None,
+                        owner: None,
+                        kind,
+                        zpos: 1,
+                        color: color.clone(),
+                        yuv: (ColorEncoding::Bt709, ColorRange::Full),
+                    },
+                    GFP_KERNEL,
+                )?),
+            );
+        }
+        scene.output_color = crate::color::OutputColor::new(
+            Some(&[ColorLut::new(1, 2, 3)]),
+            None,
+            Some(&[ColorLut::new(4, 5, 6)]),
+        )?;
+        let description = crate::renderer::description::Description::new(&scene)?;
+        check(description.layers.len() == 3)?;
+        check(description.layers[1].kind == scene::Kind::Overlay)?;
+        check(description.layers[2].kind == scene::Kind::Cursor)?;
+        check(description.layers[1].geometry().position == [-1, 3])?;
+        check(description.layers[1].geometry().source[0] == 1 << 15)?;
+        check(
+            description.layers[1]
+                .color
+                .as_ref()
+                .ok_or(EINVAL)?
+                .operations()
+                .len()
+                == 2,
+        )?;
+        check(description.layers[1].yuv == (ColorEncoding::Bt709, ColorRange::Full))?;
+        let (degamma, _, gamma) = description.color.ok_or(EINVAL)?.description();
+        check(degamma == Some(&[[1, 2, 3]][..]))?;
+        check(gamma == Some(&[[4, 5, 6]][..]))?;
+        drop(description);
+        let mut oversized = KVec::new();
+        for _ in 0..17 {
+            oversized.push(Operation::SrgbEotf, GFP_KERNEL)?;
+        }
+        let mut layer = scene.layers().nth(1).ok_or(EINVAL)?.clone();
+        layer.color = crate::color::Pipeline::new(oversized)?;
+        scene.set_layer(8, Some(Arc::new(layer, GFP_KERNEL)?));
+        check(matches!(
+            crate::renderer::description::Description::new(&scene),
+            Err(E2BIG)
+        ))?;
+        Ok(())
+    }
+
+    #[test]
     fn plane_helpers_exclude_aliases_and_foreign_objects() -> Result {
         let fixture = Fixture::new()?;
         let foreign = Fixture::new_named(c"castkms-foreign-plane-test")?;
