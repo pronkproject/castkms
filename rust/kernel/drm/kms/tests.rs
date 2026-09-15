@@ -38,6 +38,7 @@ mod preparation;
 mod properties;
 mod retirement;
 mod routing;
+mod installation;
 
 use super::*;
 use crate::{
@@ -62,6 +63,9 @@ struct Counts {
     plane_updates: AtomicU32,
     framebuffer_preparations: AtomicU32,
     fail_framebuffer_preparation: AtomicU32,
+    install_calls: AtomicU32,
+    install_successes: AtomicU32,
+    fail_install: AtomicU32,
     // Borrowed only by synchronous preparation callbacks while their source is retained.
     preparation_source: AtomicPtr<bindings::drm_prepare_source>,
     preparation_capacity: AtomicU32,
@@ -552,6 +556,15 @@ impl KmsDriver for TestDriver {
         let enabled = tail.commit_modeset_enables(disabled);
         tail.fake_vblank();
         tail.commit_hw_done(enabled, planes)
+    }
+
+    fn atomic_commit_install<'a>(install: atomic::Install<'a, Self>) -> atomic::InstallResult<'a, Self> {
+        let counts = install.state().drm_dev().counts.clone();
+        counts.install_calls.fetch_add(1, Ordering::Relaxed);
+        if counts.fail_install.load(Ordering::Relaxed) != 0 {
+            return install.reject(EAGAIN);
+        }
+        install.install_then(|| { counts.install_successes.fetch_add(1, Ordering::Relaxed); })
     }
 }
 
