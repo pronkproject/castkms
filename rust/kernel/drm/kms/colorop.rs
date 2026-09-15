@@ -214,4 +214,59 @@ impl<S: FromRawPlaneState> PlaneStateMutator<'_, S> {
         Ok(())
     }
 
+    /// Copy the selected pipeline during atomic validation, without retaining blob pointers.
+    ///
+    /// The plane-state guard excludes other plane access. Color operations share that
+    /// plane's modeset lock. No public color-operation mutator can alias the snapshot.
+    pub fn color_pipeline_snapshot(&mut self, maximum: usize) -> Result<KVec<Operation>> {
+        let state = self.as_raw();
+        if state.state.is_null() {
+            return Err(EINVAL);
+        }
+        let mut operation = state.color_pipeline;
+        let mut result = KVec::new();
+        while !operation.is_null() {
+            if result.len() >= maximum {
+                return Err(E2BIG);
+            }
+            // SAFETY: The selected pipeline is retained by the plane/device. Its
+            // immutable links share this plane, whose lock the guard already holds.
+            let value = unsafe {
+                if (*operation).plane != state.plane {
+                    return Err(EINVAL);
+                }
+                let current = from_err_ptr(bindings::drm_atomic_get_colorop_state(
+                    state.state,
+                    operation,
+                ))?;
+                if (*current).bypass {
+                    Operation::Bypass
+                } else {
+                    match (*operation).type_ {
+                        bindings::drm_colorop_type_DRM_COLOROP_1D_CURVE => match (*current).curve_1d_type {
+                            bindings::drm_colorop_curve_1d_type_DRM_COLOROP_1D_CURVE_SRGB_EOTF => Operation::SrgbEotf,
+                            bindings::drm_colorop_curve_1d_type_DRM_COLOROP_1D_CURVE_SRGB_INV_EOTF => Operation::SrgbInverseEotf,
+                            _ => return Err(EOPNOTSUPP),
+                        },
+                        bindings::drm_colorop_type_DRM_COLOROP_CTM_3X4 => {
+                            let blob = (*current).data;
+                            if blob.is_null() {
+                                Operation::Bypass
+                            } else {
+                                if (*blob).length != size_of::<[u64; 12]>() || (*blob).data.is_null() {
+                                    return Err(EINVAL);
+                                }
+                                Operation::Matrix((*blob).data.cast::<[u64; 12]>().read_unaligned())
+                            }
+                        },
+                        _ => return Err(EOPNOTSUPP),
+                    }
+                }
+            };
+            result.push(value, GFP_KERNEL)?;
+            // SAFETY: The link is immutable throughout the retained device lifetime.
+            operation = unsafe { (*operation).next };
+        }
+        Ok(result)
+    }
 }
