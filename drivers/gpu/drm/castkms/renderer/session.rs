@@ -393,6 +393,10 @@ pub(crate) struct PendingSource<'a> {
 }
 
 impl PendingSource<'_> {
+    pub(crate) fn scene_description(&self) -> Result<super::description::Description<'_>> {
+        super::description::Description::new(self.job.as_ref().ok_or(EINVAL)?.scene())
+    }
+
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
