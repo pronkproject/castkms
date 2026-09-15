@@ -7,7 +7,7 @@
 use bindings;
 
 use crate::{
-    error::{code::EINVAL, Result},
+    error::{code::EINVAL, code::EOVERFLOW, Result},
     types::Opaque,
 };
 
@@ -44,8 +44,15 @@ impl ModeFlags {
     pub const CLKDIV2: Self = Self(bindings::DRM_MODE_FLAG_CLKDIV2);
 
     /// Return whether all flags in `other` are set.
+    #[inline]
     pub fn contains(self, other: Self) -> bool {
         self & other == other
+    }
+
+    /// Return the raw DRM mode-flag representation.
+    #[inline]
+    pub fn bits(self) -> u32 {
+        self.0
     }
 }
 
@@ -258,6 +265,13 @@ impl DisplayMode {
         unsafe { (*self.as_raw()).vtotal }
     }
 
+    /// Return the vertical scan multiplier.
+    #[inline]
+    pub fn vscan(&self) -> u16 {
+        // SAFETY: Reading this field is safe via the type invariants.
+        unsafe { (*self.as_raw()).vscan }
+    }
+
     /// Return the pixel clock in kHz.
     #[inline]
     pub fn clock(&self) -> i32 {
@@ -277,6 +291,30 @@ impl DisplayMode {
     pub fn vrefresh(&self) -> i32 {
         // SAFETY: `drm_mode_vrefresh` only reads this valid display mode.
         unsafe { bindings::drm_mode_vrefresh(self.as_raw()) }
+    }
+
+    /// Return the refresh rate in millihertz without rounding to whole hertz.
+    #[inline]
+    pub fn vrefresh_millihz(&self) -> Result<u32> {
+        let mut numerator = u64::try_from(self.clock()).map_err(|_| EINVAL)? * 1_000_000;
+        let mut denominator = u64::from(self.htotal()) * u64::from(self.vtotal());
+        if self.flags().contains(ModeFlags::INTERLACE) {
+            numerator = numerator.checked_mul(2).ok_or(EOVERFLOW)?;
+        }
+        if self.flags().contains(ModeFlags::DBLSCAN) {
+            denominator = denominator.checked_mul(2).ok_or(EOVERFLOW)?;
+        }
+        denominator = denominator
+            .checked_mul(u64::from(self.vscan().max(1)))
+            .ok_or(EOVERFLOW)?;
+        if denominator == 0 {
+            return Err(EINVAL);
+        }
+        let rounded = numerator
+            .checked_add(denominator / 2)
+            .ok_or(EOVERFLOW)?
+            / denominator;
+        u32::try_from(rounded).map_err(|_| EOVERFLOW)
     }
 
     /// Return the CTA-861 Video Identification Code matching this mode.
