@@ -387,6 +387,88 @@ struct drm_castkms_renderer_release_source {
 	__u32 reserved[3];
 };
 
+/* Complete-scene stream, native byte order. All records are eight-byte aligned.
+ * DEQUEUE_SCENE shares the source queue and RELEASE_SOURCE lifetime contract.
+ * The result consists of a scene header, layer records with their color records,
+ * then output color records. Layer order is back-to-front, with zpos ties in
+ * KMS plane creation order. Source rectangles use unsigned 16.16 pixels;
+ * signed destination positions permit clipping. Sampling is nearest-neighbor.
+ * Layers use premultiplied pixel alpha (opaque for formats without alpha), source
+ * over an opaque black background. Plane color precedes blending; output color
+ * follows blending. All unused memory-plane records contain fd -1 and zeros.
+ * The producer fd covers all layers and must complete successfully before any
+ * source read; -1 denotes no outstanding producer fence. Retaining ordinary
+ * DMA-BUF fds does not authorize reads after RELEASE_SOURCE.
+ * No descriptor is installed on failure, even after a partial metadata copy.
+ * Allocate SCENE_MAX_BYTES for the result; a smaller capacity may return
+ * ENOSPC without consuming the scene. Flags and reserved fields must be zero.
+ * Empty/unchanged scenes return ENODATA, and an outstanding job returns EBUSY.
+ */
+#define DRM_CASTKMS_RENDERER_SCENE_VERSION 1
+#define DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES 65536
+#define DRM_CASTKMS_RENDERER_SCENE_MAX_LAYERS 24
+#define DRM_CASTKMS_RENDERER_SCENE_MAX_COLOR_OPS 16
+#define DRM_CASTKMS_RENDERER_LAYER_PRIMARY 0
+#define DRM_CASTKMS_RENDERER_LAYER_OVERLAY 1
+#define DRM_CASTKMS_RENDERER_LAYER_CURSOR 2
+#define DRM_CASTKMS_RENDERER_COLOR_BYPASS 0
+#define DRM_CASTKMS_RENDERER_COLOR_SRGB_EOTF 1
+#define DRM_CASTKMS_RENDERER_COLOR_SRGB_INVERSE_EOTF 2
+#define DRM_CASTKMS_RENDERER_COLOR_MATRIX 3
+#define DRM_CASTKMS_RENDERER_COLOR_LUT 4
+
+struct drm_castkms_renderer_dequeue_scene {
+	__u64 result;
+	__u32 capacity;
+	__u32 flags;
+	__u64 reserved;
+};
+
+struct drm_castkms_renderer_scene {
+	__u32 version;
+	__u32 bytes;
+	__u64 job_id;
+	__u64 content_serial;
+	__u32 width;
+	__u32 height;
+	__u32 layer_count;
+	__s32 producer_fd;
+	__u32 output_color_count;
+	__u32 reserved;
+};
+
+struct drm_castkms_renderer_layer {
+	__u32 bytes; /* Includes following color records. */
+	__u32 kind;
+	__u32 zpos;
+	__u32 format;
+	__u64 modifier;
+	__u32 width;
+	__u32 height;
+	__u32 source[4];
+	__s32 position[2];
+	__u32 destination[2];
+	__u32 color_encoding; /* 0 BT.601, 1 BT.709, 2 BT.2020 nonconstant. */
+	__u32 color_range; /* 0 limited, 1 full. */
+	__u32 plane_count;
+	__u32 color_count;
+	struct drm_castkms_renderer_source_plane planes[4];
+};
+
+/* Each color record starts with kind and payload_bytes. Curves and bypass
+ * have no payload. MATRIX has twelve u64 S31.32 sign-magnitude coefficients
+ * (three rows of four, including offsets); LUT has 1..256 entries containing
+ * u16 red, green, blue, zero. LUT input/output range is 0..65535 with linear
+ * interpolation. Plane matrices retain signed extended range between steps;
+ * curves and the pipeline output clamp to 0..65535. Matrix offsets use the
+ * same channel units, not normalized 0..1 units. Output operations are applied
+ * in degamma-LUT, matrix, gamma-LUT order, omitting absent operations.
+ */
+struct drm_castkms_renderer_color {
+	__u32 kind;
+	__u32 payload_bytes;
+};
+
 /**
  * struct drm_castkms_audio_files - independently owned audio endpoints
  * @audio_fd: Read-only interleaved PCM stream; no ALSA capture device is created.
@@ -471,9 +553,13 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER 0x09
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SOURCE 0x0a
 #define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x0b
+#define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
+	DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_DEQUEUE_SCENE,
+			struct drm_castkms_renderer_dequeue_scene),
 	DRM_IOCTL_CASTKMS_CREATE_AUDIO_CAPTURE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_AUDIO_CAPTURE,
 			struct drm_castkms_create_audio_capture),
