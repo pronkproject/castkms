@@ -153,7 +153,7 @@ impl Candidate {
     /// source for fresh private storage and never escapes through the returned snapshot.
     pub(crate) fn snapshot_current(&self) -> Result<Snapshot> {
         self.validate()?;
-        let host = self.access.device().host.current().map_err(|error| {
+        let host = self.access.display().host.current().map_err(|error| {
             if error == EAGAIN {
                 ENODATA
             } else {
