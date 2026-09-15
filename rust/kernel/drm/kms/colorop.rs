@@ -85,3 +85,55 @@ where
         })
     }
 }
+
+impl<S: FromRawPlaneState> PlaneStateMutator<'_, S> {
+    /// Select an advertised non-bypass pipeline by enumeration order, or bypass all operations.
+    pub fn select_color_pipeline(&mut self, index: Option<usize>) -> Result {
+        // SAFETY: The guard exclusively owns the unpublished plane state.
+        let raw = unsafe { self.as_raw_mut() };
+        // SAFETY: The guard owns an unpublished plane state. Its plane retains the
+        // immutable property enumeration and all static color-operation objects.
+        unsafe {
+            let mut pipeline = ptr::null_mut();
+            if let Some(mut index) = index {
+                let property = (*raw.plane).color_pipeline_property;
+                if property.is_null() {
+                    return Err(EOPNOTSUPP);
+                }
+                let head = &raw mut (*property).enum_list;
+                let mut entry = (*head).next;
+                while entry != head {
+                    let value =
+                        (*crate::container_of!(entry, bindings::drm_property_enum, head)).value;
+                    if value != 0 {
+                        if index == 0 {
+                            let object = bindings::drm_mode_object_find(
+                                (*raw.plane).dev,
+                                ptr::null_mut(),
+                                u32::try_from(value).map_err(|_| EINVAL)?,
+                                bindings::DRM_MODE_OBJECT_COLOROP,
+                            );
+                            if object.is_null() {
+                                return Err(EINVAL);
+                            }
+                            pipeline = crate::container_of!(object, bindings::drm_colorop, base);
+                            if (*pipeline).plane != raw.plane {
+                                return Err(EINVAL);
+                            }
+                            break;
+                        }
+                        index -= 1;
+                    }
+                    entry = (*entry).next;
+                }
+                if pipeline.is_null() {
+                    return Err(EINVAL);
+                }
+            }
+            let changed = bindings::drm_atomic_set_colorop_for_plane(raw, pipeline);
+            raw.set_color_mgmt_changed(raw.color_mgmt_changed() || changed);
+        }
+        Ok(())
+    }
+
+}
