@@ -149,6 +149,22 @@ mod cases {
     }
 
     #[test]
+    fn high_depth_yuv_ignores_unused_low_bits() -> Result {
+        for (format, padding) in [(drm::fourcc::P010, 63u16), (drm::fourcc::P012, 15u16)] {
+            let pixel = formats::pixel(format, 0, 0, |plane, _, _, out| {
+                for word in out.chunks_exact_mut(2) {
+                    word.copy_from_slice(
+                        &((if plane == 0 { 16u16 } else { 128u16 }) * 256 | padding).to_le_bytes(),
+                    );
+                }
+                Ok(())
+            })?;
+            check(pixel == 0)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn every_format_decodes_padded_odd_width_storage() -> Result {
         for &format in formats::FORMATS {
             white_image(format, true)?;
