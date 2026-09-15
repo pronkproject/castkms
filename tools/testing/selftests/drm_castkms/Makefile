@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 CFLAGS += $(shell pkg-config --cflags libdrm) -Wall -Wextra
 LDLIBS += $(shell pkg-config --libs libdrm)
-TEST_GEN_PROGS := modeset master-lifetime execution capture-grant capture-stream capture-destination capture-output
+TEST_GEN_PROGS := modeset master-lifetime execution monitor-control capture-grant capture-stream capture-destination capture-output
 TEST_PROGS := takeover-model.py handback-model.py
 TEST_FILES := standalone.config
 LOCAL_HDRS := fixture.h
@@ -9,6 +9,7 @@ include ../lib.mk
 
 $(OUTPUT)/modeset: fixture.c import.c
 $(OUTPUT)/master-lifetime: fixture.c
+$(OUTPUT)/monitor-control: fixture.c
 $(OUTPUT)/capture-grant: fixture.c
 $(OUTPUT)/capture-stream: fixture.c
 $(OUTPUT)/capture-destination: fixture.c
