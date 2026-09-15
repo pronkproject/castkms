@@ -28,6 +28,12 @@
  */
 #include <linux/hrtimer_types.h>
 
+#if IS_ENABLED(CONFIG_RUST_SND_PCM)
+#include <sound/core.h>
+#include <sound/info.h>
+#include <sound/pcm.h>
+#endif
+
 #include <linux/acpi.h>
 #include <linux/anon_inodes.h>
 #include <linux/gpu_buddy.h>

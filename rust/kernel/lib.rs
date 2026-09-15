@@ -138,6 +138,8 @@ pub mod serdev;
 pub mod sizes;
 #[cfg(CONFIG_SOC_BUS)]
 pub mod soc;
+#[cfg(CONFIG_RUST_SND_PCM)]
+pub mod sound;
 #[doc(hidden)]
 pub mod std_vendor;
 pub mod str;

@@ -49,6 +49,10 @@ menuconfig SND
 
 if SND
 
+config RUST_SND_PCM
+	bool
+	depends on RUST && SND=y && SND_PCM=y
+
 source "sound/core/Kconfig"
 
 source "sound/drivers/Kconfig"
