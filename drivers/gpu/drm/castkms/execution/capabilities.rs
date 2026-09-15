@@ -2,9 +2,9 @@
 
 //! Immutable whole-scene requirements, without renderer authority or CPU layout policy.
 
-use crate::scene::Geometry;
+use crate::scene::{Geometry, Kind, Scene};
 use kernel::{
-    drm::{fourcc, kms::colorop::Operation},
+    drm::{fourcc, gem::BaseObject, kms::colorop::Operation},
     prelude::*,
 };
 
@@ -139,6 +139,71 @@ impl Profile {
                     format.native
                 }
         })
+    }
+
+    /// Validate every contributing layer and output operation without mapping storage.
+    /// Empty scenes are allowed at an otherwise supported output size.
+    pub(crate) fn check(&self, scene: &Scene, output: [u32; 2]) -> Result {
+        self.check_output(output)?;
+        let mut roles = [0; 3];
+        let mut count = 0;
+        for layer in scene.layers() {
+            count += 1;
+            let role = match layer.kind {
+                Kind::Primary => 0,
+                Kind::Overlay => 1,
+                Kind::Cursor => 2,
+            };
+            roles[role] += 1;
+            if count > self.limits.layers || roles[role] > self.limits.roles[role] {
+                return Err(EOPNOTSUPP);
+            }
+            let image = layer.framebuffer();
+            self.check_geometry(layer.geometry(), [image.width(), image.height()], output)?;
+            for index in 0..image.plane_count() {
+                let imported = image.object_at(index)?.imported_dma_buf().is_some();
+                if !self.storage(
+                    image.format(),
+                    image.modifier(),
+                    image.plane_count(),
+                    imported,
+                    image.pitch(index)?,
+                    image.offset(index)?,
+                ) {
+                    return Err(EOPNOTSUPP);
+                }
+            }
+            if image.plane_count() == 0 || image.is_interlaced() {
+                return Err(EOPNOTSUPP);
+            }
+            self.check_color(layer.color.as_deref())?;
+            use kernel::drm::kms::plane::{ColorEncoding, ColorRange};
+            let encoding = match layer.yuv.0 {
+                ColorEncoding::Bt601 => 0,
+                ColorEncoding::Bt709 => 1,
+                ColorEncoding::Bt2020 => 2,
+            };
+            let range = match layer.yuv.1 {
+                ColorRange::Limited => 0,
+                ColorRange::Full => 1,
+            };
+            if image.is_yuv()
+                && (!self.limits.color.yuv_encodings[encoding]
+                    || !self.limits.color.yuv_ranges[range])
+            {
+                return Err(EOPNOTSUPP);
+            }
+        }
+        if let Some(color) = &scene.output_color {
+            let (degamma, matrix, gamma) = color.description();
+            if (matrix.is_some() && !self.limits.color.output_matrix)
+                || degamma.is_some_and(|lut| lut.len() > self.limits.color.lut_entries)
+                || gamma.is_some_and(|lut| lut.len() > self.limits.color.lut_entries)
+            {
+                return Err(EOPNOTSUPP);
+            }
+        }
+        Ok(())
     }
 
     fn check_output(&self, output: [u32; 2]) -> Result {
