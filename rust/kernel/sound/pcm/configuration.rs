@@ -53,6 +53,8 @@ pub struct Config {
     pub periods_max: u32,
     /// Advertise pause support supplied by the driver.
     pub pause: bool,
+    /// Advertise driver-supplied estimated link timestamps.
+    pub link_timestamps: bool,
 }
 
 impl Config {
@@ -82,6 +84,11 @@ impl Config {
                 | bindings::SNDRV_PCM_INFO_MMAP_VALID
                 | if self.pause {
                     bindings::SNDRV_PCM_INFO_PAUSE
+                } else {
+                    0
+                }
+                | if self.link_timestamps {
+                    bindings::SNDRV_PCM_INFO_HAS_LINK_ESTIMATED_ATIME
                 } else {
                     0
                 },
@@ -152,6 +159,7 @@ mod tests {
             periods_min: 2,
             periods_max: 16,
             pause: false,
+            link_timestamps: false,
         }
     }
 
