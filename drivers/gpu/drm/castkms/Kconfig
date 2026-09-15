@@ -9,9 +9,10 @@ config DRM_CASTKMS
 	select DRM_KMS_HELPER
 	help
 	  Development version of the CastKMS virtual display driver. It provides
-	  one always-connected output and atomic modesetting with immediate flip
-	  completion. It does not yet provide a display clock, capture, delegated
-	  composition, audio, or CEC. Do not use it as a replacement for the C
+	  one to eight virtual outputs and atomic modesetting with software vblank.
+	  The in-kernel compositor accepts linear RGB, monochrome and YUV buffers,
+	  including CPU-mappable imports, at sizes through 8192x8192. It does not
+	  yet provide audio or CEC. Do not use it as a replacement for the C
 	  CastKMS driver in a casting session.
 
 	  The module is called castkms.
