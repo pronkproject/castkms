@@ -324,7 +324,7 @@ impl crtc::DriverCrtc for Crtc {
         let (transaction, old, mut state) = check.take_all();
         CrtcState::resolve_blank_owner(transaction, old, &mut state)?;
         state.validate_color_mgmt(256)?;
-        state.output_color = crate::color::OutputColor::new(None, None, state.gamma_lut())?;
+        state.output_color = crate::color::OutputColor::new(None, state.ctm(), state.gamma_lut())?;
         CrtcState::check_configuration(old, &mut state)
     }
 
@@ -515,7 +515,7 @@ impl KmsDriver for Driver {
             };
             let crtc =
                 crtc::UnregisteredCrtc::<Crtc>::new(dev, plane, cursor, None, display.clone())?;
-            crtc.enable_color_mgmt(0, false, 256);
+            crtc.enable_color_mgmt(0, true, 256);
             crtc.set_gamma_size(256)?;
             let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
                 dev,
