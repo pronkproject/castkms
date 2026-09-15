@@ -26,10 +26,19 @@ struct Submission {
     completion: Option<ARef<Fence>>,
 }
 
-enum State {
+enum SubmissionState {
     Idle,
     Publishing,
     Submitted(Submission),
+}
+
+struct Snapshot {
+    content: Option<ContentSerial>,
+}
+
+struct State {
+    snapshot: Option<Snapshot>,
+    submission: SubmissionState,
 }
 
 /// One candidate's single native probe submission.
@@ -47,8 +56,29 @@ pub(super) struct Probe {
 impl Probe {
     pub(super) fn new() -> impl PinInit<Self> {
         pin_init!(Self {
-            state <- kernel::new_mutex!(State::Idle),
+            state <- kernel::new_mutex!(State {
+                snapshot: None,
+                submission: SubmissionState::Idle,
+            }),
         })
+    }
+
+    /// Publish one startup snapshot and retain its kernel-derived content identity.
+    ///
+    /// The callback runs under the probe lock and must not reenter candidate operations.
+    /// It should only perform the infallible descriptor installation guarded by publication.
+    pub(super) fn publish_snapshot<R>(
+        &self,
+        content: Option<ContentSerial>,
+        publish: impl FnOnce() -> R,
+    ) -> Result<R> {
+        let mut state = self.state.lock();
+        if state.snapshot.is_some() {
+            return Err(EALREADY);
+        }
+        let result = publish();
+        state.snapshot = Some(Snapshot { content });
+        Ok(result)
     }
 
     /// Publish one submission, returning the slot when validation fails.
@@ -58,13 +88,24 @@ impl Probe {
         completion: Option<ARef<Fence>>,
         after_reserve: impl FnOnce() -> Result,
     ) -> Result {
-        {
+        self.submit_source_then(|_| Ok(source), completion, after_reserve)
+    }
+
+    fn submit_source_then(
+        &self,
+        source: impl FnOnce(&State) -> Result<Source>,
+        completion: Option<ARef<Fence>>,
+        after_reserve: impl FnOnce() -> Result,
+    ) -> Result {
+        let source = {
             let mut state = self.state.lock();
-            match *state {
-                State::Idle => *state = State::Publishing,
-                _ => return Err(EALREADY),
+            if !matches!(state.submission, SubmissionState::Idle) {
+                return Err(EALREADY);
             }
-        }
+            let source = source(&state)?;
+            state.submission = SubmissionState::Publishing;
+            source
+        };
         let mut pending = Pending {
             probe: self,
             submission: Some(Submission { source, completion }),
@@ -73,12 +114,28 @@ impl Probe {
         pending.publish()
     }
 
+    /// Publish work over the startup snapshot delivered for this candidate.
+    pub(super) fn submit_snapshot_then(
+        &self,
+        completion: Option<ARef<Fence>>,
+        after_reserve: impl FnOnce() -> Result,
+    ) -> Result {
+        self.submit_source_then(
+            |state| {
+                let content = state.snapshot.as_ref().ok_or(ENODATA)?.content;
+                Ok(Source::Snapshot(content))
+            },
+            completion,
+            after_reserve,
+        )
+    }
+
     /// Return whether submitted work completed, preserving native failure status.
     pub(super) fn result(&self) -> Result<bool> {
         let state = self.state.lock();
-        let submission = match &*state {
-            State::Submitted(submission) => submission,
-            State::Idle | State::Publishing => return Err(ENODATA),
+        let submission = match &state.submission {
+            SubmissionState::Submitted(submission) => submission,
+            SubmissionState::Idle | SubmissionState::Publishing => return Err(ENODATA),
         };
         match &submission.completion {
             None => Ok(true),
@@ -95,9 +152,9 @@ impl Probe {
             return Err(EAGAIN);
         }
         let state = self.state.lock();
-        match &*state {
-            State::Submitted(submission) => Ok(submission.source),
-            State::Idle | State::Publishing => Err(ENODATA),
+        match &state.submission {
+            SubmissionState::Submitted(submission) => Ok(submission.source),
+            SubmissionState::Idle | SubmissionState::Publishing => Err(ENODATA),
         }
     }
 }
@@ -112,12 +169,12 @@ impl Pending<'_> {
     fn publish(&mut self) -> Result {
         let submission = self.submission.take().ok_or(EINVAL)?;
         let mut state = self.probe.state.lock();
-        if !matches!(*state, State::Publishing) {
+        if !matches!(state.submission, SubmissionState::Publishing) {
             drop(state);
             drop(submission);
             return Err(ECANCELED);
         }
-        *state = State::Submitted(submission);
+        state.submission = SubmissionState::Submitted(submission);
         Ok(())
     }
 }
@@ -125,8 +182,8 @@ impl Pending<'_> {
 impl Drop for Pending<'_> {
     fn drop(&mut self) {
         let mut state = self.probe.state.lock();
-        if matches!(*state, State::Publishing) {
-            *state = State::Idle;
+        if matches!(state.submission, SubmissionState::Publishing) {
+            state.submission = SubmissionState::Idle;
         }
         drop(state);
         drop(self.submission.take());

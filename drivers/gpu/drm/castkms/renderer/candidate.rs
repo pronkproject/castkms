@@ -165,7 +165,8 @@ impl Candidate {
     ) -> Result<R> {
         self.with_current_control(|control| {
             image_access::Current::new(control)?.check_snapshot(snapshot)?;
-            Ok(publish())
+            self.probe
+                .publish_snapshot(snapshot.content_serial(), publish)
         })
     }
 
@@ -186,12 +187,10 @@ impl Candidate {
     }
 
     /// Publish a probe that uploaded one independent HOST startup snapshot.
-    pub(crate) fn submit_snapshot_probe(
-        &self,
-        content: Option<crate::scene::ContentSerial>,
-        completion: Option<ARef<Fence>>,
-    ) -> Result {
-        self.submit_probe(ProbeSource::Snapshot(content), completion)
+    pub(crate) fn submit_snapshot_probe(&self, completion: Option<ARef<Fence>>) -> Result {
+        self.validate()?;
+        self.probe
+            .submit_snapshot_then(completion, || self.validate())
     }
 
     /// Inspect submitted probe completion without waiting or activating execution.

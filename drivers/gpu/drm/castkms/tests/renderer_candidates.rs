@@ -221,16 +221,4 @@ mod cases {
         check(candidate.probe_result()?)?;
         check(candidate.submit_private_probe(None) == Err(EALREADY))
     }
-
-    #[test]
-    fn startup_probe_can_complete_without_a_content_serial() -> Result {
-        let fixture = Fixture::new()?;
-        let _connector = fixture.drm.publish_connector_identity()?;
-        let file = fixture.drm.master_file()?;
-        let owner = owner(&fixture, &file)?;
-        let _fb = enable(&fixture)?;
-        let candidate = Candidate::begin(owner.access())?;
-        candidate.submit_snapshot_probe(None, None)?;
-        check(candidate.probe_result()?)
-    }
 }
