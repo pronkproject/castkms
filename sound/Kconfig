@@ -52,6 +52,7 @@ if SND
 config RUST_SND_PCM
 	bool
 	depends on RUST && SND=y && SND_PCM=y
+	select SND_PCM_ELD
 
 source "sound/core/Kconfig"
 

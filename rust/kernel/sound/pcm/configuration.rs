@@ -111,6 +111,29 @@ pub struct Identity<'a> {
     pub name: &'a CStr,
 }
 
+/// Optional native ELD playback constraints.
+pub struct DisplayAudio<'a> {
+    /// Validated baseline ELD bytes; copied during construction.
+    pub eld: &'a [u8],
+}
+
+impl DisplayAudio<'_> {
+    pub(super) fn validate(&self) -> Result<[u8; 128]> {
+        let eld = self.eld;
+        if eld.len() < 20
+            || eld.len() > 128
+            || 4 + eld[2] as usize * 4 != eld.len()
+            || (eld[4] & 31) > 16
+            || 20 + (eld[4] & 31) as usize + (eld[5] >> 4) as usize * 3 > eld.len()
+        {
+            return Err(EINVAL);
+        }
+        let mut bytes = [0; 128];
+        bytes[..eld.len()].copy_from_slice(eld);
+        Ok(bytes)
+    }
+}
+
 #[cfg(CONFIG_KUNIT)]
 #[crate::prelude::kunit_tests(rust_snd_pcm_configuration)]
 mod tests {
@@ -174,5 +197,21 @@ mod tests {
         }
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn malformed_eld_cannot_install_native_constraints() {
+        let mut eld = [0; 20];
+        let check = |eld: &[u8]| {
+            DisplayAudio {
+                eld,
+            }
+            .validate()
+        };
+        assert!(check(&eld).is_err());
+        eld[2] = 4;
+        assert!(check(&eld).is_ok());
+        eld[5] = 0xf0;
+        assert!(check(&eld).is_err());
     }
 }

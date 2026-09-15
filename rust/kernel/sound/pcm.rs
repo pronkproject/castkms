@@ -3,7 +3,7 @@
 //! ALSA playback registration, callbacks and synchronized native buffer access.
 
 mod configuration;
-pub use configuration::{Config, Format, Identity};
+pub use configuration::{Config, DisplayAudio, Format, Identity};
 
 use crate::{
     device::Device,
@@ -89,6 +89,7 @@ struct Lifecycle {
 struct State<T: Operations> {
     driver: Arc<T>,
     shared: Arc<Shared>,
+    eld: Option<[u8; 128]>,
     #[pin]
     lifecycle: Mutex<Lifecycle>,
 }
@@ -172,7 +173,7 @@ impl Stream {
     }
 }
 
-/// Unique registration of a playback PCM with driver callbacks.
+/// Unique registration of a playback PCM and its optional display controls.
 pub struct Registration<T: Operations> {
     raw: *mut bindings::snd_card,
     state: Arc<State<T>>,
@@ -191,9 +192,14 @@ impl<T: Operations> Registration<T> {
         module: &'static ThisModule,
         identity: Identity<'_>,
         config: Config,
+        display: Option<DisplayAudio<'_>>,
         driver: Arc<T>,
     ) -> Result<Self> {
         config.validate()?;
+        let eld = display
+            .as_ref()
+            .map(|display| display.validate())
+            .transpose()?;
         let shared = Arc::pin_init(
             pin_init!(Shared {
                 config,
@@ -204,7 +210,7 @@ impl<T: Operations> Registration<T> {
         )?;
         let state = Arc::pin_init(
             pin_init!(State {
-                driver, shared,
+                driver, shared, eld,
                 lifecycle <- crate::new_mutex!(Lifecycle { closed: false, generation: 0 }),
             }),
             GFP_KERNEL,
@@ -306,9 +312,19 @@ unsafe extern "C" fn open<T: Operations>(substream: *mut bindings::snd_pcm_subst
     if lifecycle.closed {
         return ENODEV.to_errno();
     }
-    // SAFETY: The runtime is exclusively initialized for the live native file.
+    // SAFETY: The runtime is exclusively initialized and immutable ELD storage
+    // remains owned by State until all native files and constraints are retired.
     unsafe {
         (*(*substream).runtime).hw = state.shared.config.hardware();
+        if let Some(eld) = &state.eld {
+            let error = bindings::snd_pcm_hw_constraint_eld(
+                (*substream).runtime,
+                eld.as_ptr().cast_mut().cast(),
+            );
+            if error < 0 {
+                return error;
+            }
+        }
         bindings::snd_pcm_hw_constraint_integer(
             (*substream).runtime,
             bindings::SNDRV_PCM_HW_PARAM_PERIODS as _,
