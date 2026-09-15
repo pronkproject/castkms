@@ -5782,6 +5782,57 @@ static void drm_edid_to_eld(struct drm_connector *connector,
 	mutex_unlock(&connector->eld_mutex);
 }
 
+/**
+ * drm_edid_build_eld - Build an independent audio-capability snapshot
+ * @drm_edid: Validated EDID to parse
+ * @eld: Caller-owned output storage, cleared before parsing
+ * @size: Size of @eld, at least MAX_ELD_BYTES
+ * @displayport: Select the DisplayPort ELD connection type instead of HDMI
+ *
+ * Uses the same CTA and DisplayID iterators and ELD construction as connector
+ * probing, without publishing properties or requiring a connector. Basic-audio
+ * sinks without SADs receive the mandatory stereo LPCM descriptor. HDCP, port
+ * identity and audio synchronization delay remain zero for the caller to fill.
+ *
+ * Return: ELD byte length, zero for a sink without audio, or -EINVAL for invalid
+ * arguments. The caller must supply a validated EDID.
+ */
+int drm_edid_build_eld(const struct drm_edid *drm_edid, u8 *eld,
+		       size_t size, bool displayport)
+{
+	struct drm_edid_iter iter;
+	const u8 *ext;
+	u8 cea_rev = 0;
+	bool basic_audio = false;
+
+	if (!drm_edid || !eld || size < MAX_ELD_BYTES)
+		return -EINVAL;
+	memset(eld, 0, size);
+	drm_edid_iter_begin(drm_edid, &iter);
+	drm_edid_iter_for_each(ext, &iter) {
+		if (ext[0] != CEA_EXT)
+			continue;
+		if (!cea_rev)
+			cea_rev = ext[1];
+		basic_audio |= ext[3] & EDID_BASIC_AUDIO;
+	}
+	drm_edid_iter_end(&iter);
+	build_eld(drm_edid, eld, cea_rev, displayport);
+	if (!drm_eld_sad_count(eld)) {
+		if (!basic_audio) {
+			memset(eld, 0, size);
+			return 0;
+		}
+		memcpy(&eld[DRM_ELD_CEA_SAD(drm_eld_mnl(eld), 0)],
+		       (const u8[]) { 0x09, 0x07, 0x01 }, 3);
+		eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= 1 << DRM_ELD_SAD_COUNT_SHIFT;
+		eld[DRM_ELD_BASELINE_ELD_LEN] =
+			DIV_ROUND_UP(drm_eld_calc_baseline_block_size(eld), 4);
+	}
+	return drm_eld_size(eld);
+}
+EXPORT_SYMBOL_GPL(drm_edid_build_eld);
+
 static int _drm_edid_to_sad(const struct drm_edid *drm_edid,
 			    struct cea_sad **psads)
 {
