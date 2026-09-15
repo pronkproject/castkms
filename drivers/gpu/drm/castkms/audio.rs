@@ -6,6 +6,8 @@
 mod buffer;
 #[cfg(any(CONFIG_DRM_CASTKMS_AUDIO, CONFIG_DRM_CASTKMS_KUNIT_TEST))]
 mod clock;
+#[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+pub(crate) mod playback;
 
 /// The playback and capture paths share one interleaved PCM format.
 #[cfg(any(CONFIG_DRM_CASTKMS_AUDIO, CONFIG_DRM_CASTKMS_KUNIT_TEST))]
