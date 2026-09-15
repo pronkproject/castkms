@@ -106,7 +106,8 @@ impl Monitor {
     }
 
     fn add_fallback_modes(connector: &connector::ConnectorGuard<'_, display::Connector>) -> i32 {
-        let count = connector.add_modes_noedid((8192, 8192));
+        let count = connector.add_modes_noedid((crate::execution::potential::MAX_DIMENSION,
+            crate::execution::potential::MAX_DIMENSION));
         connector.set_preferred_mode((1024, 768));
         count
     }

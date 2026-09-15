@@ -39,6 +39,163 @@ mod cases {
     }
 
     #[test]
+    fn negotiated_gpu_contract_accepts_tiling_float_and_larger_modes() -> Result {
+        with_display(|device, crtc, connector, scanout, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let reference = linear_profile()?;
+            let mut formats = KVec::new();
+            formats.push(reference.formats()[0], GFP_KERNEL)?;
+            let tiled_modifier = 0x0100_0000_0000_0001;
+            for (format, modifier, pitch) in [
+                (drm::fourcc::XRGB8888, Some(tiled_modifier), 2560),
+                (drm::fourcc::XRGB16161616F, None, 5120),
+            ] {
+                let mut tuple = reference.formats()[0];
+                tuple.fourcc = format;
+                tuple.modifier = modifier;
+                tuple.max_pitch = pitch;
+                formats.push(tuple, GFP_KERNEL)?;
+            }
+            let profile =
+                crate::execution::capabilities::Profile::new(*reference.limits(), formats)?;
+            let tiled_object = shmem::Object::<gem::Object>::new(
+                device,
+                2560 * 480,
+                Default::default(),
+                Default::default(),
+            )?;
+            let tiled_framebuffer = Framebuffer::from_objects(
+                device,
+                &FramebufferLayout {
+                    width: 640,
+                    height: 480,
+                    format: drm::fourcc::XRGB8888,
+                    modifier: Some(tiled_modifier),
+                    interlaced: false,
+                    planes: &[FramebufferPlane {
+                        object: &tiled_object,
+                        pitch: 2560,
+                        offset: 0,
+                    }],
+                },
+            )?;
+            let tiled_scanout = CrtcScanout {
+                mode: scanout.mode,
+                framebuffer: &tiled_framebuffer,
+                connectors: scanout.connectors,
+                position: (0, 0),
+            };
+            // The static GPU envelope must not broaden HOST acceptance.
+            check(
+                device
+                    .atomic_update(|transaction| {
+                        transaction.set_crtc_config(crtc, Some(&tiled_scanout))
+                    })
+                    .is_err(),
+            )?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let proposal = candidate.propose_profile(profile)?;
+            device.atomic_update(|transaction| {
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(proposal.describe().transition);
+                Ok(())
+            })?;
+            let (active, _, execution) = proposal.activate(device)?;
+            for (format, modifier, pitch) in [
+                (drm::fourcc::XRGB8888, Some(tiled_modifier), 2560),
+                (drm::fourcc::XRGB16161616F, None, 5120),
+            ] {
+                let object = shmem::Object::<gem::Object>::new(
+                    device,
+                    pitch as usize * 480,
+                    Default::default(),
+                    Default::default(),
+                )?;
+                let framebuffer = Framebuffer::from_objects(
+                    device,
+                    &FramebufferLayout {
+                        width: 640,
+                        height: 480,
+                        format,
+                        modifier,
+                        interlaced: false,
+                        planes: &[FramebufferPlane {
+                            object: &object,
+                            pitch,
+                            offset: 0,
+                        }],
+                    },
+                )?;
+                let target = CrtcScanout {
+                    mode: scanout.mode,
+                    framebuffer: &framebuffer,
+                    connectors: scanout.connectors,
+                    position: (0, 0),
+                };
+                device.atomic_update(|transaction| {
+                    transaction.set_crtc_config(crtc, Some(&target))
+                })?;
+                let job = candidate.claim_source(&active, execution, None)?;
+                check(
+                    job.scene()
+                        .primary()
+                        .ok_or(EINVAL)?
+                        .framebuffer()
+                        .modifier()
+                        == modifier,
+                )?;
+                job.release_without_access();
+            }
+            let mode = DisplayMode::from_timings(ModeTimings {
+                clock_khz: 300000,
+                hdisplay: 9000,
+                hsync_start: 9016,
+                hsync_end: 9112,
+                htotal: 9200,
+                vdisplay: 480,
+                vsync_start: 490,
+                vsync_end: 492,
+                vtotal: 525,
+                flags: ModeFlags::NHSYNC | ModeFlags::NVSYNC,
+            })?;
+            let target = CrtcScanout {
+                mode: &mode,
+                framebuffer: scanout.framebuffer,
+                connectors: scanout.connectors,
+                position: (0, 0),
+            };
+            device.atomic_update(|mut transaction| {
+                transaction.as_mut().set_crtc_config(crtc, Some(&target))?;
+                transaction.as_mut().disable_plane(crtc.primary_plane())
+            })?;
+            active.check()?;
+            let incoming = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let host = incoming.propose_host()?;
+            check(
+                device
+                    .atomic_update(|transaction| {
+                        transaction
+                            .add_crtc_state(crtc)?
+                            .tag_transition(host.describe().transition);
+                        Ok(())
+                    })
+                    .is_err(),
+            )?;
+            device.atomic_update(|mut transaction| {
+                transaction.as_mut().set_crtc_config(crtc, None)?;
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(host.describe().transition);
+                Ok(())
+            })?;
+            host.handback(device)?;
+            device.execution.check_host()
+        })
+    }
+
+    #[test]
     fn host_handback_uses_a_gate_without_releasing_old_source_reads() -> Result {
         for disable in [false, true] {
             with_display(|device, crtc, connector, _, file| {
@@ -46,7 +203,7 @@ mod cases {
                 let first = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
                 first.submit_private_probe(None)?;
                 let proposal = first.propose_profile(linear_profile()?)?;
-                device.atomic_update(|mut transaction| {
+                device.atomic_update(|transaction| {
                     transaction
                         .add_crtc_state(crtc)?
                         .tag_transition(proposal.describe().transition);
@@ -106,7 +263,7 @@ mod cases {
             begin.publish()?;
             old.candidate(old_id)?.submit_private_probe(None)?;
             let profile = old.propose_profile(old_id, linear_profile()?)?;
-            device.atomic_update(|mut transaction| {
+            device.atomic_update(|transaction| {
                 transaction
                     .add_crtc_state(crtc)?
                     .tag_transition(profile.transition);
@@ -118,7 +275,7 @@ mod cases {
             let host_id = begin.id();
             begin.publish()?;
             let pending = host.propose_host(host_id)?;
-            device.atomic_update(|mut transaction| {
+            device.atomic_update(|transaction| {
                 transaction
                     .add_crtc_state(crtc)?
                     .tag_transition(pending.transition);
@@ -147,7 +304,7 @@ mod cases {
             let first = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             first.submit_private_probe(None)?;
             let proposal = first.propose_profile(linear_profile()?)?;
-            device.atomic_update(|mut transaction| {
+            device.atomic_update(|transaction| {
                 transaction
                     .add_crtc_state(crtc)?
                     .tag_transition(proposal.describe().transition);
@@ -158,7 +315,7 @@ mod cases {
             replacement.submit_private_probe(None)?;
             let next = replacement.propose_profile(linear_profile()?)?;
             old.check()?;
-            device.atomic_update(|mut transaction| {
+            device.atomic_update(|transaction| {
                 transaction
                     .add_crtc_state(crtc)?
                     .tag_transition(next.describe().transition);
