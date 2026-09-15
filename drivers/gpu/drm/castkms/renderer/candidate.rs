@@ -102,6 +102,17 @@ impl Candidate {
     ) -> Result<super::proposal::Proposal> {
         let profile = Arc::new(profile, GFP_KERNEL)?;
         let target = crate::execution::validation::Contract::Renderer(profile.clone());
+        self.propose_contract(target)
+    }
+
+    pub(crate) fn propose_host(self: &Arc<Self>) -> Result<super::proposal::Proposal> {
+        self.propose_contract(crate::execution::validation::Contract::Host)
+    }
+
+    fn propose_contract(
+        self: &Arc<Self>,
+        target: crate::execution::validation::Contract,
+    ) -> Result<super::proposal::Proposal> {
         let device = self.access.device();
         let output = device
             .displays
@@ -112,7 +123,7 @@ impl Candidate {
             self.access.display().execution.propose(
                 self.execution,
                 &self.proposal_owner,
-                profile,
+                target.clone(),
                 || {
                     device.validation.reserve(
                         output,
@@ -280,6 +291,14 @@ impl Candidate {
         registered: &Device<Driver, Registered>,
         proposal: Option<&crate::execution::proposal::Registration>,
     ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
+        if proposal.is_some_and(|proposal| {
+            matches!(
+                proposal.description().profile,
+                crate::execution::validation::Contract::Host
+            )
+        }) {
+            return Err(EOPNOTSUPP);
+        }
         let device = self.access.device();
         let registered_device: &Device<Driver> = registered;
         if !core::ptr::eq(device, registered_device) {
