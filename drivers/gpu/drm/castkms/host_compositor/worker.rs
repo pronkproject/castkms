@@ -16,7 +16,10 @@ use super::{
     },
     pool::Pool, //
 };
-use crate::Output;
+use crate::{
+    execution::publication::Publication,
+    Output, //
+};
 use kernel::{
     prelude::*,
     sync::{
@@ -85,6 +88,7 @@ struct Worker {
     #[pin]
     changed: CondVar,
     output: Arc<Output>,
+    execution: Arc<Publication>,
     pool: Arc<Pool>,
 }
 
@@ -103,10 +107,10 @@ impl WorkItem for Worker {
         let outcome = match compose::current_checked(&worker.output, &worker.pool, || {
             let state = worker.state.lock();
             if matches!(*state, State::Closed) {
-                Err(ENODEV)
-            } else {
-                Ok(state)
+                return Err(ENODEV);
             }
+            let execution = worker.execution.admit_host()?;
+            Ok((state, execution))
         }) {
             Ok(Some(image)) => match Arc::new(image, GFP_KERNEL) {
                 Ok(image) => Outcome::Image(image),
@@ -142,7 +146,11 @@ pub(crate) struct RetiredResults {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
-    pub(crate) fn new(output: Arc<Output>, pool: Arc<Pool>) -> Result<Self> {
+    pub(crate) fn new(
+        output: Arc<Output>,
+        execution: Arc<Publication>,
+        pool: Arc<Pool>,
+    ) -> Result<Self> {
         let worker = Arc::pin_init(
             pin_init!(Worker {
                 work <- new_work!("castkms-host-compose"),
@@ -153,6 +161,7 @@ impl Owner {
                 }),
                 changed <- kernel::sync::new_condvar!(),
                 output,
+                execution,
                 pool,
             }),
             GFP_KERNEL,

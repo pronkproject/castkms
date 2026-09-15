@@ -38,13 +38,14 @@ pub(super) struct State {
 
 impl State {
     fn new(
+        execution: Arc<Publication>,
         output: Arc<Output>,
         monitor: Arc<Monitor>,
         host: Arc<configuration::Configuration>,
         startup: Arc<renderer_startup::Startup>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
-            execution: Arc::pin_init(Publication::new(), GFP_KERNEL)?,
+            execution,
             authority <- Authority::new(),
             output,
             monitor,
@@ -77,11 +78,18 @@ pub(super) struct Owner {
 impl Owner {
     pub(super) fn new() -> Result<Self> {
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+        let execution = Arc::pin_init(Publication::new(), GFP_KERNEL)?;
         let monitor = Monitor::new()?;
-        let host = configuration::Owner::new(output.clone())?;
+        let host = configuration::Owner::new(output.clone(), execution.clone())?;
         let startup = renderer_startup::Owner::new(output.identity())?;
         let state = Arc::pin_init(
-            State::new(output, monitor, host.configuration(), startup.startup()),
+            State::new(
+                execution,
+                output,
+                monitor,
+                host.configuration(),
+                startup.startup(),
+            ),
             GFP_KERNEL,
         )?;
         Ok(Self {

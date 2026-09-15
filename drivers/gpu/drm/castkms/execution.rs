@@ -9,10 +9,12 @@ pub(crate) mod publication;
 mod prepared;
 pub(crate) use prepared::Prepared;
 
-/// The initial renderer profile, before delegated execution is available.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Profile {
+    /// In-kernel composition over the restricted HOST framebuffer profile.
     HostV1,
+    /// An activated userspace renderer owns display execution.
+    GpuV1,
 }
 
 /// One coherent observation; it neither reserves execution nor authorizes capture.

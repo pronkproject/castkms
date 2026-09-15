@@ -81,7 +81,11 @@ mod cases {
         let _remaining = fixture
             .host_budget
             .reserve(16 * 1024 * 1024 - 2 * layout.size())?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let handle = owner.handle();
         let mut previous: Option<Arc<crate::host_compositor::compose::Completed>> = None;
         for _ in 0..64 {
@@ -127,7 +131,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(3, 2)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let handle = owner.handle();
         handle.request()?;
         owner.flush();
@@ -144,7 +152,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(3, 2)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         // Prepare every waiter before queueing work that needs teardown.
         let waiters = [
             Waiter::new(owner.handle())?,

@@ -14,7 +14,7 @@ mod cases {
     #[test]
     fn an_unconfigured_owner_closes_without_a_graphics_device() -> Result {
         let output = kernel::sync::Arc::pin_init(output::Output::new(), GFP_KERNEL)?;
-        let owner = Owner::new(output)?;
+        let owner = Owner::new_for_test(output)?;
         let configuration = owner.configuration();
         check(matches!(configuration.current(), Err(EAGAIN)))?;
         drop(owner);
@@ -25,7 +25,10 @@ mod cases {
     #[test]
     fn identical_layouts_preserve_the_worker_and_its_result() -> Result {
         let fixture = Fixture::new()?;
-        let owner = Owner::new(fixture.drm.device().output.clone())?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+        )?;
         let configuration = owner.configuration();
         let layout = Layout::new(3, 2)?;
         let first = configuration.configure(fixture.drm.device(), layout)?;
@@ -43,7 +46,10 @@ mod cases {
     #[test]
     fn changed_geometry_closes_old_handles_even_at_equal_allocation_size() -> Result {
         let fixture = Fixture::new()?;
-        let owner = Owner::new(fixture.drm.device().output.clone())?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+        )?;
         let configuration = owner.configuration();
         let first = configuration.configure(fixture.drm.device(), Layout::new(3, 2)?)?;
         first.request()?;
@@ -65,7 +71,10 @@ mod cases {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
         fixture.select(&fb, false, 0)?;
-        let owner = Owner::new(fixture.drm.device().output.clone())?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+        )?;
         let configuration = owner.configuration();
         let first = configuration.configure(fixture.drm.device(), Layout::new(640, 480)?)?;
         first.request()?;
@@ -135,7 +144,10 @@ mod cases {
     #[test]
     fn surviving_configuration_references_cannot_restart_after_owner_release() -> Result {
         let fixture = Fixture::new()?;
-        let owner = Owner::new(fixture.drm.device().output.clone())?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+        )?;
         let configuration = owner.configuration();
         let handle = configuration.configure(fixture.drm.device(), Layout::new(640, 480)?)?;
         handle.request()?;

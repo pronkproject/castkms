@@ -20,6 +20,7 @@ pub(super) fn encode(description: Description) -> [u8; 16] {
     let mut bytes = [0; 16];
     let profile = match description.profile {
         Profile::HostV1 => uapi::DRM_CASTKMS_EXECUTION_HOST_V1,
+        Profile::GpuV1 => uapi::DRM_CASTKMS_EXECUTION_GPU_V1,
     };
     bytes[0..4].copy_from_slice(&uapi::DRM_CASTKMS_EXECUTION_VERSION.to_ne_bytes());
     bytes[4..8].copy_from_slice(&profile.to_ne_bytes());

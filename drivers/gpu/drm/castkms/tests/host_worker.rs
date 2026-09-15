@@ -24,7 +24,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let handle = owner.handle();
         handle.request()?;
         owner.flush();
@@ -51,7 +55,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(3, 2)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let request = owner.handle().request_outcome()?;
         let retired = owner.stop_admission();
         check(matches!(request.try_outcome(), Err(ENODEV)))?;
@@ -74,7 +82,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let handle = owner.handle();
         handle.request()?;
         owner.flush();
@@ -107,7 +119,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool.clone())?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool.clone(),
+        )?;
         let handle = owner.handle();
         let peer = handle.clone();
         handle.request()?;
@@ -137,7 +153,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let handle = owner.handle();
         handle.request()?;
         drop(handle);
@@ -158,7 +178,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let first = owner.handle();
         let second = first.clone();
         first.request()?;
@@ -181,7 +205,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let handle = owner.handle();
         handle.request()?;
         owner.flush();
@@ -218,7 +246,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool.clone())?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool.clone(),
+        )?;
         let handle = owner.handle();
         for _ in 0..16 {
             handle.request()?;
@@ -238,7 +270,11 @@ mod cases {
             &fixture.host_budget,
             Layout::new(640, 480)?,
         )?;
-        let owner = Owner::new(fixture.drm.device().output.clone(), pool)?;
+        let owner = Owner::new(
+            fixture.drm.device().output.clone(),
+            fixture.drm.device().execution.clone(),
+            pool,
+        )?;
         let handle = owner.handle();
         handle.request()?;
         owner.flush();

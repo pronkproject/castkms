@@ -27,9 +27,18 @@ use kernel::{
     prelude::*,
     sync::{
         Arc,
-        Mutex, //
+        Mutex,
+        MutexGuard, //
     }, //
 };
+
+/// Brief exclusion against a change away from HOST execution.
+///
+/// Retain only through source-claim admission. Pixel access and native completion
+/// must not depend on this guard, and dropping it performs no renderer work.
+pub(crate) struct HostAdmission<'a> {
+    _state: MutexGuard<'a, State>,
+}
 
 struct State {
     description: Description,
@@ -103,6 +112,21 @@ impl Publication {
     /// Observe metadata only; retaining it preserves neither authority nor an active renderer.
     pub(crate) fn describe(&self) -> Description {
         self.state.lock().description
+    }
+
+    /// Exclude execution publication while admitting one HOST source read.
+    pub(crate) fn admit_host(&self) -> Result<HostAdmission<'_>> {
+        let state = self.state.lock();
+        if state.description.profile != Profile::HostV1 {
+            return Err(EOPNOTSUPP);
+        }
+        Ok(HostAdmission { _state: state })
+    }
+
+    /// Check whether a HOST-only operation is currently meaningful.
+    pub(crate) fn check_host(&self) -> Result {
+        drop(self.admit_host()?);
+        Ok(())
     }
 
     /// Allocate a new description before entering display or renderer control locks.
