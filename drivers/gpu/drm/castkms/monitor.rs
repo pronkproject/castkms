@@ -2,21 +2,28 @@
 
 //! Published sink description for the virtual connector.
 
-use crate::display;
+use crate::{display, Driver};
 use kernel::{
-    drm::kms::connector::{self, Edid},
+    drm::{
+        device::{Registered, RegisteredDeviceRef},
+        kms::connector::{self, Edid},
+        Device,
+    },
     prelude::*,
     sync::{Arc, Mutex},
 };
 
-pub(crate) enum Description {
-    Fallback,
+enum Description {
     Attached(Option<Edid>),
     Disconnected,
 }
 
 enum State {
-    Published(Description),
+    Unmanaged,
+    Managed {
+        identity: Arc<()>,
+        description: Description,
+    },
     Closed,
 }
 
@@ -30,7 +37,7 @@ impl Monitor {
     pub(crate) fn new() -> Result<Arc<Self>> {
         Arc::pin_init(
             pin_init!(Self {
-                state <- kernel::new_mutex!(State::Published(Description::Fallback)),
+                state <- kernel::new_mutex!(State::Unmanaged),
             }),
             GFP_KERNEL,
         )
@@ -38,12 +45,16 @@ impl Monitor {
 
     pub(crate) fn status(&self) -> connector::Status {
         match &*self.state.lock() {
-            State::Published(Description::Fallback | Description::Attached(_)) => {
-                connector::Status::Connected
+            State::Unmanaged
+            | State::Managed {
+                description: Description::Attached(_),
+                ..
+            } => connector::Status::Connected,
+            State::Managed {
+                description: Description::Disconnected,
+                ..
             }
-            State::Published(Description::Disconnected) | State::Closed => {
-                connector::Status::Disconnected
-            }
+            | State::Closed => connector::Status::Disconnected,
         }
     }
 
@@ -53,21 +64,30 @@ impl Monitor {
     ) -> i32 {
         let state = self.state.lock();
         match &*state {
-            State::Published(Description::Attached(Some(edid))) => {
-                match connector.add_edid_modes(edid) {
-                    Ok(count) if count > 0 => count,
-                    Ok(_) => Self::add_fallback_modes(connector),
-                    Err(_) => 0,
-                }
-            }
-            State::Published(Description::Fallback | Description::Attached(None)) => {
+            State::Managed {
+                description: Description::Attached(Some(edid)),
+                ..
+            } => match connector.add_edid_modes(edid) {
+                Ok(count) if count > 0 => count,
+                Ok(_) => Self::add_fallback_modes(connector),
+                Err(_) => 0,
+            },
+            State::Unmanaged
+            | State::Managed {
+                description: Description::Attached(None),
+                ..
+            } => {
                 if connector.update_edid(None).is_err() {
                     0
                 } else {
                     Self::add_fallback_modes(connector)
                 }
             }
-            State::Published(Description::Disconnected) | State::Closed => {
+            State::Managed {
+                description: Description::Disconnected,
+                ..
+            }
+            | State::Closed => {
                 let _ = connector.update_edid(None);
                 0
             }
@@ -80,21 +100,113 @@ impl Monitor {
         count
     }
 
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
-    pub(crate) fn publish(&self, replacement: Description) -> Result {
+    pub(crate) fn acquire(
+        self: &Arc<Self>,
+        device: &Device<Driver, Registered>,
+    ) -> Result<Control> {
+        if !Arc::ptr_eq(self, &device.monitor) {
+            return Err(EINVAL);
+        }
+        let identity = Arc::new((), GFP_KERNEL)?;
+        {
+            let mut state = self.state.lock();
+            match &*state {
+                State::Unmanaged => {
+                    *state = State::Managed {
+                        identity: identity.clone(),
+                        description: Description::Disconnected,
+                    };
+                }
+                State::Managed { .. } => return Err(EBUSY),
+                State::Closed => return Err(ENODEV),
+            }
+        }
+        let control = Control {
+            monitor: self.clone(),
+            device: device.to_registered_ref(),
+            identity,
+        };
+        control.notify();
+        Ok(control)
+    }
+
+    fn publish(&self, identity: &Arc<()>, replacement: Description) -> Result {
         let retired = {
             let mut state = self.state.lock();
-            if matches!(*state, State::Closed) {
-                return Err(ENODEV);
+            match &*state {
+                State::Managed {
+                    identity: current, ..
+                } if Arc::ptr_eq(current, identity) => core::mem::replace(
+                    &mut *state,
+                    State::Managed {
+                        identity: identity.clone(),
+                        description: replacement,
+                    },
+                ),
+                State::Managed { .. } | State::Unmanaged => return Err(ECANCELED),
+                State::Closed => return Err(ENODEV),
             }
-            core::mem::replace(&mut *state, State::Published(replacement))
         };
         drop(retired);
         Ok(())
     }
 
+    fn release(&self, identity: &Arc<()>) -> bool {
+        let retired = {
+            let mut state = self.state.lock();
+            match &*state {
+                State::Managed {
+                    identity: current, ..
+                } if Arc::ptr_eq(current, identity) => {
+                    Some(core::mem::replace(&mut *state, State::Unmanaged))
+                }
+                _ => None,
+            }
+        };
+        let changed = retired.is_some();
+        drop(retired);
+        changed
+    }
+
     pub(crate) fn close(&self) {
         let retired = core::mem::replace(&mut *self.state.lock(), State::Closed);
         drop(retired);
+    }
+}
+
+/// Exclusive control of one virtual monitor publication interval.
+pub(crate) struct Control {
+    monitor: Arc<Monitor>,
+    device: RegisteredDeviceRef<Driver>,
+    identity: Arc<()>,
+}
+
+impl Control {
+    pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
+        self.monitor
+            .publish(&self.identity, Description::Attached(edid))?;
+        self.notify();
+        Ok(())
+    }
+
+    pub(crate) fn detach(&self) -> Result {
+        self.monitor
+            .publish(&self.identity, Description::Disconnected)?;
+        self.notify();
+        Ok(())
+    }
+
+    fn notify(&self) {
+        if let Some(device) = self.device.registration_guard() {
+            device.hotplug_event();
+        }
+    }
+}
+
+impl Drop for Control {
+    fn drop(&mut self) {
+        if self.monitor.release(&self.identity) {
+            self.notify();
+        }
     }
 }
