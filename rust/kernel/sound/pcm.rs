@@ -13,7 +13,7 @@ use crate::{
     sync::{Arc, ArcBorrow, Mutex, SpinLockIrq},
     ThisModule,
 };
-use core::ptr;
+use core::{ptr, time::Duration};
 
 /// Finalized geometry of one prepared native buffer.
 #[derive(Clone, Copy)]
@@ -40,10 +40,18 @@ pub enum Trigger {
     PausePush,
 }
 
+/// Driver-provided estimate of system time and audio link position.
+pub struct LinkTime {
+    /// System timestamp.
+    pub system: Duration,
+    /// Audio position expressed as time.
+    pub audio: Duration,
+}
+
 /// Driver callbacks for a playback PCM. No timing or interruption policy is imposed.
 ///
 /// `prepare`, `stop` and `disconnect` run in sleepable context, serialized by
-/// registration. `trigger` and `position` must not sleep. They run
+/// registration. `trigger`, `position` and `link_time` must not sleep. They run
 /// under ALSA's stream lock and must not invoke stream notifications recursively.
 pub trait Operations: Send + Sync + Sized {
     /// Initialize a newly prepared buffer. Retained streams are invalidated on retirement.
@@ -58,6 +66,10 @@ pub trait Operations: Send + Sync + Sized {
     fn trigger(&self, command: Trigger) -> Result;
     /// Absolute playback position, in frames; the adapter handles native ring wraparound.
     fn position(&self) -> u64;
+    /// Supply estimated link time when advertised by the configuration.
+    fn link_time(&self) -> Option<LinkTime> {
+        None
+    }
 }
 
 struct Buffer {
@@ -300,6 +312,7 @@ impl<T: Operations> Registration<T> {
         prepare: Some(prepare::<T>),
         trigger: Some(trigger::<T>),
         pointer: Some(pointer::<T>),
+        get_time_info: Some(time_info::<T>),
         ..pin_init::zeroed()
     };
     const ELD_CONTROL: bindings::snd_kcontrol_new = bindings::snd_kcontrol_new {
@@ -494,6 +507,40 @@ unsafe extern "C" fn pointer<T: Operations>(
     }
 }
 
+unsafe extern "C" fn time_info<T: Operations>(
+    substream: *mut bindings::snd_pcm_substream,
+    system: *mut bindings::timespec64,
+    audio: *mut bindings::timespec64,
+    config: *mut bindings::snd_pcm_audio_tstamp_config,
+    report: *mut bindings::snd_pcm_audio_tstamp_report,
+) -> c_int {
+    // SAFETY: ALSA provides writable result pointers for the callback duration.
+    unsafe {
+        (*report).set_valid(0);
+        (*report).set_actual_type(bindings::SNDRV_PCM_AUDIO_TSTAMP_TYPE_DEFAULT);
+        let state = state::<T>(substream);
+        if !state.shared.config.link_timestamps
+            || (*config).type_requested() != bindings::SNDRV_PCM_AUDIO_TSTAMP_TYPE_LINK_ESTIMATED
+        {
+            return 0;
+        }
+        let Some(time) = state.driver.link_time() else {
+            return 0;
+        };
+        if time.system.as_secs() > i64::MAX as u64 || time.audio.as_secs() > i64::MAX as u64 {
+            return EOVERFLOW.to_errno();
+        }
+        (*system).tv_sec = time.system.as_secs() as _;
+        (*system).tv_nsec = time.system.subsec_nanos() as _;
+        (*audio).tv_sec = time.audio.as_secs() as _;
+        (*audio).tv_nsec = time.audio.subsec_nanos() as _;
+        (*report).set_actual_type(bindings::SNDRV_PCM_AUDIO_TSTAMP_TYPE_LINK_ESTIMATED);
+        (*report).set_valid(1);
+        (*report).set_accuracy_report(0);
+    }
+    0
+}
+
 fn copy_name(output: &mut [c_char], name: &CStr) {
     output.fill(0);
     let len = name.to_bytes().len().min(output.len().saturating_sub(1));
@@ -547,7 +594,7 @@ mod tests {
             pin_init!(Shared {
                 config: Config { format: Format::S16Le, rate: 48_000, channels: 2,
                     buffer_bytes_max: 4096, period_bytes_min: 256, period_bytes_max: 2048,
-                    periods_min: 2, periods_max: 16, pause: false },
+                    periods_min: 2, periods_max: 16, pause: false, link_timestamps: false },
                 buffer <- crate::new_spinlock_irq!(Buffer { raw: ptr::null_mut(), generation: 0 }),
                 notifications <- crate::new_spinlock_irq!(Buffer { raw: ptr::null_mut(), generation: 0 }),
             }),
