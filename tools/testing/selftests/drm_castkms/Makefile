@@ -4,7 +4,7 @@ LDLIBS += $(shell pkg-config --libs libdrm)
 TEST_GEN_PROGS := modeset master-lifetime execution monitor-control renderer-control capture-grant capture-stream capture-destination capture-output
 TEST_PROGS := takeover-model.py handback-model.py
 TEST_FILES := standalone.config
-TEST_GEN_PROGS += audio audio-multi
+TEST_GEN_PROGS += audio audio-pipewire audio-multi
 LOCAL_HDRS := fixture.h audio-fixture.h
 include ../lib.mk
 
@@ -17,4 +17,5 @@ $(OUTPUT)/capture-stream: fixture.c
 $(OUTPUT)/capture-destination: fixture.c
 $(OUTPUT)/capture-output: fixture.c
 $(OUTPUT)/audio: fixture.c audio-fixture.c
+$(OUTPUT)/audio-pipewire: fixture.c audio-fixture.c
 $(OUTPUT)/audio-multi: fixture.c audio-fixture.c
