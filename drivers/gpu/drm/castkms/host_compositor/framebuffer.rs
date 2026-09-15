@@ -8,7 +8,8 @@ use crate::{
     Driver, //
 };
 use kernel::{
-    drm::gem::shmem,
+    dma_buf::cpu_access::Read,
+    drm::gem::{shmem, BaseObject},
     drm::kms::framebuffer::{
         Framebuffer as KmsFramebuffer,
         FramebufferRef, //
@@ -37,12 +38,23 @@ impl Framebuffer {
         (self.image.width(), self.image.height())
     }
 
-    /// Prepare owned mappings without reading or claiming the source.
+    /// Read fixture-owned pixels with no external producers or published scene.
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn read_for_test(&self, plane: usize, x: usize, y: usize, bytes: &mut [u8]) -> Result {
+        let mapping = self.prepare_mapping()?;
+        mapping.read(plane, x, y, bytes)?;
+        mapping.finish()
+    }
+
+    /// Prepare owned mappings and CPU intervals without reading or claiming the source.
     pub(super) fn prepare_mapping(&self) -> Result<Mapping> {
         let mut planes = KVec::new();
         for index in 0..self.image.plane_count() {
             let object = self.image.object_at(index)?;
-            let storage = Storage::Native(object.owned_vmap()?);
+            let storage = match object.imported_dma_buf() {
+                Some(buffer) => Storage::Imported(Read::new(&buffer)?),
+                None => Storage::Native(object.owned_vmap()?),
+            };
             planes.push(
                 MappedPlane {
                     storage,
@@ -64,6 +76,7 @@ impl Framebuffer {
 
 enum Storage {
     Native(shmem::VMapOwned<crate::gem::Object>),
+    Imported(Read),
 }
 
 struct MappedPlane {
@@ -95,6 +108,7 @@ impl Mapping {
             .and_then(|v| v.checked_add(x))
             .ok_or(EOVERFLOW)?;
         match &plane.storage {
+            Storage::Imported(read) => read.copy_to_slice(start, bytes),
             Storage::Native(map) => {
                 let end = start.checked_add(bytes.len()).ok_or(EOVERFLOW)?;
                 let memory = map.as_view();
@@ -112,8 +126,16 @@ impl Mapping {
         }
     }
 
-    /// Complete source CPU access before its read claim is released.
+    /// Complete all exporter cache maintenance before publishing the private image.
     pub(super) fn finish(&self) -> Result {
-        Ok(())
+        let mut result = Ok(());
+        for plane in &self.planes {
+            if let Storage::Imported(read) = &plane.storage {
+                if let Err(error) = read.finish() {
+                    result = Err(error);
+                }
+            }
+        }
+        result
     }
 }
