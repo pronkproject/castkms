@@ -18,6 +18,7 @@ mod monitor_file;
 mod output;
 mod provenance;
 mod renderer;
+mod renderer_file;
 mod renderer_startup;
 mod scene;
 
@@ -107,6 +108,8 @@ impl drm::Driver for Driver {
     kernel::declare_drm_ioctls! {
         (CASTKMS_CREATE_MONITOR_CONTROL, drm_castkms_create_monitor_control,
          drm::ioctl::MASTER, monitor_file::create),
+        (CASTKMS_CREATE_RENDERER_CONTROL, drm_castkms_create_renderer_control,
+         drm::ioctl::MASTER, renderer_file::create),
     }
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
