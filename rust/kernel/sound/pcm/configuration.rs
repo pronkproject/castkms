@@ -111,10 +111,12 @@ pub struct Identity<'a> {
     pub name: &'a CStr,
 }
 
-/// Optional native ELD playback constraints.
+/// Optional native ELD constraints/control and AV-output jack registration.
 pub struct DisplayAudio<'a> {
     /// Validated baseline ELD bytes; copied during construction.
     pub eld: &'a [u8],
+    /// Driver-selected AV-output jack name.
+    pub jack_name: &'a CStr,
 }
 
 impl DisplayAudio<'_> {
@@ -205,6 +207,7 @@ mod tests {
         let check = |eld: &[u8]| {
             DisplayAudio {
                 eld,
+                jack_name: c"Test",
             }
             .validate()
         };
