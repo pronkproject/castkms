@@ -133,6 +133,23 @@ pub struct Ioctl;
 impl Sealed for Ioctl {}
 impl DeviceContext for Ioctl {}
 
+/// An owned reference to a DRM device which completed userspace registration.
+///
+/// The device may have been unplugged after this reference was created. Use
+/// [`Self::registration_guard`] before accessing facilities which require the
+/// parent device to remain bound.
+pub struct RegisteredDeviceRef<T: drm::Driver>(ARef<Device<T>>);
+
+impl<T: drm::Driver> RegisteredDeviceRef<T> {
+    /// Guard against device unplug for one registered-device operation.
+    #[must_use]
+    pub fn registration_guard(&self) -> Option<RegistrationGuard<'_, T>> {
+        // SAFETY: Construction is only available from a Registered device, so
+        // this device completed registration before the owned reference escaped.
+        unsafe { self.0.registration_guard_after_registration() }
+    }
+}
+
 /// A [`Device`] which is known at compile-time to be unregistered with userspace.
 ///
 /// This type allows performing operations which are only safe to do before userspace registration,
@@ -361,6 +378,26 @@ impl<T: drm::Driver, C: DeviceContext> Device<T, C> {
     pub(crate) const fn has_kms() -> bool {
         <T::Kms as KmsImplPrivate>::MODE_CONFIG_OPS.is_some()
     }
+
+    /// Enter one operation for a device known to have completed registration.
+    ///
+    /// # Safety
+    ///
+    /// This device must have been registered with userspace previously.
+    unsafe fn registration_guard_after_registration(&self) -> Option<RegistrationGuard<'_, T>> {
+        let mut idx: i32 = 0;
+        // SAFETY: `self` retains the initialized native device.
+        if unsafe { bindings::drm_dev_enter(self.as_raw(), &mut idx) } {
+            Some(RegistrationGuard {
+                // SAFETY: Successful entry excludes unplug and keeps the parent bound.
+                dev: unsafe { self.assume_ctx() },
+                idx,
+                _not_send: NotThreadSafe,
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl<T: drm::Driver> Device<T, Ioctl> {
@@ -371,23 +408,8 @@ impl<T: drm::Driver> Device<T, Ioctl> {
     /// While [`RegistrationGuard`] is held the parent device is guaranteed to be bound.
     #[must_use]
     pub fn registration_guard(&self) -> Option<RegistrationGuard<'_, T>> {
-        let mut idx: i32 = 0;
-        // SAFETY: `self.as_raw()` is a valid pointer to a `struct drm_device`.
-        if unsafe { bindings::drm_dev_enter(self.as_raw(), &mut idx) } {
-            // INVARIANT:
-            // - `idx` is the SRCU index from the successful `drm_dev_enter()` above.
-            // - The parent bus device is bound: `drm_dev_enter()` succeeded, meaning
-            //   `drm_dev_unplug()` has not completed; since it is only called from
-            //   `Registration::drop()` during parent unbind, the parent is still bound.
-            Some(RegistrationGuard {
-                // SAFETY: See INVARIANT above; the `Registered` context invariant holds.
-                dev: unsafe { self.assume_ctx() },
-                idx,
-                _not_send: NotThreadSafe,
-            })
-        } else {
-            None
-        }
+        // SAFETY: Ioctl context proves that this device completed registration.
+        unsafe { self.registration_guard_after_registration() }
     }
 }
 
@@ -411,6 +433,11 @@ pub struct RegistrationGuard<'a, T: drm::Driver> {
 }
 
 impl<T: drm::Driver> Device<T, Registered> {
+    /// Retain the device for operations which may run after this guard ends.
+    pub fn to_registered_ref(&self) -> RegisteredDeviceRef<T> {
+        RegisteredDeviceRef(self.deref().into())
+    }
+
     /// Returns a reference to the registration data with lifetime shortened from `'static`.
     ///
     /// # Safety
