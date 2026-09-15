@@ -287,6 +287,10 @@ impl Publication {
         if state.description != change.expected {
             return Err(ESTALE);
         }
+        // Probe-only activation cannot bypass a proposed capability contract.
+        if state.pending.is_some() {
+            return Err(EAGAIN);
+        }
         let property = match &mut state.slot {
             Slot::Ready(property) => property,
             Slot::Closed => return Err(ENODEV),
