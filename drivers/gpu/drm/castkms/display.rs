@@ -729,6 +729,10 @@ impl KmsDriver for Driver {
             Ok(prepared) => prepared,
             Err(error) => return install.reject(error),
         };
-        install.install_then(|| prepared.commit())
+        let mut retired = None;
+        let result = install.install_then(|| retired = Some(prepared.commit()));
+        drop(validation);
+        drop(retired);
+        result
     }
 }
