@@ -47,6 +47,17 @@ impl DmaBuf {
         unsafe { (*self.as_raw()).size }
     }
 
+    /// Whether the retained DMA-BUF file was exported with read access.
+    ///
+    /// File access mode is not pixel permission or synchronization with producers.
+    pub fn is_readable(&self) -> bool {
+        // SAFETY: The buffer retains its immutable file pointer. FMODE_READ is
+        // fixed at file initialization; unrelated mode bits may change concurrently.
+        // FIXME(read_once): Replace with read_once when available on the Rust side.
+        let mode = unsafe { core::ptr::addr_of!((*(*self.as_raw()).file).f_mode).read_volatile() };
+        mode & bindings::FMODE_READ != 0
+    }
+
     /// Whether the retained DMA-BUF file was exported with write access.
     ///
     /// Check this on the acquired buffer when accepting a userspace destination, not
