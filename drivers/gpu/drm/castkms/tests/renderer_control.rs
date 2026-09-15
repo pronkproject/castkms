@@ -23,7 +23,7 @@ use kernel::drm::{
     Device, //
 };
 
-fn with_display(
+pub(super) fn with_display(
     f: impl FnOnce(
         &Device<Driver, Registered>,
         &Crtc<display::Crtc>,

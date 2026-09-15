@@ -9,6 +9,8 @@ mod clock;
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
 pub(crate) mod playback;
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+pub(crate) mod provider;
+#[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
 mod source;
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
 mod tap;

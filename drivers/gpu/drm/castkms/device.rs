@@ -54,6 +54,8 @@ pub(super) struct State {
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) startup: Arc<renderer_startup::Startup>,
     pub(super) capture_grants: Arc<grants::Registry>,
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    pub(super) audio_grants: Arc<grants::Registry>,
     pub(super) capture_streams: Arc<streams::Registry>,
     pub(super) capture_budget: Arc<budget::Budget>,
     pub(super) displays: KVec<Arc<Display>>,
@@ -82,6 +84,8 @@ impl State {
             #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             startup: displays.first().ok_or(EINVAL)?.startup.clone(),
             capture_grants: grants::Registry::new()?,
+            #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+            audio_grants: grants::Registry::new()?,
             capture_streams: streams::Registry::new()?,
             capture_budget: budget::Budget::new()?,
             displays,
@@ -93,6 +97,8 @@ impl State {
             display.monitor.close();
         }
         self.capture_grants.close();
+        #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+        self.audio_grants.close();
         self.capture_streams.close();
         self.authority.close();
         for display in &self.displays {

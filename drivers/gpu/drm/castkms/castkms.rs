@@ -151,6 +151,8 @@ impl drm::Driver for Driver {
             display.startup.invalidate_current();
         }
         dev.capture_streams.revoke_all();
+        #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+        dev.audio_grants.revoke_all();
         dev.authority.changed(master);
     }
 }

@@ -70,6 +70,8 @@ mod host_worker;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod image_access;
 mod monitor;
+#[cfg(all(CONFIG_DRM_CASTKMS_AUDIO, CONFIG_DRM_CLIENT))]
+mod audio;
 mod topology;
 mod composition_planes;
 mod output_identity;
