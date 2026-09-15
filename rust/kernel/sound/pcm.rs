@@ -66,12 +66,16 @@ struct Buffer {
 }
 
 // SAFETY: The pointer is accessed only under its owning IRQ-safe lock. Retirement
-// clears published pointers before ALSA can free or replace native storage.
+// clears both published pointers before ALSA can free or replace native storage.
 unsafe impl Send for Buffer {}
 
 #[pin_data]
 struct Shared {
     config: Config,
+    #[pin]
+    buffer: SpinLockIrq<Buffer>,
+    // Separate from buffer access: notifications invoke driver callbacks, which
+    // may lock driver state also held by a caller copying playback samples.
     #[pin]
     notifications: SpinLockIrq<Buffer>,
 }
@@ -92,6 +96,7 @@ struct State<T: Operations> {
 impl<T: Operations> State<T> {
     fn retire(&self) {
         self.shared.notifications.lock().raw = ptr::null_mut();
+        self.shared.buffer.lock().raw = ptr::null_mut();
     }
 }
 
@@ -106,6 +111,39 @@ pub struct Stream {
 }
 
 impl Stream {
+    /// Copy whole frames from a wrapping native buffer into caller-owned storage.
+    ///
+    /// The caller chooses the amount of work. Copies hold an IRQ-safe lock and
+    /// must therefore be bounded by the driver's latency requirements.
+    pub fn copy_frames(&self, start: u64, output: &mut [u8]) -> Result {
+        let buffer = self.shared.buffer.lock();
+        if buffer.raw.is_null() || buffer.generation != self.generation {
+            return Err(ENODEV);
+        }
+        let frame_bytes = self.shared.config.frame_bytes();
+        // SAFETY: Buffer retirement is excluded by the guard and publication occurs
+        // only after ALSA allocates and finalizes the runtime buffer.
+        let runtime = unsafe { (*buffer.raw).runtime };
+        // SAFETY: Finalized buffer geometry remains stable under the buffer guard.
+        let size = unsafe { (*runtime).buffer_size as usize };
+        if size == 0 || output.len() % frame_bytes != 0 || output.len() / frame_bytes > size {
+            return Err(EINVAL);
+        }
+        let start = (start % size as u64) as usize * frame_bytes;
+        for (index, byte) in output.iter_mut().enumerate() {
+            // SAFETY: The checked frame range wraps within allocated DMA storage.
+            // Volatile loads create no references to memory writable through mmap.
+            *byte = unsafe {
+                ptr::read_volatile((*runtime).dma_area.add(ring_offset(
+                    start,
+                    index,
+                    size * frame_bytes,
+                )))
+            };
+        }
+        Ok(())
+    }
+
     /// Notify ALSA that at least one playback period has elapsed.
     pub fn period_elapsed(&self) -> Result {
         self.notify()
@@ -150,6 +188,7 @@ impl<T: Operations> Registration<T> {
         let shared = Arc::pin_init(
             pin_init!(Shared {
                 config,
+                buffer <- crate::new_spinlock_irq!(Buffer { raw: ptr::null_mut(), generation: 0 }),
                 notifications <- crate::new_spinlock_irq!(Buffer { raw: ptr::null_mut(), generation: 0 }),
             }),
             GFP_KERNEL,
@@ -280,7 +319,7 @@ unsafe extern "C" fn hw_params<T: Operations>(
     }
     state.driver.stop();
     state.retire();
-    // SAFETY: Notifications are unpublished before
+    // SAFETY: Private buffer access and notifications are unpublished before
     // allocation, including replacement of a PREPARED buffer without hw_free.
     unsafe {
         let index = (bindings::SNDRV_PCM_HW_PARAM_BUFFER_BYTES
@@ -312,7 +351,7 @@ unsafe extern "C" fn hw_free<T: Operations>(substream: *mut bindings::snd_pcm_su
     let _lifecycle = state.lifecycle.lock();
     state.driver.stop();
     state.retire();
-    // SAFETY: Published notifications have completed before freeing.
+    // SAFETY: Both kinds of published native access have completed before freeing.
     unsafe { bindings::snd_pcm_lib_free_pages(substream) }
 }
 
@@ -335,6 +374,10 @@ unsafe extern "C" fn prepare<T: Operations>(substream: *mut bindings::snd_pcm_su
             buffer_frames: (*(*substream).runtime).buffer_size as usize,
             period_frames: (*(*substream).runtime).period_size as usize,
         }
+    };
+    *state.shared.buffer.lock() = Buffer {
+        raw: substream,
+        generation,
     };
     *state.shared.notifications.lock() = Buffer {
         raw: substream,
@@ -395,6 +438,15 @@ fn copy_name(output: &mut [c_char], name: &CStr) {
     }
 }
 
+fn ring_offset(start: usize, index: usize, size: usize) -> usize {
+    let tail = size - start;
+    if index < tail {
+        start + index
+    } else {
+        index - tail
+    }
+}
+
 #[cfg(CONFIG_KUNIT)]
 #[crate::prelude::kunit_tests(rust_snd_pcm_buffer)]
 mod tests {
@@ -406,6 +458,7 @@ mod tests {
                 config: Config { format: Format::S16Le, rate: 48_000, channels: 2,
                     buffer_bytes_max: 4096, period_bytes_min: 256, period_bytes_max: 2048,
                     periods_min: 2, periods_max: 16, pause: false },
+                buffer <- crate::new_spinlock_irq!(Buffer { raw: ptr::null_mut(), generation: 0 }),
                 notifications <- crate::new_spinlock_irq!(Buffer { raw: ptr::null_mut(), generation: 0 }),
             }),
             GFP_KERNEL,
@@ -413,11 +466,12 @@ mod tests {
     }
 
     #[test]
-    fn retired_stream_rejects_notifications() -> Result {
+    fn retired_stream_rejects_storage_and_notifications() -> Result {
         let stream = Stream {
             shared: shared()?,
             generation: 0,
         };
+        assert_eq!(stream.copy_frames(0, &mut [0; 4]), Err(ENODEV));
         assert_eq!(stream.period_elapsed(), Err(ENODEV));
         Ok(())
     }
@@ -427,12 +481,21 @@ mod tests {
         let shared = shared()?;
         // An inaccessible sentinel demonstrates rejection before native access.
         let raw = ptr::dangling_mut();
+        *shared.buffer.lock() = Buffer { raw, generation: 2 };
         *shared.notifications.lock() = Buffer { raw, generation: 2 };
         let stream = Stream {
             shared,
             generation: 1,
         };
+        assert_eq!(stream.copy_frames(0, &mut [0; 4]), Err(ENODEV));
         assert_eq!(stream.period_elapsed(), Err(ENODEV));
         Ok(())
+    }
+
+    #[test]
+    fn ring_offsets_do_not_overflow_for_large_buffers() {
+        assert_eq!(ring_offset(90, 9, 100), 99);
+        assert_eq!(ring_offset(90, 10, 100), 0);
+        assert_eq!(ring_offset(usize::MAX - 8, 16, usize::MAX), 8);
     }
 }
