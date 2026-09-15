@@ -82,11 +82,12 @@ impl Slot {
         Ok(access(self.image.as_ref().ok_or(EIO)?))
     }
 
-    pub(super) fn copy_from(
+    pub(super) fn composite(
         &mut self,
-        source: &super::framebuffer::Mapping,
+        sources: &[super::framebuffer::Mapping],
+        output_color: Option<&crate::color::OutputColor>,
     ) -> Result {
-        self.image.as_mut().ok_or(EIO)?.copy_from(source)
+        self.image.as_mut().ok_or(EIO)?.composite(sources, output_color)
     }
 
     pub(super) fn clear(&mut self) -> Result {

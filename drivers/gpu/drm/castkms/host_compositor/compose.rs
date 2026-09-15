@@ -115,27 +115,41 @@ pub(crate) fn current_checked<G>(
     let layout = slot.with_image(|image| image.layout())?;
     let metadata = output.with_checked_cpu_scene(
         |scene| {
-            let Some(primary) = scene.primary() else {
-                return Ok(None);
-            };
-            let framebuffer = Framebuffer::new(primary.framebuffer(), primary.geometry())?;
-            if framebuffer.dimensions() != layout.dimensions() {
-                return Err(EINVAL);
+            let mut layers = KVec::new();
+            for (index, layer) in scene.layers().enumerate() {
+                layers.push((index, layer), GFP_KERNEL)?;
             }
-            framebuffer.prepare_mapping().map(Some)
+            // Break zpos ties in plane creation order, matching DRM object IDs.
+            layers.sort_unstable_by_key(|(index, layer)| (layer.zpos, *index));
+            let mut mappings = KVec::new();
+            for (_, layer) in layers {
+                let framebuffer = Framebuffer::new(layer.framebuffer(), layer.geometry())?;
+                if framebuffer.dimensions() != layout.dimensions() {
+                    return Err(EINVAL);
+                }
+                let mut mapping = framebuffer.prepare_mapping()?;
+                mapping.color = layer.color.clone();
+                mapping.yuv = layer.yuv;
+                mappings.push(mapping, GFP_KERNEL)?;
+            }
+            Ok(mappings)
         },
         admit,
         |scene, configuration, mapping| -> Result<_> {
             let result = (|| {
                 scene.producer_result()?;
-                if let Some(mapping) = mapping {
-                    slot.copy_from(mapping)?;
+                if !mapping.is_empty() {
+                    slot.composite(mapping, scene.output_color.as_deref())?;
                 } else {
                     let dimensions = configuration.as_ref().ok_or(EINVAL)?.dimensions();
                     if (dimensions[0], dimensions[1]) != layout.dimensions() {
                         return Err(EINVAL);
                     }
-                    slot.clear()?;
+                    if scene.output_color.is_none() {
+                        slot.clear()?;
+                    } else {
+                        slot.composite(mapping, scene.output_color.as_deref())?;
+                    }
                 }
                 Ok((
                     scene.content_serial(),
@@ -146,9 +160,13 @@ pub(crate) fn current_checked<G>(
             // End exporter CPU access before releasing the read claim. Source reuse
             // must not race cache maintenance, even when copying failed. Unmapping
             // still happens after the claim, outside reservation and modeset locks.
-            if let Some(mapping) = mapping {
-                mapping.finish()?;
+            let mut finished = Ok(());
+            for mapping in mapping {
+                if let Err(error) = mapping.finish() {
+                    finished = Err(error);
+                }
             }
+            finished?;
             result
         },
     )?;
