@@ -19,18 +19,17 @@ pub(crate) const MAX_WIDTH: u32 = 8192;
 pub(crate) const MAX_HEIGHT: u32 = 8192;
 pub(crate) const MAX_ALLOCATION_BYTES: usize = 512 * 1024 * 1024;
 
-/// Validate native storage and full-frame sampling without granting source access.
-///
-/// An imported allocation is not qualified by successful PRIME import alone. The
-/// built-in renderer supports only native CastKMS shmem and complete aligned rows.
+pub(crate) use crate::formats::FORMATS;
+
+/// Validate linear storage and full-frame sampling without granting source access.
 pub(crate) fn check_framebuffer(image: &Framebuffer<Driver>, geometry: Geometry) -> Result {
     let width = image.width();
     let height = image.height();
     if width == 0 || height == 0 || width > MAX_WIDTH || height > MAX_HEIGHT {
         return Err(EINVAL);
     }
-    if image.format() != fourcc::XRGB8888
-        || image.plane_count() != 1
+    if !FORMATS.contains(&image.format())
+        || image.plane_count() != crate::formats::plane_count(image.format())
         || image.is_interlaced()
         || image
             .modifier()
@@ -41,25 +40,28 @@ pub(crate) fn check_framebuffer(image: &Framebuffer<Driver>, geometry: Geometry)
     {
         return Err(EINVAL);
     }
-    let object = image.object_at(0)?;
-    if object.imported_dma_buf().is_some() {
-        return Err(EOPNOTSUPP);
-    }
-    let pitch = image.pitch(0)? as usize;
-    let offset = image.offset(0)? as usize;
-    if pitch % 4 != 0 || offset % 4 != 0 || pitch < width as usize * 4 {
-        return Err(EINVAL);
-    }
-    let size = object.size();
-    if size > MAX_ALLOCATION_BYTES {
-        return Err(E2BIG);
-    }
-    let end = pitch
-        .checked_mul(height as usize)
-        .and_then(|bytes| bytes.checked_add(offset))
-        .ok_or(EOVERFLOW)?;
-    if end > size {
-        return Err(EINVAL);
+    for index in 0..image.plane_count() {
+        let object = image.object_at(index)?;
+        if object.imported_dma_buf().is_some() {
+            return Err(EOPNOTSUPP);
+        }
+        let layout = crate::formats::plane(image.format(), index)?;
+        let pitch = image.pitch(index)? as usize;
+        let offset = image.offset(index)? as usize;
+        if pitch < layout.row_bytes(width) {
+            return Err(EINVAL);
+        }
+        if object.size() > MAX_ALLOCATION_BYTES {
+            return Err(E2BIG);
+        }
+        let end = pitch
+            .checked_mul(layout.rows(height) - 1)
+            .and_then(|bytes| bytes.checked_add(layout.row_bytes(width)))
+            .and_then(|bytes| bytes.checked_add(offset))
+            .ok_or(EOVERFLOW)?;
+        if end > object.size() {
+            return Err(EINVAL);
+        }
     }
     Ok(())
 }

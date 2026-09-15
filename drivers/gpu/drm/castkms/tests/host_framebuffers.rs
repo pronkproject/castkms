@@ -91,18 +91,12 @@ mod cases {
     }
 
     #[test]
-    fn host_layout_requires_aligned_complete_rows() -> Result {
+    fn byte_reads_allow_unaligned_rows_without_final_padding() -> Result {
         let fixture = Fixture::new()?;
         let unaligned = native(&fixture, 4096, 64, 2, 257, 0, false)?;
-        check(matches!(
-            HostFramebuffer::new(&unaligned, geometry(64, 2)),
-            Err(EINVAL)
-        ))?;
+        HostFramebuffer::new(&unaligned, geometry(64, 2))?;
         let short_padding = native(&fixture, 8192, 64, 2, 4096, 4, false)?;
-        check(matches!(
-            HostFramebuffer::new(&short_padding, geometry(64, 2)),
-            Err(EINVAL)
-        ))?;
+        HostFramebuffer::new(&short_padding, geometry(64, 2))?;
         Ok(())
     }
 
