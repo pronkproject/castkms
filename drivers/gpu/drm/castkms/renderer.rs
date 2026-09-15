@@ -5,6 +5,7 @@
 pub(crate) mod candidate;
 mod capability_description;
 mod capability_file;
+mod profile_file;
 pub(crate) mod description;
 mod client_file;
 pub(crate) mod files;
