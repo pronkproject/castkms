@@ -52,8 +52,8 @@ impl Candidate {
     fn begin_then(access: Access, after_reserve: impl FnOnce() -> Result) -> Result<Self> {
         let probe = Arc::pin_init(Probe::new(), GFP_KERNEL)?;
         let configuration = access.with_current(|current| Ok(current.configuration().clone()))?;
-        let execution = access.device().execution.describe();
-        let resources = access.device().startup.begin()?;
+        let execution = access.display().execution.describe();
+        let resources = access.display().startup.begin()?;
         let candidate = Self {
             resources,
             access,
@@ -129,7 +129,7 @@ impl Candidate {
 
     fn check_control(&self, current: &display_control::Current<'_>) -> Result {
         if current.configuration() != &self.configuration
-            || self.access.device().execution.describe() != self.execution
+            || self.access.display().execution.describe() != self.execution
         {
             Err(ESTALE)
         } else {
