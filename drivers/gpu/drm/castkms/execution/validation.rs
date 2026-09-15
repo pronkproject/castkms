@@ -83,6 +83,14 @@ pub(crate) struct Installation<'a> {
     epoch: Epoch,
 }
 
+/// A checked contract replacement that retains exclusive validation ownership.
+#[must_use = "commit only after execution publication succeeds"]
+pub(crate) struct Activation<'a> {
+    validation: &'a mut Validation,
+    target: Contract,
+    epoch: Epoch,
+}
+
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Validation {
     pub(crate) fn new(active: Contract) -> Self {
@@ -95,6 +103,17 @@ impl Validation {
 
     pub(crate) fn epoch(&self) -> Epoch {
         self.epoch
+    }
+
+    /// The caller has excluded native installation and established that the latest
+    /// installed scene has reached normal publication. A gate alone is insufficient.
+    pub(crate) fn prepare_activation(&mut self, proposal: u64, mut check: impl FnMut(&Contract) -> Result) -> Result<Activation<'_>> {
+        let gate = self.gate.as_ref().filter(|gate| gate.proposal == proposal).ok_or(ESTALE)?;
+        check(&self.active)?;
+        check(&gate.target)?;
+        let target = gate.target.clone();
+        let epoch = Epoch(self.epoch.0.checked_add(1).ok_or(EOVERFLOW)?);
+        Ok(Activation { validation: self, target, epoch })
     }
 
     /// Ordinary animation is checked against every installed contract, not its serial.
@@ -159,6 +178,17 @@ impl Installation<'_> {
     pub(crate) fn commit(self) {
         self.validation.gate = Some(self.gate);
         self.validation.epoch = self.epoch;
+    }
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Activation<'_> {
+    /// Infallible after preparation. Return retired contracts for release outside locks.
+    pub(crate) fn commit(self) -> (Contract, Option<Contract>) {
+        let old = core::mem::replace(&mut self.validation.active, self.target);
+        let gate = self.validation.gate.take().map(|gate| gate.target);
+        self.validation.epoch = self.epoch;
+        (old, gate)
     }
 }
 
