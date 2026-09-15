@@ -300,4 +300,43 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn mixed_plane_owners_cannot_relabel_retained_content() -> Result {
+        let fixture = Fixture::new_features(c"castkms-plane-owners", 1, true, true)?;
+        let first = fixture
+            .drm
+            .synthetic_master_snapshot(true)?
+            .master()
+            .clone();
+        fixture.drm.device().authority.changed(Some(first.clone()));
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        check(fixture.has_owner(Some(&first)))?;
+        let second = fixture
+            .drm
+            .synthetic_master_snapshot(true)?
+            .master()
+            .clone();
+        fixture.drm.device().authority.changed(Some(second));
+        let overlay = small_image(&fixture, 0xffff0000)?;
+        configure(&fixture, 2, &overlay, [0, 0], [2, 2])?;
+        check(fixture.has_owner(None))?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        check(
+            compose::current(&fixture.drm.device().output, &pool)?
+                .ok_or(EINVAL)?
+                .owner()
+                .is_none(),
+        )?;
+        fixture.drm.update(|mut transaction| {
+            transaction.as_mut().disable_plane(fixture.drm.plane_at(2)?)
+        })?;
+        check(fixture.has_owner(Some(&first)))?;
+        Ok(())
+    }
+
 }
