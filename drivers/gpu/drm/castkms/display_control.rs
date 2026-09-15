@@ -122,7 +122,7 @@ impl Target {
         if !guard.holds_object(self.crtc.crtc()) || !guard.holds_object(&*self.connector) {
             return Err(EACCES);
         }
-        let output = &self.device().output;
+        let output = &self.crtc.crtc().display.output;
         output.with_accepted(|accepted| {
             let accepted = accepted.ok_or(ENODEV)?;
             let configuration = accepted.configuration.as_ref().ok_or(ENODEV)?;
@@ -138,6 +138,10 @@ impl Target {
                 _task: NotThreadSafe,
             })
         })
+    }
+
+    pub(crate) fn display(&self) -> &crate::device::Display {
+        &self.crtc.crtc().display
     }
 }
 
