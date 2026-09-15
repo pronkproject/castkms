@@ -181,6 +181,12 @@ impl plane::DriverPlane for Plane {
         let (transaction, old, mut state) = check.take_all();
         check_geometry(transaction, &mut state)?;
         if let Some(geometry) = state.geometry {
+            if state.plane().kind == scene::Kind::Cursor {
+                let framebuffer = state.framebuffer().ok_or(EINVAL)?;
+                if framebuffer.width() > 512 || framebuffer.height() > 512 {
+                    return Err(EINVAL);
+                }
+            }
             super::execution::host::check_framebuffer(
                 state.framebuffer().ok_or(EINVAL)?,
                 geometry,
@@ -467,7 +473,7 @@ impl KmsDriver for Driver {
         Ok(ModeConfigInfo {
             min_resolution: (1, 1),
             max_resolution: (8192, 8192),
-            max_cursor: (0, 0),
+            max_cursor: (512, 512),
             preferred_depth: 24,
             preferred_fourcc: Some(fourcc::XRGB8888),
             enable_default_client: false,
@@ -476,7 +482,7 @@ impl KmsDriver for Driver {
 
     fn create_objects(dev: &UnregisteredKmsDevice<'_, Self>) -> Result {
         dev.enable_preparation(8)?;
-        for display in &dev.displays {
+        for (index, display) in dev.displays.iter().enumerate() {
             let plane = plane::UnregisteredPlane::<Plane>::new(
                 dev,
                 0,
@@ -486,14 +492,27 @@ impl KmsDriver for Driver {
                 None,
                 scene::Kind::Primary,
             )?;
+            plane.create_zpos_immutable_property(0)?;
             plane.create_nearest_scaling_filter_property()?;
-            let crtc = crtc::UnregisteredCrtc::<Crtc>::new(
-                dev,
-                plane,
-                None::<&plane::UnregisteredPlane<Plane>>,
-                None,
-                display.clone(),
-            )?;
+            let cursor = if dev.enable_cursor {
+                let cursor = plane::UnregisteredPlane::<Plane>::new(
+                    dev,
+                    1 << index,
+                    &[fourcc::ARGB8888],
+                    Some(&[fourcc::FORMAT_MOD_LINEAR]),
+                    plane::Type::Cursor,
+                    None,
+                    scene::Kind::Cursor,
+                )?;
+                cursor.create_zpos_immutable_property(31)?;
+                cursor.create_nearest_scaling_filter_property()?;
+                cursor.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
+                Some(cursor)
+            } else {
+                None
+            };
+            let crtc =
+                crtc::UnregisteredCrtc::<Crtc>::new(dev, plane, cursor, None, display.clone())?;
             let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
                 dev,
                 encoder::Type::Virtual,
