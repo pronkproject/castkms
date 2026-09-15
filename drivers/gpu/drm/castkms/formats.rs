@@ -39,6 +39,9 @@ pub(crate) const FORMATS: &[u32] = &[
     YVU422,
     YUV444,
     YVU444,
+    P010,
+    P012,
+    P016,
 ];
 
 /// Sampling factors and stored bits per sample in one format plane.
