@@ -19,7 +19,7 @@ use kernel::{
 
 /// Two preallocated images, with no allocation or wait for image reuse during reservation.
 ///
-/// Each image is at most 8 MiB, so the pool is at most 16 MiB. A worker must reserve a
+/// Each image is at most 256 MiB, so the pool is at most 512 MiB. A worker must reserve a
 /// slot before claiming a compositor source. Shutdown discards free images immediately;
 /// outstanding slots remain private and release their storage when returned.
 /// Replacements must use the same output budget, including images from closed pools.
