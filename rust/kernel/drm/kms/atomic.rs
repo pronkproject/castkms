@@ -68,7 +68,7 @@ pub(super) unsafe fn run_update<T: KmsDriver>(
     update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
 ) -> Result {
     // SAFETY: The caller supplies the initialized-device and exclusion guarantees.
-    unsafe { run_transaction(dev, update, false) }
+    unsafe { run_transaction(dev, update, |raw| to_result(bindings::drm_atomic_commit(raw.as_ptr()))) }
 }
 
 /// Validate an update on an initialized device without publishing it.
@@ -81,15 +81,16 @@ pub(super) unsafe fn run_check<T: KmsDriver>(
     update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
 ) -> Result {
     // SAFETY: The caller supplies the same guarantees as for a committing transaction.
-    unsafe { run_transaction(dev, update, true) }
+    unsafe { run_transaction(dev, update, |raw| to_result(bindings::drm_atomic_check_only(raw.as_ptr()))) }
 }
 
-// Both terminal operations use the same ownership, callback and backoff boundaries. This
-// function inherits run_update's safety contract; check_only changes only the terminal helper.
+// All terminal operations share ownership and backoff boundaries. The caller must follow
+// run_update's safety contract, and finish must validate before committing the transaction.
+// Finish may borrow the raw transaction only for its invocation, never retain that pointer.
 unsafe fn run_transaction<T: KmsDriver>(
     dev: &Device<T>,
     mut update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
-    check_only: bool,
+    mut finish: impl FnMut(NonNull<bindings::drm_atomic_commit>) -> Result,
 ) -> Result {
     pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new(0));
     loop {
@@ -111,17 +112,7 @@ unsafe fn run_transaction<T: KmsDriver>(
             let result = if contended {
                 Err(EDEADLK)
             } else {
-                result.and_then(|()| {
-                    // SAFETY: All callback borrows have ended. The transaction is unpublished and
-                    // holds the required locks; the core performs validation before publishing it.
-                    to_result(unsafe {
-                        if check_only {
-                            bindings::drm_atomic_check_only(raw.as_ptr())
-                        } else {
-                            bindings::drm_atomic_commit(raw.as_ptr())
-                        }
-                    })
-                })
+                result.and_then(|()| finish(raw))
             };
             // The driver may discover contention during validation, after the callback returned.
             // SAFETY: Validation uses this task's initialized context synchronously.
