@@ -23,6 +23,10 @@ use kernel::{
 
 enum Slot {
     Idle,
+    Host {
+        id: u64,
+        description: Description,
+    },
     Publishing,
     Active {
         id: u64,
@@ -109,8 +113,29 @@ impl Session {
         id: u64,
         profile: crate::execution::capabilities::Profile,
     ) -> Result<crate::execution::proposal::DescriptionSnapshot> {
+        self.propose(id, Some(profile))
+    }
+
+    pub(crate) fn propose_host(
+        &self,
+        id: u64,
+    ) -> Result<crate::execution::proposal::DescriptionSnapshot> {
+        self.propose(id, None)
+    }
+
+    fn propose(
+        &self,
+        id: u64,
+        profile: Option<crate::execution::capabilities::Profile>,
+    ) -> Result<crate::execution::proposal::DescriptionSnapshot> {
         let candidate = self.candidate(id)?;
-        let proposal = Arc::new(candidate.propose_profile(profile)?, GFP_KERNEL)?;
+        let proposal = Arc::new(
+            match profile {
+                Some(profile) => candidate.propose_profile(profile)?,
+                None => candidate.propose_host()?,
+            },
+            GFP_KERNEL,
+        )?;
         let description = proposal.describe().clone();
         let mut state = self.state.lock();
         if state.closed {
@@ -144,7 +169,7 @@ impl Session {
             if state.closed {
                 return Err(EKEYREVOKED);
             }
-            if !matches!(state.slot, Slot::Idle) {
+            if !matches!(state.slot, Slot::Idle | Slot::Host { .. }) {
                 return Err(EBUSY);
             }
         }
@@ -154,7 +179,7 @@ impl Session {
             if state.closed {
                 return Err(EKEYREVOKED);
             }
-            if !matches!(state.slot, Slot::Idle) {
+            if !matches!(state.slot, Slot::Idle | Slot::Host { .. }) {
                 return Err(EBUSY);
             }
             let id = state.next_id;
@@ -202,6 +227,14 @@ impl Session {
                         Err(ENOENT)
                     };
                 }
+                other @ Slot::Host { id: current, .. } => {
+                    state.slot = other;
+                    return if current == id {
+                        Err(EALREADY)
+                    } else {
+                        Err(ENOENT)
+                    };
+                }
                 Slot::Idle => return Err(ENOENT),
             };
             (candidate, state.proposal.take())
@@ -225,6 +258,7 @@ impl Session {
             } if *current == id => Ok(candidate.clone()),
             Slot::Publishing | Slot::Activating { .. } => Err(EBUSY),
             Slot::Renderer { id: current, .. } if *current == id => Err(EALREADY),
+            Slot::Host { id: current, .. } if *current == id => Err(EALREADY),
             _ => Err(ENOENT),
         }
     }
@@ -236,6 +270,23 @@ impl Session {
             let mut state = self.state.lock();
             if state.closed {
                 return Err(EKEYREVOKED);
+            }
+            if let Slot::Host {
+                id: current,
+                description,
+            } = &state.slot
+            {
+                return if *current == id {
+                    self.access.with_output(|| {
+                        if self.access.display().execution.describe() == *description {
+                            Ok(*description)
+                        } else {
+                            Err(ESTALE)
+                        }
+                    })
+                } else {
+                    Err(ENOENT)
+                };
             }
             if let Slot::Renderer {
                 id: current,
@@ -278,8 +329,22 @@ impl Session {
         };
 
         let activated = match proposal {
-            Some(proposal) => proposal.activate(&registered),
-            None => candidate.activate(&registered),
+            Some(proposal)
+                if matches!(
+                    proposal.describe().profile,
+                    crate::execution::validation::Contract::Host
+                ) =>
+            {
+                proposal
+                    .handback(&registered)
+                    .map(|description| (None, description))
+            }
+            Some(proposal) => proposal
+                .activate(&registered)
+                .map(|(active, source, description)| (Some((active, source)), description)),
+            None => candidate
+                .activate(&registered)
+                .map(|(active, source, description)| (Some((active, source)), description)),
         };
         let mut state = self.state.lock();
         if state.closed {
@@ -294,7 +359,15 @@ impl Session {
             return Err(ECANCELED);
         }
         match activated {
-            Ok((active, source, description)) => {
+            Ok((None, description)) => {
+                state.slot = Slot::Host { id, description };
+                let retired = state.proposal.take();
+                drop(state);
+                drop(retired);
+                registered.hotplug_event();
+                Ok(description)
+            }
+            Ok((Some((active, source)), description)) => {
                 state.slot = Slot::Renderer {
                     id,
                     candidate,
