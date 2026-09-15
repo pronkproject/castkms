@@ -14,6 +14,48 @@ mod cases {
     use super::*;
 
     #[test]
+    fn replacement_keeps_old_admission_until_successful_activation() -> Result {
+        let owner = owner()?;
+        let startup = owner.startup();
+        let candidate = startup.begin()?;
+        let (old, ()) = candidate.activate_negotiated(|| Ok(()))?;
+        let replacement = startup.begin()?;
+        old.with_current(|| Ok(()))?;
+        assert!(matches!(startup.begin(), Err(EBUSY)));
+        assert!(matches!(
+            replacement.activate_negotiated(|| Err::<(), _>(EIO)),
+            Err(EIO)
+        ));
+        old.check()?;
+        replacement.cancel();
+        old.check()?;
+        let next = startup.begin()?;
+        drop(replacement);
+        next.check()?;
+        let (active, ()) = next.activate_negotiated(|| Ok(()))?;
+        assert_eq!(old.check(), Err(EIO));
+        drop(old);
+        active.check()?;
+        Ok(())
+    }
+
+    #[test]
+    fn losing_the_old_worker_invalidates_its_replacement() -> Result {
+        let owner = owner()?;
+        let startup = owner.startup();
+        let candidate = startup.begin()?;
+        let (old, ()) = candidate.activate_negotiated(|| Ok(()))?;
+        let replacement = startup.begin()?;
+        drop(old);
+        assert_eq!(replacement.check(), Err(ECANCELED));
+        assert!(matches!(
+            replacement.activate_negotiated(|| Ok(())),
+            Err(ECANCELED)
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn negotiated_workers_follow_modes_but_not_authority_changes() -> Result {
         for negotiated in [false, true] {
             let owner = owner()?;

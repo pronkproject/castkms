@@ -19,6 +19,66 @@ use kernel::{
 mod cases {
     use super::*;
 
+    fn linear_profile() -> Result<crate::execution::capabilities::Profile> {
+        let reference = crate::tests::renderer_proposals::profile()?;
+        let mut formats = KVec::new();
+        formats.push(
+            crate::execution::capabilities::Format {
+                fourcc: drm::fourcc::XRGB8888,
+                modifier: None,
+                planes: 1,
+                native: true,
+                imported: true,
+                pitch_alignment: 1,
+                offset_alignment: 1,
+                max_pitch: u32::MAX,
+            },
+            GFP_KERNEL,
+        )?;
+        crate::execution::capabilities::Profile::new(*reference.limits(), formats)
+    }
+
+    #[test]
+    fn replacing_a_negotiated_worker_retains_its_outstanding_source_read() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let first = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            first.submit_private_probe(None)?;
+            let proposal = first.propose_profile(linear_profile()?)?;
+            device.atomic_update(|mut transaction| {
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(proposal.describe().transition);
+                Ok(())
+            })?;
+            let (old, _, description) = proposal.activate(device)?;
+            let replacement = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            replacement.submit_private_probe(None)?;
+            let next = replacement.propose_profile(linear_profile()?)?;
+            old.check()?;
+            device.atomic_update(|mut transaction| {
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(next.describe().transition);
+                Ok(())
+            })?;
+            let job = first.claim_source(&old, description, None)?;
+            let source = device
+                .output
+                .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                .ok_or(EINVAL)?;
+            let (active, _, next_description) = next.activate(device)?;
+            check(next_description.generation == description.generation + 1)?;
+            check(old.check() == Err(EIO))?;
+            drop(old);
+            active.check()?;
+            source.seal();
+            check(source.prepared()?.is_none())?;
+            job.release_without_access();
+            check(source.prepared()?.is_some())
+        })
+    }
+
     #[test]
     fn tagged_configuration_changes_keep_the_incoming_candidate() -> Result {
         for disable in [false, true] {
