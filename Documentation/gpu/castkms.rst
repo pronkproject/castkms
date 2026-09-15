@@ -100,6 +100,14 @@ descriptor revocation and attachment replacement on a disposable device::
     make -C tools/testing/selftests TARGETS=drm_castkms
     tools/testing/selftests/drm_castkms/audio /dev/dri/cardN
 
+The multi-output test exercises sound outside the kernel test framework. Run
+it only on a disposable device; it attaches monitors and changes display modes.
+``audio-multi`` requires eight CastKMS outputs and no sound server. It plays a
+different signal on each output, checks that the signals stay separate, and
+exercises repeated modesets, monitor replacement and DRM master handoff::
+
+    tools/testing/selftests/drm_castkms/audio-multi /dev/dri/cardN
+
 Virtual monitor control
 -----------------------
 
