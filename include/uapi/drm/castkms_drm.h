@@ -10,6 +10,16 @@
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
 #define DRM_CASTKMS_RENDERER_VERSION 6
 
+/*
+ * Request-only unsigned CRTC property. Zero means an ordinary update. A nonzero
+ * value identifies a pending transition on that output; atomic checking and
+ * final installation validate both contracts. TEST_ONLY installs no gate.
+ * Successful installation binds the gate to the accepted configuration.
+ * Readback is always zero and state duplication never carries the tag forward.
+ * A token is metadata, not permission to render or access source buffers.
+ */
+#define DRM_CASTKMS_TRANSITION_PROPERTY "CASTKMS_TRANSITION"
+
 #define DRM_CASTKMS_RENDERER_PROBE_PRIVATE 1
 #define DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE 2
 

@@ -63,6 +63,44 @@ static unsigned int open_files(void)
 	return count;
 }
 
+static void check_transition_property(int fd, uint32_t crtc)
+{
+	drmModeAtomicReq *update = drmModeAtomicAlloc();
+	drmModeObjectProperties *properties;
+	unsigned int found = 0;
+
+	CHECK(update);
+	property(fd, update, crtc, DRM_MODE_OBJECT_CRTC, DRM_CASTKMS_TRANSITION_PROPERTY, 0);
+	CHECK(drmModeAtomicCommit(fd, update, DRM_MODE_ATOMIC_TEST_ONLY, NULL) == 0);
+	CHECK(drmModeAtomicCommit(fd, update, 0, NULL) == 0);
+	drmModeAtomicFree(update);
+	update = drmModeAtomicAlloc();
+	CHECK(update);
+	property(fd, update, crtc, DRM_MODE_OBJECT_CRTC, DRM_CASTKMS_TRANSITION_PROPERTY, UINT64_MAX);
+	errno = 0;
+	CHECK(drmModeAtomicCommit(fd, update, DRM_MODE_ATOMIC_TEST_ONLY, NULL) < 0);
+	CHECK(errno == ESTALE);
+	errno = 0;
+	CHECK(drmModeAtomicCommit(fd, update, 0, NULL) < 0);
+	CHECK(errno == ESTALE);
+	drmModeAtomicFree(update);
+	properties = drmModeObjectGetProperties(fd, crtc, DRM_MODE_OBJECT_CRTC);
+	CHECK(properties);
+	for (uint32_t i = 0; i < properties->count_props; i++) {
+		drmModePropertyRes *description = drmModeGetProperty(fd, properties->props[i]);
+
+		CHECK(description);
+		if (!strcmp(description->name, DRM_CASTKMS_TRANSITION_PROPERTY)) {
+			CHECK(properties->prop_values[i] == 0);
+			CHECK(description->flags & DRM_MODE_PROP_ATOMIC);
+			found++;
+		}
+		drmModeFreeProperty(description);
+	}
+	CHECK(found == 1);
+	drmModeFreeObjectProperties(properties);
+}
+
 static void expect_ioctl_error(int fd, unsigned long command, void *request,
 			       int expected)
 {
@@ -292,6 +330,7 @@ int main(int argc, char **argv)
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0);
 	CHECK(drmSetMaster(fd) == 0);
+	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
 	peer = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(peer >= 0 && !drmIsMaster(peer));
 	resources = drmModeGetResources(fd);
@@ -311,6 +350,7 @@ int main(int argc, char **argv)
 			       connector->modes[0].vdisplay, 0x57);
 	CHECK(drmModeSetCrtc(fd, request.crtc_id, buffer.fb, 0, 0,
 			     &connector_id, 1, &connector->modes[0]) == 0);
+	check_transition_property(fd, request.crtc_id);
 	capture_output = create_buffer(fd, buffer.dumb.width, buffer.dumb.height,
 				       0x19);
 	drmModeFreeConnector(connector);
