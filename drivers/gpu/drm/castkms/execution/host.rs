@@ -15,9 +15,9 @@ use kernel::{
     prelude::*, //
 };
 
-pub(crate) const MAX_WIDTH: u32 = 1920;
-pub(crate) const MAX_HEIGHT: u32 = 1080;
-pub(crate) const MAX_ALLOCATION_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_WIDTH: u32 = 8192;
+pub(crate) const MAX_HEIGHT: u32 = 8192;
+pub(crate) const MAX_ALLOCATION_BYTES: usize = 512 * 1024 * 1024;
 
 /// Validate native storage and full-frame sampling without granting source access.
 ///

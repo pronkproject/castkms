@@ -38,7 +38,7 @@ mod cases {
         let fixture = Fixture::new()?;
         let valid = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
         fixture.select(&valid, false, 0)?;
-        let invalid = framebuffer(&fixture, 16 * 1024 * 1024 + 4096, 2560)?;
+        let invalid = framebuffer(&fixture, execution::host::MAX_ALLOCATION_BYTES + 4096, 2560)?;
         for check_only in [true, false] {
             check(fixture.select(&invalid, check_only, 0) == Err(E2BIG))?;
             check(fixture.drm.device().output.inspect(|scene| {

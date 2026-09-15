@@ -109,7 +109,7 @@ mod cases {
     #[test]
     fn source_allocation_is_bounded_independently_of_image_size() -> Result {
         let fixture = Fixture::new()?;
-        let oversized = native(&fixture, 16 * 1024 * 1024 + 4096, 64, 2, 256, 0, false)?;
+        let oversized = native(&fixture, execution::host::MAX_ALLOCATION_BYTES + 4096, 64, 2, 256, 0, false)?;
         check(matches!(
             HostFramebuffer::new(&oversized, geometry(64, 2)),
             Err(E2BIG)
