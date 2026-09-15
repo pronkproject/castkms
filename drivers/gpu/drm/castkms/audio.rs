@@ -9,6 +9,8 @@ mod clock;
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
 pub(crate) mod playback;
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+pub(crate) mod files;
+#[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
 pub(crate) mod provider;
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
 mod source;
@@ -20,6 +22,19 @@ pub(crate) use source::{
     Attachment,
     Source, //
 };
+
+#[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+pub(crate) use files::create;
+
+#[cfg(not(CONFIG_DRM_CASTKMS_AUDIO))]
+pub(crate) fn create(
+    _: &kernel::drm::Device<crate::Driver, kernel::drm::device::Registered>,
+    _: &(),
+    _: &mut kernel::uapi::drm_castkms_create_audio_capture,
+    _: &kernel::drm::file::File<crate::File>,
+) -> kernel::error::Result<u32> {
+    Err(kernel::error::code::EOPNOTSUPP)
+}
 
 /// The playback and capture paths share one interleaved PCM format.
 #[cfg(any(CONFIG_DRM_CASTKMS_AUDIO, CONFIG_DRM_CASTKMS_KUNIT_TEST))]
