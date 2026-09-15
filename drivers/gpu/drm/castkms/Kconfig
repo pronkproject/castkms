@@ -22,6 +22,14 @@ config DRM_CASTKMS
 
 	  The module is called castkms.
 
+config DRM_CASTKMS_AUDIO
+	bool "CastKMS audio playback"
+	depends on DRM_CASTKMS && SND=y && SND_PCM=y
+	select RUST_SND_PCM
+	default y
+	help
+	  Build Rust ALSA playback support for virtual display audio.
+
 config DRM_CASTKMS_KUNIT_TEST
 	bool "CastKMS scene lifetime tests" if !KUNIT_ALL_TESTS
 	depends on DRM_CASTKMS && KUNIT=y
