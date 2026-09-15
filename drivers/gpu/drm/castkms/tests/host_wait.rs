@@ -80,7 +80,7 @@ mod cases {
         let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, layout)?;
         let _remaining = fixture
             .host_budget
-            .reserve(16 * 1024 * 1024 - 2 * layout.size())?;
+            .reserve(crate::host_compositor::budget::LIMIT - 2 * layout.size())?;
         let owner = Owner::new(
             fixture.drm.device().output.clone(),
             fixture.drm.device().execution.clone(),

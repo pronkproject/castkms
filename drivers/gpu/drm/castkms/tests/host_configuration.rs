@@ -76,6 +76,7 @@ mod cases {
             fixture.drm.device().execution.clone(),
         )?;
         let configuration = owner.configuration();
+        let _pressure = configuration.reserve_for_test(crate::host_compositor::budget::LIMIT - 16 * 1024 * 1024)?;
         let first = configuration.configure(fixture.drm.device(), Layout::new(640, 480)?)?;
         first.request()?;
         first.flush_for_test();

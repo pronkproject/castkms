@@ -53,7 +53,7 @@ mod cases {
         let fixture = Fixture::new()?;
         let _remainder = fixture
             .host_budget
-            .reserve(16 * 1024 * 1024 - kernel::page::PAGE_SIZE)?;
+            .reserve(crate::host_compositor::budget::LIMIT - kernel::page::PAGE_SIZE)?;
         for _ in 0..3 {
             check(matches!(
                 Pool::new(
@@ -73,7 +73,7 @@ mod cases {
         let fixture = Fixture::new()?;
         let _remainder = fixture
             .host_budget
-            .reserve(16 * 1024 * 1024 - 2 * kernel::page::PAGE_SIZE)?;
+            .reserve(crate::host_compositor::budget::LIMIT - 2 * kernel::page::PAGE_SIZE)?;
         let pool = Pool::new(
             fixture.drm.device(),
             &fixture.host_budget,

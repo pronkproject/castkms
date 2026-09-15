@@ -39,11 +39,11 @@ mod cases {
         check(handle.take_outcome().is_none())?;
         owner.close();
         check(matches!(
-            fixture.host_budget.reserve(16 * 1024 * 1024),
+            fixture.host_budget.reserve(crate::host_compositor::budget::LIMIT),
             Err(EBUSY)
         ))?;
         drop(retired);
-        let _whole_budget = fixture.host_budget.reserve(16 * 1024 * 1024)?;
+        let _whole_budget = fixture.host_budget.reserve(crate::host_compositor::budget::LIMIT)?;
         Ok(())
     }
 
@@ -98,14 +98,14 @@ mod cases {
         drop(owner);
         check(handle.request() == Err(ENODEV))?;
         check(matches!(
-            fixture.host_budget.reserve(16 * 1024 * 1024),
+            fixture.host_budget.reserve(crate::host_compositor::budget::LIMIT),
             Err(EBUSY)
         ))?;
         let mut row = [0xff; 2560];
         retained.read_row(0, &mut row)?;
         check(row == [0; 2560])?;
         drop(retained);
-        let _whole_budget = fixture.host_budget.reserve(16 * 1024 * 1024)?;
+        let _whole_budget = fixture.host_budget.reserve(crate::host_compositor::budget::LIMIT)?;
         Ok(())
     }
 

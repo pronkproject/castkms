@@ -50,6 +50,7 @@ mod cases {
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
         fixture.select(&fb, false, 0)?;
         let configuration = &fixture.drm.device().host;
+        let _pressure = configuration.reserve_for_test(crate::host_compositor::budget::LIMIT - 16 * 1024 * 1024)?;
         let first = configuration.configure(fixture.drm.device(), Layout::new(640, 480)?)?;
         first.request()?;
         first.flush_for_test();

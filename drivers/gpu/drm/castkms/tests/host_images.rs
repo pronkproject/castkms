@@ -87,7 +87,7 @@ mod cases {
         let fixture = Fixture::new()?;
         let remainder = fixture
             .host_budget
-            .reserve(16 * 1024 * 1024 - kernel::page::PAGE_SIZE)?;
+            .reserve(crate::host_compositor::budget::LIMIT - kernel::page::PAGE_SIZE)?;
         let image = Image::new(
             fixture.drm.device(),
             &fixture.host_budget,
