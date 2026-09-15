@@ -323,6 +323,8 @@ impl crtc::DriverCrtc for Crtc {
     fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
         CrtcState::resolve_blank_owner(transaction, old, &mut state)?;
+        state.validate_color_mgmt(256)?;
+        state.output_color = crate::color::OutputColor::new(None, None, state.gamma_lut())?;
         CrtcState::check_configuration(old, &mut state)
     }
 
@@ -513,6 +515,8 @@ impl KmsDriver for Driver {
             };
             let crtc =
                 crtc::UnregisteredCrtc::<Crtc>::new(dev, plane, cursor, None, display.clone())?;
+            crtc.enable_color_mgmt(0, false, 256);
+            crtc.set_gamma_size(256)?;
             let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
                 dev,
                 encoder::Type::Virtual,
