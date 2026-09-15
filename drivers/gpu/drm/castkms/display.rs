@@ -27,10 +27,12 @@ use kernel::{
     prelude::*,
     sync::Arc, //
 };
-use plane::RawPlaneState;
+use plane::{RawPlane, RawPlaneState};
 
 #[pin_data]
-pub(super) struct Plane {}
+pub(super) struct Plane {
+    kind: scene::Kind,
+}
 #[pin_data]
 pub(super) struct Crtc {
     pub(super) display: Arc<super::device::Display>,
@@ -45,37 +47,43 @@ pub(super) struct Connector {
 pub(super) struct ConnectorState;
 
 pub(super) struct CrtcState {
+    output_color: Option<Arc<crate::color::OutputColor>>,
     configuration: Option<scene::Configuration>,
     visible: bool,
+    layer_mask: u32,
+    content: Option<scene::ContentSerial>,
     blank_owner: Option<kernel::drm::auth::MasterRef<Driver>>,
 }
 
 pub(super) struct PlaneState {
+    color: Option<Arc<crate::color::Pipeline>>,
     geometry: Option<scene::Geometry>,
-    content: Option<scene::ContentSerial>,
     selection: Selection,
     owner: Option<kernel::drm::auth::MasterRef<Driver>>,
     producer: Option<Arc<framebuffer::dependencies::Dependencies>>,
+    prepared: Option<Arc<scene::Primary>>,
 }
 
 impl plane::DriverPlaneState for PlaneState {
     type Plane = Plane;
     fn new(_: &plane::Plane<Plane>) -> Result<Self> {
         Ok(Self {
+            color: None,
             geometry: None,
-            content: None,
             selection: Selection::RetainedFramebuffer,
             owner: None,
             producer: None,
+            prepared: None,
         })
     }
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
+            color: self.color.clone(),
             geometry: None,
-            content: self.content,
             selection: Selection::RetainedFramebuffer,
             owner: self.owner.clone(),
             producer: None,
+            prepared: None,
         })
     }
 }
@@ -84,15 +92,21 @@ impl crtc::DriverCrtcState for CrtcState {
     type Crtc = Crtc;
     fn new(_: &crtc::Crtc<Crtc>) -> Result<Self> {
         Ok(Self {
+            output_color: None,
             configuration: None,
             visible: false,
+            layer_mask: 0,
+            content: None,
             blank_owner: None,
         })
     }
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
+            output_color: self.output_color.clone(),
             configuration: self.configuration.clone(),
             visible: self.visible,
+            layer_mask: self.layer_mask,
+            content: self.content,
             blank_owner: self.blank_owner.clone(),
         })
     }
@@ -155,12 +169,12 @@ fn resolve_owner(
 
 #[vtable]
 impl plane::DriverPlane for Plane {
-    type Args = ();
+    type Args = scene::Kind;
     type Driver = Driver;
     type State = PlaneState;
 
-    fn new(_: &Device<Driver>, _: ()) -> impl PinInit<Self, Error> {
-        try_pin_init!(Self {})
+    fn new(_: &Device<Driver>, kind: scene::Kind) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self { kind })
     }
 
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
@@ -172,7 +186,6 @@ impl plane::DriverPlane for Plane {
                 geometry,
             )?;
         }
-        state.content = scene::ContentSerial::for_update(old.content, state.geometry.is_some())?;
         state.selection = Selection::for_update(
             transaction.plane_input(state.plane())?,
             old.framebuffer(),
@@ -187,6 +200,7 @@ impl plane::DriverPlane for Plane {
         mut state: plane::PlaneStateMutator<'_, plane::PlaneState<PlaneState>>,
     ) -> Result {
         state.producer = None;
+        state.prepared = None;
         if let Some(framebuffer) = state.framebuffer() {
             let dependencies = framebuffer::dependencies::Dependencies::acquire(
                 framebuffer,
@@ -197,26 +211,22 @@ impl plane::DriverPlane for Plane {
             state.set_producer_fence(completion);
             state.producer = Some(dependencies);
         }
+        if let Some(geometry) = state.geometry {
+            state.prepared = Some(Arc::new(
+                scene::Primary {
+                    yuv: (plane::ColorEncoding::Bt601, plane::ColorRange::Limited),
+                    color: state.color.clone(),
+                    framebuffer: state.framebuffer().ok_or(EINVAL)?.to_owned_ref(),
+                    geometry,
+                    producer: state.producer.clone(),
+                    owner: state.owner.clone(),
+                    kind: state.plane().kind,
+                    zpos: state.zpos(),
+                },
+                GFP_KERNEL,
+            )?);
+        }
         Ok(())
-    }
-}
-
-impl PlaneState {
-    fn scene(state: &plane::PlaneState<Self>) -> Option<scene::Scene> {
-        state
-            .geometry
-            .zip(state.content)
-            .and_then(|(geometry, content)| {
-                state.framebuffer().map(|framebuffer| {
-                    scene::Scene::new(
-                        framebuffer.to_owned_ref(),
-                        geometry,
-                        content,
-                        state.owner.clone(),
-                        state.producer.clone(),
-                    )
-                })
-            })
     }
 }
 
@@ -225,12 +235,27 @@ impl CrtcState {
         transaction: &atomic::AtomicStateComposer<Driver>,
         old: &crtc::CrtcState<Self>,
         state: &mut crtc::CrtcStateMutator<'_, crtc::CrtcState<Self>>,
-    ) {
+    ) -> Result {
         // Native atomic validation checks plane visibility before invoking CRTC checks.
-        state.visible = state.active()
-            && transaction
-                .get_new_plane_state(state.crtc().primary_plane())
-                .map_or(old.visible, |plane| plane.geometry.is_some());
+        let mut mask = old.layer_mask;
+        let mut changed =
+            state.mode_changed() || state.color_mgmt_changed() || state.active() != old.active();
+        transaction.try_for_each_new_plane_state(|plane, opaque| {
+            changed |= old.layer_mask & plane.mask() != 0;
+            mask &= !plane.mask();
+            let plane_state = plane::PlaneState::<PlaneState>::from_opaque(opaque);
+            if plane_state.geometry.is_some()
+                && plane_state
+                    .crtc()
+                    .is_some_and(|crtc| crtc.index() == state.crtc().index())
+            {
+                mask |= plane.mask();
+                changed = true;
+            }
+        })?;
+        state.layer_mask = if state.active() { mask } else { 0 };
+        state.visible = state.layer_mask != 0;
+        state.content = scene::ContentSerial::for_update(old.content, state.visible && changed)?;
         state.blank_owner = if !state.active() || state.visible {
             None
         } else if !old.active() || old.visible || state.mode_changed() {
@@ -238,6 +263,7 @@ impl CrtcState {
         } else {
             old.blank_owner.clone()
         };
+        Ok(())
     }
 
     fn check_configuration(
@@ -290,7 +316,7 @@ impl crtc::DriverCrtc for Crtc {
 
     fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
-        CrtcState::resolve_blank_owner(transaction, old, &mut state);
+        CrtcState::resolve_blank_owner(transaction, old, &mut state)?;
         CrtcState::check_configuration(old, &mut state)
     }
 
@@ -330,18 +356,35 @@ impl Crtc {
             commit.crtc().display.output.close();
             return;
         };
-        let primary = commit.crtc().primary_plane();
         let transaction = commit.atomic_state();
         let (old, state) = commit.old_new_state();
         let update = if !state.active() {
             SceneUpdate::Replace(None)
         } else if !state.visible {
-            SceneUpdate::Replace(Some(scene::Scene::blank(state.blank_owner.clone())))
+            let mut scene = scene::Scene::blank(state.blank_owner.clone());
+            scene.output_color = state.output_color.clone();
+            SceneUpdate::Replace(Some(scene))
+        } else if old.visible && state.content == old.content {
+            SceneUpdate::Retain
         } else {
-            match transaction.get_new_plane_state(primary) {
-                Some(plane) => SceneUpdate::Replace(PlaneState::scene(plane)),
-                None => SceneUpdate::Retain,
-            }
+            let mut scene = commit
+                .crtc()
+                .display
+                .output
+                .with_accepted(|accepted| accepted.and_then(|accepted| accepted.scene.cloned()))
+                .unwrap_or_else(|| scene::Scene::blank(None));
+            transaction.for_each_new_plane_state(|plane, opaque| {
+                let plane_state = plane::PlaneState::<PlaneState>::from_opaque(opaque);
+                let layer = if state.layer_mask & plane.mask() != 0 {
+                    plane_state.prepared.clone()
+                } else {
+                    None
+                };
+                scene.set_layer(plane.index() as usize, layer);
+            });
+            scene.finalize(state.content);
+            scene.output_color = state.output_color.clone();
+            SceneUpdate::Replace(Some(scene))
         };
         commit.crtc().display.output.publish_with_configuration(
             source,
@@ -441,7 +484,7 @@ impl KmsDriver for Driver {
                 Some(&[fourcc::FORMAT_MOD_LINEAR]),
                 plane::Type::Primary,
                 None,
-                (),
+                scene::Kind::Primary,
             )?;
             plane.create_nearest_scaling_filter_property()?;
             let crtc = crtc::UnregisteredCrtc::<Crtc>::new(
