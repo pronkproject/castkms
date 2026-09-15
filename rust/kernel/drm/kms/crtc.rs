@@ -166,6 +166,20 @@ pub trait DriverCrtc: Send + Sync + Sized {
     /// Drivers may use this to instantiate their [`DriverCrtc`] object.
     fn new(device: &Device<Self::Driver>, args: &Self::Args) -> impl PinInit<Self, Error>;
 
+    /// Decode a driver-owned atomic property into unpublished private state.
+    ///
+    /// DRM has validated property attachment and its native value bounds. This callback
+    /// must only update the supplied private payload, not live device state. Reject
+    /// unrecognized property identifiers with `EINVAL`.
+    fn atomic_set_property(&self, _state: &mut Self::State, _property: u32, _value: u64) -> Result {
+        Err(EINVAL)
+    }
+
+    /// Encode a driver-owned property from the supplied immutable private state.
+    fn atomic_get_property(&self, _state: &Self::State, _property: u32) -> Result<u64> {
+        Err(EINVAL)
+    }
+
     /// The optional [`drm_crtc_helper_funcs.atomic_check`] hook for this crtc.
     ///
     /// Drivers may use this to customize the atomic check phase of their [`Crtc`] objects. The
@@ -231,9 +245,9 @@ impl<T: DriverCrtc> Crtc<T> {
             atomic_create_state: Some(atomic_create_state_callback::<T::State>),
             atomic_destroy_state: Some(atomic_destroy_state_callback::<T::State>),
             atomic_duplicate_state: Some(atomic_duplicate_state_callback::<T::State>),
-            atomic_get_property: None,
+            atomic_get_property: Some(atomic_get_property_callback::<T>),
             atomic_print_state: None,
-            atomic_set_property: None,
+            atomic_set_property: Some(atomic_set_property_callback::<T>),
             cursor_move: None,
             cursor_request: Some(bindings::drm_atomic_helper_cursor_request),
             cursor_set2: None,
@@ -1441,6 +1455,45 @@ unsafe extern "C" fn atomic_create_state_callback<T: DriverCrtcState>(
     // Unlike reset, initialization does not publish the state or modify the CRTC/vblank state.
     unsafe { bindings::__drm_atomic_helper_crtc_state_init(new, crtc) };
     new
+}
+
+unsafe extern "C" fn atomic_set_property_callback<T: DriverCrtc>(
+    crtc: *mut bindings::drm_crtc,
+    state: *mut bindings::drm_crtc_state,
+    property: *mut bindings::drm_property,
+    value: u64,
+) -> i32 {
+    // SAFETY: The vtable is installed only for Crtc<T> and its associated state.
+    // DRM exclusively owns the unpublished state during property decoding. Borrow
+    // only the private payload, leaving native mutable fields behind their Opaque.
+    let (crtc, payload, id) = unsafe {
+        let state = &*state.cast::<CrtcState<T::State>>();
+        (Crtc::<T>::from_raw(crtc), &mut *state.inner.get(), (*property).base.id)
+    };
+    from_result(|| {
+        crtc.atomic_set_property(payload, id, value)?;
+        Ok(0)
+    })
+}
+
+unsafe extern "C" fn atomic_get_property_callback<T: DriverCrtc>(
+    crtc: *mut bindings::drm_crtc,
+    state: *const bindings::drm_crtc_state,
+    property: *mut bindings::drm_property,
+    value: *mut u64,
+) -> i32 {
+    // SAFETY: Vtable typing identifies both wrappers. DRM stabilizes the supplied
+    // state for observation and provides initialized property metadata plus writable output.
+    let (crtc, payload, id) = unsafe {
+        let state = &*state.cast::<CrtcState<T::State>>();
+        (Crtc::<T>::from_raw(crtc), &*state.inner.get(), (*property).base.id)
+    };
+    from_result(|| {
+        let result = crtc.atomic_get_property(payload, id)?;
+        // SAFETY: Native caller supplied space for one property value.
+        unsafe { *value = result };
+        Ok(0)
+    })
 }
 
 unsafe extern "C" fn atomic_check_callback<T: DriverCrtc>(
