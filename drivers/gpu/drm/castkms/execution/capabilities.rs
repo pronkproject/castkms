@@ -111,6 +111,31 @@ impl Profile {
     pub(crate) fn formats(&self) -> &[Format] {
         &self.formats
     }
+
+    fn storage(
+        &self,
+        fourcc: u32,
+        modifier: Option<u64>,
+        planes: usize,
+        imported: bool,
+        pitch: u32,
+        offset: u32,
+    ) -> bool {
+        self.formats.iter().any(|format| {
+            format.fourcc == fourcc
+                && format.modifier == modifier
+                && format.planes as usize == planes
+                && pitch != 0
+                && pitch <= format.max_pitch
+                && pitch % format.pitch_alignment == 0
+                && offset % format.offset_alignment == 0
+                && if imported {
+                    format.imported
+                } else {
+                    format.native
+                }
+        })
+    }
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
@@ -160,6 +185,21 @@ mod tests {
             GFP_KERNEL,
         )?;
         Profile::new(limits, formats)
+    }
+
+    #[test]
+    fn modifier_and_provenance_are_exact() -> Result {
+        let modifier = Some(0x0100_0000_0000_0001);
+        let profile = profile(limits(), modifier)?;
+        assert!(profile.storage(fourcc::XRGB8888, modifier, 1, true, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, false, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, Some(0), 1, true, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, None, 1, true, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 2, true, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 15, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 16, 1));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 65540, 0));
+        Ok(())
     }
 
     #[test]
