@@ -8,14 +8,14 @@ mod cases {
 
     #[test]
     fn unsupported_dimensions_are_rejected_without_allocations() {
-        for (width, height) in [(0, 1), (1, 0), (1921, 1), (1, 1081), (u32::MAX, u32::MAX)] {
+        for (width, height) in [(0, 1), (1, 0), (8193, 1), (1, 8193), (u32::MAX, u32::MAX)] {
             assert_eq!(Layout::new(width, height), Err(EINVAL));
         }
     }
 
     #[test]
     fn packed_rows_fit_inside_a_page_rounded_allocation() -> Result {
-        for (width, height) in [(1, 1), (3, 2), (640, 480), (1920, 1080)] {
+        for (width, height) in [(1, 1), (3, 2), (640, 480), (3840, 2160), (8192, 8192)] {
             let layout = Layout::new(width, height)?;
             assert_eq!(layout.dimensions(), (width, height));
             assert_eq!(layout.pitch(), width as usize * 4);
@@ -23,7 +23,7 @@ mod cases {
             assert!(layout.size() >= visible);
             assert!(layout.size() - visible < kernel::page::PAGE_SIZE);
             assert_eq!(layout.size() % kernel::page::PAGE_SIZE, 0);
-            assert!(layout.size() <= 8 * 1024 * 1024);
+            assert!(layout.size() <= 256 * 1024 * 1024);
         }
         Ok(())
     }

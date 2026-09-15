@@ -21,13 +21,13 @@ pub(crate) struct Layout {
 
 impl Layout {
     pub(crate) fn new(width: u32, height: u32) -> Result<Self> {
-        if width == 0 || height == 0 || width > 1920 || height > 1080 {
+        if width == 0 || height == 0 || width > 8192 || height > 8192 {
             return Err(EINVAL);
         }
         let pitch = (width as usize).checked_mul(4).ok_or(EOVERFLOW)?;
         let bytes = pitch.checked_mul(height as usize).ok_or(EOVERFLOW)?;
         let size = page_align(bytes).ok_or(EOVERFLOW)?;
-        if size > 8 * 1024 * 1024 {
+        if size > 256 * 1024 * 1024 {
             return Err(E2BIG);
         }
         Ok(Self {
