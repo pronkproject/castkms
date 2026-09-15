@@ -36,6 +36,14 @@ _Static_assert(sizeof(struct drm_castkms_renderer_submit_probe) == 32,
 	       "renderer probe submission ABI");
 _Static_assert(sizeof(struct drm_castkms_renderer_commit_takeover) == 16,
 	       "renderer takeover commit ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_source_plane) == 16,
+	       "renderer source plane ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_source) == 144,
+	       "renderer source ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_dequeue_source) == 24,
+	       "renderer source dequeue ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_release_source) == 32,
+	       "renderer source release ABI");
 
 static unsigned int open_files(void)
 {
@@ -265,9 +273,14 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_commit_takeover commit = {};
 	struct drm_castkms_renderer_snapshot snapshot;
 	struct drm_castkms_renderer_snapshot snapshot_duplicate;
+	struct drm_castkms_renderer_source source;
+	struct drm_castkms_renderer_dequeue_source dequeue_source = {};
+	struct drm_castkms_renderer_release_source release_source = {
+		.completion_fd = -1,
+	};
 	drmModeConnector *connector;
 	drmModeRes *resources;
-	struct buffer buffer, capture_output;
+	struct buffer buffer, capture_output, gpu_buffer;
 	uint32_t connector_id;
 	unsigned int before;
 	int duplicate, fd, peer;
@@ -540,6 +553,13 @@ int main(int argc, char **argv)
 	first = query_renderer(files.renderer_fd);
 	candidate = begin_takeover(files.renderer_fd, first.generation);
 	CHECK(close(files.renderer_fd) == 0);
+	connector = drmModeGetConnector(peer, connector_id);
+	CHECK(connector && connector->count_modes > 0);
+	gpu_buffer = create_buffer(peer, connector->modes[0].hdisplay,
+				   connector->modes[0].vdisplay, 0x91);
+	CHECK(drmModeSetCrtc(peer, request.crtc_id, gpu_buffer.fb, 0, 0,
+			     &connector_id, 1, &connector->modes[0]) == 0);
+	drmModeFreeConnector(connector);
 	next_files = create_renderer(peer, &request);
 	candidate = begin_takeover(next_files.renderer_fd, first.generation);
 	submit_probe(next_files.renderer_fd, candidate.candidate_id,
@@ -557,11 +577,66 @@ int main(int argc, char **argv)
 	expect_ioctl_error(next_files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
 			   &begin, EBUSY);
+	dequeue_source.result = 0;
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
+			   &dequeue_source, EINVAL);
+	dequeue_source.result = 1;
+	before = open_files();
+	for (unsigned int i = 0; i < 8; i++)
+		expect_ioctl_error(next_files.renderer_fd,
+				   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
+				   &dequeue_source, EFAULT);
+	CHECK(open_files() == before);
+	dequeue_source.result = (uintptr_t)&source;
+	memset(&source, 0xa5, sizeof(source));
+	CHECK(ioctl(next_files.renderer_fd,
+		    DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
+		    &dequeue_source) == 0);
+	CHECK(source.job_id && source.content_serial);
+	CHECK(source.format == DRM_FORMAT_XRGB8888);
+	CHECK(source.width == gpu_buffer.dumb.width &&
+	      source.height == gpu_buffer.dumb.height);
+	CHECK(source.plane_count == 1 && source.planes[0].dma_buf_fd >= 0);
+	CHECK(source.producer_fd == -1 && source.reserved == 0);
+	for (unsigned int i = source.plane_count;
+	     i < DRM_CASTKMS_RENDERER_MAX_PLANES; i++)
+		CHECK(source.planes[i].dma_buf_fd == -1 &&
+		      source.planes[i].pitch == 0 &&
+		      source.planes[i].offset == 0 &&
+		      source.planes[i].reserved == 0);
+	CHECK(fcntl(source.planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
+			   &dequeue_source, EBUSY);
+	release_source.job_id = source.job_id;
+	release_source.kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS;
+	release_source.job_id++;
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+			   &release_source, ENOENT);
+	release_source.job_id--;
+	release_source.completion_fd = 0;
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+			   &release_source, EINVAL);
+	release_source.completion_fd = -1;
+	CHECK(ioctl(next_files.renderer_fd,
+		    DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+		    &release_source) == 0);
+	CHECK(ioctl(next_files.renderer_fd,
+		    DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+		    &release_source) == 0);
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
+			   &dequeue_source, ENODATA);
+	CHECK(close(source.planes[0].dma_buf_fd) == 0);
 	CHECK(close(next_files.renderer_fd) == 0);
 	CHECK(close(next_files.revoke_fd) == 0);
 	CHECK(close(files.revoke_fd) == 0);
 	destroy_buffer(fd, &buffer);
 	destroy_buffer(fd, &capture_output);
+	destroy_buffer(peer, &gpu_buffer);
 	CHECK(close(peer) == 0);
 	CHECK(close(fd) == 0);
 	puts("PASS: renderer capability publication, query and revocation");

@@ -19,7 +19,7 @@ use kernel::{
         }, //
     },
     prelude::*,
-    sync::Arc, //
+    sync::{aref::ARef, Arc}, //
 };
 
 /// A conservative content revision within one plane lifetime, not an ownership identity.
@@ -114,6 +114,14 @@ impl Scene {
         } else {
             Ok(())
         }
+    }
+
+    /// Retain one native wait for the producer records acquired with this scene.
+    pub(super) fn producer_completion(&self) -> Result<Option<ARef<kernel::dma_fence::Fence>>> {
+        self.primary
+            .as_ref()
+            .and_then(|primary| primary.producer.as_ref())
+            .map_or(Ok(None), |dependencies| dependencies.completion())
     }
 
     /// Blank output has no framebuffer content revision, not an unchanged revision.

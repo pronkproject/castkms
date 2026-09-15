@@ -11,7 +11,8 @@ const fn fourcc_code(a: u8, b: u8, c: u8, d: u8) -> u32 {
 
 // TODO: We manually import this because we don't have a reasonable way of getting constants from
 // function-like macros in bindgen yet.
-pub(crate) const FORMAT_MOD_INVALID: u64 = 0xffffffffffffff;
+/// Sentinel used when no explicit framebuffer modifier was supplied.
+pub const FORMAT_MOD_INVALID: u64 = 0xffffffffffffff;
 /// Linear framebuffer layout (`DRM_FORMAT_MOD_LINEAR`).
 ///
 /// A driver that accepts only linear scanout has to say so through the plane's format-modifier
