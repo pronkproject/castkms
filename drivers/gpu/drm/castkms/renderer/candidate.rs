@@ -40,6 +40,7 @@ pub(crate) struct Candidate {
     configuration: Configuration,
     execution: Description,
     probe: Arc<Probe>,
+    proposal_owner: Arc<()>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -51,6 +52,7 @@ impl Candidate {
 
     fn begin_then(access: Access, after_reserve: impl FnOnce() -> Result) -> Result<Self> {
         let probe = Arc::pin_init(Probe::new(), GFP_KERNEL)?;
+        let proposal_owner = Arc::new((), GFP_KERNEL)?;
         let configuration = access.with_current(|current| Ok(current.configuration().clone()))?;
         let execution = access.display().execution.describe();
         let resources = access.display().startup.begin()?;
@@ -60,9 +62,17 @@ impl Candidate {
             configuration,
             execution,
             probe,
+            proposal_owner,
         };
         after_reserve()?;
-        candidate.validate()?;
+        candidate.with_current_control(|_| {
+            candidate
+                .access
+                .display()
+                .execution
+                .retire_other_worker_proposal(&candidate.proposal_owner);
+            Ok(())
+        })?;
         Ok(candidate)
     }
 
@@ -288,5 +298,15 @@ impl Candidate {
     /// Cancel only this reservation; retained objects cannot cancel its replacement.
     pub(crate) fn cancel(&self) {
         self.resources.cancel();
+        self.access
+            .display()
+            .execution
+            .cancel_worker_proposal(&self.proposal_owner);
+    }
+}
+
+impl Drop for Candidate {
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
