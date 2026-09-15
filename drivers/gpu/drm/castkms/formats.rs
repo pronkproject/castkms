@@ -65,6 +65,12 @@ fn yuv(format: u32) -> Option<(usize, usize, bool, bool, usize)> {
         NV61 => (2, 1, false, true, 8),
         NV24 => (1, 1, false, false, 8),
         NV42 => (1, 1, false, true, 8),
+        YUV420 => (2, 2, true, false, 8),
+        YVU420 => (2, 2, true, true, 8),
+        YUV422 => (2, 1, true, false, 8),
+        YVU422 => (2, 1, true, true, 8),
+        YUV444 => (1, 1, true, false, 8),
+        YVU444 => (1, 1, true, true, 8),
         _ => return None,
     })
 }
@@ -123,12 +129,17 @@ pub(crate) fn pixel(
     mut read: impl FnMut(usize, usize, usize, &mut [u8]) -> Result,
 ) -> Result<u32> {
     let rgb = |r: u32, g: u32, b: u32| (r << 16) | (g << 8) | b;
-    if let Some((hs, vs, _planar, swap, _depth)) = yuv(format) {
+    if let Some((hs, vs, planar, swap, _depth)) = yuv(format) {
         let bytes = 1;
         let mut luma = [0; 2];
         let mut chroma = [0; 4];
         read(0, x * bytes, y, &mut luma[..bytes])?;
-        read(1, (x / hs) * bytes * 2, y / vs, &mut chroma[..bytes * 2])?;
+        if planar {
+            read(1, x / hs, y / vs, &mut chroma[..1])?;
+            read(2, x / hs, y / vs, &mut chroma[1..2])?;
+        } else {
+            read(1, (x / hs) * bytes * 2, y / vs, &mut chroma[..bytes * 2])?;
+        }
         let sample = |b: &[u8]| -> i64 { i64::from(b[0]) * 256 };
         let yy = sample(&luma) - 16 * 256;
         let a = sample(&chroma[..bytes]) - 128 * 256;
