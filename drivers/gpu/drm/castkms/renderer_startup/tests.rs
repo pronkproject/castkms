@@ -14,6 +14,25 @@ mod cases {
     use super::*;
 
     #[test]
+    fn handback_reopens_startup_only_after_successful_publication() -> Result {
+        let owner = owner()?;
+        let startup = owner.startup();
+        let candidate = startup.begin()?;
+        let (old, ()) = candidate.activate_negotiated(|| Ok(()))?;
+        let pending = startup.begin()?;
+        assert_eq!(pending.handback(|| Err::<(), _>(EIO)), Err(EIO));
+        old.check()?;
+        pending.check()?;
+        pending.handback(|| Ok(()))?;
+        assert_eq!(old.check(), Err(EIO));
+        let next = startup.begin()?;
+        drop(old);
+        drop(pending);
+        next.check()?;
+        Ok(())
+    }
+
+    #[test]
     fn replacement_keeps_old_admission_until_successful_activation() -> Result {
         let owner = owner()?;
         let startup = owner.startup();

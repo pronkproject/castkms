@@ -135,6 +135,19 @@ impl Startup {
         drop(retired);
     }
 
+    fn handback<R>(&self, identity: &Arc<()>, publish: impl FnOnce() -> Result<R>) -> Result<R> {
+        let mut state = self.state.lock();
+        match &*state {
+            State::Reserved(current) if Arc::ptr_eq(current, identity) => (),
+            State::Replacing { candidate, .. } if Arc::ptr_eq(candidate, identity) => (),
+            State::Closed => return Err(ENODEV),
+            _ => return Err(ECANCELED),
+        }
+        let result = publish()?;
+        *state = State::Idle;
+        Ok(result)
+    }
+
     /// Invalidate startup state belonging to a replaced display-control interval.
     pub(crate) fn invalidate_current(&self) {
         self.invalidate(false);
@@ -224,6 +237,11 @@ impl Candidate {
         publish: impl FnOnce() -> Result<R>,
     ) -> Result<(Active, R)> {
         self.startup.activate(&self.identity, true, publish)
+    }
+
+    /// Stop old renderer admission only after a gated HOST publication succeeds.
+    pub(crate) fn handback<R>(&self, publish: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.startup.handback(&self.identity, publish)
     }
 
     pub(crate) fn cancel(&self) {
