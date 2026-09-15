@@ -27,7 +27,7 @@ use kernel::{
 
 // Control-lifetime tests use independent synthetic configuration tags.
 fn register(registry: &Arc<Registry>, stream: &Stream) -> Result<Registration> {
-    registry.register(stream, &scene::Configuration::new(1, [1, 1])?)
+    registry.register(stream, &scene::Configuration::new(1, [1, 1], 60_000, 0)?)
 }
 
 #[pin_data]

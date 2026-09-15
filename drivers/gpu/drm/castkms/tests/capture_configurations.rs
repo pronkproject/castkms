@@ -16,8 +16,8 @@ mod cases {
     #[test]
     fn retiring_one_interval_preserves_other_registered_streams() -> Result {
         let registry = Registry::new()?;
-        let old = scene::Configuration::new(1, [640, 480])?;
-        let current = scene::Configuration::new(1, [640, 480])?;
+        let old = scene::Configuration::new(1, [640, 480], 60_000, 0)?;
+        let current = scene::Configuration::new(1, [640, 480], 60_000, 0)?;
         let first = Stream::new(1, 4)?;
         let second = Stream::new(1, 4)?;
         let old_registration = registry.register(&first, &old)?;
@@ -37,7 +37,7 @@ mod cases {
     #[test]
     fn a_claimed_old_interval_finishes_without_exposing_new_success() -> Result {
         let registry = Registry::new()?;
-        let configuration = scene::Configuration::new(1, [640, 480])?;
+        let configuration = scene::Configuration::new(1, [640, 480], 60_000, 0)?;
         let stream = Stream::new(1, 4)?;
         let _registration = registry.register(&stream, &configuration)?;
         let request = stream.queue()?;
@@ -56,8 +56,8 @@ mod cases {
     #[test]
     fn repeated_retirement_does_not_revoke_a_newer_registration() -> Result {
         let registry = Registry::new()?;
-        let old = scene::Configuration::new(1, [640, 480])?;
-        let current = scene::Configuration::new(1, [640, 480])?;
+        let old = scene::Configuration::new(1, [640, 480], 60_000, 0)?;
+        let current = scene::Configuration::new(1, [640, 480], 60_000, 0)?;
         let first = Stream::new(1, 4)?;
         let old_registration = registry.register(&first, &old)?;
         registry.revoke_configuration(&old);
