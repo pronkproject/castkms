@@ -127,6 +127,8 @@ mod cases {
             (BGRA8888, 0x0000ff80),
             (RGB888, 0xff0000),
             (BGR888, 0xff),
+            (RGB565, 0xf800),
+            (BGR565, 0x001f),
         ] {
             let pixel = formats::pixel(format, 0, 0, |plane, x, y, out| {
                 check(plane == 0 && x == 0 && y == 0)?;
