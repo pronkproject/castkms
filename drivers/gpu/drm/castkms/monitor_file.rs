@@ -275,7 +275,7 @@ pub(crate) fn create(
             return Err(EACCES);
         }
     }
-    let lease = Lease::new(dev.monitor.acquire(dev)?)?;
+    let lease = Lease::new(connector.monitor.acquire(dev)?)?;
     {
         let guard = snapshot.master().lock_current().ok_or(EACCES)?;
         if !guard.is_master_file(file) || !guard.holds_object(&*connector) {

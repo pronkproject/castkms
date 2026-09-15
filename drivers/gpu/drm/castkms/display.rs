@@ -39,7 +39,7 @@ pub(super) struct Crtc {
 pub(super) struct Encoder {}
 #[pin_data]
 pub(super) struct Connector {
-    monitor: Arc<monitor::Monitor>,
+    pub(super) monitor: Arc<monitor::Monitor>,
 }
 
 pub(super) struct ConnectorState;
