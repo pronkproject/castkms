@@ -79,6 +79,12 @@ struct drm_property_enum {
  */
 struct drm_property {
 	/**
+	 * @atomic_replay_scalar: The driver explicitly permits replay of the numeric
+	 * value into fresh atomic state. No descriptor or native-object reference
+	 * needs to be retained for that value. Set only during construction.
+	 */
+	bool atomic_replay_scalar;
+	/**
 	 * @head: per-device list of properties, for cleanup.
 	 */
 	struct list_head head;
@@ -262,6 +268,9 @@ struct drm_property *drm_property_create_bitmask(struct drm_device *dev,
 struct drm_property *drm_property_create_range(struct drm_device *dev,
 					       u32 flags, const char *name,
 					       uint64_t min, uint64_t max);
+struct drm_property *drm_property_create_replayable_range(struct drm_device *dev,
+						       const char *name,
+						       u64 min, u64 max);
 struct drm_property *drm_property_create_signed_range(struct drm_device *dev,
 						      u32 flags, const char *name,
 						      int64_t min, int64_t max);
