@@ -250,7 +250,7 @@ impl Candidate {
         self.access.with_current(|current| {
             active.with_candidate(&self.resources, || {
                 if current.configuration() != &self.configuration
-                    || self.access.device().execution.describe() != execution
+                    || self.access.display().execution.describe() != execution
                     || execution.profile != Profile::GpuV1
                 {
                     return Err(ESTALE);
