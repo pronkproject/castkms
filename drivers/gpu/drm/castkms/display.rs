@@ -32,7 +32,9 @@ use plane::RawPlaneState;
 #[pin_data]
 pub(super) struct Plane {}
 #[pin_data]
-pub(super) struct Crtc {}
+pub(super) struct Crtc {
+    pub(super) display: Arc<super::device::Display>,
+}
 #[pin_data]
 pub(super) struct Encoder {}
 #[pin_data]
@@ -274,13 +276,15 @@ impl CrtcState {
 
 #[vtable]
 impl crtc::DriverCrtc for Crtc {
-    type Args = ();
+    type Args = Arc<super::device::Display>;
     type Driver = Driver;
     type State = CrtcState;
     type VblankImpl = vblank::SoftwareVblank<Self>;
 
-    fn new(_: &Device<Driver>, _: &()) -> impl PinInit<Self, Error> {
-        try_pin_init!(Self {})
+    fn new(_: &Device<Driver>, display: &Self::Args) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self {
+            display: display.clone()
+        })
     }
 
     fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
@@ -322,7 +326,7 @@ impl crtc::DriverCrtc for Crtc {
 impl Crtc {
     fn publish_scene(commit: &crtc::CrtcAtomicCommit<'_, Self>) {
         let Some(source) = commit.preparation_source() else {
-            commit.crtc().drm_dev().output.close();
+            commit.crtc().display.output.close();
             return;
         };
         let primary = commit.crtc().primary_plane();
@@ -338,13 +342,13 @@ impl Crtc {
                 None => SceneUpdate::Retain,
             }
         };
-        transaction.drm_dev().output.publish_with_configuration(
+        commit.crtc().display.output.publish_with_configuration(
             source,
             update,
             state.configuration.clone(),
         );
         if old.configuration != state.configuration {
-            transaction.drm_dev().startup.invalidate_current();
+            commit.crtc().display.startup.invalidate_current();
             if let Some(configuration) = &old.configuration {
                 transaction
                     .drm_dev()
@@ -442,7 +446,7 @@ impl KmsDriver for Driver {
             plane,
             None::<&plane::UnregisteredPlane<Plane>>,
             None,
-            (),
+            dev.displays.first().ok_or(EINVAL)?.clone(),
         )?;
         let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
             dev,
