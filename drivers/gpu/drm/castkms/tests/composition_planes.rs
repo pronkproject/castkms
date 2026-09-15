@@ -238,4 +238,66 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn shared_overlay_can_be_reassigned_after_disable() -> Result {
+        let fixture = Fixture::new_features(c"castkms-overlay-routing", 2, true, true)?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        let mode = DisplayMode::from_timings(ModeTimings {
+            clock_khz: 25175,
+            hdisplay: 640,
+            hsync_start: 656,
+            hsync_end: 752,
+            htotal: 800,
+            vdisplay: 480,
+            vsync_start: 490,
+            vsync_end: 492,
+            vtotal: 525,
+            flags: ModeFlags::NHSYNC | ModeFlags::NVSYNC,
+        })?;
+        fixture.drm.update(|mut transaction| {
+            for index in 0..2 {
+                transaction.as_mut().set_crtc_config(
+                    fixture.drm.crtc_at(index)?,
+                    Some(&CrtcScanout {
+                        mode: &mode,
+                        framebuffer: &primary,
+                        connectors: &[fixture.drm.connector_at(index)?],
+                        position: (0, 0),
+                    }),
+                )?;
+            }
+            Ok(())
+        })?;
+        let overlay = small_image(&fixture, 0xffff0000)?;
+        for target in [1, 0] {
+            fixture.drm.update(|mut transaction| {
+                transaction.as_mut().set_plane_config(
+                    fixture.drm.plane_at(4)?,
+                    &PlaneScanout {
+                        crtc: fixture.drm.crtc_at(target)?,
+                        framebuffer: &overlay,
+                        source: [0, 0, 2 << 16, 2 << 16],
+                        position: [0, 0],
+                        destination: [2, 2],
+                    },
+                )
+            })?;
+            for index in 0..2 {
+                check(
+                    fixture.drm.device().displays[index]
+                        .output
+                        .inspect(|scene| {
+                            scene.is_some_and(|scene| {
+                                scene.layers().count() == if index == target { 2 } else { 1 }
+                            })
+                        }),
+                )?;
+            }
+            fixture.drm.update(|mut transaction| {
+                transaction.as_mut().disable_plane(fixture.drm.plane_at(4)?)
+            })?;
+        }
+        Ok(())
+    }
+
 }
