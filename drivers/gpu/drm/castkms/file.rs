@@ -11,6 +11,7 @@ use crate::{
         }, //
     },
     display,
+    renderer::permission::{Owner as RendererOwner, Permission as RendererPermission},
     Driver, //
 };
 use kernel::{
@@ -48,6 +49,58 @@ impl drm::file::DriverFile for File {
 }
 
 impl File {
+    /// Issue renderer control from one current master interval.
+    ///
+    /// Construction runs outside native DRM locks. The second check prevents a file or
+    /// display-object ownership change during allocation from authorizing the result.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn issue_renderer_control(
+        file: &drm::file::File<Self>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+    ) -> Result<RendererOwner> {
+        Self::issue_renderer_control_then(file, crtc, connector, || Ok(()))
+    }
+
+    fn issue_renderer_control_then(
+        file: &drm::file::File<Self>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+        after_create: impl FnOnce() -> Result,
+    ) -> Result<RendererOwner> {
+        let snapshot = file.master_snapshot().ok_or(EACCES)?;
+        let permission = {
+            let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+            if !guard.is_master_file(file) {
+                return Err(EACCES);
+            }
+            RendererPermission::new(&guard, crtc, connector)?
+        };
+        let owner = RendererOwner::new(permission)?;
+        after_create()?;
+        {
+            let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+            if !guard.is_master_file(file)
+                || !guard.holds_object(crtc)
+                || !guard.holds_object(connector)
+            {
+                return Err(EACCES);
+            }
+        }
+        owner.access().with_current(|_| Ok(()))?;
+        Ok(owner)
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn issue_renderer_control_then_for_test(
+        file: &drm::file::File<Self>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+        after_create: impl FnOnce() -> Result,
+    ) -> Result<RendererOwner> {
+        Self::issue_renderer_control_then(file, crtc, connector, after_create)
+    }
+
     /// Resolve the issuing file's IDs before entering the existing grant policy boundary.
     pub(crate) fn create_capture_files(
         dev: &drm::Device<Driver, Registered>,
