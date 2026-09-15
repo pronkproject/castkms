@@ -510,6 +510,14 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
         to_result(unsafe { bindings::drm_plane_create_zpos_immutable_property(self.as_raw(), zpos) })
     }
 
+    /// Attach an adjustable plane stacking position before registration.
+    pub fn create_zpos_property(&self, initial: u32, min: u32, max: u32) -> Result {
+        if initial < min || initial > max {
+            return Err(EINVAL);
+        }
+        // SAFETY: Setup owns the initialized plane and the range contains the default.
+        to_result(unsafe { bindings::drm_plane_create_zpos_property(self.as_raw(), initial, min, max) })
+    }
 }
 
 /// A trait implemented by any type that acts as a [`struct drm_plane`] interface.
