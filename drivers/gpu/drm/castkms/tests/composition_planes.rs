@@ -392,4 +392,37 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn plane_helpers_exclude_aliases_and_foreign_objects() -> Result {
+        let fixture = Fixture::new()?;
+        let foreign = Fixture::new_named(c"castkms-foreign-plane-test")?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        fixture.drm.update(|transaction| {
+            let plane = fixture.drm.plane()?;
+            let guard = transaction.add_plane_state(plane)?;
+            check(transaction.try_for_each_new_plane_state(|_, _| {}) == Err(EBUSY))?;
+            drop(guard);
+            let mut excluded = false;
+            transaction.try_for_each_new_plane_state(|plane, _| {
+                excluded = matches!(transaction.add_plane_state(plane), Err(EBUSY));
+            })?;
+            check(excluded)
+        })?;
+        check(
+            fixture.drm.check(|mut transaction| {
+                transaction.as_mut().set_plane_config(
+                    fixture.drm.plane()?,
+                    &PlaneScanout {
+                        crtc: foreign.drm.crtc()?,
+                        framebuffer: &primary,
+                        source: [0, 0, 640 << 16, 480 << 16],
+                        position: [0, 0],
+                        destination: [640, 480],
+                    },
+                )
+            }) == Err(EINVAL),
+        )?;
+        Ok(())
+    }
 }
