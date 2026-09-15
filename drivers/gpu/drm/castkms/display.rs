@@ -661,4 +661,22 @@ impl KmsDriver for Driver {
         let enabled = tail.commit_modeset_enables(disabled);
         tail.commit_hw_done(enabled, planes)
     }
+
+    fn atomic_commit_install<'a>(install: atomic::Install<'a, Self>) -> atomic::InstallResult<'a, Self> {
+        let device_state = core::ops::Deref::deref(install.state().drm_dev()).clone();
+        let validation = device_state.validation.lock();
+        let mut result = Ok(());
+        install.state().for_each_new_crtc_state(|crtc, opaque| {
+            if result.is_ok() {
+                let state = crtc::CrtcState::<CrtcState>::from_opaque(opaque);
+                result = state.validation_view().and_then(|scene| {
+                    validation.check(crtc.index() as usize, scene)
+                });
+            }
+        });
+        match result {
+            Ok(()) => install.install(),
+            Err(error) => install.reject(error),
+        }
+    }
 }
