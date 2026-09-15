@@ -7,11 +7,61 @@ mod tables;
 use kernel::{
     drm::kms::{
         colorop::Operation,
-        crtc::{ColorLut},
+        crtc::{ColorCtm, ColorLut},
     },
     prelude::*,
     sync::Arc,
 };
+
+/// Output-wide degamma, matrix and gamma, applied after plane composition.
+pub(crate) struct OutputColor {
+    degamma: Option<Arc<Gamma>>,
+    matrix: Option<[u64; 12]>,
+    gamma: Option<Arc<Gamma>>,
+}
+
+impl OutputColor {
+    pub(crate) fn new(
+        degamma: Option<&[ColorLut]>,
+        ctm: Option<&ColorCtm>,
+        gamma: Option<&[ColorLut]>,
+    ) -> Result<Option<Arc<Self>>> {
+        if degamma.is_none() && ctm.is_none() && gamma.is_none() {
+            return Ok(None);
+        }
+        let matrix = ctm.map(|ctm| {
+            core::array::from_fn(|index| {
+                if index % 4 == 3 {
+                    0
+                } else {
+                    ctm.raw()[(index / 4) * 3 + index % 4]
+                }
+            })
+        });
+        Ok(Some(Arc::new(
+            Self {
+                degamma: Gamma::new(degamma)?,
+                matrix,
+                gamma: Gamma::new(gamma)?,
+            },
+            GFP_KERNEL,
+        )?))
+    }
+
+    pub(crate) fn apply(&self, mut channels: [u32; 3]) -> [u32; 3] {
+        if let Some(degamma) = &self.degamma {
+            channels = degamma.apply(channels);
+        }
+        if let Some(coefficients) = &self.matrix {
+            channels = matrix(coefficients, channels.map(|value| value as i32))
+                .map(|value| value.clamp(0, 65535) as u32);
+        }
+        if let Some(gamma) = &self.gamma {
+            channels = gamma.apply(channels);
+        }
+        channels
+    }
+}
 
 pub(crate) struct Pipeline {
     operations: KVec<Operation>,
