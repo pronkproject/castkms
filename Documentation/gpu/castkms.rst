@@ -8,14 +8,16 @@ be composed in userspace. The Rust driver provides a display device and an
 internal CPU capture path for kernel callers and tests. Public capture is not
 enabled. It is not a replacement for a working C CastKMS casting installation.
 
-Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create one
-virtual output. Without a monitor controller it presents an always-connected
-development monitor. The driver accepts atomic modesetting and native linear
-XRGB8888 framebuffers allocated through the usual DRM dumb-buffer interface.
-Foreign storage may be imported through PRIME and described by a framebuffer,
-but is rejected for visible HOST scanout during atomic validation. Modes up to
-1920 by 1080 are offered for development.
-That size is a temporary driver limit, not a receiver or transport policy.
+Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create eight
+virtual outputs by default. The ``max_outputs`` parameter accepts one through
+eight. Without monitor controllers the outputs present always-connected
+development monitors. The driver accepts atomic modesetting and linear RGB,
+monochrome and YUV framebuffers, including CPU-mappable PRIME imports for HOST
+composition. Tiled storage is not supported by the in-kernel compositor.
+Modes and framebuffer sizes are supported through 8192 by 8192; that bound
+is a driver limit, not a receiver or transport policy. Cursor planes, eight
+shared overlays and per-plane color pipelines are enabled by default. Their
+module parameters allow disabling them for compatibility and testing.
 The virtual parent has DMA addressing configured before DRM registration so
 exporters can map imported attachments. Import retains the exporter's storage
 and reservation without requiring a persistent CPU mapping. It does not add
