@@ -134,4 +134,13 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn eight_outputs_have_eight_shared_overlays_and_eight_cursors() -> Result {
+        let fixture = Fixture::new_features(c"castkms-full-plane-topology", 8, true, true)?;
+        fixture.drm.plane_at(23)?;
+        check(matches!(fixture.drm.plane_at(24), Err(EINVAL)))?;
+        fixture.drm.crtc_at(7)?;
+        Ok(())
+    }
+
 }
