@@ -93,7 +93,12 @@ impl Owner {
 
     /// Permanently stop admission; call outside callbacks and native DRM locks.
     pub(crate) fn revoke(&self) {
-        *self.access.policy.revoked.lock() = true;
+        let mut revoked = self.access.policy.revoked.lock();
+        *revoked = true;
+        self.access
+            .device()
+            .validation
+            .revoke_owner(&self.access.policy.transition_owner);
     }
 }
 
