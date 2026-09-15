@@ -47,6 +47,26 @@ fn lookup(length: usize, input: i32, entry: impl Fn(usize) -> u16) -> i32 {
     ((lower * (65535 - fraction) + upper * fraction + 32767) / 65535) as i32
 }
 
+fn matrix(coefficients: &[u64; 12], channels: [i32; 3]) -> [i32; 3] {
+    let signed = |raw: u64| {
+        let magnitude = i128::from(raw & !(1 << 63));
+        if raw >> 63 != 0 {
+            -magnitude
+        } else {
+            magnitude
+        }
+    };
+    core::array::from_fn(|row| {
+        let mut sum = signed(coefficients[row * 4 + 3]);
+        for channel in 0..3 {
+            sum += signed(coefficients[row * 4 + channel]) * i128::from(channels[channel]);
+        }
+        // All S31.32 coefficients and signed 32-bit inputs fit the wide accumulator.
+        // Saturate extended range instead of letting hostile coefficients wrap.
+        ((sum + (1 << 31)) >> 32).clamp(i128::from(i32::MIN), i128::from(i32::MAX)) as i32
+    })
+}
+
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 #[kunit_tests(rust_castkms_color)]
 mod tests {
@@ -63,6 +83,23 @@ mod tests {
         let constant = Gamma::new(Some(&[ColorLut::new(123, 456, 789)]))?.ok_or(EINVAL)?;
         assert_eq!(constant.apply([65535, 0, 32768]), [123, 456, 789]);
         Ok(())
+    }
+
+    #[test]
+    fn matrices_preserve_negative_values_until_pipeline_end() {
+        let mut coefficients = [0; 12];
+        coefficients[0] = (1 << 63) | (1 << 32);
+        coefficients[5] = 1 << 32;
+        coefficients[10] = 1 << 32;
+        let negative = matrix(&coefficients, [12345, 456, 789]);
+        assert_eq!(negative, [-12345, 456, 789]);
+        assert_eq!(matrix(&coefficients, negative), [12345, 456, 789]);
+    }
+
+    #[test]
+    fn matrices_saturate_extreme_coefficients() {
+        assert_eq!(matrix(&[u64::MAX; 12], [i32::MAX; 3]), [i32::MIN; 3]);
+        assert_eq!(matrix(&[i64::MAX as u64; 12], [i32::MAX; 3]), [i32::MAX; 3]);
     }
 
 }
