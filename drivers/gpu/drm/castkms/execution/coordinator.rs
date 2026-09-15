@@ -58,7 +58,7 @@ impl Reservation {
     /// Publication must perform every fallible step before making execution visible.
     pub(crate) fn activate<R>(
         &self,
-        configuration: &Configuration,
+        configuration: Option<&Configuration>,
         check: impl FnMut(&Contract) -> Result,
         publish: impl FnOnce() -> Result<R>,
     ) -> Result<R> {
@@ -68,7 +68,7 @@ impl Reservation {
             if !pending.gated {
                 return Err(EAGAIN);
             }
-            if pending.configuration.as_ref() != Some(configuration) {
+            if pending.configuration.as_ref() != configuration {
                 return Err(ESTALE);
             }
             let slot = guard.0.outputs.get_mut(self.output).ok_or(EINVAL)?;

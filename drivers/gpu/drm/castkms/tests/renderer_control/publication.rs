@@ -20,6 +20,58 @@ mod cases {
     use super::*;
 
     #[test]
+    fn tagged_configuration_changes_keep_the_incoming_candidate() -> Result {
+        for disable in [false, true] {
+            with_display(|device, crtc, connector, scanout, file| {
+                let owner = owner(&file, crtc, connector)?;
+                let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                candidate.submit_private_probe(None)?;
+                let proposal =
+                    candidate.propose_profile(crate::tests::renderer_proposals::profile()?)?;
+                let mode = DisplayMode::from_timings(ModeTimings {
+                    clock_khz: 24000,
+                    hdisplay: 640,
+                    hsync_start: 656,
+                    hsync_end: 752,
+                    htotal: 800,
+                    vdisplay: 480,
+                    vsync_start: 490,
+                    vsync_end: 492,
+                    vtotal: 525,
+                    flags: ModeFlags::NHSYNC | ModeFlags::NVSYNC,
+                })?;
+                let target = CrtcScanout {
+                    mode: &mode,
+                    framebuffer: scanout.framebuffer,
+                    connectors: scanout.connectors,
+                    position: (0, 0),
+                };
+                device.atomic_update(|mut transaction| {
+                    transaction
+                        .as_mut()
+                        .set_crtc_config(crtc, if disable { None } else { Some(&target) })?;
+                    transaction.as_mut().disable_plane(crtc.primary_plane())?;
+                    transaction
+                        .add_crtc_state(crtc)?
+                        .tag_transition(proposal.describe().transition);
+                    Ok(())
+                })?;
+                let (active, _, description) = proposal.activate(device)?;
+                active.check()?;
+                check(description.profile == Profile::GpuV1)?;
+                // Re-enable or change mode under the new contract without losing the worker.
+                device.atomic_update(|mut transaction| {
+                    transaction.as_mut().set_crtc_config(crtc, Some(scanout))?;
+                    transaction.as_mut().disable_plane(crtc.primary_plane())
+                })?;
+                active.check()?;
+                check(device.execution.pending_profile().is_none())
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn session_retains_negotiation_across_activation_reply_retries() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;

@@ -291,26 +291,40 @@ impl Candidate {
             .execution
             .prepare(registered, Profile::GpuV1)?;
         let description = prepared.description()?;
-        let (active, source) = self.access.with_installed(registered, |current, locked| {
-            self.check_control(&current)?;
-            self.resources.activate(|| {
-                let source = self.probe.completed_source()?;
-                let execution = &self.access.display().execution;
-                if let Some(proposal) = proposal {
-                    proposal.check()?;
-                    execution.publish_proposal(
-                        locked,
-                        &mut prepared,
-                        proposal.description().generation,
-                        current.configuration(),
-                        |contract| current.check_contract(contract),
-                    )?;
-                } else {
-                    execution.publish(locked, &mut prepared)?;
-                }
-                Ok(source)
-            })
-        })?;
+        let (active, source) =
+            self.access
+                .with_installed_transition(registered, |current, locked| {
+                    if self.access.display().execution.describe() != self.execution {
+                        return Err(ESTALE);
+                    }
+                    // Legacy startup remains bound to its original enabled configuration.
+                    // A negotiated proposal is instead bound to the installed target by its gate.
+                    if proposal.is_none() && current.configuration() != Some(&self.configuration) {
+                        return Err(ESTALE);
+                    }
+                    let publish = || {
+                        let source = self.probe.completed_source()?;
+                        let execution = &self.access.display().execution;
+                        if let Some(proposal) = proposal {
+                            proposal.check()?;
+                            execution.publish_proposal(
+                                locked,
+                                &mut prepared,
+                                proposal.description().generation,
+                                current.configuration(),
+                                |contract| current.check_contract(contract),
+                            )?;
+                        } else {
+                            execution.publish(locked, &mut prepared)?;
+                        }
+                        Ok(source)
+                    };
+                    if proposal.is_some() {
+                        self.resources.activate_negotiated(publish)
+                    } else {
+                        self.resources.activate(publish)
+                    }
+                })?;
         Ok((active, source, description))
     }
 
@@ -323,8 +337,7 @@ impl Candidate {
     ) -> Result<SourceJob> {
         self.access.with_current(|current| {
             active.with_candidate(&self.resources, || {
-                if current.configuration() != &self.configuration
-                    || self.access.display().execution.describe() != execution
+                if self.access.display().execution.describe() != execution
                     || execution.profile != Profile::GpuV1
                 {
                     return Err(ESTALE);

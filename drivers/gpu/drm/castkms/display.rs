@@ -528,7 +528,11 @@ impl Crtc {
             state.configuration.clone(),
         );
         if old.configuration != state.configuration {
-            commit.crtc().display.startup.invalidate_current();
+            // A tagged migration deliberately changes the candidate's configuration.
+            // The gate, not an unchanged mode identity, controls its activation.
+            if state.transition == 0 {
+                commit.crtc().display.startup.configuration_changed();
+            }
             if let Some(configuration) = &old.configuration {
                 transaction
                     .drm_dev()
