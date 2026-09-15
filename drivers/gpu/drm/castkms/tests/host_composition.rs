@@ -192,6 +192,7 @@ mod cases {
             let scene = Scene::new(
                 fb,
                 Geometry {
+                    position: [0, 0],
                     source: [0, 0, 640 << 16, 480 << 16],
                     destination: [640, 480],
                     output: [640, 480],

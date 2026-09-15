@@ -10,6 +10,7 @@ use crate::{
 
 fn geometry(width: u32, height: u32) -> Geometry {
     Geometry {
+        position: [0, 0],
         source: [0, 0, width << 16, height << 16],
         destination: [width, height],
         output: [width, height],
