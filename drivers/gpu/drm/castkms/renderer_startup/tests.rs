@@ -71,4 +71,45 @@ mod cases {
         assert_eq!(calls, 0);
         Ok(())
     }
+
+    #[test]
+    fn failed_activation_preserves_the_candidate_reservation() -> Result {
+        let owner = owner()?;
+        let startup = owner.startup();
+        let candidate = startup.begin()?;
+        assert!(matches!(candidate.activate(|| Err::<(), _>(EIO)), Err(EIO)));
+        candidate.check()?;
+        candidate.cancel();
+        let _replacement = startup.begin()?;
+        Ok(())
+    }
+
+    #[test]
+    fn active_renderer_ownership_never_reopens_candidate_admission() -> Result {
+        let owner = owner()?;
+        let startup = owner.startup();
+        let candidate = startup.begin()?;
+        let (active, value) = candidate.activate(|| Ok(19))?;
+        assert_eq!(value, 19);
+        candidate.cancel();
+        active.check()?;
+        assert!(matches!(startup.begin(), Err(EBUSY)));
+        drop(active);
+        assert!(matches!(startup.begin(), Err(EBUSY)));
+        Ok(())
+    }
+
+    #[test]
+    fn display_interval_change_marks_an_active_renderer_lost() -> Result {
+        let owner = owner()?;
+        let startup = owner.startup();
+        let candidate = startup.begin()?;
+        let (active, ()) = candidate.activate(|| Ok(()))?;
+        startup.invalidate_current();
+        assert_eq!(active.check(), Err(EIO));
+        assert!(matches!(startup.begin(), Err(EBUSY)));
+        owner.close();
+        assert_eq!(active.check(), Err(ENODEV));
+        Ok(())
+    }
 }

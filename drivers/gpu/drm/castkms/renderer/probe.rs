@@ -14,7 +14,7 @@ use kernel::{
 
 /// Input identity for one private startup operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Source {
+pub(crate) enum Source {
     /// Renderer-owned pixels carrying no display content identity.
     Private,
     /// An independent HOST snapshot retaining its historical content identity.

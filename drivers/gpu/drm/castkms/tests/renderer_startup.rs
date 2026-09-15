@@ -49,7 +49,7 @@ mod cases {
         let fixture = Fixture::new()?;
         let startup = &fixture.drm.device().startup;
         let first = startup.begin()?;
-        startup.cancel_current();
+        startup.invalidate_current();
         check(first.check() == Err(ECANCELED))?;
         let second = startup.begin()?;
         first.cancel();

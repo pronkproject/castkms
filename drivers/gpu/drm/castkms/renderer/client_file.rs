@@ -111,6 +111,16 @@ struct SubmitProbe {
 // SAFETY: Every bit pattern is valid for SubmitProbe's integer fields.
 unsafe impl FromBytes for SubmitProbe {}
 
+#[repr(C)]
+struct CommitTakeover {
+    candidate_id: u64,
+    flags: u32,
+    reserved: u32,
+}
+
+// SAFETY: Every bit pattern is valid for CommitTakeover's integer fields.
+unsafe impl FromBytes for CommitTakeover {}
+
 struct ClientFile {
     session: Arc<Session>,
 }
@@ -176,6 +186,7 @@ impl ClientFile {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER => self.abort(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT => self.get_snapshot(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE => self.submit_probe(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER => self.commit_takeover(arg),
             _ => Err(ENOTTY),
         }
     }
@@ -345,11 +356,31 @@ impl ClientFile {
             candidate.submit_private_probe(completion)
         }
     }
+
+    fn commit_takeover(&self, arg: usize) -> Result {
+        const {
+            assert!(
+                core::mem::size_of::<CommitTakeover>()
+                    == core::mem::size_of::<uapi::drm_castkms_renderer_commit_takeover>()
+            )
+        };
+        let mut reader = UserSlice::new(
+            UserPtr::from_addr(arg),
+            core::mem::size_of::<CommitTakeover>(),
+        )
+        .reader();
+        let request = reader.read::<CommitTakeover>()?;
+        if request.candidate_id == 0 || request.flags != 0 || request.reserved != 0 {
+            return Err(EINVAL);
+        }
+        self.session.activate(request.candidate_id).map(|_| ())
+    }
 }
 
 fn profile_value(profile: Profile) -> u32 {
     match profile {
         Profile::HostV1 => uapi::DRM_CASTKMS_EXECUTION_HOST_V1,
+        Profile::GpuV1 => uapi::DRM_CASTKMS_EXECUTION_GPU_V1,
     }
 }
 

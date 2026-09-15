@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! One renderer endpoint's candidate ownership, independent of file transport.
+//! One renderer endpoint's candidate and active ownership, independent of file transport.
 
 use super::{
     candidate::Candidate,
-    permission::Access, //
+    permission::Access,
+    probe::Source as ProbeSource, //
 };
-use crate::{execution::Description, scene::Configuration};
+use crate::{
+    execution::Description,
+    renderer_startup,
+    scene::Configuration,
+    Driver, //
+};
 use kernel::{
+    drm::device::RegisteredDeviceRef,
     prelude::*,
     sync::{Arc, Mutex}, //
 };
@@ -18,6 +25,17 @@ enum Slot {
     Active {
         id: u64,
         candidate: Arc<Candidate>,
+    },
+    Activating {
+        id: u64,
+        candidate: Arc<Candidate>,
+    },
+    Renderer {
+        id: u64,
+        candidate: Arc<Candidate>,
+        active: renderer_startup::Active,
+        _source: ProbeSource,
+        description: Description,
     },
 }
 
@@ -30,15 +48,17 @@ struct State {
 #[pin_data]
 pub(super) struct Session {
     access: Access,
+    device: RegisteredDeviceRef<Driver>,
     #[pin]
     state: Mutex<State>,
 }
 
 impl Session {
-    pub(super) fn new(access: Access) -> Result<Arc<Self>> {
+    pub(super) fn new(access: Access, device: RegisteredDeviceRef<Driver>) -> Result<Arc<Self>> {
         Arc::pin_init(
             pin_init!(Self {
                 access,
+                device,
                 state <- kernel::new_mutex!(State {
                     closed: false,
                     next_id: 1,
@@ -106,6 +126,18 @@ impl Session {
                     state.slot = Slot::Publishing;
                     return Err(EBUSY);
                 }
+                other @ Slot::Activating { .. } => {
+                    state.slot = other;
+                    return Err(EBUSY);
+                }
+                other @ Slot::Renderer { id: current, .. } => {
+                    state.slot = other;
+                    return if current == id {
+                        Err(EALREADY)
+                    } else {
+                        Err(ENOENT)
+                    };
+                }
                 Slot::Idle => return Err(ENOENT),
             }
         };
@@ -125,24 +157,112 @@ impl Session {
                 id: current,
                 candidate,
             } if *current == id => Ok(candidate.clone()),
-            Slot::Publishing => Err(EBUSY),
+            Slot::Publishing | Slot::Activating { .. } => Err(EBUSY),
+            Slot::Renderer { id: current, .. } if *current == id => Err(EALREADY),
             _ => Err(ENOENT),
         }
     }
 
-    pub(super) fn close(&self) {
+    /// Activate one completed candidate or reconcile an already published result.
+    pub(super) fn activate(&self, id: u64) -> Result<Description> {
+        let registered = self.device.registration_guard().ok_or(ENODEV)?;
         let candidate = {
+            let mut state = self.state.lock();
+            if state.closed {
+                return Err(EKEYREVOKED);
+            }
+            if let Slot::Renderer {
+                id: current,
+                active,
+                description,
+                ..
+            } = &state.slot
+            {
+                return if *current == id {
+                    active.check()?;
+                    if self.access.device().execution.describe() == *description {
+                        Ok(*description)
+                    } else {
+                        Err(EIO)
+                    }
+                } else {
+                    Err(ENOENT)
+                };
+            }
+            match core::mem::replace(&mut state.slot, Slot::Idle) {
+                Slot::Active {
+                    id: current,
+                    candidate,
+                } if current == id => {
+                    state.slot = Slot::Activating {
+                        id,
+                        candidate: candidate.clone(),
+                    };
+                    candidate
+                }
+                other @ Slot::Publishing | other @ Slot::Activating { .. } => {
+                    state.slot = other;
+                    return Err(EBUSY);
+                }
+                other => {
+                    state.slot = other;
+                    return Err(ENOENT);
+                }
+            }
+        };
+
+        let activated = candidate.activate(&registered);
+        let mut state = self.state.lock();
+        if state.closed {
+            state.slot = Slot::Idle;
+            drop(state);
+            drop(activated);
+            return Err(EKEYREVOKED);
+        }
+        if !matches!(state.slot, Slot::Activating { id: current, .. } if current == id) {
+            drop(state);
+            drop(activated);
+            return Err(ECANCELED);
+        }
+        match activated {
+            Ok((active, source, description)) => {
+                state.slot = Slot::Renderer {
+                    id,
+                    candidate,
+                    active,
+                    _source: source,
+                    description,
+                };
+                drop(state);
+                registered.hotplug_event();
+                Ok(description)
+            }
+            Err(error) => {
+                state.slot = Slot::Active { id, candidate };
+                Err(error)
+            }
+        }
+    }
+
+    pub(super) fn close(&self) {
+        let (candidate, active) = {
             let mut state = self.state.lock();
             state.closed = true;
             match core::mem::replace(&mut state.slot, Slot::Idle) {
-                Slot::Active { candidate, .. } => Some(candidate),
-                _ => None,
+                Slot::Active { candidate, .. } | Slot::Activating { candidate, .. } => {
+                    (Some(candidate), None)
+                }
+                Slot::Renderer {
+                    candidate, active, ..
+                } => (Some(candidate), Some(active)),
+                _ => (None, None),
             }
         };
         if let Some(candidate) = candidate {
             candidate.cancel();
             drop(candidate);
         }
+        drop(active);
     }
 }
 

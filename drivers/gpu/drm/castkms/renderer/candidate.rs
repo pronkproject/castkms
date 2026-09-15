@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     display_control,
-    execution::Description,
+    execution::{Description, Profile},
     host_compositor::compose::Completed,
     host_snapshot::Snapshot,
     image_access,
@@ -122,12 +122,18 @@ impl Candidate {
         current: display_control::Current<'_>,
         f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
     ) -> Result<R> {
+        self.check_control(&current)?;
+        self.resources.with_current(|| f(current))
+    }
+
+    fn check_control(&self, current: &display_control::Current<'_>) -> Result {
         if current.configuration() != &self.configuration
             || self.access.device().execution.describe() != self.execution
         {
-            return Err(ESTALE);
+            Err(ESTALE)
+        } else {
+            Ok(())
         }
-        self.resources.with_current(|| f(current))
     }
 
     /// Copy an optional image into independent private storage after checking ownership.
@@ -197,6 +203,33 @@ impl Candidate {
     pub(crate) fn probe_result(&self) -> Result<bool> {
         self.validate()?;
         self.probe.result()
+    }
+
+    /// Publish GPU execution after this candidate's native probe succeeds.
+    ///
+    /// Metadata allocation occurs before display control. Publication and device-wide
+    /// active ownership transfer share the startup exclusion interval. A pending or failed
+    /// probe changes neither execution nor candidate state.
+    pub(crate) fn activate(
+        &self,
+        registered: &Device<Driver, Registered>,
+    ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
+        let device = self.access.device();
+        let registered_device: &Device<Driver> = registered;
+        if !core::ptr::eq(device, registered_device) {
+            return Err(EINVAL);
+        }
+        let mut prepared = device.execution.prepare(registered, Profile::GpuV1)?;
+        let description = prepared.description()?;
+        let (active, source) = self.access.with_installed(registered, |current, locked| {
+            self.check_control(&current)?;
+            self.resources.activate(|| {
+                let source = self.probe.completed_source()?;
+                device.execution.publish(locked, &mut prepared)?;
+                Ok(source)
+            })
+        })?;
+        Ok((active, source, description))
     }
 
     fn snapshot_then(

@@ -9,6 +9,7 @@ use super::{
     session::Session, //
 };
 use kernel::{
+    drm::{device::Registered, Device},
     fs::File,
     prelude::*,
     sync::aref::ARef, //
@@ -27,8 +28,8 @@ impl Files {
     /// The renderer file holds only an access handle. Final revoker release drops the
     /// unique owner and revokes every access handle, including duplicated renderer files.
     /// Failure publishes no descriptor and revokes through normal owner cleanup.
-    pub(crate) fn new(owner: Owner) -> Result<Self> {
-        let session = Session::new(owner.access())?;
+    pub(crate) fn new(owner: Owner, device: &Device<crate::Driver, Registered>) -> Result<Self> {
+        let session = Session::new(owner.access(), device.to_registered_ref())?;
         let renderer = client_file::create(session.clone())?;
         let revoker = revoker_file::create(owner, session)?;
         Ok(Self { renderer, revoker })
@@ -42,7 +43,10 @@ impl Files {
 
 impl Owner {
     /// Transfer renderer access and revocation ownership into anonymous files.
-    pub(crate) fn into_files(self) -> Result<Files> {
-        Files::new(self)
+    pub(crate) fn into_files(
+        self,
+        device: &Device<crate::Driver, Registered>,
+    ) -> Result<Files> {
+        Files::new(self, device)
     }
 }

@@ -8,7 +8,7 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 3
+#define DRM_CASTKMS_RENDERER_VERSION 4
 
 #define DRM_CASTKMS_RENDERER_PROBE_PRIVATE 1
 #define DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE 2
@@ -268,6 +268,26 @@ struct drm_castkms_renderer_submit_probe {
 	__u32 reserved[3];
 };
 
+/**
+ * struct drm_castkms_renderer_commit_takeover - activate delegated execution
+ * @candidate_id: candidate whose submitted probe completed successfully
+ * @flags: must be zero
+ * @reserved: must be zero
+ *
+ * Success atomically transfers the candidate into active-renderer ownership,
+ * publishes a new GPU execution generation, and closes new HOST source-read
+ * admission. Work admitted before the transition retires normally.
+ *
+ * Repeating the operation for the same active candidate succeeds so a caller
+ * can reconcile a lost reply. A pending probe returns EAGAIN; a failed probe
+ * returns its exact completion error. Other stale candidates are rejected.
+ */
+struct drm_castkms_renderer_commit_takeover {
+	__u64 candidate_id;
+	__u32 flags;
+	__u32 reserved;
+};
+
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
 #define DRM_CASTKMS_CREATE_RENDERER_CONTROL 0x01
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
@@ -278,6 +298,7 @@ struct drm_castkms_renderer_submit_probe {
 #define DRM_CASTKMS_RENDERER_ABORT_TAKEOVER 0x06
 #define DRM_CASTKMS_RENDERER_GET_SNAPSHOT 0x07
 #define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x08
+#define DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER 0x09
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
@@ -310,7 +331,10 @@ enum {
 			struct drm_castkms_renderer_get_snapshot),
 	DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_SUBMIT_PROBE,
-			struct drm_castkms_renderer_submit_probe),
+			 struct drm_castkms_renderer_submit_probe),
+	DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER,
+			 struct drm_castkms_renderer_commit_takeover),
 };
 
 #define DRM_CASTKMS_EXECUTION_VERSION 1
