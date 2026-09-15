@@ -2,7 +2,10 @@
 
 //! Authorized private startup for one accepted display configuration.
 
-use super::permission::Access;
+use super::{
+    permission::Access,
+    probe::{Probe, Source as ProbeSource},
+};
 use crate::{
     display_control,
     execution::Description,
@@ -14,12 +17,14 @@ use crate::{
     Driver, //
 };
 use kernel::{
+    dma_fence::Fence,
     drm::{
         device::Registered,
         kms::LockedState,
         Device, //
     },
     prelude::*, //
+    sync::{aref::ARef, Arc},
 };
 
 /// One renderer's private reservation, without an activation or live-source claim.
@@ -33,6 +38,7 @@ pub(crate) struct Candidate {
     access: Access,
     configuration: Configuration,
     execution: Description,
+    probe: Arc<Probe>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -43,6 +49,7 @@ impl Candidate {
     }
 
     fn begin_then(access: Access, after_reserve: impl FnOnce() -> Result) -> Result<Self> {
+        let probe = Arc::pin_init(Probe::new(), GFP_KERNEL)?;
         let configuration = access.with_current(|current| Ok(current.configuration().clone()))?;
         let execution = access.device().execution.describe();
         let resources = access.device().startup.begin()?;
@@ -51,6 +58,7 @@ impl Candidate {
             access,
             configuration,
             execution,
+            probe,
         };
         after_reserve()?;
         candidate.validate()?;
@@ -159,6 +167,37 @@ impl Candidate {
             image_access::Current::new(control)?.check_snapshot(snapshot)?;
             Ok(publish())
         })
+    }
+
+    /// Publish one private probe submission after checking startup on both sides.
+    ///
+    /// A probe reads no live compositor source. Its completion can cover an independent
+    /// startup snapshot or entirely renderer-owned storage. Publication records submitted
+    /// native work; it does not activate delegated execution.
+    fn submit_probe(&self, source: ProbeSource, completion: Option<ARef<Fence>>) -> Result {
+        self.validate()?;
+        self.probe
+            .submit_then(source, completion, || self.validate())
+    }
+
+    /// Publish a probe over entirely renderer-owned storage.
+    pub(crate) fn submit_private_probe(&self, completion: Option<ARef<Fence>>) -> Result {
+        self.submit_probe(ProbeSource::Private, completion)
+    }
+
+    /// Publish a probe that uploaded one independent HOST startup snapshot.
+    pub(crate) fn submit_snapshot_probe(
+        &self,
+        content: Option<crate::scene::ContentSerial>,
+        completion: Option<ARef<Fence>>,
+    ) -> Result {
+        self.submit_probe(ProbeSource::Snapshot(content), completion)
+    }
+
+    /// Inspect submitted probe completion without waiting or activating execution.
+    pub(crate) fn probe_result(&self) -> Result<bool> {
+        self.validate()?;
+        self.probe.result()
     }
 
     fn snapshot_then(
