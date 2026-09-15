@@ -32,6 +32,7 @@
 #include <sound/control.h>
 #include <sound/core.h>
 #include <sound/info.h>
+#include <sound/jack.h>
 #include <sound/pcm.h>
 #include <sound/pcm_drm_eld.h>
 #endif

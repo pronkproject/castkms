@@ -176,6 +176,7 @@ impl Stream {
 /// Unique registration of a playback PCM and its optional display controls.
 pub struct Registration<T: Operations> {
     raw: *mut bindings::snd_card,
+    jack: *mut bindings::snd_jack,
     state: Arc<State<T>>,
 }
 
@@ -227,8 +228,9 @@ impl<T: Operations> Registration<T> {
                 &mut raw,
             )
         })?;
-        let card = Self {
+        let mut card = Self {
             raw,
+            jack: ptr::null_mut(),
             state,
         };
         // SAFETY: The unregistered card is uniquely owned. private_free consumes the
@@ -258,7 +260,15 @@ impl<T: Operations> Registration<T> {
                 0,
                 0,
             );
-            if display.is_some() {
+            if let Some(display) = display {
+                to_result(bindings::snd_jack_new(
+                    raw,
+                    display.jack_name.as_char_ptr(),
+                    bindings::snd_jack_types_SND_JACK_AVOUT as _,
+                    &mut card.jack,
+                    true,
+                    false,
+                ))?;
                 let control = bindings::snd_ctl_new1(&Self::ELD_CONTROL, (*raw).private_data);
                 if control.is_null() {
                     return Err(ENOMEM);
@@ -266,6 +276,9 @@ impl<T: Operations> Registration<T> {
                 to_result(bindings::snd_ctl_add(raw, control))?;
             }
             to_result(bindings::snd_card_register(raw))?;
+            if !card.jack.is_null() {
+                bindings::snd_jack_report(card.jack, bindings::snd_jack_types_SND_JACK_AVOUT as _);
+            }
         }
         Ok(card)
     }
@@ -301,6 +314,9 @@ impl<T: Operations> Drop for Registration<T> {
         // SAFETY: Registration is unique; ALSA defers destruction until native files
         // close. Published stream handles have already lost access to native pointers.
         unsafe {
+            if !self.jack.is_null() {
+                bindings::snd_jack_report(self.jack, 0);
+            }
             bindings::snd_card_free_when_closed(self.raw);
         }
     }
