@@ -2027,17 +2027,17 @@ mod cases {
                 0,
             )?
         };
-        let retained: ARef<Device<TestDriver>> = registration.device().into();
+        let retained = registration
+            .registration_guard()
+            .ok_or(ENODEV)?
+            .to_registered_ref();
         let crtc_count = {
             let registered = registration.registration_guard().ok_or(ENODEV)?;
             registered.check_atomic_update(|_| Ok(()))?;
             registered.num_crtcs()
         };
         drop(registration);
-        // SAFETY: Registration succeeded and retained owns the device after unplug. Ioctl
-        // context requires past registration, not current registration or a bound parent.
-        let unplugged = unsafe { retained.assume_ctx::<drm::Ioctl>() };
-        let rejected = unplugged.registration_guard().is_none();
+        let rejected = retained.registration_guard().is_none();
         let remaining = counts.objects.load(Ordering::Relaxed);
         drop(retained);
         assert_eq!(crtc_count, 1);
