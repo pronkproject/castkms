@@ -11,7 +11,7 @@ use kernel::{
     }, //
 };
 
-const BYTE_LIMIT: usize = 64 * 1024 * 1024;
+const BYTE_LIMIT: usize = 512 * 1024 * 1024;
 pub(super) const STREAM_LIMIT: usize = 16;
 pub(super) const CAPACITY_LIMIT: u32 = 8;
 
