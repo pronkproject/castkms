@@ -55,6 +55,7 @@ impl Permission {
 #[pin_data]
 struct Policy {
     permission: Permission,
+    transition_owner: Arc<()>,
     #[pin]
     revoked: Mutex<bool>,
 }
@@ -72,9 +73,11 @@ pub(crate) struct Owner {
 impl Owner {
     /// Allocate the owner outside native master, object-ID and modeset locks.
     pub(crate) fn new(permission: Permission) -> Result<Self> {
+        let transition_owner = Arc::new((), GFP_KERNEL)?;
         let policy = Arc::pin_init(
             pin_init!(Policy {
                 permission,
+                transition_owner,
                 revoked <- kernel::new_mutex!(false),
             }),
             GFP_KERNEL,
@@ -108,6 +111,11 @@ pub(crate) struct Access {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Access {
+    /// Identity only, with no authority or retained DRM resources.
+    pub(crate) fn transition_owner(&self) -> Arc<()> {
+        self.policy.transition_owner.clone()
+    }
+
     /// Borrow the allocation device without authorizing access to display pixels.
     pub(crate) fn device(&self) -> &Device<Driver> {
         self.policy.permission.target.device()
