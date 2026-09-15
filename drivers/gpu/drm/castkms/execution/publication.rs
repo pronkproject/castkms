@@ -306,6 +306,51 @@ impl Publication {
         Ok(())
     }
 
+    /// Publish execution and its gated input contract under the same installation lock.
+    pub(crate) fn publish_proposal(
+        &self,
+        locked: &LockedState<'_, Driver>,
+        prepared: &mut Prepared,
+        generation: u64,
+        configuration: &crate::scene::Configuration,
+        check: impl FnMut(&super::validation::Contract) -> Result,
+    ) -> Result {
+        if !Arc::ptr_eq(&self.origin, &prepared.origin) {
+            return Err(EINVAL);
+        }
+        let change = prepared.pending.ok_or(EALREADY)?;
+        let retired = {
+            let mut state = self.state.lock();
+            if state.description != change.expected {
+                return Err(ESTALE);
+            }
+            let State {
+                description,
+                slot,
+                pending,
+                ..
+            } = &mut *state;
+            let entry = pending
+                .as_ref()
+                .filter(|entry| entry.description.generation == generation)
+                .ok_or(ESTALE)?;
+            let property = match slot {
+                Slot::Ready(property) => property,
+                Slot::Closed => return Err(ENODEV),
+                _ => return Err(EAGAIN),
+            };
+            entry.reservation.activate(configuration, check, || {
+                property.replace_blob(locked, &mut prepared.blob)?;
+                *description = change.next;
+                prepared.pending = None;
+                Ok(())
+            })?;
+            pending.take()
+        };
+        drop(retired);
+        Ok(())
+    }
+
     /// Release the control handle outside its mutex, preserving the installed native blob.
     pub(crate) fn close(&self) {
         let (slot, pending) = {
