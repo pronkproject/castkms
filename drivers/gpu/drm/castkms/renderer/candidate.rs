@@ -94,6 +94,29 @@ impl Candidate {
         self.execution
     }
 
+    /// Register immutable pending capabilities without changing KMS acceptance.
+    /// The profile is allocated before entering authority and startup exclusion.
+    pub(crate) fn propose_profile(
+        self: &Arc<Self>,
+        profile: crate::execution::capabilities::Profile,
+    ) -> Result<super::proposal::Proposal> {
+        let profile = Arc::new(profile, GFP_KERNEL)?;
+        let registration = self.with_current_control(|_| {
+            self.access
+                .display()
+                .execution
+                .propose(self.execution, &self.proposal_owner, profile)
+        })?;
+        Ok(super::proposal::Proposal::new(self.clone(), registration))
+    }
+
+    pub(super) fn check_proposal(
+        &self,
+        registration: &crate::execution::proposal::Registration,
+    ) -> Result {
+        self.with_current_control(|_| registration.check())
+    }
+
     /// Recheck authority and private reservation without changing active execution.
     ///
     /// Success is an observation only. A later operation must perform its own validation

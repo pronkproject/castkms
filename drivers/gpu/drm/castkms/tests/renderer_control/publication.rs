@@ -20,6 +20,24 @@ mod cases {
     use super::*;
 
     #[test]
+    fn pending_capabilities_cannot_use_probe_only_activation() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let before = device.execution.describe();
+            let proposal =
+                candidate.propose_profile(crate::tests::renderer_proposals::profile()?)?;
+            check(candidate.activate(device).err() == Some(EAGAIN))?;
+            check(device.execution.describe() == before)?;
+            proposal.validate()?;
+            proposal.cancel();
+            let (_active, _, next) = candidate.activate(device)?;
+            check(next.generation == before.generation + 1)
+        })
+    }
+
+    #[test]
     fn publishing_metadata_invalidates_the_old_candidate() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
