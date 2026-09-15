@@ -136,4 +136,82 @@ impl<S: FromRawPlaneState> PlaneStateMutator<'_, S> {
         Ok(())
     }
 
+    /// Replace one selected operation in an unpublished candidate.
+    ///
+    /// Propagate errors to the transaction runner. Operation types and advertised curve
+    /// choices are checked; matrix data is copied into a separately owned native blob.
+    pub fn set_color_operation(&mut self, index: usize, value: Operation) -> Result {
+        // SAFETY: The guard exclusively owns the unpublished plane state.
+        let raw = unsafe { self.as_raw_mut() };
+        if raw.state.is_null() {
+            return Err(EINVAL);
+        }
+        let mut operation = raw.color_pipeline;
+        // SAFETY: The plane guard retains its selected immutable operation chain and
+        // modeset lock. Native operation state has no other Rust mutable accessor.
+        unsafe {
+            for _ in 0..index {
+                if operation.is_null() {
+                    return Err(EINVAL);
+                }
+                operation = (*operation).next;
+            }
+            if operation.is_null() || (*operation).plane != raw.plane {
+                return Err(EINVAL);
+            }
+            let state = from_err_ptr(bindings::drm_atomic_get_colorop_state(raw.state, operation))?;
+            match value {
+                Operation::Bypass => {
+                    if (*operation).bypass_property.is_null() {
+                        return Err(EOPNOTSUPP);
+                    }
+                    (*state).bypass = true;
+                }
+                Operation::SrgbEotf | Operation::SrgbInverseEotf => {
+                    if (*operation).type_ != bindings::drm_colorop_type_DRM_COLOROP_1D_CURVE {
+                        return Err(EINVAL);
+                    }
+                    let curve = if matches!(value, Operation::SrgbEotf) {
+                        bindings::drm_colorop_curve_1d_type_DRM_COLOROP_1D_CURVE_SRGB_EOTF
+                    } else {
+                        bindings::drm_colorop_curve_1d_type_DRM_COLOROP_1D_CURVE_SRGB_INV_EOTF
+                    };
+                    let property = (*operation).curve_1d_type_property;
+                    if property.is_null() {
+                        return Err(EINVAL);
+                    }
+                    let head = &raw mut (*property).enum_list;
+                    let mut entry = (*head).next;
+                    let mut supported = false;
+                    while entry != head {
+                        supported |=
+                            (*crate::container_of!(entry, bindings::drm_property_enum, head)).value
+                                == u64::from(curve);
+                        entry = (*entry).next;
+                    }
+                    if !supported {
+                        return Err(EOPNOTSUPP);
+                    }
+                    (*state).curve_1d_type = curve;
+                    (*state).bypass = false;
+                }
+                Operation::Matrix(coefficients) => {
+                    if (*operation).type_ != bindings::drm_colorop_type_DRM_COLOROP_CTM_3X4 {
+                        return Err(EINVAL);
+                    }
+                    let blob = from_err_ptr(bindings::drm_property_create_blob(
+                        (*operation).dev,
+                        size_of::<[u64; 12]>(),
+                        coefficients.as_ptr().cast(),
+                    ))?;
+                    bindings::drm_property_replace_blob(&raw mut (*state).data, blob);
+                    bindings::drm_property_blob_put(blob);
+                    (*state).bypass = false;
+                }
+            }
+            raw.set_color_mgmt_changed(true);
+        }
+        Ok(())
+    }
+
 }
