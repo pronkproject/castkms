@@ -260,6 +260,14 @@ impl<T: Operations> Registration<T> {
                 0,
                 0,
             );
+            to_result(bindings::snd_pcm_add_chmap_ctls(
+                pcm,
+                bindings::SNDRV_PCM_STREAM_PLAYBACK as _,
+                bindings::snd_pcm_std_chmaps.as_ptr(),
+                config.channels as _,
+                0,
+                ptr::null_mut(),
+            ))?;
             if let Some(display) = display {
                 to_result(bindings::snd_jack_new(
                     raw,
