@@ -476,6 +476,52 @@ impl<T: DriverCrtc> Clone for CrtcRef<T> {
 pub struct UnregisteredCrtc<T: DriverCrtc>(Crtc<T>, NotThreadSafe);
 
 impl<T: DriverCrtc> UnregisteredCrtc<T> {
+    /// Attach a replayable driver-owned unsigned atomic range before publication.
+    ///
+    /// Mode configuration owns the property until cleanup. The returned identifier is
+    /// metadata only; compare it in the driver's property callbacks. Drivers must initialize
+    /// the corresponding private state to `initial` themselves.
+    /// Values must be self-contained numbers, not descriptors or object references
+    /// requiring retained ownership. Rebuilt requests replay the setter after waits;
+    /// atomic checking must revalidate any live policy denoted by the value.
+    pub fn attach_replayable_range_property(
+        &self,
+        name: &CStr,
+        minimum: u64,
+        maximum: u64,
+        initial: u64,
+    ) -> Result<u32> {
+        if name.is_empty()
+            || name.to_bytes().len() >= bindings::DRM_PROP_NAME_LEN as usize
+            || minimum > initial
+            || initial > maximum
+        {
+            return Err(EINVAL);
+        }
+        let raw = self.as_raw();
+        // SAFETY: Unregistered construction exclusively owns the initialized CRTC and
+        // its property array. Mode configuration and the device remain live.
+        let (device, object) = unsafe { ((*raw).dev, &raw mut (*raw).base) };
+        // SAFETY: Property attachment is serialized by unpublished construction.
+        if unsafe { (*(*object).properties).count } >= bindings::DRM_OBJECT_MAX_PROPERTY as i32 {
+            return Err(ENOSPC);
+        }
+        // SAFETY: The name is terminated and the range is ordered. Mode configuration
+        // owns the allocation and releases it even if subsequent construction fails.
+        let property = unsafe {
+            bindings::drm_property_create_replayable_range(
+                device, name.as_char_ptr(), minimum, maximum,
+            )
+        };
+        if property.is_null() {
+            return Err(ENOMEM);
+        }
+        // SAFETY: Both objects belong to device and the property array has capacity.
+        unsafe { bindings::drm_object_attach_property(object, property, initial) };
+        // SAFETY: The successful constructor initialized the property identifier.
+        Ok(unsafe { (*property).base.id })
+    }
+
     /// Construct a new [`UnregisteredCrtc`].
     ///
     /// A driver may use this from their [`KmsDriver::create_objects`] callback in order to
