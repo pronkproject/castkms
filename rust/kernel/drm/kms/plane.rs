@@ -503,6 +503,13 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
             bindings::drm_plane_create_blend_mode_property(self.as_raw(), supported_modes.bits())
         })
     }
+
+    /// Attach an immutable plane stacking position before registration.
+    pub fn create_zpos_immutable_property(&self, zpos: u32) -> Result {
+        // SAFETY: Setup owns the initialized plane before registration.
+        to_result(unsafe { bindings::drm_plane_create_zpos_immutable_property(self.as_raw(), zpos) })
+    }
+
 }
 
 /// A trait implemented by any type that acts as a [`struct drm_plane`] interface.
