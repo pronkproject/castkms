@@ -72,6 +72,26 @@ impl BitOr for Rotation {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BlendModes(u32);
 
+/// YUV matrix selected by a plane's COLOR_ENCODING property.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ColorEncoding {
+    /// ITU-R BT.601 luma coefficients.
+    Bt601,
+    /// ITU-R BT.709 luma coefficients.
+    Bt709,
+    /// ITU-R BT.2020 non-constant-luminance coefficients.
+    Bt2020,
+}
+
+/// Digital code range selected by a plane's COLOR_RANGE property.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ColorRange {
+    /// Nominal video code ranges: luma 16–235 and chroma 16–240 at eight bits.
+    Limited,
+    /// The complete code range of each stored channel.
+    Full,
+}
+
 impl BlendModes {
     /// Source pixels are premultiplied by alpha.
     pub const PREMULTIPLIED: Self = Self(1 << bindings::DRM_MODE_BLEND_PREMULTI);
@@ -821,6 +841,21 @@ impl Rect {
 /// This is implemented internally by DRM, and provides many of the basic methods for working with
 /// the atomic state of [`Plane`]s.
 pub trait RawPlaneState: AsRawPlaneState {
+    /// The accepted YUV interpretation, rejecting unknown native values.
+    fn yuv_color(&self) -> Result<(ColorEncoding, ColorRange)> {
+        let encoding = match self.as_raw().color_encoding {
+            bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT601 => ColorEncoding::Bt601,
+            bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT709 => ColorEncoding::Bt709,
+            bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT2020 => ColorEncoding::Bt2020,
+            _ => return Err(EINVAL),
+        };
+        let range = match self.as_raw().color_range {
+            bindings::drm_color_range_DRM_COLOR_YCBCR_LIMITED_RANGE => ColorRange::Limited,
+            bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE => ColorRange::Full,
+            _ => return Err(EINVAL),
+        };
+        Ok((encoding, range))
+    }
     /// Requested stacking position; equal positions are ordered by plane object ID.
     fn zpos(&self) -> u32 {
         self.as_raw().zpos
