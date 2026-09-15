@@ -3,6 +3,9 @@
 //! Owned display descriptions, without pixel-read permission or completion guarantees.
 
 mod configuration;
+mod geometry;
+
+pub(super) use geometry::Geometry;
 
 pub(crate) use configuration::Configuration;
 
@@ -41,14 +44,6 @@ impl ContentSerial {
         let next = value.checked_add(1).ok_or(EOVERFLOW)?;
         Ok(Some(Self(NonZeroU64::new(next).ok_or(EOVERFLOW)?)))
     }
-}
-
-/// Requested source coordinates are retained in DRM's unsigned 16.16 representation.
-#[derive(Clone, Copy)]
-pub(super) struct Geometry {
-    pub(super) source: [u32; 4],
-    pub(super) destination: [u32; 2],
-    pub(super) output: [u32; 2],
 }
 
 /// An active output, including a blank output with no framebuffer to retain.
