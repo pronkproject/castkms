@@ -16,6 +16,18 @@ mod cases {
     use super::*;
 
     #[test]
+    fn capture_has_an_independent_bounded_clock() -> Result {
+        let mut clock = clock::Capture::new(1_000_000_000);
+        check(clock.advance(1_009_999_999).frames == 0)?;
+        check(clock.advance(1_010_000_000).frames == PERIOD_FRAMES)?;
+        let due = clock.advance(2_000_000_000);
+        check(due.frames == 4 * PERIOD_FRAMES && due.dropped == 45_600)?;
+        check(clock.advance(2_000_000_000).frames == 0)?;
+        check(clock.advance(2_009_999_999).frames == 0)?;
+        check(clock.advance(2_010_000_000).frames == PERIOD_FRAMES)
+    }
+
+    #[test]
     fn ring_reads_whole_frames_and_preserves_order() -> Result {
         let mut ring = buffer::Buffer::new()?;
         let mut output = [0; 9];
