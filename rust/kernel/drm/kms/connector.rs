@@ -5,6 +5,8 @@
 //! C header: [`include/drm/drm_connector.h`](srctree/include/drm/drm_connector.h)
 
 mod properties;
+mod eld;
+pub use eld::Eld;
 pub use properties::ReadOnlyBlobProperty;
 
 use super::{
