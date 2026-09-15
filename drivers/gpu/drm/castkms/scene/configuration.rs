@@ -10,6 +10,8 @@ use kernel::{
 struct Description {
     connectors: u32,
     dimensions: [u32; 2],
+    refresh_millihz: u32,
+    mode_flags: u32,
 }
 
 /// An immutable candidate description; only accepted publication makes it current.
@@ -20,14 +22,21 @@ struct Description {
 pub(crate) struct Configuration(Arc<Description>);
 
 impl Configuration {
-    pub(crate) fn new(connectors: u32, dimensions: [u32; 2]) -> Result<Self> {
-        if connectors == 0 || dimensions.contains(&0) {
+    pub(crate) fn new(
+        connectors: u32,
+        dimensions: [u32; 2],
+        refresh_millihz: u32,
+        mode_flags: u32,
+    ) -> Result<Self> {
+        if connectors == 0 || dimensions.contains(&0) || refresh_millihz == 0 {
             return Err(EINVAL);
         }
         Ok(Self(Arc::new(
             Description {
                 connectors,
                 dimensions,
+                refresh_millihz,
+                mode_flags,
             },
             GFP_KERNEL,
         )?))
@@ -40,6 +49,14 @@ impl Configuration {
 
     pub(crate) fn dimensions(&self) -> [u32; 2] {
         self.0.dimensions
+    }
+
+    pub(crate) fn refresh_millihz(&self) -> u32 {
+        self.0.refresh_millihz
+    }
+
+    pub(crate) fn mode_flags(&self) -> u32 {
+        self.0.mode_flags
     }
 }
 

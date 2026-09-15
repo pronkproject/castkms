@@ -250,6 +250,8 @@ impl CrtcState {
             u32::from(state.mode().hdisplay()),
             u32::from(state.mode().vdisplay()),
         ];
+        let refresh_millihz = state.mode().vrefresh_millihz()?;
+        let mode_flags = state.mode().flags().bits();
         state.configuration = match old.configuration.as_ref() {
             Some(configuration)
                 if old.active()
@@ -259,7 +261,12 @@ impl CrtcState {
             {
                 Some(configuration.clone())
             }
-            _ => Some(scene::Configuration::new(connectors, dimensions)?),
+            _ => Some(scene::Configuration::new(
+                connectors,
+                dimensions,
+                refresh_millihz,
+                mode_flags,
+            )?),
         };
         Ok(())
     }

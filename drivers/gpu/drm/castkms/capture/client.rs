@@ -170,6 +170,8 @@ unsafe impl ClientOwner for Client {
         Description::new(
             offer.id(),
             [width, height],
+            image.configuration().refresh_millihz(),
+            image.configuration().mode_flags(),
             image.format(),
             image.modifier(),
             image.max_requests(),
