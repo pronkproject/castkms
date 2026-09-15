@@ -73,6 +73,7 @@ pub struct ColorCtm(bindings::drm_color_ctm);
 
 enum ColorUpdate<'a> {
     Gamma(Option<&'a [ColorLut]>),
+    Degamma(Option<&'a [ColorLut]>),
 }
 
 impl ColorCtm {
@@ -1176,6 +1177,11 @@ impl<'a, T: FromRawCrtcState> CrtcStateMutator<'a, T> {
         self.set_color_update(ColorUpdate::Gamma(entries))
     }
 
+    /// Replace the output degamma table with an independently retained native blob.
+    pub fn set_degamma_lut(&mut self, entries: Option<&[ColorLut]>) -> Result {
+        self.set_color_update(ColorUpdate::Degamma(entries))
+    }
+
     fn set_color_update(&mut self, update: ColorUpdate<'_>) -> Result {
         // SAFETY: The mutator exclusively owns a live, unpublished CRTC state.
         // Each input has a fully initialized transparent native representation;
@@ -1185,6 +1191,8 @@ impl<'a, T: FromRawCrtcState> CrtcStateMutator<'a, T> {
             let dev = (*(*state).crtc).dev;
             let (property, data) = match update {
                 ColorUpdate::Gamma(entries) => ((*dev).mode_config.gamma_lut_property,
+                    entries.map(|entries| (entries.as_ptr().cast(), mem::size_of_val(entries)))),
+                ColorUpdate::Degamma(entries) => ((*dev).mode_config.degamma_lut_property,
                     entries.map(|entries| (entries.as_ptr().cast(), mem::size_of_val(entries)))),
             };
             if property.is_null() { return Err(EOPNOTSUPP); }
