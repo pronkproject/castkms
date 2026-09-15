@@ -2,7 +2,7 @@
 
 //! Pending capability metadata; neither renderer authority nor an activation gate.
 
-use super::{capabilities, publication::Publication, Description};
+use super::{publication::Publication, validation::Contract, Description};
 use kernel::{prelude::*, sync::Arc};
 
 /// An immutable observation, not continuing permission to act on its proposal.
@@ -14,7 +14,7 @@ pub(crate) struct DescriptionSnapshot {
     /// Device-scoped atomic transition identity, not a permission to render.
     pub(crate) transition: u64,
     pub(crate) expected: Description,
-    pub(crate) profile: Arc<capabilities::Profile>,
+    pub(crate) profile: Contract,
 }
 
 pub(super) fn next_generation(previous: u64) -> Result<u64> {

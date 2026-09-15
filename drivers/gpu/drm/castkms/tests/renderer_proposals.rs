@@ -83,11 +83,14 @@ mod cases {
         let owner = owner(&fixture, &file)?;
         let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
         let proposal = candidate.propose_profile(profile()?)?;
-        let update = |mut transaction: Pin<&mut kernel::drm::kms::atomic::AtomicStateComposer<Driver>>| {
-            transaction.as_mut().disable_plane(fixture.drm.plane()?)?;
-            transaction.add_crtc_state(fixture.drm.crtc()?)?.tag_transition(proposal.describe().transition);
-            Ok(())
-        };
+        let update =
+            |mut transaction: Pin<&mut kernel::drm::kms::atomic::AtomicStateComposer<Driver>>| {
+                transaction.as_mut().disable_plane(fixture.drm.plane()?)?;
+                transaction
+                    .add_crtc_state(fixture.drm.crtc()?)?
+                    .tag_transition(proposal.describe().transition);
+                Ok(())
+            };
         fixture.drm.check(update)?;
         enable(&fixture)?;
         fixture.drm.update(update)?;
@@ -106,15 +109,28 @@ mod cases {
         let owner = owner(&fixture, &file)?;
         let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
         let proposal = candidate.propose_profile(profile()?)?;
-        check(fixture.drm.update_after_check(|mut transaction| {
-            transaction.as_mut().disable_plane(fixture.drm.plane()?)?;
-            transaction.add_crtc_state(fixture.drm.crtc()?)?.tag_transition(proposal.describe().transition);
-            Ok(())
-        }, || {
-            proposal.cancel();
-            Ok(())
-        }) == Err(ESTALE))?;
-        check(fixture.drm.device().output.inspect(|scene| scene.is_some_and(|scene| scene.primary().is_some())))?;
+        check(
+            fixture.drm.update_after_check(
+                |mut transaction| {
+                    transaction.as_mut().disable_plane(fixture.drm.plane()?)?;
+                    transaction
+                        .add_crtc_state(fixture.drm.crtc()?)?
+                        .tag_transition(proposal.describe().transition);
+                    Ok(())
+                },
+                || {
+                    proposal.cancel();
+                    Ok(())
+                },
+            ) == Err(ESTALE),
+        )?;
+        check(
+            fixture
+                .drm
+                .device()
+                .output
+                .inspect(|scene| scene.is_some_and(|scene| scene.primary().is_some())),
+        )?;
         enable(&fixture)
     }
 
@@ -128,15 +144,25 @@ mod cases {
         let owner = owner(&fixture, &file)?;
         let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
         let mut formats = KVec::new();
-        formats.push(Format {
-            fourcc: image.format(), modifier: image.modifier(), planes: 1,
-            native: true, imported: true, pitch_alignment: 1, offset_alignment: 1,
-            max_pitch: u32::MAX,
-        }, GFP_KERNEL)?;
+        formats.push(
+            Format {
+                fourcc: image.format(),
+                modifier: image.modifier(),
+                planes: 1,
+                native: true,
+                imported: true,
+                pitch_alignment: 1,
+                offset_alignment: 1,
+                max_pitch: u32::MAX,
+            },
+            GFP_KERNEL,
+        )?;
         let compatible = Profile::new(*profile()?.limits(), formats)?;
         let proposal = candidate.propose_profile(compatible)?;
         fixture.drm.update(|transaction| {
-            transaction.add_crtc_state(fixture.drm.crtc()?)?.tag_transition(proposal.describe().transition);
+            transaction
+                .add_crtc_state(fixture.drm.crtc()?)?
+                .tag_transition(proposal.describe().transition);
             Ok(())
         })?;
         for _ in 0..8 {
@@ -166,7 +192,16 @@ mod cases {
             .execution
             .pending_profile()
             .ok_or(EINVAL)?;
-        check(Arc::ptr_eq(&observed.profile, &proposal.describe().profile))?;
+        let crate::execution::validation::Contract::Renderer(observed_profile) = &observed.profile
+        else {
+            return Err(EINVAL);
+        };
+        let crate::execution::validation::Contract::Renderer(proposed_profile) =
+            &proposal.describe().profile
+        else {
+            return Err(EINVAL);
+        };
+        check(Arc::ptr_eq(observed_profile, proposed_profile))?;
         for _ in 0..8 {
             enable(&fixture)?;
             proposal.validate()?;
@@ -184,7 +219,7 @@ mod cases {
         drop(replacement);
         check(fixture.drm.device().execution.pending_profile().is_none())?;
         // Historical metadata outlives registration without retaining its slot.
-        check(observed.profile.formats().len() == 1)
+        check(observed_profile.formats().len() == 1)
     }
 
     #[test]
@@ -219,7 +254,7 @@ mod cases {
         fixture.drm.device().validation.gate_for_test(
             0,
             proposal.describe().transition,
-            crate::execution::validation::Contract::Renderer(proposal.describe().profile.clone()),
+            proposal.describe().profile.clone(),
         )?;
         check(enable(&fixture) == Err(EOPNOTSUPP))?;
         proposal.cancel();
@@ -242,7 +277,7 @@ mod cases {
         fixture.drm.device().validation.gate_for_test(
             0,
             proposal.describe().transition,
-            crate::execution::validation::Contract::Renderer(proposal.describe().profile.clone()),
+            proposal.describe().profile.clone(),
         )?;
         check(enable(&fixture) == Err(EOPNOTSUPP))?;
         owner.revoke();
@@ -262,7 +297,7 @@ mod cases {
         fixture.drm.device().validation.gate_for_test(
             0,
             proposal.describe().transition,
-            crate::execution::validation::Contract::Renderer(proposal.describe().profile.clone()),
+            proposal.describe().profile.clone(),
         )?;
         check(enable(&fixture) == Err(EOPNOTSUPP))?;
         <Driver as drm::Driver>::master_changed(fixture.drm.device(), None);

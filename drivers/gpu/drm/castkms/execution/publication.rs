@@ -169,7 +169,7 @@ impl Publication {
         self: &Arc<Self>,
         expected: Description,
         worker: &Arc<()>,
-        profile: Arc<super::capabilities::Profile>,
+        profile: super::validation::Contract,
         reserve: impl FnOnce() -> Result<super::coordinator::Reservation>,
     ) -> Result<super::proposal::Registration> {
         let mut state = self.state.lock();
