@@ -24,6 +24,7 @@ enum State {
     Idle,
     Reserved(Arc<()>),
     Active(Arc<()>, bool),
+    Replacing { active: Arc<()>, candidate: Arc<()> },
     Lost,
     Closed,
 }
@@ -58,7 +59,15 @@ impl Startup {
             let mut state = self.state.lock();
             match &*state {
                 State::Idle => *state = State::Reserved(identity.clone()),
-                State::Reserved(_) | State::Active(..) | State::Lost => return Err(EBUSY),
+                State::Active(active, true) => {
+                    *state = State::Replacing {
+                        active: active.clone(),
+                        candidate: identity.clone(),
+                    }
+                }
+                State::Reserved(_) | State::Active(..) | State::Replacing { .. } | State::Lost => {
+                    return Err(EBUSY)
+                }
                 State::Closed => return Err(ENODEV),
             }
         }
@@ -75,6 +84,7 @@ impl Startup {
     fn with_current<R>(&self, identity: &Arc<()>, f: impl FnOnce() -> Result<R>) -> Result<R> {
         match &*self.state.lock() {
             State::Reserved(current) if Arc::ptr_eq(current, identity) => f(),
+            State::Replacing { candidate, .. } if Arc::ptr_eq(candidate, identity) => f(),
             State::Closed => Err(ENODEV),
             _ => Err(ECANCELED),
         }
@@ -89,6 +99,11 @@ impl Startup {
         let mut state = self.state.lock();
         match &*state {
             State::Reserved(current) if Arc::ptr_eq(current, identity) => (),
+            State::Replacing { candidate, .. }
+                if follows_configuration && Arc::ptr_eq(candidate, identity) =>
+            {
+                ()
+            }
             State::Closed => return Err(ENODEV),
             _ => return Err(ECANCELED),
         }
@@ -109,6 +124,10 @@ impl Startup {
             match &*state {
                 State::Reserved(current) if Arc::ptr_eq(current, identity) => {
                     Some(core::mem::replace(&mut *state, State::Idle))
+                }
+                State::Replacing { active, candidate } if Arc::ptr_eq(candidate, identity) => {
+                    let restored = State::Active(active.clone(), true);
+                    Some(core::mem::replace(&mut *state, restored))
                 }
                 _ => None,
             }
@@ -132,6 +151,11 @@ impl Startup {
             match &*state {
                 State::Reserved(_) => Some(core::mem::replace(&mut *state, State::Idle)),
                 State::Active(_, true) if configuration_only => None,
+                State::Replacing { active, .. } if configuration_only => {
+                    let restored = State::Active(active.clone(), true);
+                    Some(core::mem::replace(&mut *state, restored))
+                }
+                State::Replacing { .. } => Some(core::mem::replace(&mut *state, State::Lost)),
                 State::Active(..) => Some(core::mem::replace(&mut *state, State::Lost)),
                 _ => None,
             }
@@ -144,6 +168,9 @@ impl Startup {
             let mut state = self.state.lock();
             match &*state {
                 State::Active(current, _) if Arc::ptr_eq(current, identity) => {
+                    Some(core::mem::replace(&mut *state, State::Lost))
+                }
+                State::Replacing { active, .. } if Arc::ptr_eq(active, identity) => {
                     Some(core::mem::replace(&mut *state, State::Lost))
                 }
                 _ => None,
@@ -257,6 +284,7 @@ impl Active {
     pub(crate) fn check(&self) -> Result {
         match &*self.startup.state.lock() {
             State::Active(current, _) if Arc::ptr_eq(current, &self.identity) => Ok(()),
+            State::Replacing { active, .. } if Arc::ptr_eq(active, &self.identity) => Ok(()),
             State::Closed => Err(ENODEV),
             _ => Err(EIO),
         }
@@ -269,6 +297,7 @@ impl Active {
     pub(crate) fn with_current<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
         match &*self.startup.state.lock() {
             State::Active(current, _) if Arc::ptr_eq(current, &self.identity) => f(),
+            State::Replacing { active, .. } if Arc::ptr_eq(active, &self.identity) => f(),
             State::Closed => Err(ENODEV),
             _ => Err(EIO),
         }
