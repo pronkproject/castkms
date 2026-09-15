@@ -40,6 +40,13 @@ pub(crate) struct HostAdmission<'a> {
     _state: MutexGuard<'a, State>,
 }
 
+/// Coherent execution and capability metadata, with no retained authority.
+pub(crate) struct CapabilitySnapshot {
+    pub(crate) execution: Description,
+    pub(crate) validation: super::coordinator::Snapshot,
+    pub(crate) pending: Option<super::proposal::DescriptionSnapshot>,
+}
+
 struct State {
     description: Description,
     slot: Slot,
@@ -125,7 +132,35 @@ impl Publication {
             .lock()
             .pending
             .as_ref()
+            .filter(|entry| entry.reservation.check().is_ok())
             .map(|entry| entry.description.clone())
+    }
+
+    /// Publication precedes validation locking, matching activation and registration.
+    pub(crate) fn capabilities(
+        &self,
+        coordinator: &super::coordinator::Coordinator,
+        output: usize,
+    ) -> Result<CapabilitySnapshot> {
+        let state = self.state.lock();
+        if matches!(state.slot, Slot::Closed) {
+            return Err(ENODEV);
+        }
+        let validation = coordinator.lock().snapshot(output)?;
+        let pending = state
+            .pending
+            .as_ref()
+            .filter(|entry| {
+                validation
+                    .pending
+                    .is_some_and(|(token, _)| token == entry.description.transition)
+            })
+            .map(|entry| entry.description.clone());
+        Ok(CapabilitySnapshot {
+            execution: state.description,
+            validation,
+            pending,
+        })
     }
 
     /// Install one bounded proposal under the caller's display/authority/startup locks.

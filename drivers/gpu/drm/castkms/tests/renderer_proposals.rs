@@ -197,6 +197,7 @@ mod cases {
         let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
         let proposal = candidate.propose_profile(profile()?)?;
         owner.revoke();
+        check(fixture.drm.device().execution.pending_profile().is_none())?;
         check(proposal.validate() == Err(EKEYREVOKED))?;
         check(matches!(
             candidate.propose_profile(profile()?),
