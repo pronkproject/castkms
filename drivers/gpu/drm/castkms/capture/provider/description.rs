@@ -71,7 +71,7 @@ impl Capture {
             return Err(EKEYREVOKED);
         }
         self.policy.permission.with_current(|current| {
-            self.policy.permission.device().execution.check_host()?;
+            self.policy.permission.display().execution.check_host()?;
             let _admission = self.authority.begin()?;
             Ok(Description {
                 capture: self.clone(),
