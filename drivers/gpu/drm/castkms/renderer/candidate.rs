@@ -132,6 +132,35 @@ impl Candidate {
         self.snapshot_then(image, || Ok(()))
     }
 
+    /// Copy the newest retained HOST result when it belongs to this control interval.
+    ///
+    /// No work is requested when HOST has no completed image. The retained image is only a
+    /// source for fresh private storage and never escapes through the returned snapshot.
+    pub(crate) fn snapshot_current(&self) -> Result<Snapshot> {
+        self.validate()?;
+        let host = self.access.device().host.current().map_err(|error| {
+            if error == EAGAIN {
+                ENODATA
+            } else {
+                error
+            }
+        })?;
+        let image = host.last_image().ok_or(ENODATA)?;
+        self.snapshot(&image)
+    }
+
+    /// Publish an already copied snapshot while its origin and candidate remain current.
+    pub(crate) fn publish_snapshot<R>(
+        &self,
+        snapshot: &Snapshot,
+        publish: impl FnOnce() -> R,
+    ) -> Result<R> {
+        self.with_current_control(|control| {
+            image_access::Current::new(control)?.check_snapshot(snapshot)?;
+            Ok(publish())
+        })
+    }
+
     fn snapshot_then(
         &self,
         image: &Completed,
