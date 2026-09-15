@@ -200,7 +200,7 @@ mod cases {
                 ContentSerial::for_update(None, true)?.ok_or(EINVAL)?,
                 None,
                 Some(records),
-            );
+            )?;
             let source = Source::new(1)?;
             let output = &fixture.drm.device().output;
             output.publish_with_configuration(

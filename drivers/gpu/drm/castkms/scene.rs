@@ -25,7 +25,7 @@ use kernel::{
     sync::{aref::ARef, Arc}, //
 };
 
-/// A conservative content revision within one plane lifetime, not an ownership identity.
+/// A conservative content revision within one output lifetime, not an ownership identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ContentSerial(NonZeroU64);
 
@@ -49,7 +49,9 @@ impl ContentSerial {
 /// An active output, including a blank output with no framebuffer to retain.
 #[derive(Clone)]
 pub(super) struct Scene {
-    primary: Option<Primary>,
+    pub(super) output_color: Option<Arc<crate::color::OutputColor>>,
+    layers: [Option<Arc<Primary>>; MAX_PLANES],
+    content: Option<ContentSerial>,
     // Historical attribution resolved by the accepted transaction, not live capture authority.
     owner: Option<MasterRef<Driver>>,
 }
@@ -57,10 +59,26 @@ pub(super) struct Scene {
 /// The framebuffer reference preserves storage lifetime, not the contents of that storage.
 #[derive(Clone)]
 pub(super) struct Primary {
-    framebuffer: FramebufferRef<Driver>,
-    geometry: Geometry,
-    content: ContentSerial,
-    producer: Option<Arc<Dependencies>>,
+    pub(super) yuv: (
+        kernel::drm::kms::plane::ColorEncoding,
+        kernel::drm::kms::plane::ColorRange,
+    ),
+    pub(super) color: Option<Arc<crate::color::Pipeline>>,
+    pub(super) framebuffer: FramebufferRef<Driver>,
+    pub(super) geometry: Geometry,
+    pub(super) producer: Option<Arc<Dependencies>>,
+    pub(super) owner: Option<MasterRef<Driver>>,
+    pub(super) kind: Kind,
+    pub(super) zpos: u32,
+}
+
+pub(super) const MAX_PLANES: usize = 24;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Kind {
+    Primary,
+    Overlay,
+    Cursor,
 }
 
 impl Primary {
@@ -76,9 +94,12 @@ impl Primary {
 impl Scene {
     /// Compare backing reservations without mapping pixels or acquiring a source read.
     pub(super) fn uses_reservation(&self, reservation: &Reservation) -> Result<bool> {
-        if let Some(primary) = &self.primary {
+        for primary in self.layers() {
             for plane in 0..primary.framebuffer.plane_count() {
-                if core::ptr::eq(primary.framebuffer.object_at(plane)?.reservation(), reservation) {
+                if core::ptr::eq(
+                    primary.framebuffer.object_at(plane)?.reservation(),
+                    reservation,
+                ) {
                     return Ok(true);
                 }
             }
@@ -87,16 +108,35 @@ impl Scene {
     }
 
     pub(super) fn primary(&self) -> Option<&Primary> {
-        self.primary.as_ref()
+        self.layers().find(|layer| layer.kind == Kind::Primary)
+    }
+
+    pub(super) fn layers(&self) -> impl Iterator<Item = &Primary> {
+        self.layers.iter().filter_map(|layer| layer.as_deref())
+    }
+
+    pub(super) fn set_layer(&mut self, index: usize, layer: Option<Arc<Primary>>) {
+        self.layers[index] = layer;
+    }
+
+    /// A composed image is attributable only when every contributing plane agrees.
+    pub(super) fn finalize(&mut self, content: Option<ContentSerial>) {
+        let owner = self.layers().next().and_then(|layer| layer.owner.clone());
+        if self.layers().next().is_some() {
+            self.owner = if self.layers().all(|layer| layer.owner == owner) {
+                owner
+            } else {
+                None
+            };
+            self.content = content;
+        } else {
+            self.content = None;
+        }
     }
 
     pub(super) fn producer_result(&self) -> Result {
         let mut pending = false;
-        if let Some(records) = self
-            .primary
-            .as_ref()
-            .and_then(|primary| primary.producer.as_ref())
-        {
+        for records in self.layers().filter_map(|layer| layer.producer.as_ref()) {
             for fence in records.iter() {
                 match fence.status() {
                     kernel::dma_fence::Status::Pending => pending = true,
@@ -113,23 +153,25 @@ impl Scene {
 
     /// Retain one native wait for the producer records acquired with this scene.
     pub(super) fn producer_completion(&self) -> Result<Option<ARef<kernel::dma_fence::Fence>>> {
-        self.primary
-            .as_ref()
-            .and_then(|primary| primary.producer.as_ref())
-            .map_or(Ok(None), |dependencies| dependencies.completion())
+        let mut records = KVec::new();
+        for dependencies in self.layers().filter_map(|layer| layer.producer.as_ref()) {
+            for fence in dependencies.iter() {
+                records.push(fence.to_owned_ref(), GFP_KERNEL)?;
+            }
+        }
+        kernel::dma_fence::Fence::merge_completion(&records)
     }
 
     /// Blank output has no framebuffer content revision, not an unchanged revision.
     pub(super) fn content_serial(&self) -> Option<ContentSerial> {
-        self.primary.as_ref().map(|primary| primary.content)
+        self.content
     }
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_failed(&self) -> bool {
-        self.primary
-            .as_ref()
-            .and_then(|primary| primary.producer.as_ref())
-            .is_some_and(|records| {
+        self.layers()
+            .filter_map(|primary| primary.producer.as_ref())
+            .any(|records| {
                 records.iter().any(|fence| {
                     matches!(fence.status(), kernel::dma_fence::Status::Complete(Err(_)))
                 })
@@ -138,8 +180,7 @@ impl Scene {
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn producer_status(&self) -> Option<kernel::dma_fence::Status> {
-        self.primary
-            .as_ref()?
+        self.primary()?
             .producer
             .as_ref()?
             .iter()
@@ -151,27 +192,40 @@ impl Scene {
         self.owner.as_ref()
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn new(
         framebuffer: FramebufferRef<Driver>,
         geometry: Geometry,
         content: ContentSerial,
         owner: Option<MasterRef<Driver>>,
         producer: Option<Arc<Dependencies>>,
-    ) -> Self {
-        Self {
-            primary: Some(Primary {
+    ) -> Result<Self> {
+        let mut scene = Self::blank(owner.clone());
+        scene.layers[0] = Some(Arc::new(
+            Primary {
+                yuv: (
+                    kernel::drm::kms::plane::ColorEncoding::Bt601,
+                    kernel::drm::kms::plane::ColorRange::Limited,
+                ),
+                color: None,
                 framebuffer,
                 geometry,
-                content,
                 producer,
-            }),
-            owner,
-        }
+                owner,
+                kind: Kind::Primary,
+                zpos: 0,
+            },
+            GFP_KERNEL,
+        )?);
+        scene.content = Some(content);
+        Ok(scene)
     }
 
     pub(super) fn blank(owner: Option<MasterRef<Driver>>) -> Self {
         Self {
-            primary: None,
+            output_color: None,
+            layers: core::array::from_fn(|_| None),
+            content: None,
             owner,
         }
     }
