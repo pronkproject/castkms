@@ -97,6 +97,50 @@ mod cases {
     }
 
     #[test]
+    fn sessions_reconcile_host_handback_while_the_old_endpoint_drains() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let old = Session::new(owner.access(), device.to_registered_ref())?;
+            let begin = old.begin(device.execution.describe().generation)?;
+            let old_id = begin.id();
+            begin.publish()?;
+            old.candidate(old_id)?.submit_private_probe(None)?;
+            let profile = old.propose_profile(old_id, linear_profile()?)?;
+            device.atomic_update(|mut transaction| {
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(profile.transition);
+                Ok(())
+            })?;
+            let gpu = old.activate(old_id)?;
+            let host = Session::new(owner.access(), device.to_registered_ref())?;
+            let begin = host.begin(gpu.generation)?;
+            let host_id = begin.id();
+            begin.publish()?;
+            let pending = host.propose_host(host_id)?;
+            device.atomic_update(|mut transaction| {
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(pending.transition);
+                Ok(())
+            })?;
+            let read = old.begin_source()?;
+            let read_id = read.id();
+            read.publish(|| ())?;
+            let result = host.activate(host_id)?;
+            check(result.profile == Profile::HostV1)?;
+            check(host.activate(host_id)? == result)?;
+            check(host.abort(host_id) == Err(EALREADY))?;
+            old.release_source(read_id, Completion::WithoutAccess)?;
+            check(old.begin_source().err() == Some(EIO))?;
+            drop(host.begin(result.generation)?);
+            old.close_for_test();
+            host.close_for_test();
+            device.execution.check_host()
+        })
+    }
+
+    #[test]
     fn replacing_a_negotiated_worker_retains_its_outstanding_source_read() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
