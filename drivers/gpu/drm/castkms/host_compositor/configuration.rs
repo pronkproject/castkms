@@ -11,6 +11,7 @@ use super::{
     worker, //
 };
 use crate::{
+    execution::publication::Publication,
     Driver,
     Output, //
 };
@@ -49,6 +50,7 @@ pub(crate) struct Configuration {
     #[pin]
     state: Mutex<State>,
     output: Arc<Output>,
+    execution: Arc<Publication>,
     budget: Arc<Budget>,
 }
 
@@ -97,7 +99,7 @@ impl Configuration {
         drop(retired);
 
         let pool = Pool::new(device, &self.budget, layout)?;
-        let worker = worker::Owner::new(self.output.clone(), pool)?;
+        let worker = worker::Owner::new(self.output.clone(), self.execution.clone(), pool)?;
         let handle = worker.handle();
         // The lifecycle guard excludes replacement and shutdown until publication.
         *self.state.lock() = State::Open(Some(Active { layout, worker }));
@@ -146,13 +148,14 @@ impl Configuration {
 pub(crate) struct Owner(Arc<Configuration>);
 
 impl Owner {
-    pub(crate) fn new(output: Arc<Output>) -> Result<Self> {
+    pub(crate) fn new(output: Arc<Output>, execution: Arc<Publication>) -> Result<Self> {
         let budget = Budget::new()?;
         Ok(Self(Arc::pin_init(
             pin_init!(Configuration {
                 lifecycle <- kernel::new_mutex!(()),
                 state <- kernel::new_mutex!(State::Open(None)),
                 output,
+                execution,
                 budget,
             }),
             GFP_KERNEL,
@@ -161,6 +164,12 @@ impl Owner {
 
     pub(crate) fn configuration(&self) -> Arc<Configuration> {
         self.0.clone()
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn new_for_test(output: Arc<Output>) -> Result<Self> {
+        let execution = Arc::pin_init(Publication::new(), GFP_KERNEL)?;
+        Self::new(output, execution)
     }
 
     /// Close outside DRM locks; waits for configuration and queued work to finish.

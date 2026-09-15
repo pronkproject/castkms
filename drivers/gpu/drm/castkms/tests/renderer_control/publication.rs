@@ -34,6 +34,30 @@ mod cases {
     }
 
     #[test]
+    fn gpu_publication_closes_new_host_source_admission() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            let host = device.host.configure(
+                device,
+                crate::host_compositor::layout::Layout::new(640, 480)?,
+            )?;
+            let mut prepared = device.execution.prepare(device, Profile::GpuV1)?;
+            let description = prepared.description()?;
+            candidate.with_activation_control(device, |_, locked| {
+                device.execution.publish(locked, &mut prepared)
+            })?;
+            check(description == device.execution.describe())?;
+            check(device.execution.admit_host().err() == Some(EOPNOTSUPP))?;
+            let request = host.request_outcome()?;
+            check(matches!(
+                request.wait()?,
+                crate::host_compositor::worker::Outcome::Failed(error)
+                    if error == EOPNOTSUPP
+            ))
+        })
+    }
+
     fn a_superseded_preparation_keeps_its_unpublished_storage() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;

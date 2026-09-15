@@ -315,11 +315,12 @@ enum {
 
 #define DRM_CASTKMS_EXECUTION_VERSION 1
 #define DRM_CASTKMS_EXECUTION_HOST_V1 1
+#define DRM_CASTKMS_EXECUTION_GPU_V1 2
 
 /**
  * struct drm_castkms_execution - CASTKMS_EXECUTION connector blob
  * @version: Description layout version, DRM_CASTKMS_EXECUTION_VERSION.
- * @profile: Active renderer profile, DRM_CASTKMS_EXECUTION_HOST_V1.
+ * @profile: Active DRM_CASTKMS_EXECUTION_* profile.
  * @generation: Nonzero capability generation within the connector lifetime.
  *
  * The read-only blob describes the renderer, not capture permission or completion.
@@ -335,6 +336,11 @@ enum {
  * color operation is supported. Clients include the cursor in primary rendering.
  * Disabled outputs and blank active outputs require no source allocation.
  * Successful PRIME import does not establish eligibility for that profile.
+ *
+ * GPU_V1 identifies one activated userspace renderer. New HOST source reads are
+ * rejected while that renderer owns execution; work admitted before activation
+ * retires normally. Renderer operations define the accepted delegated work and
+ * completion contract independently of final-image capture permission.
  */
 struct drm_castkms_execution {
 	__u32 version;

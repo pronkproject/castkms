@@ -146,6 +146,7 @@ impl Capture {
         }
         let permission = &self.policy.permission;
         permission.with_current(|current| {
+            permission.device().execution.check_host()?;
             if current.configuration() != configuration {
                 return Err(ESTALE);
             }
@@ -157,6 +158,7 @@ impl Capture {
             .reserve(layout, capacity)?;
         let storage = Storage::new(charge, self.authority.clone())?;
         let registered = permission.with_current(|current| {
+            permission.device().execution.check_host()?;
             if current.configuration() != configuration {
                 return Err(ESTALE);
             }
@@ -213,6 +215,12 @@ impl Stream {
     /// checks the image and claims through the native authority under policy locks.
     pub(crate) fn check_current(&self) -> Result {
         self.capture.policy.permission.with_current(|current| {
+            self.capture
+                .policy
+                .permission
+                .device()
+                .execution
+                .check_host()?;
             if current.configuration() != &self.configuration {
                 return Err(ESTALE);
             }

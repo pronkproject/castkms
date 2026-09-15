@@ -61,7 +61,7 @@ mod cases {
     #[test]
     fn shutdown_waits_for_lifecycle_operations_without_locking_handle_access() -> Result {
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
-        let owner = Owner::new(output)?;
+        let owner = Owner::new_for_test(output)?;
         let configuration = owner.configuration();
         let closer = Closer::new(configuration.clone())?;
 
