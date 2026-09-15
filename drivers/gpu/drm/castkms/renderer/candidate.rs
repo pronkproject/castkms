@@ -13,6 +13,7 @@ use crate::{
     host_snapshot::Snapshot,
     image_access,
     renderer_startup,
+    renderer::job::SourceJob,
     scene::Configuration,
     Driver, //
 };
@@ -230,6 +231,25 @@ impl Candidate {
             })
         })?;
         Ok((active, source, description))
+    }
+
+    /// Claim the current live scene under this candidate's active incarnation.
+    pub(crate) fn claim_source(
+        &self,
+        active: &renderer_startup::Active,
+        execution: Description,
+    ) -> Result<SourceJob> {
+        self.access.with_current(|current| {
+            active.with_candidate(&self.resources, || {
+                if current.configuration() != &self.configuration
+                    || self.access.device().execution.describe() != execution
+                    || execution.profile != Profile::GpuV1
+                {
+                    return Err(ESTALE);
+                }
+                SourceJob::claim(&current)
+            })
+        })
     }
 
     fn snapshot_then(

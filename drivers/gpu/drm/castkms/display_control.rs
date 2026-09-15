@@ -191,4 +191,17 @@ impl Current<'_> {
         }
         Ok(())
     }
+
+    /// Claim and retain the current scene while its authority and generation are stable.
+    ///
+    /// The claim, not the cloned scene, prevents source retirement. The caller must not
+    /// publish either owner until every enclosing authorization callback has succeeded.
+    pub(crate) fn claim_scene(
+        &self,
+    ) -> Result<(Scene, kernel::drm::preparation::ReadClaim)> {
+        self.check_scene_owner()?;
+        let claim = self.source.claim()?;
+        let scene = self.scene.cloned().ok_or(EAGAIN)?;
+        Ok((scene, claim))
+    }
 }
