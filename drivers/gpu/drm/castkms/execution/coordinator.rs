@@ -156,6 +156,12 @@ impl Coordinator {
         self.invalidate_where(|pending| Arc::ptr_eq(&pending.owner, owner));
     }
 
+    /// Invalidate transitions across an authority boundary without closing the device.
+    /// The caller excludes registration by the departing authority.
+    pub(crate) fn invalidate_all(&self) {
+        self.invalidate_where(|_| true);
+    }
+
     fn invalidate_where(&self, matches: impl Fn(&Pending) -> bool) {
         let mut retired: [_; crate::device::MAX_OUTPUTS as usize] =
             core::array::from_fn(|_| (None, None));
