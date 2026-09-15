@@ -190,9 +190,14 @@ mod cases {
 
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
-    fn imported_linear_storage_is_not_host_eligible() -> Result {
+    fn imported_linear_storage_is_host_eligible() -> Result {
         with_exporter(|source| {
             let buffer = source.drm.export_dumb(64, 64, 32)?;
+            {
+                let mut write = kernel::dma_buf::cpu_access::Write::new(&buffer)?;
+                write.copy_from_slice(256 + 12, &[0x12, 0x34, 0x56, 0x78])?;
+                write.finish()?;
+            }
             let target = CastKms::new(c"castkms-host-import-test")?;
             let object = {
                 let registered = target._display.registration_guard().ok_or(ENODEV)?;
@@ -216,10 +221,10 @@ mod cases {
                     },
                 )?
             };
-            check(matches!(
-                HostFramebuffer::new(&fb, geometry(64, 64)),
-                Err(EOPNOTSUPP)
-            ))?;
+            let host = HostFramebuffer::new(&fb, geometry(64, 64))?;
+            let mut bytes = [0; 4];
+            host.read_for_test(0, 12, 1, &mut bytes)?;
+            check(bytes == [0x12, 0x34, 0x56, 0x78])?;
             Ok(())
         })
     }
