@@ -3,7 +3,10 @@
 //! Immutable whole-scene requirements, without renderer authority or CPU layout policy.
 
 use crate::scene::Geometry;
-use kernel::{drm::fourcc, prelude::*};
+use kernel::{
+    drm::{fourcc, kms::colorop::Operation},
+    prelude::*,
+};
 
 pub(crate) const MAX_FORMATS: usize = 256;
 
@@ -175,6 +178,25 @@ impl Profile {
         }
         Ok(())
     }
+
+    fn check_color(&self, pipeline: Option<&crate::color::Pipeline>) -> Result {
+        let Some(pipeline) = pipeline else {
+            return Ok(());
+        };
+        let limits = self.limits.color;
+        if pipeline.operations().len() > limits.operations {
+            return Err(EOPNOTSUPP);
+        }
+        for operation in pipeline.operations() {
+            match operation {
+                Operation::Bypass => {}
+                Operation::SrgbEotf | Operation::SrgbInverseEotf if limits.srgb => {}
+                Operation::Matrix(_) if limits.plane_matrix => {}
+                _ => return Err(EOPNOTSUPP),
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
@@ -331,6 +353,36 @@ mod tests {
                     None
                 )?
                 .check_geometry(geometry, [2; 2], [4; 2]),
+                Err(EOPNOTSUPP)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn plane_color_operations_require_declared_support() -> Result {
+        let mut operations = KVec::new();
+        operations.push(Operation::SrgbInverseEotf, GFP_KERNEL)?;
+        operations.push(Operation::Matrix([0; 12]), GFP_KERNEL)?;
+        let pipeline = crate::color::Pipeline::new(operations)?;
+        let limits = limits();
+        profile(limits, None)?.check_color(pipeline.as_deref())?;
+        for color in [
+            ColorLimits {
+                srgb: false,
+                ..limits.color
+            },
+            ColorLimits {
+                plane_matrix: false,
+                ..limits.color
+            },
+            ColorLimits {
+                operations: 1,
+                ..limits.color
+            },
+        ] {
+            assert_eq!(
+                profile(Limits { color, ..limits }, None)?.check_color(pipeline.as_deref()),
                 Err(EOPNOTSUPP)
             );
         }
