@@ -49,7 +49,10 @@ impl Image {
         let size = layout.size();
         let charge = budget.reserve(size)?;
         let object = shmem::Object::<gem::Object>::new(
-            device, size, Default::default(), Default::default(),
+            device,
+            size,
+            Default::default(),
+            Default::default(),
         )?;
         let map = object.owned_vmap()?;
         // SAFETY: The new native allocation has no other pixel users or exported handles.
@@ -131,15 +134,17 @@ impl Image {
         Ok(())
     }
 
-    /// Copy a matching source while the caller holds its synchronous CPU read claim.
+    /// Copy an opaque source while the caller holds its synchronous CPU read claim.
     pub(super) fn copy_from(&mut self, source: &super::framebuffer::Mapping) -> Result {
         let (width, height) = self.dimensions();
-        if source.width != width || source.height != height {
+        if source.geometry.output != [width, height] {
             return Err(EINVAL);
         }
         for y in 0..height as usize {
             let output = self.row(y as u32)?;
-            if source.format == kernel::drm::fourcc::XRGB8888 {
+            if source.format == kernel::drm::fourcc::XRGB8888
+                && source.geometry.is_identity(source.width, source.height)
+            {
                 let mut bytes = [0; 1024];
                 for start in (0..self.layout.pitch()).step_by(bytes.len()) {
                     let len = (self.layout.pitch() - start).min(bytes.len());
@@ -149,9 +154,14 @@ impl Image {
                 continue;
             }
             for x in 0..width as usize {
-                let pixel = crate::formats::pixel(source.format, x, y, |plane, x, y, bytes| {
-                    source.read(plane, x, y, bytes)
-                })?;
+                let pixel = match source.geometry.sample(x as u32, y as u32) {
+                    Some((sx, sy)) => {
+                        crate::formats::pixel(source.format, sx, sy, |plane, x, y, bytes| {
+                            source.read(plane, x, y, bytes)
+                        })?
+                    }
+                    None => 0,
+                };
                 let offset = x * 4;
                 io_project!(output, [try: offset..offset + 4])
                     .copy_from_slice(&pixel.to_le_bytes());
