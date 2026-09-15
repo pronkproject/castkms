@@ -271,7 +271,8 @@ struct drm_castkms_create_renderer_control {
  * @generation: current nonzero execution generation
  *
  * Query succeeds only while this renderer capability, its issuing master
- * interval, and its exact enabled output remain current. A successful query is
+ * interval, and its exact output remain current, including disabled video.
+ * A successful query is
  * an observation; it does not reserve a later takeover or source operation.
  */
 struct drm_castkms_renderer_query {
@@ -308,13 +309,14 @@ struct drm_castkms_renderer_takeover {
 
 /**
  * struct drm_castkms_renderer_begin_takeover - reserve candidate startup
- * @expected_generation: current HOST execution generation from query
+ * @expected_generation: current execution generation from query
  * @result: pointer to writable struct drm_castkms_renderer_takeover storage
  * @flags: must be zero
  * @reserved: must be zero
  *
- * Only one candidate may be reserved for an output. HOST execution and capture
- * remain active. Success returns a candidate description after all fallible
+ * Only one candidate may be reserved for an output. The old execution remains
+ * active. BEGIN requires enabled video; a later tagged update may disable it.
+ * Success returns a candidate description after all fallible
  * user-memory access. Failure publishes no candidate; output memory may have
  * been partially written and must not be used.
  */
@@ -417,13 +419,17 @@ struct drm_castkms_renderer_submit_probe {
 
 /**
  * struct drm_castkms_renderer_commit_takeover - activate delegated execution
- * @candidate_id: candidate whose submitted probe completed successfully
+ * @candidate_id: ready GPU candidate or a registered HOST candidate
  * @flags: must be zero
  * @reserved: must be zero
  *
  * Success atomically transfers the candidate into active-renderer ownership,
  * publishes a new GPU execution generation, and closes new HOST source-read
  * admission. Work admitted before the transition retires normally.
+ * With REGISTER_PROFILE, a published tagged update must first install the
+ * two-contract gate. A HOST target needs no probe and publishes HOST execution
+ * instead. Pending gate/publication readiness returns EAGAIN. Use a fresh
+ * endpoint for replacement or HOST handback; retain the old endpoint to drain.
  *
  * Repeating the operation for the same active candidate succeeds so a caller
  * can reconcile a lost reply. A pending probe returns EAGAIN; a failed probe
@@ -765,7 +771,7 @@ enum {
  * struct drm_castkms_execution - CASTKMS_EXECUTION connector blob
  * @version: Description layout version, DRM_CASTKMS_EXECUTION_VERSION.
  * @profile: Active DRM_CASTKMS_EXECUTION_* profile.
- * @generation: Nonzero capability generation within the connector lifetime.
+ * @generation: Nonzero execution generation within the connector lifetime.
  *
  * The read-only blob describes the renderer, not capture permission or completion.
  * All fields use native byte order. Version 1 has exactly 16 bytes. Unknown
