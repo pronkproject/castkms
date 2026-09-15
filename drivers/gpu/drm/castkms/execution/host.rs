@@ -21,7 +21,7 @@ pub(crate) const MAX_ALLOCATION_BYTES: usize = 512 * 1024 * 1024;
 
 pub(crate) use crate::formats::FORMATS;
 
-/// Validate linear storage and full-frame sampling without granting source access.
+/// Validate linear storage and bounded sampling without granting source access.
 pub(crate) fn check_framebuffer(image: &Framebuffer<Driver>, geometry: Geometry) -> Result {
     let width = image.width();
     let height = image.height();
@@ -34,12 +34,10 @@ pub(crate) fn check_framebuffer(image: &Framebuffer<Driver>, geometry: Geometry)
         || image
             .modifier()
             .is_some_and(|modifier| modifier != fourcc::FORMAT_MOD_LINEAR)
-        || geometry.source != [0, 0, width << 16, height << 16]
-        || geometry.destination != [width, height]
-        || geometry.output != [width, height]
     {
         return Err(EINVAL);
     }
+    geometry.check(width, height)?;
     for index in 0..image.plane_count() {
         let object = image.object_at(index)?;
         let layout = crate::formats::plane(image.format(), index)?;

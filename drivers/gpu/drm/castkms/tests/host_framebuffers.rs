@@ -86,18 +86,21 @@ mod cases {
     }
 
     #[test]
-    fn sampling_requires_the_entire_framebuffer() -> Result {
+    fn sampling_accepts_cropping_scaling_and_clipping() -> Result {
         let fixture = Fixture::new()?;
         let fb = native(&fixture, 4096, 64, 2, 256, 0, false)?;
         let mut crop = geometry(64, 2);
         crop.source[0] = 1 << 16;
-        check(matches!(HostFramebuffer::new(&fb, crop), Err(EINVAL)))?;
+        crop.source[2] = 63 << 16;
+        HostFramebuffer::new(&fb, crop)?;
         let mut scale = geometry(64, 2);
         scale.destination[0] = 32;
-        check(matches!(HostFramebuffer::new(&fb, scale), Err(EINVAL)))?;
+        HostFramebuffer::new(&fb, scale)?;
         let mut clipped = geometry(64, 2);
         clipped.output[0] = 32;
-        check(matches!(HostFramebuffer::new(&fb, clipped), Err(EINVAL)))?;
+        HostFramebuffer::new(&fb, clipped)?;
+        crop.source[2] = 64 << 16;
+        check(matches!(HostFramebuffer::new(&fb, crop), Err(EINVAL)))?;
         Ok(())
     }
 
