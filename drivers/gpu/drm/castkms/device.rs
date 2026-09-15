@@ -38,8 +38,7 @@ pub(super) struct Display {
 
 #[pin_data]
 pub(super) struct State {
-    #[pin]
-    pub(crate) validation: crate::execution::coordinator::Coordinator,
+    pub(crate) validation: Arc<crate::execution::coordinator::Coordinator>,
     pub(super) enable_cursor: bool,
     pub(super) enable_overlay: bool,
     pub(super) enable_plane_pipeline: bool,
@@ -71,7 +70,10 @@ impl State {
         enable_plane_pipeline: bool,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
-            validation <- crate::execution::coordinator::Coordinator::new(displays.len()),
+            validation: Arc::pin_init(
+                crate::execution::coordinator::Coordinator::new(displays.len()),
+                GFP_KERNEL,
+            )?,
             enable_cursor,
             enable_overlay,
             enable_plane_pipeline,
