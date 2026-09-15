@@ -21,6 +21,16 @@ pub(crate) struct OutputColor {
 }
 
 impl OutputColor {
+    pub(crate) fn description(
+        &self,
+    ) -> (Option<&[[u16; 3]]>, Option<&[u64; 12]>, Option<&[[u16; 3]]>) {
+        (
+            self.degamma.as_ref().map(|lut| lut.entries.as_slice()),
+            self.matrix.as_ref(),
+            self.gamma.as_ref().map(|lut| lut.entries.as_slice()),
+        )
+    }
+
     pub(crate) fn new(
         degamma: Option<&[ColorLut]>,
         ctm: Option<&ColorCtm>,
