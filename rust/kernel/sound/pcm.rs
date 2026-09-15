@@ -146,10 +146,15 @@ impl Stream {
 
     /// Notify ALSA that at least one playback period has elapsed.
     pub fn period_elapsed(&self) -> Result {
-        self.notify()
+        self.notify(false)
     }
 
-    fn notify(&self) -> Result {
+    /// Interrupt native playback with an underrun indication.
+    pub fn xrun(&self) -> Result {
+        self.notify(true)
+    }
+
+    fn notify(&self, xrun: bool) -> Result {
         let buffer = self.shared.notifications.lock();
         if buffer.raw.is_null() || buffer.generation != self.generation {
             return Err(ENODEV);
@@ -157,7 +162,11 @@ impl Stream {
         // SAFETY: The notification guard excludes native runtime retirement, including
         // completion of any driver callbacks invoked by ALSA under its stream lock.
         unsafe {
-            bindings::snd_pcm_period_elapsed(buffer.raw);
+            if xrun {
+                bindings::snd_pcm_stop_xrun(buffer.raw);
+            } else {
+                bindings::snd_pcm_period_elapsed(buffer.raw);
+            }
         }
         Ok(())
     }
@@ -473,6 +482,7 @@ mod tests {
         };
         assert_eq!(stream.copy_frames(0, &mut [0; 4]), Err(ENODEV));
         assert_eq!(stream.period_elapsed(), Err(ENODEV));
+        assert_eq!(stream.xrun(), Err(ENODEV));
         Ok(())
     }
 
@@ -489,6 +499,7 @@ mod tests {
         };
         assert_eq!(stream.copy_frames(0, &mut [0; 4]), Err(ENODEV));
         assert_eq!(stream.period_elapsed(), Err(ENODEV));
+        assert_eq!(stream.xrun(), Err(ENODEV));
         Ok(())
     }
 
