@@ -205,6 +205,10 @@ impl Stream {
         self.capture.policy.permission.device()
     }
 
+    pub(super) fn host(&self) -> &crate::host_compositor::configuration::Configuration {
+        &self.capture.policy.permission.display().host
+    }
+
     pub(super) fn layout(&self) -> Layout {
         self.storage.layout()
     }
