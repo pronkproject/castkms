@@ -339,4 +339,57 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn every_layer_retains_producer_errors_and_reservations() -> Result {
+        use kernel::drm::{
+            gem::BaseObject,
+            kms::{
+                framebuffer::dependencies::Dependencies,
+                plane::{ColorEncoding, ColorRange},
+            },
+        };
+        let fixture = Fixture::new()?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        let mut scene = fixture
+            .drm
+            .device()
+            .output
+            .inspect(|scene| scene.cloned())
+            .ok_or(EINVAL)?;
+        let overlay = small_image(&fixture, 0xffff0000)?;
+        let mut fence = kernel::dma_fence::testing::ManualFence::new()?;
+        let producer = Arc::new(
+            Dependencies::acquire(&overlay, Some(fence.fence().to_owned_ref()))?,
+            GFP_KERNEL,
+        )?;
+        scene.set_layer(
+            8,
+            Some(Arc::new(
+                scene::Primary {
+                    framebuffer: overlay.clone(),
+                    geometry: scene::Geometry {
+                        source: [0, 0, 2 << 16, 2 << 16],
+                        position: [0, 0],
+                        destination: [2, 2],
+                        output: [640, 480],
+                    },
+                    producer: Some(producer),
+                    owner: None,
+                    kind: scene::Kind::Overlay,
+                    zpos: 1,
+                    color: None,
+                    yuv: (ColorEncoding::Bt601, ColorRange::Full),
+                },
+                GFP_KERNEL,
+            )?),
+        );
+        check(scene.uses_reservation(overlay.object_at(0)?.reservation())?)?;
+        check(scene.producer_result() == Err(EAGAIN))?;
+        check(scene.producer_completion()?.is_some())?;
+        fence.complete(Err(EIO))?;
+        check(scene.producer_result() == Err(EIO))?;
+        Ok(())
+    }
+
 }
