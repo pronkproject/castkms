@@ -27,6 +27,12 @@ pub(crate) const FORMATS: &[u32] = &[
     R2,
     R4,
     R8,
+    NV12,
+    NV21,
+    NV16,
+    NV61,
+    NV24,
+    NV42,
 ];
 
 /// Sampling factors and stored bits per sample in one format plane.
