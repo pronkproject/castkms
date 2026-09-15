@@ -539,6 +539,14 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
             bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE) })
     }
 
+    /// Advertise nearest-neighbor scaling, also used for the default filter choice.
+    pub fn create_nearest_scaling_filter_property(&self) -> Result {
+        // SAFETY: Setup owns the initialized plane, and both bits name valid filters.
+        to_result(unsafe { bindings::drm_plane_create_scaling_filter_property(self.as_raw(),
+            (1 << bindings::drm_scaling_filter_DRM_SCALING_FILTER_DEFAULT)
+                | (1 << bindings::drm_scaling_filter_DRM_SCALING_FILTER_NEAREST_NEIGHBOR)) })
+    }
+
     /// Attach an adjustable plane stacking position before registration.
     pub fn create_zpos_property(&self, initial: u32, min: u32, max: u32) -> Result {
         if initial < min || initial > max {
