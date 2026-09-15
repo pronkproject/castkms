@@ -3,6 +3,7 @@
 //! Display execution limits, independent of pixel access and capture permission.
 
 pub(crate) mod host;
+pub(crate) mod capabilities;
 
 pub(crate) mod property;
 pub(crate) mod publication;
