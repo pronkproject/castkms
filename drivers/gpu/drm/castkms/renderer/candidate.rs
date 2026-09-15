@@ -208,7 +208,7 @@ impl Candidate {
 
     /// Publish GPU execution after this candidate's native probe succeeds.
     ///
-    /// Metadata allocation occurs before display control. Publication and device-wide
+    /// Metadata allocation occurs before display control. Publication and per-output
     /// active ownership transfer share the startup exclusion interval. A pending or failed
     /// probe changes neither execution nor candidate state.
     pub(crate) fn activate(
@@ -220,13 +220,20 @@ impl Candidate {
         if !core::ptr::eq(device, registered_device) {
             return Err(EINVAL);
         }
-        let mut prepared = device.execution.prepare(registered, Profile::GpuV1)?;
+        let mut prepared = self
+            .access
+            .display()
+            .execution
+            .prepare(registered, Profile::GpuV1)?;
         let description = prepared.description()?;
         let (active, source) = self.access.with_installed(registered, |current, locked| {
             self.check_control(&current)?;
             self.resources.activate(|| {
                 let source = self.probe.completed_source()?;
-                device.execution.publish(locked, &mut prepared)?;
+                self.access
+                    .display()
+                    .execution
+                    .publish(locked, &mut prepared)?;
                 Ok(source)
             })
         })?;
