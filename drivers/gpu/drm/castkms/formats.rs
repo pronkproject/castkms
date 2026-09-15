@@ -2,6 +2,7 @@
 
 //! Source pixel storage and conversion to the host's opaque RGB image.
 
+use kernel::drm::kms::plane::{ColorEncoding, ColorRange};
 use kernel::{drm::fourcc::*, prelude::*};
 
 pub(crate) const FORMATS: &[u32] = &[
@@ -154,14 +155,42 @@ pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
 /// Decode a pixel using bounded reads at (plane, byte within row, row).
 ///
 /// Alpha is ignored for the opaque primary plane. YUV uses BT.601 limited range,
-/// the default DRM plane color interpretation; no color properties are exposed.
+/// a fixed interpretation used by the packed-pixel compatibility helper.
 pub(crate) fn pixel(
     format: u32,
     x: usize,
     y: usize,
     mut read: impl FnMut(usize, usize, usize, &mut [u8]) -> Result,
 ) -> Result<u32> {
-    let rgb = |r: u32, g: u32, b: u32| (r << 16) | (g << 8) | b;
+    // Preserve the unused byte for the opaque packed-copy path.
+    if format == XRGB8888 {
+        let mut bytes = [0; 4];
+        read(0, x * 4, y, &mut bytes)?;
+        return Ok(u32::from_le_bytes(bytes));
+    }
+    let [r, g, b] = channels(format, x, y, 255, None, read)?;
+    Ok((r << 16) | (g << 8) | b)
+}
+
+/// Decode normalized sixteen-bit channels without quantizing high-depth input to eight bits.
+pub(crate) fn pixel16(
+    format: u32,
+    x: usize,
+    y: usize,
+    color: (ColorEncoding, ColorRange),
+    read: impl FnMut(usize, usize, usize, &mut [u8]) -> Result,
+) -> Result<[u32; 3]> {
+    channels(format, x, y, 65535, Some(color), read)
+}
+
+fn channels(
+    format: u32,
+    x: usize,
+    y: usize,
+    maximum: u64,
+    color: Option<(ColorEncoding, ColorRange)>,
+    mut read: impl FnMut(usize, usize, usize, &mut [u8]) -> Result,
+) -> Result<[u32; 3]> {
     if let Some((hs, vs, planar, swap, depth)) = yuv(format) {
         let bytes = if depth == 8 { 1 } else { 2 };
         let mut luma = [0; 2];
@@ -185,29 +214,45 @@ pub(crate) fn pixel(
         let a = sample(&chroma[..bytes]) - 128 * 256;
         let b = sample(&chroma[bytes..]) - 128 * 256;
         let (u, v) = if swap { (b, a) } else { (a, b) };
-        let channel = |v: i64| ((v + (1 << 23)) >> 24).clamp(0, 255) as u32;
-        return Ok(rgb(
+        let channel = |v: i64| {
+            let value = (v.max(0) * maximum as i64 + 255 * (1 << 23)) / (255 * (1 << 24));
+            value.min(maximum as i64) as u32
+        };
+        return Ok([
             channel(76284 * yy + 104595 * v),
             channel(76284 * yy - 25624 * u - 53281 * v),
             channel(76284 * yy + 132251 * u),
-        ));
+        ]);
     }
     let bits = plane(format, 0)?.bits;
     let mut bytes = [0; 8];
     read(0, x * bits / 8, y, &mut bytes[..bits.div_ceil(8)])?;
     let word = u64::from_le_bytes(bytes);
-    if format == XRGB8888 {
-        return Ok(word as u32);
-    }
     let scale = |v: u64, bits: u32| -> u32 {
         let max = (1 << bits) - 1;
-        ((v * 255 + max / 2) / max) as u32
+        ((v * maximum + max / 2) / max) as u32
     };
     let (r, g, b) = match format {
-        XRGB8888 | ARGB8888 | RGB888 => (bytes[2] as u32, bytes[1] as u32, bytes[0] as u32),
-        XBGR8888 | ABGR8888 | BGR888 => (bytes[0] as u32, bytes[1] as u32, bytes[2] as u32),
-        RGBA8888 => (bytes[3] as u32, bytes[2] as u32, bytes[1] as u32),
-        BGRA8888 => (bytes[1] as u32, bytes[2] as u32, bytes[3] as u32),
+        XRGB8888 | ARGB8888 | RGB888 => (
+            scale(bytes[2] as u64, 8),
+            scale(bytes[1] as u64, 8),
+            scale(bytes[0] as u64, 8),
+        ),
+        XBGR8888 | ABGR8888 | BGR888 => (
+            scale(bytes[0] as u64, 8),
+            scale(bytes[1] as u64, 8),
+            scale(bytes[2] as u64, 8),
+        ),
+        RGBA8888 => (
+            scale(bytes[3] as u64, 8),
+            scale(bytes[2] as u64, 8),
+            scale(bytes[1] as u64, 8),
+        ),
+        BGRA8888 => (
+            scale(bytes[1] as u64, 8),
+            scale(bytes[2] as u64, 8),
+            scale(bytes[3] as u64, 8),
+        ),
         XRGB2101010 | ARGB2101010 => (
             scale((word >> 20) & 1023, 10),
             scale((word >> 10) & 1023, 10),
@@ -245,5 +290,5 @@ pub(crate) fn pixel(
         }
         _ => return Err(EINVAL),
     };
-    Ok(rgb(r, g, b))
+    Ok([r, g, b])
 }
