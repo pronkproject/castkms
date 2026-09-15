@@ -181,4 +181,36 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn stacking_changes_and_invalid_positions_are_atomic() -> Result {
+        let fixture = Fixture::new_features(c"castkms-overlay-stacking", 1, true, true)?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        let red = small_image(&fixture, 0xffff0000)?;
+        let green = small_image(&fixture, 0xff00ff00)?;
+        configure(&fixture, 2, &red, [0, 0], [2, 2])?;
+        configure(&fixture, 3, &green, [0, 0], [2, 2])?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        check(pixels(&fixture, &pool)? == [0xff00, 0xff00, 0, 0])?;
+        fixture.drm.update(|transaction| {
+            transaction
+                .add_plane_state(fixture.drm.plane_at(2)?)?
+                .set_zpos(2)
+        })?;
+        check(pixels(&fixture, &pool)? == [0xff0000, 0xff0000, 0, 0])?;
+        check(
+            fixture.drm.update(|transaction| {
+                transaction
+                    .add_plane_state(fixture.drm.plane_at(2)?)?
+                    .set_zpos(31)
+            }) == Err(EINVAL),
+        )?;
+        check(pixels(&fixture, &pool)? == [0xff0000, 0xff0000, 0, 0])?;
+        Ok(())
+    }
+
 }
