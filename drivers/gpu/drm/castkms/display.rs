@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! One development output and its accepted display descriptions.
+//! Virtual display pipelines and their accepted display descriptions.
 
 use super::{
     monitor,
@@ -432,38 +432,41 @@ impl KmsDriver for Driver {
 
     fn create_objects(dev: &UnregisteredKmsDevice<'_, Self>) -> Result {
         dev.enable_preparation(8)?;
-        let plane = plane::UnregisteredPlane::<Plane>::new(
-            dev,
-            0,
-            &[fourcc::XRGB8888],
-            Some(&[fourcc::FORMAT_MOD_LINEAR]),
-            plane::Type::Primary,
-            None,
-            (),
-        )?;
-        let crtc = crtc::UnregisteredCrtc::<Crtc>::new(
-            dev,
-            plane,
-            None::<&plane::UnregisteredPlane<Plane>>,
-            None,
-            dev.displays.first().ok_or(EINVAL)?.clone(),
-        )?;
-        let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
-            dev,
-            encoder::Type::Virtual,
-            crtc.mask(),
-            0,
-            None,
-            (),
-        )?;
-        let connector = connector::UnregisteredConnector::<Connector>::new(
-            dev,
-            connector::Type::Virtual,
-            dev.monitor.clone(),
-        )?;
-        connector.attach_edid_property();
-        dev.execution.attach(connector)?;
-        connector.attach_encoder(encoder)
+        for display in &dev.displays {
+            let plane = plane::UnregisteredPlane::<Plane>::new(
+                dev,
+                0,
+                &[fourcc::XRGB8888],
+                Some(&[fourcc::FORMAT_MOD_LINEAR]),
+                plane::Type::Primary,
+                None,
+                (),
+            )?;
+            let crtc = crtc::UnregisteredCrtc::<Crtc>::new(
+                dev,
+                plane,
+                None::<&plane::UnregisteredPlane<Plane>>,
+                None,
+                display.clone(),
+            )?;
+            let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
+                dev,
+                encoder::Type::Virtual,
+                crtc.mask(),
+                0,
+                None,
+                (),
+            )?;
+            let connector = connector::UnregisteredConnector::<Connector>::new(
+                dev,
+                connector::Type::Virtual,
+                display.monitor.clone(),
+            )?;
+            connector.attach_edid_property();
+            display.execution.attach(connector)?;
+            connector.attach_encoder(encoder)?;
+        }
+        Ok(())
     }
 
     fn atomic_commit_tail<'a>(
