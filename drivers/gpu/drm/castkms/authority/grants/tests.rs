@@ -178,7 +178,7 @@ impl Drop for Closing {
     }
 }
 
-#[kunit_tests(rust_castkms_capture_grants)]
+#[kunit_tests(rust_castkms_authority_grants)]
 mod cases {
     use super::*;
 

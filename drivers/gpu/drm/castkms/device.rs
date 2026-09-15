@@ -3,10 +3,12 @@
 //! Registration-owned shutdown of the driver's independently synchronized state.
 
 use super::{
-    authority::Authority,
+    authority::{
+        grants,
+        Authority, //
+    },
     capture::{
         budget,
-        grants,
         streams, //
     },
     execution::publication::Publication,
