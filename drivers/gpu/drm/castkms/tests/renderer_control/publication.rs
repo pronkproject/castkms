@@ -76,12 +76,23 @@ mod cases {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let session = Session::new(owner.access(), device.to_registered_ref())?;
+            let initial = session.capabilities()?;
+            check(initial.validation.generation == 1 && initial.validation.epoch == 1)?;
+            check(matches!(
+                initial.validation.active,
+                crate::execution::validation::Contract::Host
+            ))?;
             let pending = session.begin(device.execution.describe().generation)?;
             let id = pending.id();
             pending.publish()?;
             session.candidate(id)?.submit_private_probe(None)?;
             let proposal =
                 session.propose_profile(id, crate::tests::renderer_proposals::profile()?)?;
+            let pending = session.capabilities()?;
+            check(pending.validation.generation == initial.validation.generation)?;
+            check(pending.validation.epoch == initial.validation.epoch)?;
+            check(pending.validation.pending == Some((proposal.transition, false)))?;
+            check(pending.pending.ok_or(EINVAL)?.generation == proposal.generation)?;
             check(session.pending_profile()?.ok_or(EINVAL)?.transition == proposal.transition)?;
             check(session.activate(id) == Err(EAGAIN))?;
             device.atomic_update(|mut transaction| {
@@ -91,7 +102,19 @@ mod cases {
                     .tag_transition(proposal.transition);
                 Ok(())
             })?;
+            let gated = session.capabilities()?;
+            check(gated.validation.pending == Some((proposal.transition, true)))?;
+            check(gated.validation.epoch == initial.validation.epoch + 1)?;
             let description = session.activate(id)?;
+            let activated = session.capabilities()?;
+            check(activated.execution == description)?;
+            check(activated.validation.generation == proposal.generation)?;
+            check(activated.validation.epoch == initial.validation.epoch + 2)?;
+            check(activated.validation.pending.is_none() && activated.pending.is_none())?;
+            check(matches!(
+                activated.validation.active,
+                crate::execution::validation::Contract::Renderer(_)
+            ))?;
             check(session.activate(id)? == description)?;
             check(session.pending_profile()?.is_none())?;
             check(session.abort(id) == Err(EALREADY))?;

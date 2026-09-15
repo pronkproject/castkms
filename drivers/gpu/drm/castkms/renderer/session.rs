@@ -85,7 +85,22 @@ impl Session {
 
     pub(crate) fn description(&self) -> Result<Description> {
         self.access
-            .with_current(|_| Ok(self.access.display().execution.describe()))
+            .with_output(|| Ok(self.access.display().execution.describe()))
+    }
+
+    pub(crate) fn capabilities(&self) -> Result<crate::execution::publication::CapabilitySnapshot> {
+        self.access.with_output(|| {
+            let device = self.access.device();
+            let output = device
+                .displays
+                .iter()
+                .position(|display| core::ptr::eq(&**display, self.access.display()))
+                .ok_or(EINVAL)?;
+            self.access
+                .display()
+                .execution
+                .capabilities(&device.validation, output)
+        })
     }
 
     /// Retain one proposed profile independently of the file transport's reply.
@@ -115,12 +130,12 @@ impl Session {
         Ok(description)
     }
 
-    /// Historical pending metadata for reconciliation, not permission to activate it.
+    /// A current pending observation for reconciliation, not permission to activate it.
     pub(crate) fn pending_profile(
         &self,
     ) -> Result<Option<crate::execution::proposal::DescriptionSnapshot>> {
         self.access
-            .with_current(|_| Ok(self.access.display().execution.pending_profile()))
+            .with_output(|| Ok(self.access.display().execution.pending_profile()))
     }
 
     pub(crate) fn begin(&self, expected_generation: u64) -> Result<Pending<'_>> {
