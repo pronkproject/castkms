@@ -37,7 +37,8 @@ mod cases {
     fn native_completion_remains_pending_until_the_fence_signals() -> Result {
         let probe = probe()?;
         let mut completion = ManualFence::new()?;
-        probe.submit_then(Source::Snapshot(None), Some(completion.fence()), || Ok(()))?;
+        probe.publish_snapshot(None, || ())?;
+        probe.submit_snapshot_then(Some(completion.fence()), || Ok(()))?;
         assert_eq!(probe.result(), Ok(false));
         assert_eq!(probe.completed_source(), Err(EAGAIN));
         completion.complete(Ok(()))?;
@@ -63,7 +64,8 @@ mod cases {
             probe.submit_then(Source::Private, None, || Err(ESTALE)),
             Err(ESTALE)
         );
-        probe.submit_then(Source::Snapshot(None), None, || Ok(()))?;
+        probe.publish_snapshot(None, || ())?;
+        probe.submit_snapshot_then(None, || Ok(()))?;
         assert_eq!(probe.completed_source(), Ok(Source::Snapshot(None)));
         Ok(())
     }
@@ -76,6 +78,23 @@ mod cases {
             probe.submit_then(Source::Private, None, || Ok(())),
             Err(EALREADY)
         );
+        assert_eq!(probe.submit_snapshot_then(None, || Ok(())), Err(EALREADY));
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_probe_requires_one_published_startup_image() -> Result {
+        let probe = probe()?;
+        assert_eq!(probe.submit_snapshot_then(None, || Ok(())), Err(ENODATA));
+        let mut publications = 0;
+        probe.publish_snapshot(None, || publications += 1)?;
+        assert_eq!(
+            probe.publish_snapshot(None, || publications += 1),
+            Err(EALREADY)
+        );
+        assert_eq!(publications, 1);
+        probe.submit_snapshot_then(None, || Ok(()))?;
+        assert_eq!(probe.completed_source(), Ok(Source::Snapshot(None)));
         Ok(())
     }
 }
