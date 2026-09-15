@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
-//! Bounded CPU writes, with exporter mapping and cache-maintenance lifetimes.
+//! Bounded CPU access, with exporter mapping and cache-maintenance lifetimes.
 
 use super::DmaBuf;
 use crate::{
@@ -126,3 +126,103 @@ impl Drop for Write<'_> {
 
 #[cfg(CONFIG_KUNIT)]
 mod tests;
+
+/// An owned system-memory mapping for one CPU read interval.
+///
+/// Construction may wait for implicit dependencies and acquires reservation locks.
+/// Call outside source claims and modeset locks. The interval maintains exporter
+/// caches, but does not authorize reads or exclude concurrent pixel producers.
+/// Call [`Self::finish`] after the last read to observe cache-maintenance errors.
+///
+/// # Invariants
+///
+/// `map` owns one successful system-memory mapping of `buffer`. While `active`,
+/// the owner also holds a successful `DMA_FROM_DEVICE` CPU access interval.
+#[must_use = "finish the CPU read interval before reporting successful access"]
+pub struct Read {
+    buffer: crate::sync::aref::ARef<DmaBuf>,
+    map: bindings::iosys_map,
+    active: core::cell::Cell<bool>,
+}
+
+impl Read {
+    /// Map system memory and begin a CPU read interval without reading any bytes.
+    pub fn new(buffer: &DmaBuf) -> Result<Self> {
+        if !buffer.is_readable() {
+            return Err(EACCES);
+        }
+        let mut map = bindings::iosys_map::default();
+        // SAFETY: The live buffer is borrowed and map is exclusive output storage.
+        to_result(unsafe { bindings::dma_buf_vmap_unlocked(buffer.as_raw(), &mut map) })?;
+        let begun = if map.is_iomem {
+            Err(EOPNOTSUPP)
+        } else {
+            // SAFETY: The buffer and its successful mapping are live. The direction
+            // matches CPU reads of data written by the exporting device.
+            to_result(unsafe {
+                bindings::dma_buf_begin_cpu_access(
+                    buffer.as_raw(),
+                    bindings::dma_data_direction_DMA_FROM_DEVICE,
+                )
+            })
+        };
+        if let Err(error) = begun {
+            // SAFETY: The successful mapping has no active CPU interval.
+            unsafe { bindings::dma_buf_vunmap_unlocked(buffer.as_raw(), &mut map) };
+            return Err(error);
+        }
+        Ok(Self {
+            buffer: buffer.into(),
+            map,
+            active: core::cell::Cell::new(true),
+        })
+    }
+
+    /// Read a bounded byte range without exposing references to shared storage.
+    pub fn copy_to_slice(&self, offset: usize, bytes: &mut [u8]) -> Result {
+        if !self.active.get() {
+            return Err(EINVAL);
+        }
+        let end = offset.checked_add(bytes.len()).ok_or(EOVERFLOW)?;
+        if end > self.buffer.size() {
+            return Err(EINVAL);
+        }
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        // SAFETY: The successful system-memory mapping covers the retained buffer.
+        // The checked range is in bounds and the CPU interval is still active.
+        let memory = unsafe {
+            SysMem::new(core::ptr::slice_from_raw_parts_mut(
+                self.map.__bindgen_anon_1.vaddr.cast::<u8>().add(offset),
+                bytes.len(),
+            ))
+        };
+        memory.copy_to_slice(bytes);
+        Ok(())
+    }
+
+    /// End CPU access once. Further reads fail, including after an exporter error.
+    pub fn finish(&self) -> Result {
+        if !self.active.replace(false) {
+            return Ok(());
+        }
+        // SAFETY: All byte access ended and the direction matches the successful
+        // begin. Cell makes the owner non-Sync, excluding concurrent access.
+        to_result(unsafe {
+            bindings::dma_buf_end_cpu_access(
+                self.buffer.as_raw(),
+                bindings::dma_data_direction_DMA_FROM_DEVICE,
+            )
+        })
+    }
+}
+
+impl Drop for Read {
+    fn drop(&mut self) {
+        let _ = self.finish();
+        // SAFETY: This owner retains exactly one successful mapping. End access
+        // before unmapping so the exporter can maintain virtual-address caches.
+        unsafe { bindings::dma_buf_vunmap_unlocked(self.buffer.as_raw(), &mut self.map) };
+    }
+}

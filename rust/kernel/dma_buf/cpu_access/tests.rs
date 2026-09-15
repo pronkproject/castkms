@@ -32,6 +32,7 @@ struct Export {
     bytes: Opaque<[u8; 64]>,
     events: Arc<AtomicU32>,
     mode: Mode,
+    direction: bindings::dma_data_direction,
 }
 
 impl Export {
@@ -100,7 +101,7 @@ unsafe extern "C" fn begin(
     // SAFETY: Native ownership retains the private exporter during its callback.
     let data = unsafe { export(buffer) };
     data.record(2);
-    if direction != bindings::dma_data_direction_DMA_TO_DEVICE {
+    if direction != data.direction {
         return EINVAL.to_errno();
     }
     if data.mode == Mode::BeginError {
@@ -117,7 +118,7 @@ unsafe extern "C" fn end(
     // SAFETY: Native ownership retains the private exporter during its callback.
     let data = unsafe { export(buffer) };
     data.record(3);
-    if direction != bindings::dma_data_direction_DMA_TO_DEVICE {
+    if direction != data.direction {
         return EINVAL.to_errno();
     }
     if data.mode == Mode::EndError {
@@ -154,6 +155,11 @@ fn create(mode: Mode, flags: u32, events: Arc<AtomicU32>) -> Result<ARef<DmaBuf>
             bytes: Opaque::new([0; 64]),
             mode,
             events,
+            direction: if flags == bindings::O_RDONLY {
+                bindings::dma_data_direction_DMA_FROM_DEVICE
+            } else {
+                bindings::dma_data_direction_DMA_TO_DEVICE
+            },
         },
         GFP_KERNEL,
     )?);
@@ -211,6 +217,68 @@ fn run_with_flags(
         return Err(EINVAL);
     }
     result
+}
+
+#[kunit_tests(rust_dma_buf_cpu_read_lifetime)]
+mod reads {
+    use super::*;
+
+    #[test]
+    fn write_only_export_is_rejected_before_mapping() -> Result {
+        run_with_flags(Mode::Normal, bindings::O_WRONLY, 5, |buffer| {
+            assert!(matches!(Read::new(buffer), Err(EACCES)));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn bounds_and_finished_intervals_reject_reads() -> Result {
+        run_with_flags(Mode::Normal, bindings::O_RDONLY, 12345, |buffer| {
+            let read = Read::new(buffer)?;
+            let mut bytes = [0xff; 64];
+            read.copy_to_slice(0, &mut bytes)?;
+            assert_eq!(bytes, [0; 64]);
+            assert_eq!(read.copy_to_slice(1, &mut bytes), Err(EINVAL));
+            assert_eq!(read.copy_to_slice(usize::MAX, &mut bytes), Err(EOVERFLOW));
+            read.finish()?;
+            assert_eq!(read.copy_to_slice(0, &mut bytes), Err(EINVAL));
+            read.finish()
+        })
+    }
+
+    #[test]
+    fn failed_begin_unmaps_without_ending() -> Result {
+        run_with_flags(Mode::BeginError, bindings::O_RDONLY, 1245, |buffer| {
+            assert!(matches!(Read::new(buffer), Err(EINTR)));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn failed_end_is_reported_once() -> Result {
+        run_with_flags(Mode::EndError, bindings::O_RDONLY, 12345, |buffer| {
+            let read = Read::new(buffer)?;
+            assert_eq!(read.finish(), Err(EIO));
+            assert_eq!(read.finish(), Ok(()));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn io_memory_is_never_read() -> Result {
+        run_with_flags(Mode::IoMemory, bindings::O_RDONLY, 145, |buffer| {
+            assert!(matches!(Read::new(buffer), Err(EOPNOTSUPP)));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn drop_ends_unfinished_reads() -> Result {
+        run_with_flags(Mode::Normal, bindings::O_RDONLY, 12345, |buffer| {
+            let _read = Read::new(buffer)?;
+            Ok(())
+        })
+    }
 }
 
 #[kunit_tests(rust_dma_buf_cpu_write_lifetime)]
