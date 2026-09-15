@@ -8,15 +8,25 @@ mod cases {
 
     #[test]
     fn incomplete_metadata_does_not_form_a_description() -> Result {
-        for (id, dimensions, format, modifier, requests) in [
-            (0, [64, 32], fourcc::XRGB8888, 0, 8),
-            (1, [0, 32], fourcc::XRGB8888, 0, 8),
-            (1, [64, 0], fourcc::XRGB8888, 0, 8),
-            (1, [64, 32], 0, 0, 8),
-            (1, [64, 32], fourcc::XRGB8888, fourcc::FORMAT_MOD_INVALID, 8),
-            (1, [64, 32], fourcc::XRGB8888, 0, 0),
+        for (id, dimensions, refresh, format, modifier, requests) in [
+            (0, [64, 32], 60_000, fourcc::XRGB8888, 0, 8),
+            (1, [0, 32], 60_000, fourcc::XRGB8888, 0, 8),
+            (1, [64, 0], 60_000, fourcc::XRGB8888, 0, 8),
+            (1, [64, 32], 0, fourcc::XRGB8888, 0, 8),
+            (1, [64, 32], 60_000, 0, 0, 8),
+            (
+                1,
+                [64, 32],
+                60_000,
+                fourcc::XRGB8888,
+                fourcc::FORMAT_MOD_INVALID,
+                8,
+            ),
+            (1, [64, 32], 60_000, fourcc::XRGB8888, 0, 0),
         ] {
-            if Description::new(id, dimensions, format, modifier, requests) != Err(EINVAL) {
+            if Description::new(id, dimensions, refresh, 0, format, modifier, requests)
+                != Err(EINVAL)
+            {
                 return Err(EINVAL);
             }
         }
@@ -25,11 +35,13 @@ mod cases {
 
     #[test]
     fn metadata_does_not_impose_a_linear_rgb_provider() -> Result {
-        let description = Description::new(19, [128, 64], fourcc::NV12, 7, 8)?;
+        let description = Description::new(19, [128, 64], 59_940, 3, fourcc::NV12, 7, 8)?;
         let raw = description.raw();
         if raw.id != 19
             || raw.width != 128
             || raw.height != 64
+            || raw.refresh_millihz != 59_940
+            || raw.mode_flags != 3
             || raw.format != fourcc::NV12
             || raw.modifier != 7
             || raw.max_requests != 8

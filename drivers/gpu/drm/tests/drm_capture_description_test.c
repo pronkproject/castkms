@@ -69,6 +69,7 @@ static struct file *description_create(struct kunit *test,
 		.id = 19,
 		.width = 64,
 		.height = 32,
+		.refresh_millihz = 60000,
 		.format = DRM_FORMAT_XRGB8888,
 		.max_requests = 8,
 		.modifier = DRM_FORMAT_MOD_LINEAR,
@@ -115,7 +116,7 @@ static void drm_capture_description_errors_preserve_output(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &description), -EINVAL);
 	KUNIT_EXPECT_MEMEQ(test, &description, &before, sizeof(description));
 	context->result = 0;
-	for (unsigned int field = 0; field < 6; field++) {
+	for (unsigned int field = 0; field < 7; field++) {
 		context->offered = valid;
 		switch (field) {
 		case 0:
@@ -128,12 +129,15 @@ static void drm_capture_description_errors_preserve_output(struct kunit *test)
 			context->offered.height = 0;
 			break;
 		case 3:
-			context->offered.format = 0;
+			context->offered.refresh_millihz = 0;
 			break;
 		case 4:
-			context->offered.max_requests = 0;
+			context->offered.format = 0;
 			break;
 		case 5:
+			context->offered.max_requests = 0;
+			break;
+		case 6:
 			context->offered.modifier = DRM_FORMAT_MOD_INVALID;
 			break;
 		}
