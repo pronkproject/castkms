@@ -167,6 +167,32 @@ fn resolve_owner(
     Provenance::for_update(framebuffer.data(), previous, current, state.selection).cloned()
 }
 
+/// Retain layer metadata without mapping storage or claiming a source read.
+fn describe_plane<S>(
+    state: &S,
+    producer: Option<Arc<framebuffer::dependencies::Dependencies>>,
+) -> Result<Option<Arc<scene::Primary>>>
+where
+    S: RawPlaneState<Plane = plane::Plane<Plane>> + core::ops::Deref<Target = PlaneState>,
+{
+    let Some(geometry) = state.geometry else {
+        return Ok(None);
+    };
+    Ok(Some(Arc::new(
+        scene::Primary {
+            yuv: state.yuv_color()?,
+            color: state.color.clone(),
+            framebuffer: state.framebuffer().ok_or(EINVAL)?.to_owned_ref(),
+            geometry,
+            producer,
+            owner: state.owner.clone(),
+            kind: state.plane().kind,
+            zpos: state.zpos(),
+        },
+        GFP_KERNEL,
+    )?))
+}
+
 #[vtable]
 impl plane::DriverPlane for Plane {
     type Args = scene::Kind;
@@ -218,21 +244,7 @@ impl plane::DriverPlane for Plane {
             state.set_producer_fence(completion);
             state.producer = Some(dependencies);
         }
-        if let Some(geometry) = state.geometry {
-            state.prepared = Some(Arc::new(
-                scene::Primary {
-                    yuv: state.yuv_color()?,
-                    color: state.color.clone(),
-                    framebuffer: state.framebuffer().ok_or(EINVAL)?.to_owned_ref(),
-                    geometry,
-                    producer: state.producer.clone(),
-                    owner: state.owner.clone(),
-                    kind: state.plane().kind,
-                    zpos: state.zpos(),
-                },
-                GFP_KERNEL,
-            )?);
-        }
+        state.prepared = describe_plane(&state, state.producer.clone())?;
         Ok(())
     }
 }
