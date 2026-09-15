@@ -284,6 +284,34 @@ struct drm_property *drm_property_create_range(struct drm_device *dev,
 EXPORT_SYMBOL(drm_property_create_range);
 
 /**
+ * drm_property_create_replayable_range - create a replayable atomic scalar
+ * @dev: DRM device
+ * @name: property name
+ * @min: minimum value
+ * @max: maximum value
+ *
+ * The driver promises that the unsigned value is sufficient to reconstruct
+ * private atomic state after a wait. Values requiring retained file descriptors
+ * or native object references must not use this constructor. The property setter
+ * only decodes private state; atomic checking must revalidate live policy on each
+ * rebuilt transaction. Mode configuration owns the returned property.
+ *
+ * Return: A property pointer, or NULL on allocation failure.
+ */
+struct drm_property *drm_property_create_replayable_range(struct drm_device *dev,
+						       const char *name,
+						       u64 min, u64 max)
+{
+	struct drm_property *property;
+
+	property = drm_property_create_range(dev, DRM_MODE_PROP_ATOMIC, name, min, max);
+	if (property)
+		property->atomic_replay_scalar = true;
+	return property;
+}
+EXPORT_SYMBOL_GPL(drm_property_create_replayable_range);
+
+/**
  * drm_property_create_signed_range - create a new signed ranged property type
  * @dev: drm device
  * @flags: flags specifying the property type
