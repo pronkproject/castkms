@@ -4,7 +4,7 @@
 
 use kernel::{drm::fourcc::*, prelude::*};
 
-pub(crate) const FORMATS: &[u32] = &[XRGB8888];
+pub(crate) const FORMATS: &[u32] = &[XRGB8888, ARGB8888, XBGR8888, ABGR8888, RGBA8888, BGRA8888];
 
 /// Sampling factors and stored bits per sample in one format plane.
 #[derive(Clone, Copy)]
