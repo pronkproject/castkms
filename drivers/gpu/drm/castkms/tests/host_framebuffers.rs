@@ -25,6 +25,28 @@ fn native(
     offset: u32,
     interlaced: bool,
 ) -> Result<FramebufferRef<Driver>> {
+    native_format(
+        fixture,
+        size,
+        width,
+        height,
+        pitch,
+        offset,
+        interlaced,
+        drm::fourcc::XRGB8888,
+    )
+}
+
+fn native_format(
+    fixture: &Fixture,
+    size: usize,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    offset: u32,
+    interlaced: bool,
+    format: u32,
+) -> Result<FramebufferRef<Driver>> {
     let object = shmem::Object::<gem::Object>::new(
         fixture.drm.device(),
         size,
@@ -35,7 +57,7 @@ fn native(
         &FramebufferLayout {
             width,
             height,
-            format: drm::fourcc::XRGB8888,
+            format,
             modifier: Some(drm::fourcc::FORMAT_MOD_LINEAR),
             interlaced,
             planes: &[FramebufferPlane {
@@ -103,7 +125,15 @@ mod cases {
     #[test]
     fn source_allocation_is_bounded_independently_of_image_size() -> Result {
         let fixture = Fixture::new()?;
-        let oversized = native(&fixture, execution::host::MAX_ALLOCATION_BYTES + 4096, 64, 2, 256, 0, false)?;
+        let oversized = native(
+            &fixture,
+            execution::host::MAX_ALLOCATION_BYTES + 4096,
+            64,
+            2,
+            256,
+            0,
+            false,
+        )?;
         check(matches!(
             HostFramebuffer::new(&oversized, geometry(64, 2)),
             Err(E2BIG)
@@ -125,6 +155,37 @@ mod cases {
             Err(EINVAL)
         ))?;
         Ok(())
+    }
+
+    #[test]
+    fn single_plane_formats_are_host_eligible() -> Result {
+        let fixture = Fixture::new()?;
+        for &format in execution::host::FORMATS {
+            if crate::formats::plane_count(format) != 1 { continue; }
+            let pitch = crate::formats::plane(format, 0)?.row_bytes(8) as u32;
+            let fb = native_format(&fixture, 4096, 8, 2, pitch, 0, false, format)?;
+            check(HostFramebuffer::new(&fb, geometry(8, 2))?.dimensions() == (8, 2))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packed_rgb_pixels_are_normalized_to_xrgb8888() -> Result {
+        use drm::fourcc;
+
+        let pixel = |format, value: u32| crate::formats::pixel(format, 0, 0, |_, _, _, out| {
+            out.copy_from_slice(&value.to_le_bytes()[..out.len()]);
+            Ok(())
+        });
+
+        check(pixel(fourcc::ARGB8888, 0xaa12_3456)? == 0x0012_3456)?;
+        check(pixel(fourcc::ABGR8888, 0xaa12_3456)? == 0x0056_3412)?;
+        check(pixel(fourcc::XRGB2101010, 0x3ff0_0000)? == 0x00ff_0000)?;
+        check(pixel(fourcc::XBGR2101010, 0x0000_03ff)? == 0x00ff_0000)?;
+        check(matches!(
+            pixel(0, 0),
+            Err(EINVAL)
+        ))
     }
 
     #[cfg(CONFIG_DRM_CLIENT)]
