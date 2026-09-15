@@ -182,6 +182,26 @@ impl Drop for Closing {
 mod cases {
     use super::*;
 
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    #[test]
+    fn revocation_retains_budget_until_registration_owner_closes() -> Result {
+        let registry = Registry::new()?;
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let mut registrations = KVec::new();
+        for _ in 0..MAX_GRANTS {
+            let authority = authority(&counts, None)?;
+            registrations.push(registry.register(&authority.revocation())?, GFP_KERNEL)?;
+        }
+        registry.revoke_all();
+        registry.revoke_all();
+        check(counts.revokes.load(Ordering::Relaxed) == MAX_GRANTS as u32)?;
+        let next = authority(&counts, None)?;
+        check(matches!(registry.register(&next.revocation()), Err(EBUSY)))?;
+        drop(registrations.pop());
+        let _next = registry.register(&next.revocation())?;
+        check(!next.is_revoked())
+    }
+
     #[test]
     fn overlapping_shutdown_calls_observe_completed_provider_cleanup() -> Result {
         for _ in 0..32 {

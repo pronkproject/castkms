@@ -77,6 +77,22 @@ impl Registry {
         })
     }
 
+    /// Revoke the observed generation, allowing new grants from a later master.
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    pub(crate) fn revoke_all(&self) {
+        loop {
+            let next = self
+                .state
+                .lock()
+                .grants
+                .iter()
+                .find(|entry| !entry.revocation.is_revoked())
+                .cloned();
+            let Some(entry) = next else { break };
+            entry.revocation.revoke();
+        }
+    }
+
     /// Permanently stop registration and finish revoking all previously tracked grants.
     ///
     /// Concurrent calls wait for the first cleanup pass. Hold no provider cleanup locks;
