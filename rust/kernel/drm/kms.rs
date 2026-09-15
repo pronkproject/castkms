@@ -345,6 +345,7 @@ impl<T: KmsDriver> private::KmsImpl for T {
         },
 
         kms_helper_vtable: bindings::drm_mode_config_helper_funcs {
+            atomic_commit_install: None,
             atomic_commit_setup: None,
             atomic_commit_tail: if Self::HAS_ATOMIC_COMMIT_TAIL {
                 Some(atomic::commit_tail_callback::<Self>)
