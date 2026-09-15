@@ -2,6 +2,8 @@
 
 //! Top-level master observations, separate from scene ownership and lease authorization.
 
+pub(crate) mod grants;
+
 use kernel::{
     prelude::*,
     sync::Mutex, //

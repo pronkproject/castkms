@@ -21,12 +21,12 @@ pub(crate) use frame::Frame;
 pub(crate) use request::Request;
 
 use super::{
-    grants,
     host,
     permission::Permission,
     streams::Registration, //
 };
 use crate::{
+    authority::grants,
     host_compositor::{
         compose::Completed,
         layout::Layout, //

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Device-wide revocation tracking, independent of provider policy and file transport.
+//! Device-wide revocation tracking shared by independently authorized providers.
 
 use kernel::{
     drm::capture::Revocation,
@@ -45,7 +45,7 @@ impl Registry {
 
     /// Track a grant until device shutdown or its unique registration owner closes.
     ///
-    /// Tracking adds no pixel permission. The provider must retain the returned owner
+    /// Tracking adds no resource permission. The provider must retain the returned owner
     /// outside the device registry, so its destruction breaks retained device references.
     pub(crate) fn register(self: &Arc<Self>, revocation: &Revocation) -> Result<Registration> {
         let entry = Arc::new(
