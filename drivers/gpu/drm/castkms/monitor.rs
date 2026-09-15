@@ -17,7 +17,7 @@ enum Description {
     Attached {
         edid: Option<Edid>,
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-        _audio: Option<crate::audio::Attachment>,
+        audio: Option<crate::audio::Attachment>,
     },
     Disconnected,
 }
@@ -187,6 +187,21 @@ impl Monitor {
         let retired = core::mem::replace(&mut *self.state.lock(), State::Closed);
         drop(retired);
     }
+
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    pub(crate) fn audio(&self) -> Result<Arc<crate::audio::Source>> {
+        match &*self.state.lock() {
+            State::Managed {
+                description:
+                    Description::Attached {
+                        audio: Some(audio), ..
+                    },
+                ..
+            } => Ok(audio.source.clone()),
+            State::Closed => Err(ENODEV),
+            _ => Err(ENOTCONN),
+        }
+    }
 }
 
 /// Exclusive control of one virtual monitor publication interval.
@@ -221,7 +236,7 @@ impl Control {
             Description::Attached {
                 edid,
                 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-                _audio: audio,
+                audio,
             },
         )?;
         self.notify();
