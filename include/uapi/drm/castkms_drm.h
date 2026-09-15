@@ -25,6 +25,8 @@
 #define DRM_CASTKMS_CAPABILITY_RENDERER 2
 #define DRM_CASTKMS_CAPABILITY_MAX_FORMATS 256
 #define DRM_CASTKMS_CAPABILITY_MAX_BYTES (128U + 32U * 256U)
+#define DRM_CASTKMS_CAPABILITY_QUERY_MAX_BYTES \
+	(72U + 2U * DRM_CASTKMS_CAPABILITY_MAX_BYTES)
 
 #define DRM_CASTKMS_CAPABILITY_CROP (1U << 0)
 #define DRM_CASTKMS_CAPABILITY_FRACTIONAL (1U << 1)
@@ -81,6 +83,47 @@ struct drm_castkms_capability_format {
 	__u32 pitch_alignment;
 	__u32 offset_alignment;
 	__u32 max_pitch;
+};
+
+#define DRM_CASTKMS_CAPABILITY_PENDING (1U << 0)
+#define DRM_CASTKMS_CAPABILITY_GATED (1U << 1)
+
+/*
+ * A coherent native-endian snapshot followed by active and optional pending
+ * capability encodings. Offsets are relative to this 72-byte header. Without a
+ * live pending transition, pending fields, transition and pending flags are zero.
+ * Capability generation identifies an immutable contract; validation_epoch also
+ * changes when a gate is installed or lifted. Neither identifies source content.
+ * Size includes the entire snapshot. Output fields grant no continuing authority.
+ */
+struct drm_castkms_renderer_capabilities {
+	__u32 version;
+	__u32 size;
+	__u32 execution_profile;
+	__u32 flags;
+	__u64 execution_generation;
+	__u64 active_generation;
+	__u64 pending_generation;
+	__u64 transition;
+	__u64 validation_epoch;
+	__u32 active_offset;
+	__u32 active_size;
+	__u32 pending_offset;
+	__u32 pending_size;
+};
+
+/*
+ * result points to capacity writable bytes. Capacity must be at least 72.
+ * On ENOSPC only the header is written, including the required total size;
+ * retry for a fresh coherent snapshot. Copy faults may partially write output.
+ * flags and reserved must be zero. Queries work with disabled video, but still
+ * require live output authority. They never reserve a transition or source read.
+ */
+struct drm_castkms_renderer_query_capabilities {
+	__u64 result;
+	__u32 capacity;
+	__u32 flags;
+	__u64 reserved;
 };
 
 #define DRM_CASTKMS_RENDERER_PROBE_PRIVATE 1
@@ -627,9 +670,13 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SOURCE 0x0a
 #define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x0b
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
+#define DRM_CASTKMS_RENDERER_QUERY_CAPABILITIES 0x0e
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
+	DRM_IOCTL_CASTKMS_RENDERER_QUERY_CAPABILITIES =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY_CAPABILITIES,
+			struct drm_castkms_renderer_query_capabilities),
 	DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_DEQUEUE_SCENE,
 			struct drm_castkms_renderer_dequeue_scene),
