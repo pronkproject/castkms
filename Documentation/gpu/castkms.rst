@@ -142,6 +142,31 @@ Returning a copy neither installs a descriptor nor activates execution;
 exposing it requires a separate decision about its recipient at descriptor
 installation.
 
+After a candidate's private probe completes, activation publishes one GPU
+execution generation and transfers the startup reservation into a terminal
+renderer incarnation. The active session may claim each changed scene once.
+Each kernel job owns both retained scene metadata and its preparation read
+claim; the framebuffer reference alone does not delay source reuse.
+
+The renderer dequeue ioctl prepares ordinary source DMA-BUFs and reserves every
+descriptor before copying fixed-size metadata. Only the final, infallible
+publication step installs close-on-exec descriptors and makes the job require a
+userspace release. Failure before publication reports that no access occurred
+and returns the queue slot. At most one source job is outstanding, and an
+unchanged content serial is not claimed again.
+
+The job also exports a sync-file wait for the exact producer dependencies
+captured when KMS accepted the scene. An already failed producer rejects
+dequeue with its completion error; pending producer work remains represented by
+the retained native fence and does not make descriptor preparation wait.
+
+Release distinguishes no access, completed synchronous CPU access and submitted
+native work. The submitted form transfers a concrete sync-file fence and a
+promise that no later access will be submitted under the job. Dropping a
+published job without a release instead records terminal service failure.
+Source descriptors are non-revocable storage references; retaining one after
+release grants no access to a later scene generation.
+
 ``castkms.rs`` owns the virtual parent device and DRM registration. Destruction
 unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;

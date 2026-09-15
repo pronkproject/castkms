@@ -3,9 +3,11 @@
 //! Anonymous renderer endpoint retaining access without its revocation owner.
 
 use super::session::Session;
+use super::job::Completion;
 use crate::{execution::Profile, CastKms};
 use core::{ffi::c_void, ptr::NonNull};
 use kernel::{
+    alloc::KVec,
     bindings,
     dma_fence::Fence,
     error::from_err_ptr,
@@ -121,6 +123,60 @@ struct CommitTakeover {
 // SAFETY: Every bit pattern is valid for CommitTakeover's integer fields.
 unsafe impl FromBytes for CommitTakeover {}
 
+#[repr(C)]
+struct DequeueSource {
+    result: u64,
+    flags: u32,
+    reserved: [u32; 3],
+}
+
+// SAFETY: Every bit pattern is valid for DequeueSource's integer fields.
+unsafe impl FromBytes for DequeueSource {}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct SourcePlane {
+    dma_buf_fd: i32,
+    pitch: u32,
+    offset: u32,
+    reserved: u32,
+}
+
+// SAFETY: SourcePlane contains only integers and has no padding.
+unsafe impl AsBytes for SourcePlane {}
+
+#[repr(C)]
+struct SourceResult {
+    job_id: u64,
+    content_serial: u64,
+    modifier: u64,
+    format: u32,
+    width: u32,
+    height: u32,
+    plane_count: u32,
+    producer_fd: i32,
+    reserved: u32,
+    source: [u32; 4],
+    destination: [u32; 2],
+    output: [u32; 2],
+    planes: [SourcePlane; uapi::DRM_CASTKMS_RENDERER_MAX_PLANES as usize],
+}
+
+// SAFETY: SourceResult and its plane elements contain only integers and have no padding.
+unsafe impl AsBytes for SourceResult {}
+
+#[repr(C)]
+struct ReleaseSource {
+    job_id: u64,
+    completion_fd: i32,
+    kind: u32,
+    flags: u32,
+    reserved: [u32; 3],
+}
+
+// SAFETY: Every bit pattern is valid for ReleaseSource's integer fields.
+unsafe impl FromBytes for ReleaseSource {}
+
 struct ClientFile {
     session: Arc<Session>,
 }
@@ -187,6 +243,8 @@ impl ClientFile {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT => self.get_snapshot(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE => self.submit_probe(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER => self.commit_takeover(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE => self.dequeue_source(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE => self.release_source(arg),
             _ => Err(ENOTTY),
         }
     }
@@ -374,6 +432,136 @@ impl ClientFile {
             return Err(EINVAL);
         }
         self.session.activate(request.candidate_id).map(|_| ())
+    }
+
+    fn dequeue_source(&self, arg: usize) -> Result {
+        const MAX_PLANES: usize = uapi::DRM_CASTKMS_RENDERER_MAX_PLANES as usize;
+        const {
+            assert!(core::mem::size_of::<DequeueSource>()
+                == core::mem::size_of::<uapi::drm_castkms_renderer_dequeue_source>());
+            assert!(core::mem::size_of::<SourceResult>()
+                == core::mem::size_of::<uapi::drm_castkms_renderer_source>());
+        }
+        let mut reader =
+            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<DequeueSource>()).reader();
+        let request = reader.read::<DequeueSource>()?;
+        if request.result == 0
+            || request.flags != 0
+            || request.reserved.iter().any(|field| *field != 0)
+        {
+            return Err(EINVAL);
+        }
+        let pending = self.session.begin_source()?;
+        let description = pending.description()?;
+        if description.plane_count == 0 || description.plane_count > MAX_PLANES {
+            return Err(EOPNOTSUPP);
+        }
+        let mut outputs = KVec::with_capacity(description.plane_count + 1, GFP_KERNEL)?;
+        let mut producer_fd = -1;
+        if let Some(producer) = pending.producer_completion()? {
+            let file = producer.create_sync_file()?;
+            let reservation = FileDescriptorReservation::get_unused_fd_flags(
+                kernel::fs::file::flags::O_CLOEXEC,
+            )?;
+            producer_fd = reservation
+                .reserved_fd()
+                .try_into()
+                .map_err(|_| EOVERFLOW)?;
+            outputs.push((reservation, file), GFP_KERNEL)?;
+        }
+        let mut buffers: [Option<ARef<kernel::dma_buf::DmaBuf>>; MAX_PLANES] =
+            [const { None }; MAX_PLANES];
+        let mut planes = [SourcePlane {
+            dma_buf_fd: -1,
+            pitch: 0,
+            offset: 0,
+            reserved: 0,
+        }; MAX_PLANES];
+        for index in 0..description.plane_count {
+            let plane = pending.plane(index)?;
+            let mut buffer = None;
+            for previous in 0..index {
+                if plane.shares_storage_with(&pending.plane(previous)?) {
+                    buffer = buffers[previous].clone();
+                    break;
+                }
+            }
+            let buffer = match buffer {
+                Some(buffer) => buffer,
+                None => plane.export()?,
+            };
+            let reservation = FileDescriptorReservation::get_unused_fd_flags(
+                kernel::fs::file::flags::O_CLOEXEC,
+            )?;
+            planes[index] = SourcePlane {
+                dma_buf_fd: reservation
+                    .reserved_fd()
+                    .try_into()
+                    .map_err(|_| EOVERFLOW)?,
+                pitch: plane.pitch,
+                offset: plane.offset,
+                reserved: 0,
+            };
+            outputs.push((reservation, buffer.to_file()), GFP_KERNEL)?;
+            buffers[index] = Some(buffer);
+        }
+        let result = SourceResult {
+            job_id: pending.id(),
+            content_serial: description.content_serial,
+            modifier: description
+                .modifier
+                .unwrap_or(fourcc::FORMAT_MOD_INVALID),
+            format: description.format,
+            width: description.dimensions[0],
+            height: description.dimensions[1],
+            plane_count: description.plane_count.try_into().map_err(|_| EOVERFLOW)?,
+            producer_fd,
+            reserved: 0,
+            source: description.source,
+            destination: description.destination,
+            output: description.output,
+            planes,
+        };
+        let address = request.result.try_into().map_err(|_| EOVERFLOW)?;
+        UserSlice::new(UserPtr::from_addr(address), core::mem::size_of_val(&result))
+            .writer()
+            .write(&result)?;
+        pending.publish(move || {
+            for (reservation, file) in outputs {
+                reservation.fd_install(file);
+            }
+        })
+    }
+
+    fn release_source(&self, arg: usize) -> Result {
+        const {
+            assert!(core::mem::size_of::<ReleaseSource>()
+                == core::mem::size_of::<uapi::drm_castkms_renderer_release_source>())
+        };
+        let mut reader =
+            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<ReleaseSource>()).reader();
+        let request = reader.read::<ReleaseSource>()?;
+        if request.job_id == 0
+            || request.flags != 0
+            || request.reserved.iter().any(|field| *field != 0)
+        {
+            return Err(EINVAL);
+        }
+        let completion = match request.kind {
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS if request.completion_fd == -1 => {
+                Completion::WithoutAccess
+            }
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE if request.completion_fd == -1 => {
+                Completion::Cpu
+            }
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED if request.completion_fd >= 0 => {
+                let file = LocalFile::fget(request.completion_fd.try_into().map_err(|_| EBADF)?)
+                    .map_err(|_| EBADF)?;
+                Completion::Submitted(Fence::from_sync_file(&file)?)
+            }
+            _ => return Err(EINVAL),
+        };
+        self.session.release_source(request.job_id, completion)
     }
 }
 

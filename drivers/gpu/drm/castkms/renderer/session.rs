@@ -15,6 +15,7 @@ use crate::{
     Driver, //
 };
 use kernel::{
+    dma_fence::Fence,
     drm::device::RegisteredDeviceRef,
     prelude::*,
     sync::{Arc, Mutex}, //
@@ -402,6 +403,10 @@ impl PendingSource<'_> {
 
     pub(crate) fn plane(&self, index: usize) -> Result<Plane<'_>> {
         self.job.as_ref().ok_or(EINVAL)?.plane(index)
+    }
+
+    pub(crate) fn producer_completion(&self) -> Result<Option<kernel::sync::aref::ARef<Fence>>> {
+        self.job.as_ref().ok_or(EINVAL)?.producer_completion()
     }
 
     /// Publish the job after an adapter has completed every fallible operation.

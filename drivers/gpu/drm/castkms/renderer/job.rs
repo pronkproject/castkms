@@ -35,6 +35,10 @@ pub(crate) struct Plane<'a> {
 }
 
 impl Plane<'_> {
+    pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
+        core::ptr::eq(self.object, other.object)
+    }
+
     /// Retain this plane as an ordinary DMA-BUF without installing a descriptor.
     pub(crate) fn export(&self) -> Result<ARef<DmaBuf>> {
         match self.object.imported_dma_buf() {
@@ -95,6 +99,16 @@ impl SourceJob {
             pitch: framebuffer.pitch(index)?,
             offset: framebuffer.offset(index)?,
         })
+    }
+
+    /// Retain the producer wait captured when KMS accepted this scene.
+    pub(crate) fn producer_completion(&self) -> Result<Option<ARef<Fence>>> {
+        let completion = self.scene.producer_completion()?;
+        match self.scene.producer_result() {
+            Ok(()) => Ok(None),
+            Err(EAGAIN) => Ok(completion),
+            Err(error) => Err(error),
+        }
     }
 
     /// Promise that no source access occurred under this job.
