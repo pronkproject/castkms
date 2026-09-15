@@ -202,6 +202,38 @@ fn channels(
         } else {
             read(1, (x / hs) * bytes * 2, y / vs, &mut chroma[..bytes * 2])?;
         }
+        if let Some((encoding, range)) = color {
+            let sample = |b: &[u8]| -> i64 {
+                if depth == 8 {
+                    i64::from(b[0])
+                } else {
+                    i64::from(u16::from_le_bytes([b[0], b[1]]) >> (16 - depth))
+                }
+            };
+            let unit = 1i64 << (depth - 8);
+            let (y_offset, y_range, chroma_range) = match range {
+                ColorRange::Limited => (16 * unit, 219 * unit, 224 * unit),
+                ColorRange::Full => (0, (1 << depth) - 1, (1 << depth) - 1),
+            };
+            // Normalize code ranges with eight fractional bits, retaining high-depth
+            // precision and the exact neutral chroma code at each input depth.
+            let yy = (sample(&luma) - y_offset) * 65535 * 256 / y_range;
+            let a = (sample(&chroma[..bytes]) - 128 * unit) * 65535 * 256 / chroma_range;
+            let b = (sample(&chroma[bytes..]) - 128 * unit) * 65535 * 256 / chroma_range;
+            let (u, v) = if swap { (b, a) } else { (a, b) };
+            let [rv, gu, gv, bu]: [i64; 4] = match encoding {
+                ColorEncoding::Bt601 => [6021544149, -1478054095, -3067191994, 7610682049],
+                ColorEncoding::Bt709 => [6763714498, -804551626, -2010578443, 7969741314],
+                ColorEncoding::Bt2020 => [6333358775, -706750298, -2453942994, 8080551471],
+            };
+            let channel = |value: i64| ((value + (1 << 39)) >> 40).clamp(0, 65535) as u32;
+            let yy = yy << 32;
+            return Ok([
+                channel(yy + rv * v),
+                channel(yy + gu * u + gv * v),
+                channel(yy + bu * u),
+            ]);
+        }
         // Retain sub-byte precision for high-bit-depth input until RGB quantization.
         let sample = |b: &[u8]| -> i64 {
             if depth == 8 {
