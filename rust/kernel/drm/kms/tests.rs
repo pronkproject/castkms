@@ -23,6 +23,7 @@ mod connector_lookup;
 mod connector_refs;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod crtc_lookup;
+mod edids;
 mod events;
 mod framebuffers;
 mod generations;
