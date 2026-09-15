@@ -530,6 +530,22 @@ impl KmsDriver for Driver {
             display.execution.attach(connector)?;
             connector.attach_encoder(encoder)?;
         }
+        if dev.enable_overlay {
+            for _ in 0..8 {
+                let plane = plane::UnregisteredPlane::<Plane>::new(
+                    dev,
+                    (1 << dev.displays.len()) - 1,
+                    super::execution::host::FORMATS,
+                    Some(&[fourcc::FORMAT_MOD_LINEAR]),
+                    plane::Type::Overlay,
+                    None,
+                    scene::Kind::Overlay,
+                )?;
+                plane.create_zpos_property(1, 1, 30)?;
+                plane.create_nearest_scaling_filter_property()?;
+                plane.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
+            }
+        }
         Ok(())
     }
 

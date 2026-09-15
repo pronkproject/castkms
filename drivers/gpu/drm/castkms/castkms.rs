@@ -49,6 +49,10 @@ module! {
             default: true,
             description: "Enable cursor planes",
         },
+        enable_overlay: bool {
+            default: false,
+            description: "Enable eight shared overlay planes",
+        },
         max_outputs: u32 {
             default: 8,
             description: "Number of virtual display outputs (1-8)",
@@ -74,7 +78,7 @@ impl Drop for CastKms {
 impl kernel::Module for CastKms {
     fn init(_: &'static ThisModule) -> Result<Self> {
         Self::new_features(c"castkms", module_parameters::max_outputs.value(),
-            module_parameters::enable_cursor.value(), false, false)
+            module_parameters::enable_cursor.value(), module_parameters::enable_overlay.value(), false)
     }
 }
 
