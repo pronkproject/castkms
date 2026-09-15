@@ -213,4 +213,29 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn output_color_order_is_degamma_matrix_gamma() -> Result {
+        use kernel::drm::kms::crtc::ColorCtm;
+        let fixture = Fixture::new()?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        fixture.drm.update(|transaction| {
+            let mut state = transaction.add_crtc_state(fixture.drm.crtc()?)?;
+            state.set_degamma_lut(Some(&[ColorLut::new(65535, 0, 0)]))?;
+            let swap = ColorCtm::from_raw([0, 0, 1 << 32, 0, 1 << 32, 0, 1 << 32, 0, 0]);
+            state.set_ctm(Some(&swap))?;
+            state.set_gamma_lut(Some(&[
+                ColorLut::new(0, 0, 0),
+                ColorLut::new(65535, 65535, 32768),
+            ]))
+        })?;
+        check(pixels(&fixture, &pool)? == [0x80; 4])?;
+        Ok(())
+    }
+
 }
