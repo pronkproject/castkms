@@ -65,9 +65,19 @@ impl<'a, T: KmsDriver> Install<'a, T> {
     /// Attached preparation is revalidated by the native continuation and may
     /// still reject the swap. The result must be returned unchanged to DRM.
     pub fn install(self) -> InstallResult<'a, T> {
+        self.install_then(|| {})
+    }
+
+    /// Perform an infallible driver-state update only after native installation succeeds.
+    /// The callback runs inside the same caller-held locks and must not wait or acquire
+    /// outer locks. Native preparation failure skips it and is returned unchanged.
+    pub fn install_then(self, installed: impl FnOnce()) -> InstallResult<'a, T> {
         // SAFETY: The native callback supplies a scoped continuation and context
         // for this exact state. Consuming self prevents another invocation.
         let result = unsafe { (self.continuation)(self.raw.as_ptr(), self.data) };
+        if result == 0 {
+            installed();
+        }
         InstallResult {
             result,
             _scope: self.scope,
