@@ -15,7 +15,10 @@ use kernel::{
 enum Slot {
     Idle,
     Publishing,
-    Active { id: u64, candidate: Candidate },
+    Active {
+        id: u64,
+        candidate: Arc<Candidate>,
+    },
 }
 
 struct State {
@@ -61,7 +64,7 @@ impl Session {
                 return Err(EBUSY);
             }
         }
-        let candidate = Candidate::begin(self.access.clone())?;
+        let candidate = Arc::new(Candidate::begin(self.access.clone())?, GFP_KERNEL)?;
         let id = {
             let mut state = self.state.lock();
             if state.closed {
@@ -131,7 +134,7 @@ impl Session {
 pub(super) struct Pending<'a> {
     session: &'a Session,
     id: u64,
-    candidate: Option<Candidate>,
+    candidate: Option<Arc<Candidate>>,
 }
 
 impl Pending<'_> {
@@ -147,7 +150,7 @@ impl Pending<'_> {
         Ok(self.candidate()?.execution())
     }
 
-    fn candidate(&self) -> Result<&Candidate> {
+    fn candidate(&self) -> Result<&Arc<Candidate>> {
         self.candidate.as_ref().ok_or(EINVAL)
     }
 
