@@ -51,12 +51,12 @@ mod cases {
     }
 
     #[test]
-    fn unaligned_rows_fail_before_a_source_is_published() -> Result {
+    fn unaligned_rows_are_accepted_for_byte_sampling() -> Result {
         let fixture = Fixture::new()?;
         let invalid = framebuffer(&fixture, 2561 * 480, 2561)?;
         for check_only in [true, false] {
-            check(fixture.select(&invalid, check_only, 0) == Err(EINVAL))?;
-            check(!fixture.drm.device().output.has_scene())?;
+            fixture.select(&invalid, check_only, 0)?;
+            check(fixture.drm.device().output.has_scene() == !check_only)?;
         }
         Ok(())
     }
