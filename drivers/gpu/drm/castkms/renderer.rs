@@ -9,4 +9,4 @@ pub(crate) mod job;
 pub(crate) mod permission;
 mod probe;
 mod revoker_file;
-mod session;
+pub(crate) mod session;

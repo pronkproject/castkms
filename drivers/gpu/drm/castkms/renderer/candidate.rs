@@ -238,6 +238,7 @@ impl Candidate {
         &self,
         active: &renderer_startup::Active,
         execution: Description,
+        previous_content_serial: Option<u64>,
     ) -> Result<SourceJob> {
         self.access.with_current(|current| {
             active.with_candidate(&self.resources, || {
@@ -247,7 +248,7 @@ impl Candidate {
                 {
                     return Err(ESTALE);
                 }
-                SourceJob::claim(&current)
+                SourceJob::claim(&current, previous_content_serial)
             })
         })
     }

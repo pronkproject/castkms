@@ -196,12 +196,17 @@ impl Current<'_> {
     ///
     /// The claim, not the cloned scene, prevents source retirement. The caller must not
     /// publish either owner until every enclosing authorization callback has succeeded.
-    pub(crate) fn claim_scene(
+    pub(crate) fn claim_changed_scene(
         &self,
+        previous_content_serial: Option<u64>,
     ) -> Result<(Scene, kernel::drm::preparation::ReadClaim)> {
         self.check_scene_owner()?;
+        let scene = self.scene.ok_or(EAGAIN)?;
+        let content_serial = scene.content_serial().ok_or(ENODATA)?.get();
+        if previous_content_serial == Some(content_serial) {
+            return Err(ENODATA);
+        }
         let claim = self.source.claim()?;
-        let scene = self.scene.cloned().ok_or(EAGAIN)?;
-        Ok((scene, claim))
+        Ok((scene.clone(), claim))
     }
 }

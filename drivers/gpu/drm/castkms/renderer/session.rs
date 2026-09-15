@@ -4,6 +4,7 @@
 
 use super::{
     candidate::Candidate,
+    job::{Completion, Description as SourceDescription, Plane, SourceJob},
     permission::Access,
     probe::Source as ProbeSource, //
 };
@@ -36,7 +37,17 @@ enum Slot {
         active: renderer_startup::Active,
         _source: ProbeSource,
         description: Description,
+        next_source_id: u64,
+        last_content_serial: Option<u64>,
+        last_released_source: Option<u64>,
+        source: SourceSlot,
     },
+}
+
+enum SourceSlot {
+    Ready,
+    Publishing(u64),
+    Claimed { id: u64, job: SourceJob },
 }
 
 struct State {
@@ -46,7 +57,7 @@ struct State {
 }
 
 #[pin_data]
-pub(super) struct Session {
+pub(crate) struct Session {
     access: Access,
     device: RegisteredDeviceRef<Driver>,
     #[pin]
@@ -54,7 +65,7 @@ pub(super) struct Session {
 }
 
 impl Session {
-    pub(super) fn new(access: Access, device: RegisteredDeviceRef<Driver>) -> Result<Arc<Self>> {
+    pub(crate) fn new(access: Access, device: RegisteredDeviceRef<Driver>) -> Result<Arc<Self>> {
         Arc::pin_init(
             pin_init!(Self {
                 access,
@@ -69,12 +80,12 @@ impl Session {
         )
     }
 
-    pub(super) fn description(&self) -> Result<Description> {
+    pub(crate) fn description(&self) -> Result<Description> {
         self.access
             .with_current(|_| Ok(self.access.device().execution.describe()))
     }
 
-    pub(super) fn begin(&self, expected_generation: u64) -> Result<Pending<'_>> {
+    pub(crate) fn begin(&self, expected_generation: u64) -> Result<Pending<'_>> {
         {
             let state = self.state.lock();
             if state.closed {
@@ -110,7 +121,7 @@ impl Session {
         Ok(pending)
     }
 
-    pub(super) fn abort(&self, id: u64) -> Result {
+    pub(crate) fn abort(&self, id: u64) -> Result {
         let candidate = {
             let mut state = self.state.lock();
             match core::mem::replace(&mut state.slot, Slot::Idle) {
@@ -147,7 +158,7 @@ impl Session {
     }
 
     /// Retain the named candidate for a pixel operation without holding the session lock.
-    pub(super) fn candidate(&self, id: u64) -> Result<Arc<Candidate>> {
+    pub(crate) fn candidate(&self, id: u64) -> Result<Arc<Candidate>> {
         let state = self.state.lock();
         if state.closed {
             return Err(EKEYREVOKED);
@@ -164,7 +175,7 @@ impl Session {
     }
 
     /// Activate one completed candidate or reconcile an already published result.
-    pub(super) fn activate(&self, id: u64) -> Result<Description> {
+    pub(crate) fn activate(&self, id: u64) -> Result<Description> {
         let registered = self.device.registration_guard().ok_or(ENODEV)?;
         let candidate = {
             let mut state = self.state.lock();
@@ -232,6 +243,10 @@ impl Session {
                     active,
                     _source: source,
                     description,
+                    next_source_id: 1,
+                    last_content_serial: None,
+                    last_released_source: None,
+                    source: SourceSlot::Ready,
                 };
                 drop(state);
                 registered.hotplug_event();
@@ -244,45 +259,215 @@ impl Session {
         }
     }
 
+    /// Reserve one changed current scene for publication by a transport adapter.
+    pub(crate) fn begin_source(&self) -> Result<PendingSource<'_>> {
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(EKEYREVOKED);
+        }
+        let Slot::Renderer {
+            candidate,
+            active,
+            description,
+            next_source_id,
+            last_content_serial,
+            source,
+            ..
+        } = &mut state.slot
+        else {
+            return if matches!(state.slot, Slot::Publishing | Slot::Activating { .. }) {
+                Err(EBUSY)
+            } else {
+                Err(EOPNOTSUPP)
+            };
+        };
+        if !matches!(source, SourceSlot::Ready) {
+            return Err(EBUSY);
+        }
+        let job = candidate.claim_source(active, *description, *last_content_serial)?;
+        let content_serial = match job.scene().content_serial() {
+            Some(content) => content.get(),
+            None => {
+                drop(state);
+                job.release_without_access();
+                return Err(ENODATA);
+            }
+        };
+        if *last_content_serial == Some(content_serial) {
+            drop(state);
+            job.release_without_access();
+            return Err(ENODATA);
+        }
+        let id = *next_source_id;
+        *next_source_id = match id.checked_add(1) {
+            Some(next) => next,
+            None => {
+                drop(state);
+                job.release_without_access();
+                return Err(EOVERFLOW);
+            }
+        };
+        *source = SourceSlot::Publishing(id);
+        Ok(PendingSource {
+            session: self,
+            id,
+            content_serial,
+            job: Some(job),
+        })
+    }
+
+    /// Resolve one published source job, accepting a repeated terminal record.
+    pub(crate) fn release_source(&self, id: u64, completion: Completion) -> Result {
+        let job = {
+            let mut state = self.state.lock();
+            if state.closed {
+                return Err(EKEYREVOKED);
+            }
+            let Slot::Renderer {
+                source,
+                last_released_source,
+                ..
+            } = &mut state.slot
+            else {
+                return Err(EOPNOTSUPP);
+            };
+            if *last_released_source == Some(id) {
+                return Ok(());
+            }
+            match core::mem::replace(source, SourceSlot::Ready) {
+                SourceSlot::Claimed { id: current, job } if current == id => {
+                    *last_released_source = Some(id);
+                    job
+                }
+                other => {
+                    *source = other;
+                    return Err(ENOENT);
+                }
+            }
+        };
+        job.release(completion);
+        Ok(())
+    }
+
     pub(super) fn close(&self) {
-        let (candidate, active) = {
+        let (candidate, active, source) = {
             let mut state = self.state.lock();
             state.closed = true;
             match core::mem::replace(&mut state.slot, Slot::Idle) {
                 Slot::Active { candidate, .. } | Slot::Activating { candidate, .. } => {
-                    (Some(candidate), None)
+                    (Some(candidate), None, None)
                 }
                 Slot::Renderer {
-                    candidate, active, ..
-                } => (Some(candidate), Some(active)),
-                _ => (None, None),
+                    candidate,
+                    active,
+                    source,
+                    ..
+                } => (
+                    Some(candidate),
+                    Some(active),
+                    match source {
+                        SourceSlot::Claimed { job, .. } => Some(job),
+                        SourceSlot::Ready | SourceSlot::Publishing(_) => None,
+                    },
+                ),
+                _ => (None, None, None),
             }
         };
         if let Some(candidate) = candidate {
             candidate.cancel();
             drop(candidate);
         }
+        drop(source);
         drop(active);
     }
 }
 
+/// One claimed job not yet visible through its transport.
+#[must_use = "dropping an unpublished source job returns its queue slot"]
+pub(crate) struct PendingSource<'a> {
+    session: &'a Session,
+    id: u64,
+    content_serial: u64,
+    job: Option<SourceJob>,
+}
+
+impl PendingSource<'_> {
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub(crate) fn description(&self) -> Result<SourceDescription> {
+        self.job.as_ref().ok_or(EINVAL)?.description()
+    }
+
+    pub(crate) fn plane(&self, index: usize) -> Result<Plane<'_>> {
+        self.job.as_ref().ok_or(EINVAL)?.plane(index)
+    }
+
+    /// Publish the job after an adapter has completed every fallible operation.
+    pub(crate) fn publish(mut self, publish: impl FnOnce()) -> Result {
+        let job = self.job.take().ok_or(EINVAL)?;
+        let mut state = self.session.state.lock();
+        if state.closed {
+            drop(state);
+            job.release_without_access();
+            return Err(EKEYREVOKED);
+        }
+        let Slot::Renderer {
+            source,
+            last_content_serial,
+            ..
+        } = &mut state.slot
+        else {
+            drop(state);
+            job.release_without_access();
+            return Err(ECANCELED);
+        };
+        if !matches!(source, SourceSlot::Publishing(id) if *id == self.id) {
+            drop(state);
+            job.release_without_access();
+            return Err(ECANCELED);
+        }
+        publish();
+        *last_content_serial = Some(self.content_serial);
+        *source = SourceSlot::Claimed { id: self.id, job };
+        Ok(())
+    }
+}
+
+impl Drop for PendingSource<'_> {
+    fn drop(&mut self) {
+        let Some(job) = self.job.take() else {
+            return;
+        };
+        let mut state = self.session.state.lock();
+        if let Slot::Renderer { source, .. } = &mut state.slot {
+            if matches!(source, SourceSlot::Publishing(id) if *id == self.id) {
+                *source = SourceSlot::Ready;
+            }
+        }
+        drop(state);
+        job.release_without_access();
+    }
+}
+
 #[must_use = "dropping an unpublished candidate cancels its reservation"]
-pub(super) struct Pending<'a> {
+pub(crate) struct Pending<'a> {
     session: &'a Session,
     id: u64,
     candidate: Option<Arc<Candidate>>,
 }
 
 impl Pending<'_> {
-    pub(super) fn id(&self) -> u64 {
+    pub(crate) fn id(&self) -> u64 {
         self.id
     }
 
-    pub(super) fn configuration(&self) -> Result<&Configuration> {
+    pub(crate) fn configuration(&self) -> Result<&Configuration> {
         Ok(self.candidate()?.configuration())
     }
 
-    pub(super) fn execution(&self) -> Result<Description> {
+    pub(crate) fn execution(&self) -> Result<Description> {
         Ok(self.candidate()?.execution())
     }
 
@@ -290,7 +475,7 @@ impl Pending<'_> {
         self.candidate.as_ref().ok_or(EINVAL)
     }
 
-    pub(super) fn publish(mut self) -> Result {
+    pub(crate) fn publish(mut self) -> Result {
         self.candidate()?.validate()?;
         let candidate = self.candidate.take().ok_or(EINVAL)?;
         let mut state = self.session.state.lock();

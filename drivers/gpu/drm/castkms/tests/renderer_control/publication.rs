@@ -3,7 +3,13 @@
 //! Prepared metadata is consumed only by its own current publication under renderer control.
 
 use super::*;
-use crate::execution::Profile;
+use crate::{
+    execution::Profile,
+    renderer::{
+        job::Completion,
+        session::Session, //
+    },
+};
 use kernel::{
     dma_fence::testing::ManualFence,
     sync::aref::ARef, //
@@ -91,13 +97,74 @@ mod cases {
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
                 .ok_or(EINVAL)?;
-            check(candidate.claim_source(&active, candidate.execution()).err() == Some(ESTALE))?;
-            let job = candidate.claim_source(&active, description)?;
+            check(
+                candidate
+                    .claim_source(&active, candidate.execution(), None)
+                    .err()
+                    == Some(ESTALE),
+            )?;
+            let job = candidate.claim_source(&active, description, None)?;
             check(job.scene().primary().is_some())?;
             source.seal();
             check(source.prepared()?.is_none())?;
             job.release_without_access();
             check(source.prepared()?.is_some())
+        })
+    }
+
+    #[test]
+    fn session_publishes_one_changed_source_until_release() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let session = Session::new(owner.access(), device.to_registered_ref())?;
+            let pending = session.begin(device.execution.describe().generation)?;
+            let candidate_id = pending.id();
+            pending.publish()?;
+            session
+                .candidate(candidate_id)?
+                .submit_private_probe(None)?;
+            let execution = session.activate(candidate_id)?;
+            check(execution.profile == Profile::GpuV1)?;
+
+            let source = device
+                .output
+                .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                .ok_or(EINVAL)?;
+            let unpublished = session.begin_source()?;
+            let unpublished_id = unpublished.id();
+            drop(unpublished);
+            let pending = session.begin_source()?;
+            let job_id = pending.id();
+            check(job_id == unpublished_id + 1)?;
+            let description = pending.description()?;
+            check(description.format == drm::fourcc::XRGB8888)?;
+            check(description.modifier.is_none())?;
+            check(description.dimensions == [640, 480])?;
+            check(description.source == [0, 0, 640 << 16, 480 << 16])?;
+            check(description.destination == [640, 480])?;
+            check(description.output == [640, 480])?;
+            check(description.plane_count == 1)?;
+            check(description.content_serial != 0)?;
+            let plane = pending.plane(0)?;
+            check(plane.pitch == 2560)?;
+            check(plane.offset == 0)?;
+            let buffer = plane.export()?;
+            check(!buffer.is_writable())?;
+            check(session.begin_source().err() == Some(EBUSY))?;
+            let mut published = false;
+            pending.publish(|| published = true)?;
+            check(published)?;
+            check(session.begin_source().err() == Some(EBUSY))?;
+            check(
+                session.release_source(job_id + 1, Completion::WithoutAccess) == Err(ENOENT),
+            )?;
+            check(session.begin_source().err() == Some(EBUSY))?;
+
+            source.seal();
+            session.release_source(job_id, Completion::WithoutAccess)?;
+            check(source.prepared()?.is_some())?;
+            session.release_source(job_id, Completion::WithoutAccess)?;
+            check(session.begin_source().err() == Some(ENODATA))
         })
     }
 
@@ -112,7 +179,7 @@ mod cases {
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
                 .ok_or(EINVAL)?;
-            let job = candidate.claim_source(&active, description)?;
+            let job = candidate.claim_source(&active, description, None)?;
             source.seal();
             drop(job);
             check(matches!(source.prepared(), Err(EIO)))
@@ -130,9 +197,9 @@ mod cases {
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
                 .ok_or(EINVAL)?;
-            let job = candidate.claim_source(&active, description)?;
+            let job = candidate.claim_source(&active, description, None)?;
             source.seal();
-            job.release_cpu();
+            job.release(Completion::Cpu);
             let prepared = source.prepared()?.ok_or(EAGAIN)?;
             check(prepared.completion()?.is_none())
         })
@@ -149,11 +216,11 @@ mod cases {
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
                 .ok_or(EINVAL)?;
-            let job = candidate.claim_source(&active, description)?;
+            let job = candidate.claim_source(&active, description, None)?;
             let mut completion = ManualFence::new()?;
             let fence = completion.fence();
             source.seal();
-            job.release_submitted(&fence);
+            job.release(Completion::Submitted(fence));
             let prepared = source.prepared()?.ok_or(EAGAIN)?;
             let retained = prepared.completion()?.ok_or(EINVAL)?;
             check(matches!(retained.status(), kernel::dma_fence::Status::Pending))?;
