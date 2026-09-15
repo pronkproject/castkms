@@ -2,6 +2,7 @@
 
 //! Immutable whole-scene requirements, without renderer authority or CPU layout policy.
 
+use crate::scene::Geometry;
 use kernel::{drm::fourcc, prelude::*};
 
 pub(crate) const MAX_FORMATS: usize = 256;
@@ -136,6 +137,44 @@ impl Profile {
                 }
         })
     }
+
+    fn check_output(&self, output: [u32; 2]) -> Result {
+        if output.contains(&0)
+            || (0..2).any(|axis| output[axis] > self.limits.geometry.output[axis])
+        {
+            return Err(EOPNOTSUPP);
+        }
+        Ok(())
+    }
+
+    fn check_geometry(&self, geometry: Geometry, source: [u32; 2], output: [u32; 2]) -> Result {
+        let limits = self.limits.geometry;
+        if geometry.output != output
+            || source.contains(&0)
+            || (0..2).any(|axis| source[axis] > limits.source[axis])
+            || (!limits.position && geometry.position != [0, 0])
+            || (!limits.fractional && geometry.source.iter().any(|value| value & 0xffff != 0))
+        {
+            return Err(EOPNOTSUPP);
+        }
+        for axis in 0..2 {
+            let origin = u64::from(geometry.source[axis]);
+            let extent = u64::from(geometry.source[axis + 2]);
+            let destination = u64::from(geometry.destination[axis]);
+            let full = u64::from(source[axis]) << 16;
+            if extent == 0
+                || destination == 0
+                || origin + extent > full
+                || (!limits.crop && (origin != 0 || extent != full))
+                || (!limits.scale && extent != destination << 16)
+                || extent < destination * u64::from(limits.min_scale)
+                || extent > destination * u64::from(limits.max_scale)
+            {
+                return Err(EOPNOTSUPP);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
@@ -199,6 +238,8 @@ mod tests {
         assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 15, 0));
         assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 16, 1));
         assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 65540, 0));
+        profile.check_output([16384; 2])?;
+        assert_eq!(profile.check_output([16385, 1]), Err(EOPNOTSUPP));
         Ok(())
     }
 
@@ -220,6 +261,79 @@ mod tests {
         duplicate.pitch_alignment = 8;
         formats.push(duplicate, GFP_KERNEL)?;
         assert!(matches!(Profile::new(limits(), formats), Err(EINVAL)));
+        Ok(())
+    }
+
+    #[test]
+    fn geometry_limits_do_not_round_scale_ratios() -> Result {
+        let mut limits = limits();
+        limits.geometry.min_scale = 1 << 16;
+        limits.geometry.max_scale = 1 << 16;
+        let profile = profile(limits, None)?;
+        let mut geometry = Geometry {
+            source: [0, 0, 2 << 16, 2 << 16],
+            position: [-1, 0],
+            destination: [2; 2],
+            output: [2; 2],
+        };
+        profile.check_geometry(geometry, [2; 2], [2; 2])?;
+        geometry.source[2] -= 1;
+        assert_eq!(
+            profile.check_geometry(geometry, [2; 2], [2; 2]),
+            Err(EOPNOTSUPP)
+        );
+        geometry.source[0] = u32::MAX;
+        assert_eq!(
+            profile.check_geometry(geometry, [2; 2], [2; 2]),
+            Err(EOPNOTSUPP)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn geometry_features_are_explicit() -> Result {
+        let limits = limits();
+        let geometry = Geometry {
+            source: [1 << 15, 0, 1 << 16, 2 << 16],
+            position: [-1, 0],
+            destination: [4; 2],
+            output: [4; 2],
+        };
+        profile(limits, None)?.check_geometry(geometry, [2; 2], [4; 2])?;
+        for geometry_limits in [
+            GeometryLimits {
+                crop: false,
+                ..limits.geometry
+            },
+            GeometryLimits {
+                fractional: false,
+                ..limits.geometry
+            },
+            GeometryLimits {
+                position: false,
+                ..limits.geometry
+            },
+            GeometryLimits {
+                scale: false,
+                ..limits.geometry
+            },
+            GeometryLimits {
+                source: [1; 2],
+                ..limits.geometry
+            },
+        ] {
+            assert_eq!(
+                profile(
+                    Limits {
+                        geometry: geometry_limits,
+                        ..limits
+                    },
+                    None
+                )?
+                .check_geometry(geometry, [2; 2], [4; 2]),
+                Err(EOPNOTSUPP)
+            );
+        }
         Ok(())
     }
 
