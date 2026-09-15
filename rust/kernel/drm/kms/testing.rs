@@ -99,6 +99,52 @@ impl<T: KmsDriver> TestDevice<T> {
         &self.0
     }
 
+    /// Borrow crtc number `index` in the immutable fixture topology.
+    pub fn crtc_at(&self, index: usize) -> Result<&Crtc<T::Crtc>> {
+        // SAFETY: The private fixture retains completed setup and excludes topology
+        // changes. The checked index is within the native list, whose entries use
+        // the driver's nominated concrete type. The returned borrow retains self.
+        unsafe {
+            let config = &raw const (*self.0.as_raw()).mode_config;
+            if index >= (*config).num_crtc as usize { return Err(EINVAL); }
+            let mut entry = (*config).crtc_list.next;
+            for _ in 0..index { entry = (*entry).next; }
+            let raw = crate::container_of!(entry, bindings::drm_crtc, head);
+            Ok(Crtc::from_raw(raw))
+        }
+    }
+
+    /// Borrow plane number `index` in the immutable fixture topology.
+    pub fn plane_at(&self, index: usize) -> Result<&Plane<T::Plane>> {
+        // SAFETY: The private fixture retains completed setup and excludes topology
+        // changes. The checked index is within the native list, whose entries use
+        // the driver's nominated concrete type. The returned borrow retains self.
+        unsafe {
+            let config = &raw const (*self.0.as_raw()).mode_config;
+            if index >= (*config).num_total_plane as usize { return Err(EINVAL); }
+            let mut entry = (*config).plane_list.next;
+            for _ in 0..index { entry = (*entry).next; }
+            let raw = crate::container_of!(entry, bindings::drm_plane, head);
+            Ok(Plane::from_raw(raw))
+        }
+    }
+
+    /// Borrow connector number `index` in the immutable fixture topology.
+    pub fn connector_at(&self, index: usize) -> Result<&Connector<T::Connector>> {
+        // SAFETY: The private fixture retains completed setup and excludes topology
+        // changes. The checked index is within the native list, whose entries use
+        // the driver's nominated concrete type. The returned borrow retains self.
+        unsafe {
+            let config = &raw const (*self.0.as_raw()).mode_config;
+            if index >= (*config).num_connector as usize { return Err(EINVAL); }
+            let mut entry = (*config).connector_list.next;
+            for _ in 0..index { entry = (*entry).next; }
+            let raw = crate::container_of!(entry, bindings::drm_connector, head);
+            Ok(Connector::from_raw(raw))
+        }
+    }
+
+
     /// Borrow the only CRTC, rejecting fixtures with a different topology.
     pub fn crtc(&self) -> Result<&Crtc<T::Crtc>> {
         // SAFETY: Setup is complete, and this unregistered fixture excludes topology changes
