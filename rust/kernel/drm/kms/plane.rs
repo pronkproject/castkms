@@ -530,6 +530,15 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
         to_result(unsafe { bindings::drm_plane_create_zpos_immutable_property(self.as_raw(), zpos) })
     }
 
+    /// Advertise BT.601/709/2020 and limited/full range, defaulting to BT.601 full range.
+    pub fn create_yuv_color_properties(&self) -> Result {
+        // SAFETY: Setup owns the initialized plane before registration. All advertised
+        // values are members of the native color encoding and range enums.
+        to_result(unsafe { bindings::drm_plane_create_color_properties(self.as_raw(), 7, 3,
+            bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT601,
+            bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE) })
+    }
+
     /// Attach an adjustable plane stacking position before registration.
     pub fn create_zpos_property(&self, initial: u32, min: u32, max: u32) -> Result {
         if initial < min || initial > max {
