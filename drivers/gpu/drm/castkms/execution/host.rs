@@ -42,9 +42,6 @@ pub(crate) fn check_framebuffer(image: &Framebuffer<Driver>, geometry: Geometry)
     }
     for index in 0..image.plane_count() {
         let object = image.object_at(index)?;
-        if object.imported_dma_buf().is_some() {
-            return Err(EOPNOTSUPP);
-        }
         let layout = crate::formats::plane(image.format(), index)?;
         let pitch = image.pitch(index)? as usize;
         let offset = image.offset(index)? as usize;
