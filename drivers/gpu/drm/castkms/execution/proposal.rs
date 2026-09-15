@@ -11,6 +11,8 @@ pub(crate) struct DescriptionSnapshot {
     /// Monotonic within one publication, including cancelled proposals.
     /// Separate from the active execution generation and any validation epoch.
     pub(crate) generation: u64,
+    /// Device-scoped atomic transition identity, not a permission to render.
+    pub(crate) transition: u64,
     pub(crate) expected: Description,
     pub(crate) profile: Arc<capabilities::Profile>,
 }
@@ -22,6 +24,7 @@ pub(super) fn next_generation(previous: u64) -> Result<u64> {
 pub(super) struct Entry {
     pub(super) description: DescriptionSnapshot,
     pub(super) worker: Arc<()>,
+    pub(super) reservation: super::coordinator::Reservation,
 }
 
 /// Unique cancellation ownership. Drop outside display and admission locks.

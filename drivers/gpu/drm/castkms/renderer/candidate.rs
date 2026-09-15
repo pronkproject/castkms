@@ -101,11 +101,25 @@ impl Candidate {
         profile: crate::execution::capabilities::Profile,
     ) -> Result<super::proposal::Proposal> {
         let profile = Arc::new(profile, GFP_KERNEL)?;
+        let target = crate::execution::validation::Contract::Renderer(profile.clone());
+        let device = self.access.device();
+        let output = device
+            .displays
+            .iter()
+            .position(|display| core::ptr::eq(&**display, self.access.display()))
+            .ok_or(EINVAL)?;
         let registration = self.with_current_control(|_| {
             self.access
                 .display()
                 .execution
-                .propose(self.execution, &self.proposal_owner, profile)
+                .propose(self.execution, &self.proposal_owner, profile, || {
+                    device.validation.reserve(
+                        output,
+                        self.access.transition_owner(),
+                        self.configuration.clone(),
+                        target,
+                    )
+                })
         })?;
         Ok(super::proposal::Proposal::new(self.clone(), registration))
     }

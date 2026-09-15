@@ -133,6 +133,29 @@ mod cases {
     }
 
     #[test]
+    fn proposal_cancellation_lifts_its_installed_gate() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        enable(&fixture)?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+        let proposal = candidate.propose_profile(profile()?)?;
+        fixture.drm.device().validation.gate_for_test(
+            0,
+            proposal.describe().transition,
+            crate::execution::validation::Contract::Renderer(proposal.describe().profile.clone()),
+        )?;
+        check(enable(&fixture) == Err(EOPNOTSUPP))?;
+        proposal.cancel();
+        enable(&fixture)?;
+        let replacement = candidate.propose_profile(profile()?)?;
+        check(replacement.describe().transition != proposal.describe().transition)?;
+        drop(proposal);
+        replacement.validate()
+    }
+
+    #[test]
     fn canceled_candidate_cannot_remove_replacement_profile() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
