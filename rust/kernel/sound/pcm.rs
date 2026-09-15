@@ -258,6 +258,13 @@ impl<T: Operations> Registration<T> {
                 0,
                 0,
             );
+            if display.is_some() {
+                let control = bindings::snd_ctl_new1(&Self::ELD_CONTROL, (*raw).private_data);
+                if control.is_null() {
+                    return Err(ENOMEM);
+                }
+                to_result(bindings::snd_ctl_add(raw, control))?;
+            }
             to_result(bindings::snd_card_register(raw))?;
         }
         Ok(card)
@@ -272,6 +279,14 @@ impl<T: Operations> Registration<T> {
         prepare: Some(prepare::<T>),
         trigger: Some(trigger::<T>),
         pointer: Some(pointer::<T>),
+        ..pin_init::zeroed()
+    };
+    const ELD_CONTROL: bindings::snd_kcontrol_new = bindings::snd_kcontrol_new {
+        iface: bindings::SNDRV_CTL_ELEM_IFACE_PCM as _,
+        name: c"ELD".as_ptr().cast(),
+        access: bindings::SNDRV_CTL_ELEM_ACCESS_READ | bindings::SNDRV_CTL_ELEM_ACCESS_VOLATILE,
+        info: Some(eld_info),
+        get: Some(eld_get::<T>),
         ..pin_init::zeroed()
     };
 }
@@ -470,6 +485,32 @@ fn ring_offset(start: usize, index: usize, size: usize) -> usize {
     } else {
         index - tail
     }
+}
+
+unsafe extern "C" fn eld_info(
+    _: *mut bindings::snd_kcontrol,
+    info: *mut bindings::snd_ctl_elem_info,
+) -> c_int {
+    // SAFETY: ALSA supplies an exclusively writable result.
+    unsafe {
+        (*info).type_ = bindings::SNDRV_CTL_ELEM_TYPE_BYTES as _;
+        (*info).count = 128;
+    }
+    0
+}
+
+unsafe extern "C" fn eld_get<T: Operations>(
+    control: *mut bindings::snd_kcontrol,
+    value: *mut bindings::snd_ctl_elem_value,
+) -> c_int {
+    // SAFETY: The native card retains State and ALSA supplies writable result storage.
+    unsafe {
+        let state = &*(*control).private_data.cast::<State<T>>();
+        if let Some(eld) = &state.eld {
+            (&mut (*value).value.bytes.data)[..128].copy_from_slice(eld);
+        }
+    }
+    0
 }
 
 #[cfg(CONFIG_KUNIT)]
