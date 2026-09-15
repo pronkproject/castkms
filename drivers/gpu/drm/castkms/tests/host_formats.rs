@@ -183,4 +183,25 @@ mod cases {
         }
         Ok(())
     }
+
+    #[test]
+    fn yuv_chroma_order_selects_red() -> Result {
+        for (format, chroma) in [
+            (drm::fourcc::NV12, [90, 240]),
+            (drm::fourcc::NV21, [240, 90]),
+        ] {
+            let pixel = formats::pixel(format, 3, 3, |plane, x, y, out| {
+                if plane == 0 {
+                    check(x == 3 && y == 3)?;
+                    out[0] = 81;
+                } else {
+                    check(x == 2 && y == 1)?;
+                    out.copy_from_slice(&chroma);
+                }
+                Ok(())
+            })?;
+            check(pixel == 0xfe0000)?;
+        }
+        Ok(())
+    }
 }

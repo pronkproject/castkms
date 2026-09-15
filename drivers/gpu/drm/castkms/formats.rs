@@ -50,13 +50,42 @@ impl Plane {
     }
 }
 
-pub(crate) fn plane_count(_: u32) -> usize {
-    1
+/// Chroma geometry shared by all of the supported YUV layouts.
+fn yuv(format: u32) -> Option<(usize, usize, bool, bool, usize)> {
+    Some(match format {
+        NV12 => (2, 2, false, false, 8),
+        NV21 => (2, 2, false, true, 8),
+        NV16 => (2, 1, false, false, 8),
+        NV61 => (2, 1, false, true, 8),
+        NV24 => (1, 1, false, false, 8),
+        NV42 => (1, 1, false, true, 8),
+        _ => return None,
+    })
+}
+
+pub(crate) fn plane_count(format: u32) -> usize {
+    yuv(format).map_or(1, |(_, _, planar, _, _)| if planar { 3 } else { 2 })
 }
 
 pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
     if index >= plane_count(format) {
         return Err(EINVAL);
+    }
+    if let Some((hsub, vsub, planar, _, depth)) = yuv(format) {
+        let bits = if depth == 8 { 8 } else { 16 };
+        return Ok(if index == 0 {
+            Plane {
+                hsub: 1,
+                vsub: 1,
+                bits,
+            }
+        } else {
+            Plane {
+                hsub,
+                vsub,
+                bits: if planar { bits } else { bits * 2 },
+            }
+        });
     }
     let bits = match format {
         XRGB8888 | ARGB8888 | XBGR8888 | ABGR8888 | RGBA8888 | BGRA8888 | XRGB2101010
@@ -79,7 +108,8 @@ pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
 
 /// Decode a pixel using bounded reads at (plane, byte within row, row).
 ///
-/// Alpha is ignored for the opaque primary plane.
+/// Alpha is ignored for the opaque primary plane. YUV uses BT.601 limited range,
+/// the default DRM plane color interpretation; no color properties are exposed.
 pub(crate) fn pixel(
     format: u32,
     x: usize,
@@ -87,6 +117,24 @@ pub(crate) fn pixel(
     mut read: impl FnMut(usize, usize, usize, &mut [u8]) -> Result,
 ) -> Result<u32> {
     let rgb = |r: u32, g: u32, b: u32| (r << 16) | (g << 8) | b;
+    if let Some((hs, vs, _planar, swap, _depth)) = yuv(format) {
+        let bytes = 1;
+        let mut luma = [0; 2];
+        let mut chroma = [0; 4];
+        read(0, x * bytes, y, &mut luma[..bytes])?;
+        read(1, (x / hs) * bytes * 2, y / vs, &mut chroma[..bytes * 2])?;
+        let sample = |b: &[u8]| -> i64 { i64::from(b[0]) * 256 };
+        let yy = sample(&luma) - 16 * 256;
+        let a = sample(&chroma[..bytes]) - 128 * 256;
+        let b = sample(&chroma[bytes..]) - 128 * 256;
+        let (u, v) = if swap { (b, a) } else { (a, b) };
+        let channel = |v: i64| ((v + (1 << 23)) >> 24).clamp(0, 255) as u32;
+        return Ok(rgb(
+            channel(76284 * yy + 104595 * v),
+            channel(76284 * yy - 25624 * u - 53281 * v),
+            channel(76284 * yy + 132251 * u),
+        ));
+    }
     let bits = plane(format, 0)?.bits;
     let mut bytes = [0; 8];
     read(0, x * bits / 8, y, &mut bytes[..bits.div_ceil(8)])?;
