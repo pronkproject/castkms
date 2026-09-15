@@ -124,6 +124,25 @@ mod cases {
     use super::*;
 
     #[test]
+    fn yuv_matrices_distinguish_chromatic_samples() -> Result {
+        // Y=128, U=90, V=240, full range. Reference values follow each
+        // standard's luma coefficients, rounded after normalized conversion.
+        for (encoding, green, blue) in [
+            (ColorEncoding::Bt601, 61, 61),
+            (ColorEncoding::Bt709, 83, 57),
+            (ColorEncoding::Bt2020, 70, 57),
+        ] {
+            let channels = formats::pixel16(drm::fourcc::NV12, 0, 0,
+                (encoding, ColorRange::Full), |plane, _, _, bytes| {
+                    bytes.copy_from_slice(if plane == 0 { &[128] } else { &[90, 240] });
+                    Ok(())
+                })?;
+            check(channels.map(|v| (v * 255 + 32767) / 65535) == [255, green, blue])?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn packed_channel_order_decodes_red() -> Result {
         use drm::fourcc::*;
         for (format, bytes) in [
