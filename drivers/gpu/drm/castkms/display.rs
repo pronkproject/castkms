@@ -17,6 +17,7 @@ use crtc::{
     RawCrtc,
     RawCrtcState, //
 };
+use core::sync::atomic::{AtomicU32, Ordering};
 use kernel::{
     device,
     drm::{
@@ -36,6 +37,7 @@ pub(super) struct Plane {
 #[pin_data]
 pub(super) struct Crtc {
     pub(super) display: Arc<super::device::Display>,
+    transition_property: AtomicU32,
 }
 #[pin_data]
 pub(super) struct Encoder {}
@@ -261,7 +263,6 @@ impl plane::DriverPlane for Plane {
 }
 
 impl CrtcState {
-    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn tag_transition(&mut self, token: u64) {
         self.transition = token;
     }
@@ -413,8 +414,25 @@ impl crtc::DriverCrtc for Crtc {
 
     fn new(_: &Device<Driver>, display: &Self::Args) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
-            display: display.clone()
+            display: display.clone(),
+            transition_property: AtomicU32::new(0),
         })
+    }
+
+    fn atomic_set_property(&self, state: &mut CrtcState, property: u32, value: u64) -> Result {
+        if property != self.transition_property.load(Ordering::Relaxed) {
+            return Err(EINVAL);
+        }
+        state.tag_transition(value);
+        Ok(())
+    }
+
+    fn atomic_get_property(&self, _: &CrtcState, property: u32) -> Result<u64> {
+        if property != self.transition_property.load(Ordering::Relaxed) {
+            return Err(EINVAL);
+        }
+        // Request-only input: neither state duplication nor readback renews a tag.
+        Ok(0)
     }
 
     fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
@@ -633,6 +651,10 @@ impl KmsDriver for Driver {
             };
             let crtc =
                 crtc::UnregisteredCrtc::<Crtc>::new(dev, plane, cursor, None, display.clone())?;
+            let transition = crtc.attach_replayable_range_property(
+                c"CASTKMS_TRANSITION", 0, u64::MAX, 0,
+            )?;
+            crtc.transition_property.store(transition, Ordering::Relaxed);
             crtc.enable_color_mgmt(256, true, 256);
             crtc.set_gamma_size(256)?;
             let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
