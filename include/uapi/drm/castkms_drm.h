@@ -8,7 +8,7 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 6
+#define DRM_CASTKMS_RENDERER_VERSION 7
 
 /*
  * Request-only unsigned CRTC property. Zero means an ordinary update. A nonzero
@@ -83,6 +83,32 @@ struct drm_castkms_capability_format {
 	__u32 pitch_alignment;
 	__u32 offset_alignment;
 	__u32 max_pitch;
+};
+
+/*
+ * Register one immutable target for an existing BEGIN_TAKEOVER candidate.
+ * profile points to exactly profile_size bytes of capability encoding.
+ * result points to drm_castkms_renderer_profile_result; flags must be zero.
+ * HOST requires no userspace probe; a RENDERER target requires normal probe
+ * completion. Registration does not change KMS acceptance. Include transition
+ * in CASTKMS_TRANSITION on an ordinary compatible atomic update, then invoke
+ * COMMIT_TAKEOVER. ABORT_TAKEOVER cancels the pending profile and gate.
+ * A reply-copy fault may leave registration committed: query to reconcile it.
+ * Repeating registration while a proposal exists returns EBUSY, not a new token.
+ */
+struct drm_castkms_renderer_register_profile {
+	__u64 candidate_id;
+	__u64 profile;
+	__u64 result;
+	__u32 profile_size;
+	__u32 flags;
+};
+
+struct drm_castkms_renderer_profile_result {
+	__u64 transition;
+	__u64 capability_generation;
+	__u64 execution_generation;
+	__u64 reserved;
 };
 
 #define DRM_CASTKMS_CAPABILITY_PENDING (1U << 0)
@@ -670,10 +696,14 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SOURCE 0x0a
 #define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x0b
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
+#define DRM_CASTKMS_RENDERER_REGISTER_PROFILE 0x0d
 #define DRM_CASTKMS_RENDERER_QUERY_CAPABILITIES 0x0e
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
+	DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_PROFILE,
+			struct drm_castkms_renderer_register_profile),
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY_CAPABILITIES =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY_CAPABILITIES,
 			struct drm_castkms_renderer_query_capabilities),

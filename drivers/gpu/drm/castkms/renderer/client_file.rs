@@ -237,6 +237,7 @@ impl ClientFile {
 
     fn dispatch(&self, cmd: u32, arg: usize) -> Result {
         match cmd {
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE => super::profile_file::register(&self.session, arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_QUERY_CAPABILITIES => super::capability_file::query(&self.session, arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_QUERY => self.query(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER => self.begin(arg),
