@@ -234,6 +234,15 @@ impl<'a, T: Driver> UnregisteredKmsDevice<'a, T> {
 /// [`PhantomData<Self>`]: PhantomData
 #[vtable]
 pub trait KmsDriver: Driver<Kms = Self> + Sized {
+    /// Serialize policy revalidation with native software-state installation.
+    ///
+    /// Called after predecessor waits, with modeset locks held but before native
+    /// preparation locks. Return the outcome of consuming `install`, either by
+    /// rejecting or invoking its continuation. Do not wait or acquire outer locks.
+    fn atomic_commit_install<'a>(install: atomic::Install<'a, Self>) -> atomic::InstallResult<'a, Self> {
+        install.install()
+    }
+
     /// Issue creator-bound final-image capture through an open DRM file.
     ///
     /// Implementations must validate current master-file role and both target objects,
@@ -345,7 +354,11 @@ impl<T: KmsDriver> private::KmsImpl for T {
         },
 
         kms_helper_vtable: bindings::drm_mode_config_helper_funcs {
-            atomic_commit_install: None,
+            atomic_commit_install: if Self::HAS_ATOMIC_COMMIT_INSTALL {
+                Some(atomic::install_callback::<Self>)
+            } else {
+                None
+            },
             atomic_commit_setup: None,
             atomic_commit_tail: if Self::HAS_ATOMIC_COMMIT_TAIL {
                 Some(atomic::commit_tail_callback::<Self>)

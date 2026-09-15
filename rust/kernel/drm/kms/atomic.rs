@@ -18,6 +18,9 @@ use crate::{
 use core::{cell::Cell, marker::*, mem::ManuallyDrop, ops::*, ptr::NonNull};
 
 mod input;
+mod install;
+pub use install::{Install, InstallResult};
+pub(super) use install::install_callback;
 pub use input::PlaneInput;
 use super::lock::ModesetAcquireContext;
 
@@ -399,9 +402,10 @@ unsafe impl<T: KmsDriver> AlwaysRefCounted for AtomicState<T> {
     }
 }
 
-/// Read-only object-state access during an atomic commit callback.
+/// Read-only object-state access during atomic installation or commit-tail callbacks.
 ///
-/// DRM publishes the new states before scheduling the commit worker. Another atomic check may
+/// Installation callbacks inspect candidate states while modeset locks are held. DRM publishes
+/// the new states before scheduling the commit worker. Another atomic check may
 /// already be duplicating their private payloads, so commit callbacks must not acquire mutable
 /// payload guards. This accessor is only borrowed from a callback; it deliberately does not expose
 /// the reference-counted [`AtomicState`], since retaining that object would not retain its new
@@ -431,7 +435,7 @@ impl<T: KmsDriver> AtomicStateReader<T> {
         self.0.get_old_crtc_state(crtc)
     }
 
-    /// Return the published new state of `crtc`, without granting mutable payload access.
+    /// Return the candidate or published new state of `crtc`, without mutable payload access.
     pub fn get_new_crtc_state<C>(&self, crtc: &C) -> Option<&C::State>
     where
         C: ModesettableCrtc + ModeObject<Driver = T>,
@@ -455,7 +459,7 @@ impl<T: KmsDriver> AtomicStateReader<T> {
         self.0.get_old_plane_state(plane)
     }
 
-    /// Return the published new state of `plane`, without granting mutable payload access.
+    /// Return the candidate or published new state of `plane`, without mutable payload access.
     pub fn get_new_plane_state<P>(&self, plane: &P) -> Option<&P::State>
     where
         P: ModesettablePlane + ModeObject<Driver = T>,
