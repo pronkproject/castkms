@@ -100,13 +100,22 @@ descriptor revocation and attachment replacement on a disposable device::
     make -C tools/testing/selftests TARGETS=drm_castkms
     tools/testing/selftests/drm_castkms/audio /dev/dri/cardN
 
-The multi-output test exercises sound outside the kernel test framework. Run
-it only on a disposable device; it attaches monitors and changes display modes.
+Two additional tests exercise sound outside the kernel test framework. Run
+them only on disposable devices; they attach monitors and change display modes.
 ``audio-multi`` requires eight CastKMS outputs and no sound server. It plays a
 different signal on each output, checks that the signals stay separate, and
 exercises repeated modesets, monitor replacement and DRM master handoff::
 
     tools/testing/selftests/drm_castkms/audio-multi /dev/dri/cardN
+
+``audio-pipewire`` requires one output, a running PipeWire server with
+WirePlumber, and the ``pw-play``, ``pw-dump``, ``wpctl`` and ``jq`` commands. It
+waits for the new sound device to appear, directs a known signal to that device,
+and verifies the samples through the CastKMS audio file. The test sets that
+sink's volume to full and unmutes it. It checks recovery after disabling and
+re-enabling the CRTC, then repeats playback after monitor replacement::
+
+    tools/testing/selftests/drm_castkms/audio-pipewire /dev/dri/cardN
 
 Virtual monitor control
 -----------------------
