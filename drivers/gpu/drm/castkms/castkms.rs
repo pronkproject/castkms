@@ -2,6 +2,7 @@
 
 //! CastKMS virtual display device.
 
+mod audio;
 mod authority;
 mod capture;
 mod color;
