@@ -38,7 +38,8 @@ pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
         return Err(EINVAL);
     }
     let bits = match format {
-        XRGB8888 | ARGB8888 | XBGR8888 | ABGR8888 | RGBA8888 | BGRA8888 => 32,
+        XRGB8888 | ARGB8888 | XBGR8888 | ABGR8888 | RGBA8888 | BGRA8888 | XRGB2101010
+        | ARGB2101010 | XBGR2101010 | ABGR2101010 => 32,
         RGB888 | BGR888 => 24,
         RGB565 | BGR565 => 16,
         _ => return Err(EINVAL),
@@ -76,6 +77,16 @@ pub(crate) fn pixel(
         XBGR8888 | ABGR8888 | BGR888 => (bytes[0] as u32, bytes[1] as u32, bytes[2] as u32),
         RGBA8888 => (bytes[3] as u32, bytes[2] as u32, bytes[1] as u32),
         BGRA8888 => (bytes[1] as u32, bytes[2] as u32, bytes[3] as u32),
+        XRGB2101010 | ARGB2101010 => (
+            scale((word >> 20) & 1023, 10),
+            scale((word >> 10) & 1023, 10),
+            scale(word & 1023, 10),
+        ),
+        XBGR2101010 | ABGR2101010 => (
+            scale(word & 1023, 10),
+            scale((word >> 10) & 1023, 10),
+            scale((word >> 20) & 1023, 10),
+        ),
         RGB565 => (
             scale((word >> 11) & 31, 5),
             scale((word >> 5) & 63, 6),
