@@ -10,9 +10,14 @@ mod clock;
 pub(crate) mod playback;
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
 mod source;
+#[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+mod tap;
 
 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-pub(crate) use source::Attachment;
+pub(crate) use source::{
+    Attachment,
+    Source, //
+};
 
 /// The playback and capture paths share one interleaved PCM format.
 #[cfg(any(CONFIG_DRM_CASTKMS_AUDIO, CONFIG_DRM_CASTKMS_KUNIT_TEST))]

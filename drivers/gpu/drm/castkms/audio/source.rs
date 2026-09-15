@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Attachment-owned ALSA registration.
+//! Attachment-owned ALSA registration and exclusive private tap admission.
 
 use super::playback::{Gate, Playback};
+use super::tap::Tap;
 use crate::{
     CastKms,
     Driver, //
@@ -23,11 +24,58 @@ use kernel::{
         Registration, //
     },
     str::CString,
-    sync::Arc, //
+    sync::{
+        Arc,
+        Mutex, //
+    }, //
 };
+
+struct State {
+    closed: bool,
+    tap: Option<Arc<Tap>>,
+}
+
+/// Retained capture source, not an owner of the sound-card registration.
+#[pin_data]
+pub(crate) struct Source {
+    #[pin]
+    state: Mutex<State>,
+    playback: Arc<Playback>,
+}
+
+impl Source {
+    pub(super) fn open(&self) -> Result<Arc<Tap>> {
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(ENOTCONN);
+        }
+        if state
+            .tap
+            .as_ref()
+            .is_some_and(|tap| tap.terminal().is_none())
+        {
+            return Err(EBUSY);
+        }
+        let tap = Tap::new(self.playback.clone())?;
+        state.tap = Some(tap.clone());
+        Ok(tap)
+    }
+
+    fn close(&self) {
+        let tap = {
+            let mut state = self.state.lock();
+            state.closed = true;
+            state.tap.take()
+        };
+        if let Some(tap) = tap {
+            tap.terminate(ENOTCONN);
+        }
+    }
+}
 
 /// Dropping the monitor attachment disconnects ALSA even while capture handles survive.
 pub(crate) struct Attachment {
+    pub(crate) source: Arc<Source>,
     _card: Registration<Playback>,
 }
 
@@ -77,6 +125,22 @@ impl Attachment {
             }),
             playback.clone(),
         )?;
-        Ok(Some(Self { _card: card }))
+        let source = Arc::pin_init(
+            pin_init!(Source {
+                state <- kernel::new_mutex!(State { closed: false, tap: None }),
+                playback,
+            }),
+            GFP_KERNEL,
+        )?;
+        Ok(Some(Self {
+            source,
+            _card: card,
+        }))
+    }
+}
+
+impl Drop for Attachment {
+    fn drop(&mut self) {
+        self.source.close();
     }
 }
