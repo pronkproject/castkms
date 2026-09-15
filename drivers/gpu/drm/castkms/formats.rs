@@ -40,6 +40,7 @@ pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
     let bits = match format {
         XRGB8888 | ARGB8888 | XBGR8888 | ABGR8888 | RGBA8888 | BGRA8888 => 32,
         RGB888 | BGR888 => 24,
+        RGB565 | BGR565 => 16,
         _ => return Err(EINVAL),
     };
     Ok(Plane {
@@ -66,11 +67,25 @@ pub(crate) fn pixel(
     if format == XRGB8888 {
         return Ok(word as u32);
     }
+    let scale = |v: u64, bits: u32| -> u32 {
+        let max = (1 << bits) - 1;
+        ((v * 255 + max / 2) / max) as u32
+    };
     let (r, g, b) = match format {
         XRGB8888 | ARGB8888 | RGB888 => (bytes[2] as u32, bytes[1] as u32, bytes[0] as u32),
         XBGR8888 | ABGR8888 | BGR888 => (bytes[0] as u32, bytes[1] as u32, bytes[2] as u32),
         RGBA8888 => (bytes[3] as u32, bytes[2] as u32, bytes[1] as u32),
         BGRA8888 => (bytes[1] as u32, bytes[2] as u32, bytes[3] as u32),
+        RGB565 => (
+            scale((word >> 11) & 31, 5),
+            scale((word >> 5) & 63, 6),
+            scale(word & 31, 5),
+        ),
+        BGR565 => (
+            scale(word & 31, 5),
+            scale((word >> 5) & 63, 6),
+            scale((word >> 11) & 31, 5),
+        ),
         _ => return Err(EINVAL),
     };
     Ok(rgb(r, g, b))
