@@ -59,6 +59,8 @@ struct drm_mode_create_capture_grant {
  * @id: Nonzero offer name within this capture client, not capture authority.
  * @width: Visible width in pixels.
  * @height: Visible height in pixels.
+ * @refresh_millihz: Accepted display refresh rate in millihertz.
+ * @mode_flags: DRM_MODE_FLAG_* values for the accepted display mode.
  * @format: DRM fourcc format of the offered image.
  * @max_requests: Maximum requests per stream, not a reservation of queue credit.
  * @modifier: DRM format modifier of the offered image.
@@ -84,10 +86,12 @@ struct drm_capture_describe {
 	__u64 id;
 	__u32 width;
 	__u32 height;
+	__u32 refresh_millihz;
+	__u32 mode_flags;
 	__u32 format;
 	__u32 max_requests;
 	__u64 modifier;
-	__u64 reserved[2];
+	__u64 reserved;
 };
 
 #define DRM_IOCTL_CAPTURE_DESCRIBE DRM_IOR(0x00, struct drm_capture_describe)

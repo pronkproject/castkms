@@ -130,7 +130,7 @@ static void describe_output(int master, const struct drm_mode_create_capture_gra
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &first) == 0);
 	CHECK(first.id == 1 && first.width == mode.hdisplay && first.height == mode.vdisplay);
 	CHECK(first.format == DRM_FORMAT_XRGB8888 && first.modifier == DRM_FORMAT_MOD_LINEAR);
-	CHECK(first.max_requests == 8 && first.reserved[0] == 0 && first.reserved[1] == 0);
+	CHECK(first.max_requests == 8 && first.reserved == 0);
 	CHECK(drmIoctl(files->control_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == -1);
 	CHECK(errno == ENOTTY);
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE ^ (1U << _IOC_SIZESHIFT),

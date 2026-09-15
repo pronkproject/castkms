@@ -25,6 +25,8 @@ static long capture_describe(struct file *file, void __user *arg)
 	output.id = description.id;
 	output.width = description.width;
 	output.height = description.height;
+	output.refresh_millihz = description.refresh_millihz;
+	output.mode_flags = description.mode_flags;
 	output.format = description.format;
 	output.max_requests = description.max_requests;
 	output.modifier = description.modifier;

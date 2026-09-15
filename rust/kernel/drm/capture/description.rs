@@ -22,6 +22,8 @@ use core::num::{
 pub struct Description {
     id: NonZeroU64,
     dimensions: [NonZeroU32; 2],
+    refresh_millihz: NonZeroU32,
+    mode_flags: u32,
     format: NonZeroU32,
     modifier: u64,
     max_requests: NonZeroU32,
@@ -32,6 +34,8 @@ impl Description {
     pub fn new(
         id: u64,
         dimensions: [u32; 2],
+        refresh_millihz: u32,
+        mode_flags: u32,
         format: u32,
         modifier: u64,
         max_requests: u32,
@@ -45,6 +49,8 @@ impl Description {
                 NonZeroU32::new(dimensions[0]).ok_or(EINVAL)?,
                 NonZeroU32::new(dimensions[1]).ok_or(EINVAL)?,
             ],
+            refresh_millihz: NonZeroU32::new(refresh_millihz).ok_or(EINVAL)?,
+            mode_flags,
             format: NonZeroU32::new(format).ok_or(EINVAL)?,
             modifier,
             max_requests: NonZeroU32::new(max_requests).ok_or(EINVAL)?,
@@ -64,6 +70,8 @@ impl Description {
         Self::new(
             result.id,
             [result.width, result.height],
+            result.refresh_millihz,
+            result.mode_flags,
             result.format,
             result.modifier,
             result.max_requests,
@@ -78,6 +86,16 @@ impl Description {
     /// Visible width and height in pixels.
     pub fn dimensions(self) -> [u32; 2] {
         self.dimensions.map(NonZeroU32::get)
+    }
+
+    /// Accepted display refresh rate in millihertz.
+    pub fn refresh_millihz(self) -> u32 {
+        self.refresh_millihz.get()
+    }
+
+    /// Accepted DRM mode flags.
+    pub fn mode_flags(self) -> u32 {
+        self.mode_flags
     }
 
     /// DRM fourcc of the offered image.
@@ -101,6 +119,8 @@ impl Description {
             id: self.id(),
             width,
             height,
+            refresh_millihz: self.refresh_millihz(),
+            mode_flags: self.mode_flags(),
             format: self.format(),
             max_requests: self.max_requests(),
             modifier: self.modifier(),

@@ -9,6 +9,8 @@
  * @id: Nonzero name within one capture client, not an authority or object address.
  * @width: Nonzero visible width in pixels.
  * @height: Nonzero visible height in pixels.
+ * @refresh_millihz: Nonzero accepted display refresh rate in millihertz.
+ * @mode_flags: DRM_MODE_FLAG_* values for the accepted display mode.
  * @format: Nonzero DRM fourcc format of the offered image.
  * @max_requests: Nonzero maximum requests per stream, not reserved queue credit.
  * @modifier: DRM format modifier, not DRM_FORMAT_MOD_INVALID.
@@ -27,6 +29,8 @@ struct drm_capture_description {
 	u64 id;
 	u32 width;
 	u32 height;
+	u32 refresh_millihz;
+	u32 mode_flags;
 	u32 format;
 	u32 max_requests;
 	u64 modifier;
