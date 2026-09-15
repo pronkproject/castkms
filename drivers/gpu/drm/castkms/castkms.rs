@@ -144,6 +144,8 @@ impl drm::Driver for Driver {
          drm::ioctl::MASTER, monitor_file::create),
         (CASTKMS_CREATE_RENDERER_CONTROL, drm_castkms_create_renderer_control,
          drm::ioctl::MASTER, renderer_file::create),
+        (CASTKMS_CREATE_AUDIO_CAPTURE, drm_castkms_create_audio_capture,
+         drm::ioctl::MASTER, audio::create),
     }
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {

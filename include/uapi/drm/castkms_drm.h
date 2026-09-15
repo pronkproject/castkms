@@ -387,6 +387,77 @@ struct drm_castkms_renderer_release_source {
 	__u32 reserved[3];
 };
 
+/**
+ * struct drm_castkms_audio_files - independently owned audio endpoints
+ * @audio_fd: Read-only interleaved PCM stream; no ALSA capture device is created.
+ * @revoke_fd: Closing its last reference revokes the stream.
+ *
+ * Both files are close-on-exec. Closing the issuing DRM file also revokes audio.
+ * Neither endpoint grants image capture, monitor control or renderer access.
+ */
+struct drm_castkms_audio_files {
+	__s32 audio_fd;
+	__s32 revoke_fd;
+};
+
+/**
+ * struct drm_castkms_create_audio_capture - authorize one attachment's audio
+ * @crtc_id: CRTC controlled by the current top-level DRM master.
+ * @connector_id: Connector paired with that CRTC, with an attached audio sink.
+ * @files: Userspace address of struct drm_castkms_audio_files, output only.
+ * @flags: Zero, or DRM_CASTKMS_AUDIO_NONBLOCK for nonblocking reads.
+ * @reserved: Must be zero.
+ *
+ * At most one live stream may capture an attachment. Master loss, creator close,
+ * revocation, detach or device removal terminates the stream and discards queued
+ * samples. An old file never follows a replacement attachment. Capture operates
+ * independently of the selected video renderer. Disabling the CRTC suspends
+ * delivery without revoking the capability. Files are installed only after
+ * the complete result has been copied successfully.
+ */
+struct drm_castkms_create_audio_capture {
+	__u32 crtc_id;
+	__u32 connector_id;
+	__u64 files;
+	__u32 flags;
+	__u32 reserved[3];
+};
+
+#define DRM_CASTKMS_AUDIO_VERSION 1
+#define DRM_CASTKMS_AUDIO_NONBLOCK (1U << 0)
+#define DRM_CASTKMS_AUDIO_S16_LE 1
+
+/**
+ * struct drm_castkms_audio_query - fixed PCM stream description and loss counter
+ * @version: DRM_CASTKMS_AUDIO_VERSION.
+ * @format: DRM_CASTKMS_AUDIO_S16_LE, stereo interleaved signed 16-bit little endian.
+ * @rate: Sample rate in frames per second (48000).
+ * @channels: Channels per frame (2).
+ * @frame_bytes: Bytes per interleaved frame (4).
+ * @reserved: Zero.
+ * @buffer_frames: Maximum queued frames (65536).
+ * @dropped_frames: Saturating count of frames discarded due to scheduling or overflow.
+ *
+ * read() returns whole frames, including silence during idle playback while
+ * the CRTC is active. An inactive CRTC supplies no frames and queued samples
+ * are discarded on activity transitions. ALSA playback interrupted by a
+ * modeset must be prepared again. Nonzero reads smaller than one frame fail
+ * with EINVAL; an empty nonblocking stream returns
+ * EAGAIN. poll() reports readable samples or terminal POLLHUP|POLLERR.
+ */
+struct drm_castkms_audio_query {
+	__u32 version;
+	__u32 format;
+	__u32 rate;
+	__u32 channels;
+	__u32 frame_bytes;
+	__u32 reserved;
+	__u64 buffer_frames;
+	__u64 dropped_frames;
+};
+
+#define DRM_CASTKMS_CREATE_AUDIO_CAPTURE 0x02
+#define DRM_CASTKMS_AUDIO_QUERY 0x01
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
 #define DRM_CASTKMS_CREATE_RENDERER_CONTROL 0x01
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
@@ -403,6 +474,12 @@ struct drm_castkms_renderer_release_source {
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
+	DRM_IOCTL_CASTKMS_CREATE_AUDIO_CAPTURE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_AUDIO_CAPTURE,
+			struct drm_castkms_create_audio_capture),
+	DRM_IOCTL_CASTKMS_AUDIO_QUERY =
+		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_AUDIO_QUERY,
+			struct drm_castkms_audio_query),
 	DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL =
 		DRM_IOWR(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_MONITOR_CONTROL,
 			 struct drm_castkms_create_monitor_control),

@@ -54,6 +54,18 @@ impl drm::file::DriverFile for File {
 
 impl File {
     #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    pub(crate) fn create_audio_owner(
+        dev: &drm::Device<Driver, Registered>,
+        file: &drm::file::File<Self>,
+        crtc_id: u32,
+        connector_id: u32,
+    ) -> Result<crate::audio::provider::Owner> {
+        let crtc = dev.lookup_crtc(file, crtc_id)?;
+        let connector = dev.lookup_connector(file, connector_id)?;
+        Self::issue_audio_owner(file, crtc.crtc(), &connector)
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
     pub(crate) fn issue_audio_owner(
         file: &drm::file::File<Self>,
         crtc: &Crtc<display::Crtc>,
