@@ -218,7 +218,7 @@ impl Stream {
             self.capture
                 .policy
                 .permission
-                .device()
+                .display()
                 .execution
                 .check_host()?;
             if current.configuration() != &self.configuration {
