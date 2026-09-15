@@ -436,7 +436,7 @@ impl KmsDriver for Driver {
             let plane = plane::UnregisteredPlane::<Plane>::new(
                 dev,
                 0,
-                &[fourcc::XRGB8888],
+                &super::execution::host::FORMATS,
                 Some(&[fourcc::FORMAT_MOD_LINEAR]),
                 plane::Type::Primary,
                 None,
