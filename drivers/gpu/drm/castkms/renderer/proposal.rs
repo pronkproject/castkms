@@ -34,4 +34,15 @@ impl Proposal {
     pub(crate) fn cancel(&self) {
         self.registration.cancel();
     }
+
+    pub(crate) fn activate(
+        &self,
+        device: &kernel::drm::Device<crate::Driver, kernel::drm::device::Registered>,
+    ) -> Result<(
+        crate::renderer_startup::Active,
+        super::probe::Source,
+        crate::execution::Description,
+    )> {
+        self.candidate.activate_proposal(device, &self.registration)
+    }
 }

@@ -12,8 +12,8 @@ use crate::{
     host_compositor::compose::Completed,
     host_snapshot::Snapshot,
     image_access,
-    renderer_startup,
     renderer::job::SourceJob,
+    renderer_startup,
     scene::Configuration,
     Driver, //
 };
@@ -109,17 +109,19 @@ impl Candidate {
             .position(|display| core::ptr::eq(&**display, self.access.display()))
             .ok_or(EINVAL)?;
         let registration = self.with_current_control(|_| {
-            self.access
-                .display()
-                .execution
-                .propose(self.execution, &self.proposal_owner, profile, || {
+            self.access.display().execution.propose(
+                self.execution,
+                &self.proposal_owner,
+                profile,
+                || {
                     device.validation.reserve(
                         output,
                         self.access.transition_owner(),
                         self.configuration.clone(),
                         target,
                     )
-                })
+                },
+            )
         })?;
         Ok(super::proposal::Proposal::new(self.clone(), registration))
     }
@@ -262,6 +264,22 @@ impl Candidate {
         &self,
         registered: &Device<Driver, Registered>,
     ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
+        self.activate_inner(registered, None)
+    }
+
+    pub(super) fn activate_proposal(
+        &self,
+        registered: &Device<Driver, Registered>,
+        proposal: &crate::execution::proposal::Registration,
+    ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
+        self.activate_inner(registered, Some(proposal))
+    }
+
+    fn activate_inner(
+        &self,
+        registered: &Device<Driver, Registered>,
+        proposal: Option<&crate::execution::proposal::Registration>,
+    ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
         let device = self.access.device();
         let registered_device: &Device<Driver> = registered;
         if !core::ptr::eq(device, registered_device) {
@@ -277,10 +295,19 @@ impl Candidate {
             self.check_control(&current)?;
             self.resources.activate(|| {
                 let source = self.probe.completed_source()?;
-                self.access
-                    .display()
-                    .execution
-                    .publish(locked, &mut prepared)?;
+                let execution = &self.access.display().execution;
+                if let Some(proposal) = proposal {
+                    proposal.check()?;
+                    execution.publish_proposal(
+                        locked,
+                        &mut prepared,
+                        proposal.description().generation,
+                        current.configuration(),
+                        |contract| current.check_contract(contract),
+                    )?;
+                } else {
+                    execution.publish(locked, &mut prepared)?;
+                }
                 Ok(source)
             })
         })?;

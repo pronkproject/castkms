@@ -20,6 +20,40 @@ mod cases {
     use super::*;
 
     #[test]
+    fn negotiated_activation_requires_a_published_gate() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let proposal =
+                candidate.propose_profile(crate::tests::renderer_proposals::profile()?)?;
+            check(proposal.activate(device).err() == Some(EAGAIN))?;
+            let before = device.execution.describe();
+            device.atomic_update(|mut transaction| {
+                transaction.as_mut().disable_plane(crtc.primary_plane())?;
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(proposal.describe().transition);
+                Ok(())
+            })?;
+            let (_active, _, description) = proposal.activate(device)?;
+            check(description.generation == before.generation + 1)?;
+            check(description.profile == Profile::GpuV1)?;
+            check(device.execution.pending_profile().is_none())?;
+            proposal.cancel();
+            let scene = crate::scene::Scene::blank(None);
+            device.validation.lock().check(
+                0,
+                crate::execution::validation::SceneView::Enabled {
+                    scene: &scene,
+                    output: [16384; 2],
+                },
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
     fn pending_capabilities_cannot_use_probe_only_activation() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
@@ -173,9 +207,7 @@ mod cases {
             pending.publish(|| published = true)?;
             check(published)?;
             check(session.begin_source().err() == Some(EBUSY))?;
-            check(
-                session.release_source(job_id + 1, Completion::WithoutAccess) == Err(ENOENT),
-            )?;
+            check(session.release_source(job_id + 1, Completion::WithoutAccess) == Err(ENOENT))?;
             check(session.begin_source().err() == Some(EBUSY))?;
 
             source.seal();
@@ -241,7 +273,10 @@ mod cases {
             job.release(Completion::Submitted(fence));
             let prepared = source.prepared()?.ok_or(EAGAIN)?;
             let retained = prepared.completion()?.ok_or(EINVAL)?;
-            check(matches!(retained.status(), kernel::dma_fence::Status::Pending))?;
+            check(matches!(
+                retained.status(),
+                kernel::dma_fence::Status::Pending
+            ))?;
             completion.complete(Ok(()))?;
             check(matches!(
                 retained.status(),
