@@ -47,6 +47,8 @@ pub(super) struct Connector {
 pub(super) struct ConnectorState;
 
 pub(super) struct CrtcState {
+    // Complete atomic metadata, independent of commit-tail publication and producer waits.
+    checked_scene: Option<scene::Scene>,
     output_color: Option<Arc<crate::color::OutputColor>>,
     configuration: Option<scene::Configuration>,
     visible: bool,
@@ -93,6 +95,7 @@ impl crtc::DriverCrtcState for CrtcState {
     fn new(_: &crtc::Crtc<Crtc>) -> Result<Self> {
         Ok(Self {
             output_color: None,
+            checked_scene: None,
             configuration: None,
             visible: false,
             layer_mask: 0,
@@ -103,6 +106,7 @@ impl crtc::DriverCrtcState for CrtcState {
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
             output_color: self.output_color.clone(),
+            checked_scene: self.checked_scene.clone(),
             configuration: self.configuration.clone(),
             visible: self.visible,
             layer_mask: self.layer_mask,
@@ -250,6 +254,54 @@ impl plane::DriverPlane for Plane {
 }
 
 impl CrtcState {
+    /// Proposed/installed metadata only, never a published source or producer-wait proof.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn checked_scene(&self) -> Option<&scene::Scene> {
+        self.checked_scene.as_ref()
+    }
+
+    fn describe_scene(
+        transaction: &atomic::AtomicStateComposer<Driver>,
+        old: &crtc::CrtcState<Self>,
+        state: &mut crtc::CrtcStateMutator<'_, crtc::CrtcState<Self>>,
+    ) -> Result {
+        if !state.active() {
+            state.checked_scene = None;
+            return Ok(());
+        }
+        let mut scene = if state.visible {
+            old.checked_scene
+                .clone()
+                .unwrap_or_else(|| scene::Scene::blank(None))
+        } else {
+            scene::Scene::blank(state.blank_owner.clone())
+        };
+        let mut result: Result = Ok(());
+        transaction.try_for_each_new_plane_state(|plane, opaque| {
+            if result.is_err() {
+                return;
+            }
+            result = (|| {
+                let layer = if state.layer_mask & plane.mask() != 0 {
+                    // Producer dependencies are acquired only by framebuffer preparation.
+                    describe_plane(plane::PlaneState::<PlaneState>::from_opaque(opaque), None)?
+                } else {
+                    None
+                };
+                scene.set_layer(plane.index() as usize, layer);
+                Ok(())
+            })();
+        })?;
+        result?;
+        if scene.layers().count() != state.layer_mask.count_ones() as usize {
+            return Err(EINVAL);
+        }
+        scene.finalize(state.content);
+        scene.output_color = state.output_color.clone();
+        state.checked_scene = Some(scene);
+        Ok(())
+    }
+
     fn resolve_blank_owner(
         transaction: &atomic::AtomicStateComposer<Driver>,
         old: &crtc::CrtcState<Self>,
@@ -339,7 +391,8 @@ impl crtc::DriverCrtc for Crtc {
         state.validate_color_mgmt(256)?;
         state.output_color =
             crate::color::OutputColor::new(state.degamma_lut(), state.ctm(), state.gamma_lut())?;
-        CrtcState::check_configuration(old, &mut state)
+        CrtcState::check_configuration(old, &mut state)?;
+        CrtcState::describe_scene(transaction, old, &mut state)
     }
 
     fn atomic_enable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
