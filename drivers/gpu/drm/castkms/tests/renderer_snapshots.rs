@@ -59,6 +59,56 @@ mod cases {
     use super::*;
 
     #[test]
+    fn current_snapshot_reports_absence_without_starting_host_work() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let _fb = enable(&fixture, Some(&file))?;
+        let candidate = Candidate::begin(owner.access())?;
+        check(matches!(candidate.snapshot_current(), Err(ENODATA)))?;
+        check(matches!(fixture.drm.device().host.current(), Err(EAGAIN)))
+    }
+
+    #[test]
+    fn current_snapshot_publication_rechecks_the_candidate() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let fb = enable(&fixture, Some(&file))?;
+        {
+            let map = fb.vmap::<gem::Object>()?;
+            io_project!(map.view(), [try: 0..2560]).copy_from_slice(&[0x35; 2560]);
+        }
+        fixture.select(&fb, false, 0)?;
+        let host = fixture.drm.device().host.configure(
+            fixture.drm.device(),
+            Layout::new(640, 480)?,
+        )?;
+        let request = host.request_outcome()?;
+        check(matches!(
+            request.wait()?,
+            crate::host_compositor::worker::Outcome::Image(_)
+        ))?;
+        let candidate = Candidate::begin(owner.access())?;
+        let snapshot = candidate.snapshot_current()?;
+        let mut publications = 0;
+        candidate.publish_snapshot(&snapshot, || publications += 1)?;
+        check(publications == 1)?;
+        candidate.cancel();
+        check(
+            candidate.publish_snapshot(&snapshot, || publications += 1)
+                == Err(ECANCELED),
+        )?;
+        check(publications == 1)?;
+        let mut pixels = KVVec::new();
+        pixels.resize(snapshot.layout().pixel_bytes(), 0xff, GFP_KERNEL)?;
+        snapshot.copy_pixels(&mut pixels)?;
+        check(pixels[..2560] == [0x35; 2560])
+    }
+
+    #[test]
     fn startup_copy_keeps_earlier_pixels_without_relabeling_content() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
