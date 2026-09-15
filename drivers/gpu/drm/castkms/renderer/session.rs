@@ -55,6 +55,7 @@ struct State {
     closed: bool,
     next_id: u64,
     slot: Slot,
+    proposal: Option<Arc<super::proposal::Proposal>>,
 }
 
 #[pin_data]
@@ -75,6 +76,7 @@ impl Session {
                     closed: false,
                     next_id: 1,
                     slot: Slot::Idle,
+                    proposal: None,
                 }),
             }),
             GFP_KERNEL,
@@ -84,6 +86,41 @@ impl Session {
     pub(crate) fn description(&self) -> Result<Description> {
         self.access
             .with_current(|_| Ok(self.access.display().execution.describe()))
+    }
+
+    /// Retain one proposed profile independently of the file transport's reply.
+    pub(crate) fn propose_profile(
+        &self,
+        id: u64,
+        profile: crate::execution::capabilities::Profile,
+    ) -> Result<crate::execution::proposal::DescriptionSnapshot> {
+        let candidate = self.candidate(id)?;
+        let proposal = Arc::new(candidate.propose_profile(profile)?, GFP_KERNEL)?;
+        let description = proposal.describe().clone();
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(EKEYREVOKED);
+        }
+        match &state.slot {
+            Slot::Active {
+                id: current,
+                candidate: current_candidate,
+            } if *current == id && Arc::ptr_eq(current_candidate, &candidate) => (),
+            _ => return Err(ESTALE),
+        }
+        if state.proposal.is_some() {
+            return Err(EBUSY);
+        }
+        state.proposal = Some(proposal);
+        Ok(description)
+    }
+
+    /// Historical pending metadata for reconciliation, not permission to activate it.
+    pub(crate) fn pending_profile(
+        &self,
+    ) -> Result<Option<crate::execution::proposal::DescriptionSnapshot>> {
+        self.access
+            .with_current(|_| Ok(self.access.display().execution.pending_profile()))
     }
 
     pub(crate) fn begin(&self, expected_generation: u64) -> Result<Pending<'_>> {
@@ -123,9 +160,9 @@ impl Session {
     }
 
     pub(crate) fn abort(&self, id: u64) -> Result {
-        let candidate = {
+        let (candidate, proposal) = {
             let mut state = self.state.lock();
-            match core::mem::replace(&mut state.slot, Slot::Idle) {
+            let candidate = match core::mem::replace(&mut state.slot, Slot::Idle) {
                 Slot::Active {
                     id: current,
                     candidate,
@@ -151,10 +188,12 @@ impl Session {
                     };
                 }
                 Slot::Idle => return Err(ENOENT),
-            }
+            };
+            (candidate, state.proposal.take())
         };
         candidate.cancel();
         drop(candidate);
+        drop(proposal);
         Ok(())
     }
 
@@ -178,7 +217,7 @@ impl Session {
     /// Activate one completed candidate or reconcile an already published result.
     pub(crate) fn activate(&self, id: u64) -> Result<Description> {
         let registered = self.device.registration_guard().ok_or(ENODEV)?;
-        let candidate = {
+        let (candidate, proposal) = {
             let mut state = self.state.lock();
             if state.closed {
                 return Err(EKEYREVOKED);
@@ -210,7 +249,7 @@ impl Session {
                         id,
                         candidate: candidate.clone(),
                     };
-                    candidate
+                    (candidate, state.proposal.clone())
                 }
                 other @ Slot::Publishing | other @ Slot::Activating { .. } => {
                     state.slot = other;
@@ -223,7 +262,10 @@ impl Session {
             }
         };
 
-        let activated = candidate.activate(&registered);
+        let activated = match proposal {
+            Some(proposal) => proposal.activate(&registered),
+            None => candidate.activate(&registered),
+        };
         let mut state = self.state.lock();
         if state.closed {
             state.slot = Slot::Idle;
@@ -350,11 +392,17 @@ impl Session {
         Ok(())
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn close_for_test(&self) {
+        self.close();
+    }
+
     pub(super) fn close(&self) {
-        let (candidate, active, source) = {
+        let (candidate, active, source, proposal) = {
             let mut state = self.state.lock();
             state.closed = true;
-            match core::mem::replace(&mut state.slot, Slot::Idle) {
+            let (candidate, active, source) = match core::mem::replace(&mut state.slot, Slot::Idle)
+            {
                 Slot::Active { candidate, .. } | Slot::Activating { candidate, .. } => {
                     (Some(candidate), None, None)
                 }
@@ -372,7 +420,8 @@ impl Session {
                     },
                 ),
                 _ => (None, None, None),
-            }
+            };
+            (candidate, active, source, state.proposal.take())
         };
         if let Some(candidate) = candidate {
             candidate.cancel();
@@ -380,6 +429,7 @@ impl Session {
         }
         drop(source);
         drop(active);
+        drop(proposal);
     }
 }
 
