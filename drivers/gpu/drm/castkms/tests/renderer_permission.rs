@@ -3,19 +3,11 @@
 //! Renderer control has its own issuer and never implies image ownership.
 
 use super::*;
-use crate::renderer::permission::{
-    Owner,
-    Permission, //
-};
+use crate::renderer::permission::Owner;
 use kernel::drm::kms::testing::MasterFile;
 
 fn owner(fixture: &Fixture, file: &MasterFile<'_, Driver>) -> Result<Owner> {
-    let permission = {
-        let snapshot = file.file().master_snapshot().ok_or(EINVAL)?;
-        let guard = snapshot.master().lock_current().ok_or(EACCES)?;
-        Permission::new(&guard, fixture.drm.crtc()?, fixture.drm.connector()?)?
-    };
-    Owner::new(permission)
+    File::issue_renderer_control(file.file(), fixture.drm.crtc()?, fixture.drm.connector()?)
 }
 
 fn enable(fixture: &Fixture) -> Result {
@@ -60,6 +52,51 @@ mod cases {
             }) == Err(EINVAL),
         )?;
         check(calls == 0)
+    }
+
+    #[test]
+    fn file_issuance_requires_the_exact_current_master_file() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let peer = file.associated_file()?;
+        enable(&fixture)?;
+        check(matches!(
+            File::issue_renderer_control(
+                peer.file(),
+                fixture.drm.crtc()?,
+                fixture.drm.connector()?
+            ),
+            Err(EACCES)
+        ))?;
+        let owner = super::owner(&fixture, &file)?;
+        owner.access().with_current(|_| Ok(()))
+    }
+
+    #[test]
+    fn control_change_during_issuance_rejects_the_new_owner() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        enable(&fixture)?;
+        let master = file.file().master_snapshot().ok_or(EINVAL)?;
+        let result = File::issue_renderer_control_then_for_test(
+            file.file(),
+            fixture.drm.crtc()?,
+            fixture.drm.connector()?,
+            || {
+                fixture.drm.device().authority.changed(None);
+                Ok(())
+            },
+        );
+        check(matches!(result, Err(EACCES)))?;
+        fixture
+            .drm
+            .device()
+            .authority
+            .changed(Some(master.master().clone()));
+        let owner = super::owner(&fixture, &file)?;
+        owner.access().with_current(|_| Ok(()))
     }
 
     #[test]
