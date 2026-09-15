@@ -240,6 +240,20 @@ impl<T: KmsDriver> TestDevice<T> {
         unsafe { atomic::run_update(&self.0, update) }
     }
 
+    /// Inject a policy change after successful validation, before native commit dispatch.
+    ///
+    /// Both callbacks must be replayable on contention. `after_check` runs with modeset
+    /// locks held: do not acquire outer DRM locks, wait for work requiring these locks,
+    /// or recursively submit a transaction. It receives no candidate state access.
+    pub fn update_after_check(
+        &self,
+        update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+        after_check: impl FnMut() -> Result,
+    ) -> Result {
+        // SAFETY: The fixture owns initialized mode configuration and excludes teardown.
+        unsafe { atomic::run_update_after_check(&self.0, update, after_check) }
+    }
+
     /// Validate without publishing state or invoking commit callbacks.
     ///
     /// The callback has the same replay and locking requirements as [`Self::update`].
