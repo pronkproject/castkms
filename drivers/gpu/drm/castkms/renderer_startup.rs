@@ -23,7 +23,7 @@ use kernel::{
 enum State {
     Idle,
     Reserved(Arc<()>),
-    Active(Arc<()>),
+    Active(Arc<()>, bool),
     Lost,
     Closed,
 }
@@ -43,7 +43,11 @@ pub(crate) struct Startup {
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Startup {
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-    pub(crate) fn reserve_for_test(&self, device: &Device<Driver>, bytes: usize) -> Result<impl Sized> {
+    pub(crate) fn reserve_for_test(
+        &self,
+        device: &Device<Driver>,
+        bytes: usize,
+    ) -> Result<impl Sized> {
         self.budget.reserve_for_test(device, bytes)
     }
 
@@ -54,7 +58,7 @@ impl Startup {
             let mut state = self.state.lock();
             match &*state {
                 State::Idle => *state = State::Reserved(identity.clone()),
-                State::Reserved(_) | State::Active(_) | State::Lost => return Err(EBUSY),
+                State::Reserved(_) | State::Active(..) | State::Lost => return Err(EBUSY),
                 State::Closed => return Err(ENODEV),
             }
         }
@@ -79,6 +83,7 @@ impl Startup {
     fn activate<R>(
         self: &Arc<Self>,
         identity: &Arc<()>,
+        follows_configuration: bool,
         publish: impl FnOnce() -> Result<R>,
     ) -> Result<(Active, R)> {
         let mut state = self.state.lock();
@@ -88,7 +93,7 @@ impl Startup {
             _ => return Err(ECANCELED),
         }
         let result = publish()?;
-        *state = State::Active(identity.clone());
+        *state = State::Active(identity.clone(), follows_configuration);
         Ok((
             Active {
                 startup: self.clone(),
@@ -113,11 +118,21 @@ impl Startup {
 
     /// Invalidate startup state belonging to a replaced display-control interval.
     pub(crate) fn invalidate_current(&self) {
+        self.invalidate(false);
+    }
+
+    /// Negotiated workers follow profile-validated mode changes without losing ownership.
+    pub(crate) fn configuration_changed(&self) {
+        self.invalidate(true);
+    }
+
+    fn invalidate(&self, configuration_only: bool) {
         let retired = {
             let mut state = self.state.lock();
             match &*state {
                 State::Reserved(_) => Some(core::mem::replace(&mut *state, State::Idle)),
-                State::Active(_) => Some(core::mem::replace(&mut *state, State::Lost)),
+                State::Active(_, true) if configuration_only => None,
+                State::Active(..) => Some(core::mem::replace(&mut *state, State::Lost)),
                 _ => None,
             }
         };
@@ -128,7 +143,7 @@ impl Startup {
         let retired = {
             let mut state = self.state.lock();
             match &*state {
-                State::Active(current) if Arc::ptr_eq(current, identity) => {
+                State::Active(current, _) if Arc::ptr_eq(current, identity) => {
                     Some(core::mem::replace(&mut *state, State::Lost))
                 }
                 _ => None,
@@ -173,7 +188,15 @@ impl Candidate {
     /// leaves the candidate reserved. The returned owner marks unexpected loss when dropped;
     /// it never reopens candidate admission.
     pub(crate) fn activate<R>(&self, publish: impl FnOnce() -> Result<R>) -> Result<(Active, R)> {
-        self.startup.activate(&self.identity, publish)
+        self.startup.activate(&self.identity, false, publish)
+    }
+
+    /// Activate a worker whose input contract, rather than its initial mode, limits scenes.
+    pub(crate) fn activate_negotiated<R>(
+        &self,
+        publish: impl FnOnce() -> Result<R>,
+    ) -> Result<(Active, R)> {
+        self.startup.activate(&self.identity, true, publish)
     }
 
     pub(crate) fn cancel(&self) {
@@ -233,7 +256,7 @@ impl Active {
     /// Check that this renderer remains the active device-wide incarnation.
     pub(crate) fn check(&self) -> Result {
         match &*self.startup.state.lock() {
-            State::Active(current) if Arc::ptr_eq(current, &self.identity) => Ok(()),
+            State::Active(current, _) if Arc::ptr_eq(current, &self.identity) => Ok(()),
             State::Closed => Err(ENODEV),
             _ => Err(EIO),
         }
@@ -245,7 +268,7 @@ impl Active {
     /// work, acquire outer locks or release final DRM references.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
         match &*self.startup.state.lock() {
-            State::Active(current) if Arc::ptr_eq(current, &self.identity) => f(),
+            State::Active(current, _) if Arc::ptr_eq(current, &self.identity) => f(),
             State::Closed => Err(ENODEV),
             _ => Err(EIO),
         }

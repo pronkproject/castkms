@@ -14,6 +14,25 @@ mod cases {
     use super::*;
 
     #[test]
+    fn negotiated_workers_follow_modes_but_not_authority_changes() -> Result {
+        for negotiated in [false, true] {
+            let owner = owner()?;
+            let startup = owner.startup();
+            let candidate = startup.begin()?;
+            let (active, ()) = if negotiated {
+                candidate.activate_negotiated(|| Ok(()))?
+            } else {
+                candidate.activate(|| Ok(()))?
+            };
+            startup.configuration_changed();
+            assert_eq!(active.check(), if negotiated { Ok(()) } else { Err(EIO) });
+            startup.invalidate_current();
+            assert_eq!(active.check(), Err(EIO));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn control_holds_the_reservation_lock_until_callback_return() -> Result {
         let owner = owner()?;
         let startup = owner.startup();
