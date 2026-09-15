@@ -69,6 +69,7 @@ mod host_worker;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod image_access;
 mod monitor;
+mod topology;
 mod output_identity;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
@@ -127,12 +128,16 @@ impl Fixture {
     }
 
     fn new_named(name: &'static kernel::str::CStr) -> Result<Self> {
+        Self::new_outputs(name, 1)
+    }
+
+    fn new_outputs(name: &'static kernel::str::CStr, count: u32) -> Result<Self> {
         let parent = faux::Registration::new_with_dma_mask(
             name,
             None,
             kernel::dma::DmaMask::new::<64>(),
         )?;
-        let state = device::Owner::new()?;
+        let state = device::Owner::new_outputs(count)?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
         let drm = TestDevice::new(drm)?;
