@@ -8,7 +8,7 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 1
+#define DRM_CASTKMS_RENDERER_VERSION 2
 
 /**
  * struct drm_castkms_create_monitor_control - create virtual monitor control
@@ -189,6 +189,55 @@ struct drm_castkms_renderer_abort_takeover {
 	__u32 reserved;
 };
 
+/**
+ * struct drm_castkms_renderer_snapshot - independent HOST startup image
+ * @dma_buf_fd: returned close-on-exec, read-only DMA-BUF descriptor
+ * @format: returned DRM_FORMAT_* value
+ * @modifier: returned DRM_FORMAT_MOD_* value
+ * @width: returned width in pixels
+ * @height: returned height in pixels
+ * @pitch: returned byte stride
+ * @offset: returned first-pixel byte offset; currently zero
+ * @content_serial: historical nonzero content identity, or zero for a blank image
+ * @flags: returned as zero
+ * @reserved: returned as zero
+ *
+ * The backing allocation is a fresh immutable copy. It is never a compositor
+ * source or reusable HOST image, and retaining it cannot delay source release.
+ */
+struct drm_castkms_renderer_snapshot {
+	__s32 dma_buf_fd;
+	__u32 format;
+	__u64 modifier;
+	__u32 width;
+	__u32 height;
+	__u32 pitch;
+	__u32 offset;
+	__u64 content_serial;
+	__u32 flags;
+	__u32 reserved;
+};
+
+/**
+ * struct drm_castkms_renderer_get_snapshot - copy an optional HOST startup image
+ * @candidate_id: active candidate returned by BEGIN_TAKEOVER
+ * @result: pointer to writable struct drm_castkms_renderer_snapshot storage
+ * @flags: must be zero
+ * @reserved: must be zero
+ *
+ * The operation copies only the newest retained HOST result that still belongs
+ * to the candidate's display and authority interval. It returns ENODATA when no
+ * eligible result exists. Success copies the result before installing its
+ * descriptor. Failure installs no descriptor; output memory may have been
+ * partially written and must not be used.
+ */
+struct drm_castkms_renderer_get_snapshot {
+	__u64 candidate_id;
+	__u64 result;
+	__u32 flags;
+	__u32 reserved[3];
+};
+
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
 #define DRM_CASTKMS_CREATE_RENDERER_CONTROL 0x01
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
@@ -197,6 +246,7 @@ struct drm_castkms_renderer_abort_takeover {
 #define DRM_CASTKMS_RENDERER_QUERY 0x04
 #define DRM_CASTKMS_RENDERER_BEGIN_TAKEOVER 0x05
 #define DRM_CASTKMS_RENDERER_ABORT_TAKEOVER 0x06
+#define DRM_CASTKMS_RENDERER_GET_SNAPSHOT 0x07
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
@@ -224,6 +274,9 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_ABORT_TAKEOVER,
 			struct drm_castkms_renderer_abort_takeover),
+	DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_GET_SNAPSHOT,
+			struct drm_castkms_renderer_get_snapshot),
 };
 
 #define DRM_CASTKMS_EXECUTION_VERSION 1
