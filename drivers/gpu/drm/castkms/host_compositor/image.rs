@@ -15,18 +15,14 @@ use crate::{
 };
 use kernel::{
     drm::{
-        fourcc,
         gem::shmem,
-        kms::framebuffer::FramebufferVMapOwned,
         Device, //
     },
     io::{
         io_project,
         Io,
         IoBase,
-        IoCopyable,
-        SysMem,
-        SysMemBackend, //
+        SysMem, //
     },
     prelude::*,
     sync::Arc, //
@@ -136,27 +132,29 @@ impl Image {
     }
 
     /// Copy a matching source while the caller holds its synchronous CPU read claim.
-    pub(super) fn copy_from(&mut self, source: &FramebufferVMapOwned<gem::Object>) -> Result {
+    pub(super) fn copy_from(&mut self, source: &super::framebuffer::Mapping) -> Result {
         let (width, height) = self.dimensions();
-        let pitch = self.layout.pitch();
-        if source.width() != width
-            || source.height() != height
-            || source.format() != fourcc::XRGB8888
-        {
+        if source.width != width || source.height != height {
             return Err(EINVAL);
         }
-        let source_bytes = source.view();
-        let destination = self.map.as_view();
         for y in 0..height as usize {
-            let start = y * source.pitch();
-            let row = io_project!(source_bytes, [try: start..start + pitch]);
-            // SAFETY: The source mapping validates every complete row including its offset.
-            // Matching dimensions bound each row copy to both mappings. This image's storage
-            // is private and cannot be installed as a framebuffer, so the ranges cannot overlap.
-            // Exclusive access to the destination and the caller's claim protect the copy.
-            // The I/O backend permits source memory to be accessed by external pixel producers.
-            unsafe {
-                SysMemBackend::copy_from_io(row, destination.as_ptr().cast::<u8>().add(y * pitch));
+            let output = self.row(y as u32)?;
+            if source.format == kernel::drm::fourcc::XRGB8888 {
+                let mut bytes = [0; 1024];
+                for start in (0..self.layout.pitch()).step_by(bytes.len()) {
+                    let len = (self.layout.pitch() - start).min(bytes.len());
+                    source.read(0, start, y, &mut bytes[..len])?;
+                    io_project!(output, [try: start..start + len]).copy_from_slice(&bytes[..len]);
+                }
+                continue;
+            }
+            for x in 0..width as usize {
+                let pixel = crate::formats::pixel(source.format, x, y, |plane, x, y, bytes| {
+                    source.read(plane, x, y, bytes)
+                })?;
+                let offset = x * 4;
+                io_project!(output, [try: offset..offset + 4])
+                    .copy_from_slice(&pixel.to_le_bytes());
             }
         }
         Ok(())
