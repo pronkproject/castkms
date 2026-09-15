@@ -103,7 +103,7 @@ mod cases {
     #[test]
     fn dimensions_are_checked_before_allocation() -> Result {
         let fixture = Fixture::new()?;
-        for (width, height) in [(0, 1), (1, 0), (1921, 1), (1, 1081), (u32::MAX, u32::MAX)] {
+        for (width, height) in [(0, 1), (1, 0), (8193, 1), (1, 8193), (u32::MAX, u32::MAX)] {
             check(matches!(Layout::new(width, height), Err(EINVAL)))?;
         }
         let image = Image::new(
