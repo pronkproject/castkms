@@ -24,6 +24,7 @@ use kernel::{
 /// source-read accounting remain separate. Mapping storage does not authorize pixel access.
 pub(crate) struct Framebuffer {
     image: FramebufferRef<Driver>,
+    geometry: Geometry,
 }
 
 impl Framebuffer {
@@ -31,16 +32,23 @@ impl Framebuffer {
         host::check_framebuffer(image, geometry)?;
         Ok(Self {
             image: image.to_owned_ref(),
+            geometry,
         })
     }
 
     pub(crate) fn dimensions(&self) -> (u32, u32) {
-        (self.image.width(), self.image.height())
+        (self.geometry.output[0], self.geometry.output[1])
     }
 
     /// Read fixture-owned pixels with no external producers or published scene.
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-    pub(crate) fn read_for_test(&self, plane: usize, x: usize, y: usize, bytes: &mut [u8]) -> Result {
+    pub(crate) fn read_for_test(
+        &self,
+        plane: usize,
+        x: usize,
+        y: usize,
+        bytes: &mut [u8],
+    ) -> Result {
         let mapping = self.prepare_mapping()?;
         mapping.read(plane, x, y, bytes)?;
         mapping.finish()
@@ -66,6 +74,7 @@ impl Framebuffer {
             )?;
         }
         Ok(Mapping {
+            geometry: self.geometry,
             planes,
             width: self.image.width(),
             height: self.image.height(),
@@ -88,6 +97,7 @@ struct MappedPlane {
 
 /// Prepared mappings retain storage but do not grant permission to read a scene.
 pub(super) struct Mapping {
+    pub(super) geometry: Geometry,
     planes: KVec<MappedPlane>,
     pub(super) width: u32,
     pub(super) height: u32,
