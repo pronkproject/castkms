@@ -159,6 +159,30 @@ impl Access {
             })
     }
 
+    pub(crate) fn with_installed_transition<R>(
+        &self,
+        registered: &Device<Driver, Registered>,
+        f: impl FnOnce(
+            crate::display_control::TransitionCurrent<'_>,
+            &LockedState<'_, Driver>,
+        ) -> Result<R>,
+    ) -> Result<R> {
+        self.policy
+            .permission
+            .target
+            .with_installed_transition(registered, |current, locked| {
+                let permission = &self.policy.permission;
+                if permission.target.device().authority.interval()? != permission.interval {
+                    return Err(ESTALE);
+                }
+                let revoked = self.policy.revoked.lock();
+                if *revoked {
+                    return Err(EKEYREVOKED);
+                }
+                f(current, locked)
+            })
+    }
+
     fn authorize<R>(
         &self,
         current: Current<'_>,
