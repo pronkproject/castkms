@@ -84,6 +84,30 @@ pub(super) unsafe fn run_check<T: KmsDriver>(
     unsafe { run_transaction(dev, update, |raw| to_result(bindings::drm_atomic_check_only(raw.as_ptr()))) }
 }
 
+/// Exercise policy changes after successful checking, before the native commit callback.
+///
+/// # Safety
+///
+/// The initialized-device and exclusion requirements of [`run_update`] apply.
+#[cfg(CONFIG_KUNIT)]
+pub(super) unsafe fn run_update_after_check<T: KmsDriver>(
+    dev: &Device<T>,
+    update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
+    mut after_check: impl FnMut() -> Result,
+) -> Result {
+    // SAFETY: The runner owns the transaction and its modeset locks. Validation precedes
+    // the hook, which cannot borrow candidate state. Invoke the same commit callback as
+    // drm_atomic_commit, without repeating the check after the injected policy change.
+    unsafe {
+        run_transaction(dev, update, |raw| {
+            to_result(bindings::drm_atomic_check_only(raw.as_ptr()))?;
+            after_check()?;
+            let commit = (*(*dev.as_raw()).mode_config.funcs).atomic_commit.ok_or(EOPNOTSUPP)?;
+            to_result(commit(dev.as_raw(), raw.as_ptr(), false))
+        })
+    }
+}
+
 // All terminal operations share ownership and backoff boundaries. The caller must follow
 // run_update's safety contract, and finish must validate before committing the transaction.
 // Finish may borrow the raw transaction only for its invocation, never retain that pointer.
