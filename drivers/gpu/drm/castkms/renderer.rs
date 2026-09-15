@@ -3,6 +3,7 @@
 //! Separately authorized delegated rendering, independent of capture grant transport.
 
 pub(crate) mod candidate;
+mod capability_description;
 pub(crate) mod description;
 mod client_file;
 pub(crate) mod files;

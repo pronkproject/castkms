@@ -20,6 +20,69 @@
  */
 #define DRM_CASTKMS_TRANSITION_PROPERTY "CASTKMS_TRANSITION"
 
+#define DRM_CASTKMS_CAPABILITY_VERSION 1
+#define DRM_CASTKMS_CAPABILITY_HOST 1
+#define DRM_CASTKMS_CAPABILITY_RENDERER 2
+#define DRM_CASTKMS_CAPABILITY_MAX_FORMATS 256
+#define DRM_CASTKMS_CAPABILITY_MAX_BYTES (128U + 32U * 256U)
+
+#define DRM_CASTKMS_CAPABILITY_CROP (1U << 0)
+#define DRM_CASTKMS_CAPABILITY_FRACTIONAL (1U << 1)
+#define DRM_CASTKMS_CAPABILITY_POSITION (1U << 2)
+#define DRM_CASTKMS_CAPABILITY_SCALE (1U << 3)
+#define DRM_CASTKMS_CAPABILITY_SRGB (1U << 4)
+#define DRM_CASTKMS_CAPABILITY_PLANE_MATRIX (1U << 5)
+#define DRM_CASTKMS_CAPABILITY_OUTPUT_MATRIX (1U << 6)
+
+#define DRM_CASTKMS_CAPABILITY_NATIVE (1U << 0)
+#define DRM_CASTKMS_CAPABILITY_IMPORTED (1U << 1)
+#define DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER (1U << 2)
+
+/*
+ * Native-endian immutable whole-scene contract. Exactly format_count records
+ * follow this 128-byte header. Unknown flags and reserved fields must be zero.
+ * HOST selects the fixed HOST-v1 policy: all fields after kind must be zero.
+ * RENDERER limits apply to every role; advertise the intersection if roles have
+ * different restrictions. Dimensions and scale limits are positive; scales are
+ * inclusive unsigned 16.16 source/destination ratios. Roles are primary,
+ * overlay and cursor. YUV masks use bit positions from the scene encoding.
+ * Sampling is nearest-neighbor, blending is premultiplied source-over and
+ * stacking follows the scene description. A profile grants no buffer access.
+ */
+struct drm_castkms_capability_profile {
+	__u32 version;
+	__u32 kind;
+	__u32 flags;
+	__u32 format_count;
+	__u32 max_output[2];
+	__u32 max_source[2];
+	__u32 min_scale;
+	__u32 max_scale;
+	__u32 max_layers;
+	__u32 max_roles[3];
+	__u32 max_color_operations;
+	__u32 max_lut_entries;
+	__u32 yuv_encodings;
+	__u32 yuv_ranges;
+	__u32 reserved[14];
+};
+
+/*
+ * Exact fourcc/modifier/plane-count tuple. Without EXPLICIT_MODIFIER, modifier
+ * must be zero and denotes implicit layout, distinct from explicit LINEAR.
+ * At least one provenance flag is required. Alignments are positive powers of
+ * two and apply to each memory plane. Duplicate tuples are rejected.
+ */
+struct drm_castkms_capability_format {
+	__u32 fourcc;
+	__u32 plane_count;
+	__u64 modifier;
+	__u32 flags;
+	__u32 pitch_alignment;
+	__u32 offset_alignment;
+	__u32 max_pitch;
+};
+
 #define DRM_CASTKMS_RENDERER_PROBE_PRIVATE 1
 #define DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE 2
 
