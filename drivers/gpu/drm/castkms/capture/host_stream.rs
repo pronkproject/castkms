@@ -53,8 +53,8 @@ impl Stream {
     pub(crate) fn from_description(description: &Description, capacity: u32) -> Result<Self> {
         let delivery = Arc::new(description.create_stream(capacity)?, GFP_KERNEL)?;
         let device = delivery.device();
-        let worker = device
-            .host
+        let worker = delivery
+            .host()
             .configure_checked(device, delivery.layout(), || delivery.check_current())?;
         Ok(Self { delivery, worker })
     }
