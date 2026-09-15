@@ -254,6 +254,17 @@ impl plane::DriverPlane for Plane {
 }
 
 impl CrtcState {
+    fn validation_view(&self) -> Result<crate::execution::validation::SceneView<'_>> {
+        match (&self.checked_scene, &self.configuration) {
+            (Some(scene), Some(configuration)) => Ok(crate::execution::validation::SceneView::Enabled {
+                scene,
+                output: configuration.dimensions(),
+            }),
+            (None, None) => Ok(crate::execution::validation::SceneView::Disabled),
+            _ => Err(EINVAL),
+        }
+    }
+
     /// Proposed/installed metadata only, never a published source or producer-wait proof.
     #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn checked_scene(&self) -> Option<&scene::Scene> {
