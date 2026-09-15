@@ -50,7 +50,7 @@ module! {
             description: "Enable cursor planes",
         },
         enable_overlay: bool {
-            default: false,
+            default: true,
             description: "Enable eight shared overlay planes",
         },
         enable_plane_pipeline: bool {
