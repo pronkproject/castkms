@@ -177,6 +177,14 @@ pub(crate) struct Current<'a> {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Current<'_> {
+    /// Match borrowed metadata without exposing storage or acquiring a source claim.
+    pub(crate) fn check_contract(&self, contract: &crate::execution::validation::Contract) -> Result {
+        contract.check(crate::execution::validation::SceneView::Enabled {
+            scene: self.scene.ok_or(EAGAIN)?,
+            output: self.configuration.dimensions(),
+        })
+    }
+
     /// Inspect current backing identity without returning scene storage or a source claim.
     pub(crate) fn uses_reservation(&self, reservation: &Reservation) -> Result<bool> {
         self.scene
