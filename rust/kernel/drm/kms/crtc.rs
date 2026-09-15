@@ -12,7 +12,7 @@ use crate::{
     alloc::KBox,
     bindings,
     drm::device::Device,
-    error::{from_result, to_result},
+    error::{from_err_ptr, from_result, to_result},
     prelude::*,
     sync::aref::ARef,
     types::{NotThreadSafe, Opaque},
@@ -70,6 +70,10 @@ impl ColorLut {
 /// ```
 #[repr(transparent)]
 pub struct ColorCtm(bindings::drm_color_ctm);
+
+enum ColorUpdate<'a> {
+    Gamma(Option<&'a [ColorLut]>),
+}
 
 impl ColorCtm {
     /// Build a matrix from raw S31.32 **sign-magnitude** entries. Mainly useful for tests.
@@ -1164,6 +1168,35 @@ impl<'a, T: FromRawCrtcState> CrtcStateMutator<'a, T> {
         unsafe { (*self.as_raw()).set_mode_changed(changed) };
     }
 
+    /// Replace the output gamma table in an unpublished atomic candidate.
+    ///
+    /// The native setter retains an independent blob; no userspace file is involved.
+    /// The driver validates supported table lengths during atomic checking.
+    pub fn set_gamma_lut(&mut self, entries: Option<&[ColorLut]>) -> Result {
+        self.set_color_update(ColorUpdate::Gamma(entries))
+    }
+
+    fn set_color_update(&mut self, update: ColorUpdate<'_>) -> Result {
+        // SAFETY: The mutator exclusively owns a live, unpublished CRTC state.
+        // Each input has a fully initialized transparent native representation;
+        // native blob creation copies its bytes before the input borrow ends.
+        unsafe {
+            let state = self.as_raw();
+            let dev = (*(*state).crtc).dev;
+            let (property, data) = match update {
+                ColorUpdate::Gamma(entries) => ((*dev).mode_config.gamma_lut_property,
+                    entries.map(|entries| (entries.as_ptr().cast(), mem::size_of_val(entries)))),
+            };
+            if property.is_null() { return Err(EOPNOTSUPP); }
+            let blob = match data {
+                Some((data, length)) => from_err_ptr(bindings::drm_property_create_blob(dev, length, data))?,
+                None => core::ptr::null_mut(),
+            };
+            let result = to_result(bindings::drm_atomic_set_color_property_for_crtc(self.as_raw(), property, blob));
+            if !blob.is_null() { bindings::drm_property_blob_put(blob); }
+            result
+        }
+    }
 }
 
 impl<'a, T: DriverCrtcState> CrtcStateMutator<'a, CrtcState<T>> {
