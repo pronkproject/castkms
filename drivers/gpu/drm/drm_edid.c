@@ -5516,9 +5516,6 @@ drm_parse_hdmi_vsdb_audio(struct drm_connector *connector, const u8 *db)
 {
 	u8 len = cea_db_payload_len(db);
 
-	if (len >= 6 && (db[6] & (1 << 7)))
-		connector->eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= DRM_ELD_SUPPORTS_AI;
-
 	if (len >= 10 && hdmi_vsdb_latency_present(db)) {
 		connector->latency_present[0] = true;
 		connector->video_latency[0] = db[9];
@@ -5694,34 +5691,23 @@ void drm_edid_cta_sad_set(struct cea_sad *cta_sad, const u8 *sad)
 }
 
 /*
- * drm_edid_to_eld - build ELD from EDID
- * @connector: connector corresponding to the HDMI/DP sink
- * @drm_edid: EDID to parse
- *
- * Fill the ELD (EDID-Like Data) buffer for passing to the audio driver. The
- * HDCP and Port_ID ELD fields are left for the graphics driver to fill in.
+ * Build baseline ELD into cleared storage, without publishing connector state.
+ * HDCP and Port_ID fields are left for the graphics driver to fill in.
  */
-static void drm_edid_to_eld(struct drm_connector *connector,
-			    const struct drm_edid *drm_edid)
+static void build_eld(const struct drm_edid *drm_edid, u8 *eld,
+		      u8 cea_rev, bool displayport)
 {
-	const struct drm_display_info *info = &connector->display_info;
 	const struct cea_db *db;
 	struct cea_db_iter iter;
-	uint8_t *eld = connector->eld;
 	int total_sad_count = 0;
 	int mnl;
 
 	if (!drm_edid)
 		return;
 
-	mutex_lock(&connector->eld_mutex);
-
 	mnl = get_monitor_name(drm_edid, &eld[DRM_ELD_MONITOR_NAME_STRING]);
-	drm_dbg_kms(connector->dev, "[CONNECTOR:%d:%s] ELD monitor %s\n",
-		    connector->base.id, connector->name,
-		    &eld[DRM_ELD_MONITOR_NAME_STRING]);
 
-	eld[DRM_ELD_CEA_EDID_VER_MNL] = info->cea_rev << DRM_ELD_CEA_EDID_VER_SHIFT;
+	eld[DRM_ELD_CEA_EDID_VER_MNL] = cea_rev << DRM_ELD_CEA_EDID_VER_SHIFT;
 	eld[DRM_ELD_CEA_EDID_VER_MNL] |= mnl;
 
 	eld[DRM_ELD_VER] = DRM_ELD_VER_CEA861D;
@@ -5753,8 +5739,8 @@ static void drm_edid_to_eld(struct drm_connector *connector,
 			break;
 		case CTA_DB_VENDOR:
 			/* HDMI Vendor-Specific Data Block */
-			if (cea_db_is_hdmi_vsdb(db))
-				drm_parse_hdmi_vsdb_audio(connector, (const u8 *)db);
+			if (cea_db_is_hdmi_vsdb(db) && len >= 6 && (data[5] & BIT(7)))
+				eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= DRM_ELD_SUPPORTS_AI;
 			break;
 		default:
 			break;
@@ -5764,18 +5750,34 @@ static void drm_edid_to_eld(struct drm_connector *connector,
 
 	eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= total_sad_count << DRM_ELD_SAD_COUNT_SHIFT;
 
-	if (connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort ||
-	    connector->connector_type == DRM_MODE_CONNECTOR_eDP)
+	if (displayport)
 		eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= DRM_ELD_CONN_TYPE_DP;
 	else
 		eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= DRM_ELD_CONN_TYPE_HDMI;
 
 	eld[DRM_ELD_BASELINE_ELD_LEN] =
 		DIV_ROUND_UP(drm_eld_calc_baseline_block_size(eld), 4);
+}
 
-	drm_dbg_kms(connector->dev, "[CONNECTOR:%d:%s] ELD size %d, SAD count %d\n",
-		    connector->base.id, connector->name,
-		    drm_eld_size(eld), total_sad_count);
+static void drm_edid_to_eld(struct drm_connector *connector,
+			    const struct drm_edid *drm_edid)
+{
+	const struct cea_db *db;
+	struct cea_db_iter iter;
+	bool dp = connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort ||
+		  connector->connector_type == DRM_MODE_CONNECTOR_eDP;
+
+	if (!drm_edid)
+		return;
+
+	mutex_lock(&connector->eld_mutex);
+	build_eld(drm_edid, connector->eld, connector->display_info.cea_rev, dp);
+	cea_db_iter_edid_begin(drm_edid, &iter);
+	cea_db_iter_for_each(db, &iter) {
+		if (cea_db_is_hdmi_vsdb(db))
+			drm_parse_hdmi_vsdb_audio(connector, (const u8 *)db);
+	}
+	cea_db_iter_end(&iter);
 
 	mutex_unlock(&connector->eld_mutex);
 }
