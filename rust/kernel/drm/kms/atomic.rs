@@ -795,6 +795,20 @@ pub struct CrtcScanout<'a, T: KmsDriver> {
     pub position: (u16, u16),
 }
 
+/// One kernel client's plane image and requested sampling rectangles.
+pub struct PlaneScanout<'a, T: KmsDriver> {
+    /// Destination CRTC on the transaction's device.
+    pub crtc: &'a Crtc<T::Crtc>,
+    /// Retained by the new plane state independently of this description.
+    pub framebuffer: &'a Framebuffer<T>,
+    /// Source x, y, width and height in unsigned 16.16 pixels.
+    pub source: [u32; 4],
+    /// Destination x and y, including off-screen positions.
+    pub position: [i32; 2],
+    /// Destination width and height in pixels.
+    pub destination: [u32; 2],
+}
+
 impl<T: KmsDriver> Deref for AtomicStateComposer<T> {
     type Target = AtomicStateMutator<T>;
 
@@ -811,6 +825,40 @@ impl<T: KmsDriver> Drop for AtomicStateComposer<T> {
 }
 
 impl<T: KmsDriver> AtomicStateComposer<T> {
+    /// Select a framebuffer and geometry for any plane using native atomic ownership rules.
+    ///
+    /// Geometry and routing are validated when the complete transaction is checked.
+    /// Propagate errors: a failed setter may leave a partially edited candidate.
+    pub fn set_plane_config(
+        self: Pin<&mut Self>,
+        plane: &Plane<T::Plane>,
+        scanout: &PlaneScanout<'_, T>,
+    ) -> Result {
+        if !core::ptr::eq(self.drm_dev(), plane.drm_dev())
+            || !core::ptr::eq(self.drm_dev(), scanout.crtc.drm_dev())
+            || !core::ptr::eq(self.drm_dev(), scanout.framebuffer.drm_dev())
+        {
+            return Err(EINVAL);
+        }
+        let mut state = self.add_plane_state(plane)?;
+        // SAFETY: All objects belong to the transaction. The guard exclusively owns
+        // the new plane state; native setters retain routing and framebuffer references.
+        unsafe {
+            let raw = state.as_raw_mut();
+            to_result(bindings::drm_atomic_set_crtc_for_plane(raw, scanout.crtc.as_raw()))?;
+            bindings::drm_atomic_set_fb_for_plane(raw, scanout.framebuffer.as_raw());
+            raw.src_x = scanout.source[0];
+            raw.src_y = scanout.source[1];
+            raw.src_w = scanout.source[2];
+            raw.src_h = scanout.source[3];
+            raw.crtc_x = scanout.position[0];
+            raw.crtc_y = scanout.position[1];
+            raw.crtc_w = scanout.destination[0];
+            raw.crtc_h = scanout.destination[1];
+        }
+        Ok(())
+    }
+
     /// # Safety
     ///
     /// `ptr` must be an unpublished transaction for `T`, with an initialized acquire context
