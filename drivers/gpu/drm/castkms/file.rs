@@ -32,6 +32,8 @@ use kernel::{
 
 pub(crate) struct File {
     grants: Creator,
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    audio_grants: drm::capture::Creator,
 }
 
 impl drm::file::DriverFile for File {
@@ -41,6 +43,8 @@ impl drm::file::DriverFile for File {
         Ok(KBox::new(
             Self {
                 grants: Creator::new()?,
+                #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+                audio_grants: drm::capture::Creator::new(64)?,
             },
             GFP_KERNEL,
         )?
@@ -49,6 +53,35 @@ impl drm::file::DriverFile for File {
 }
 
 impl File {
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    pub(crate) fn issue_audio_owner(
+        file: &drm::file::File<Self>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+    ) -> Result<crate::audio::provider::Owner> {
+        let snapshot = file.master_snapshot().ok_or(EACCES)?;
+        let target = {
+            let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+            if !guard.is_master_file(file) {
+                return Err(EACCES);
+            }
+            crate::display_control::Target::new(&guard, crtc, connector)?
+        };
+        let mut owner = crate::audio::provider::Owner::new(target)?;
+        {
+            let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+            if !guard.is_master_file(file)
+                || !guard.holds_object(crtc)
+                || !guard.holds_object(connector)
+            {
+                return Err(EACCES);
+            }
+            owner.track_creator(&file.inner().audio_grants)?;
+        }
+        owner.access().check()?;
+        Ok(owner)
+    }
+
     /// Issue renderer control from one current master interval.
     ///
     /// Construction runs outside native DRM locks. The second check prevents a file or
