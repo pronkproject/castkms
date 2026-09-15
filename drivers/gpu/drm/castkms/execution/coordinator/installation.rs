@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+//! Borrow the whole validation cohort until native installation has succeeded.
+
+use super::*;
+use crate::execution::validation::Installation;
+
+const OUTPUTS: usize = crate::device::MAX_OUTPUTS as usize;
+
+/// Metadata borrowed only during validation, never retained by the resulting change.
+pub(crate) struct Update<'a> {
+    pub(crate) scene: SceneView<'a>,
+    pub(crate) token: u64,
+    pub(crate) previous_configuration: Option<&'a Configuration>,
+    pub(crate) configuration: Option<&'a Configuration>,
+}
+
+struct Tagged<'a> {
+    gate: Installation<'a>,
+    pending: &'a mut Pending,
+    configuration: Option<Configuration>,
+}
+
+/// Holds every affected validation owner exclusively. Dropping does not install a gate.
+#[must_use = "commit only in the native installation success continuation"]
+pub(crate) struct Prepared<'a> {
+    changes: [Option<Tagged<'a>>; OUTPUTS],
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Guard<'_> {
+    pub(crate) fn prepare<'g>(
+        &'g mut self,
+        updates: &[Option<Update<'_>>; OUTPUTS],
+    ) -> Result<Prepared<'g>> {
+        let mut prepared = Prepared {
+            changes: core::array::from_fn(|_| None),
+        };
+        for (index, update) in updates.iter().enumerate() {
+            if let Some(update) = update {
+                self.check(index, update.scene)?;
+                if self.0.closed && update.token != 0 {
+                    return Err(ENODEV);
+                }
+            }
+        }
+        for (index, slot) in self.0.outputs.iter_mut().enumerate() {
+            let Some(update) = &updates[index] else {
+                continue;
+            };
+            if update.token == 0 {
+                continue;
+            }
+            let pending = slot
+                .pending
+                .as_mut()
+                .filter(|pending| pending.token == update.token)
+                .ok_or(ESTALE)?;
+            if pending.configuration.as_ref() != update.previous_configuration {
+                return Err(ESTALE);
+            }
+            if pending.gated {
+                // A repeated tag is an observation of the same installed gate, not a
+                // second mode migration or an opportunity to renew its identity.
+                if pending.configuration.as_ref() != update.configuration {
+                    return Err(ESTALE);
+                }
+                continue;
+            }
+            let gate = slot.validation.prepare(
+                pending.epoch,
+                pending.token,
+                pending.target.clone(),
+                update.scene,
+            )?;
+            prepared.changes[index] = Some(Tagged {
+                gate,
+                pending,
+                configuration: update.configuration.cloned(),
+            });
+        }
+        Ok(prepared)
+    }
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Prepared<'_> {
+    /// No allocation, failure or native object release remains after successful swap.
+    pub(crate) fn commit(self) {
+        for change in self.changes.into_iter().flatten() {
+            change.gate.commit();
+            change.pending.configuration = change.configuration;
+            change.pending.gated = true;
+        }
+    }
+}
+
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+#[kunit_tests(rust_castkms_transition_installation)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn complete_cohort_changes_only_on_success() -> Result {
+        let coordinator = Arc::pin_init(Coordinator::new(8), GFP_KERNEL)?;
+        let configuration = Configuration::new(1, [640, 480], 60000, 0)?;
+        let owner = Arc::new((), GFP_KERNEL)?;
+        let mut reservations = KVec::with_capacity(8, GFP_KERNEL)?;
+        for index in 0..8 {
+            reservations.push(
+                coordinator.reserve(index, owner.clone(), configuration.clone(), Contract::Host)?,
+                GFP_KERNEL,
+            )?;
+        }
+        let mut updates = core::array::from_fn(|index| {
+            Some(Update {
+                scene: SceneView::Disabled,
+                token: reservations[index].token(),
+                previous_configuration: Some(&configuration),
+                configuration: None,
+            })
+        });
+        let mut guard = coordinator.lock();
+        updates[7].as_mut().ok_or(EINVAL)?.token = reservations[0].token();
+        assert!(matches!(guard.prepare(&updates), Err(ESTALE)));
+        updates[7].as_mut().ok_or(EINVAL)?.token = reservations[7].token();
+        // TEST_ONLY and failed native installation both drop an uncommitted change.
+        drop(guard.prepare(&updates)?);
+        for slot in &guard.0.outputs {
+            assert!(!slot.pending.as_ref().ok_or(EINVAL)?.gated);
+            assert_eq!(
+                slot.validation.epoch(),
+                slot.pending.as_ref().ok_or(EINVAL)?.epoch
+            );
+        }
+        guard.prepare(&updates)?.commit();
+        for slot in &guard.0.outputs {
+            assert!(slot.pending.as_ref().ok_or(EINVAL)?.gated);
+            assert!(slot.pending.as_ref().ok_or(EINVAL)?.configuration.is_none());
+            assert_ne!(
+                slot.validation.epoch(),
+                slot.pending.as_ref().ok_or(EINVAL)?.epoch
+            );
+        }
+        // Retries do not renew the gate or require an unchanged content serial.
+        for update in updates.iter_mut().flatten() {
+            update.previous_configuration = None;
+        }
+        guard.prepare(&updates)?.commit();
+        updates[0].as_mut().ok_or(EINVAL)?.configuration = Some(&configuration);
+        assert!(matches!(guard.prepare(&updates), Err(ESTALE)));
+        Ok(())
+    }
+}

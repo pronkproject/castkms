@@ -2,6 +2,9 @@
 
 //! Device-wide exclusion for complete-cohort scene acceptance.
 
+mod installation;
+pub(crate) use installation::Update;
+
 use super::validation::{Contract, Epoch, SceneView, Validation};
 use crate::scene::Configuration;
 use kernel::{
@@ -9,16 +12,13 @@ use kernel::{
     sync::{Arc, Mutex, MutexGuard},
 };
 
-#[expect(
-    dead_code,
-    reason = "scope metadata is consumed by tagged installation"
-)]
 struct Pending {
     token: u64,
     owner: Arc<()>,
-    configuration: Configuration,
+    configuration: Option<Configuration>,
     target: Contract,
     epoch: Epoch,
+    gated: bool,
 }
 
 struct Output {
@@ -137,9 +137,10 @@ impl Coordinator {
         slot.pending = Some(Pending {
             token,
             owner,
-            configuration,
+            configuration: Some(configuration),
             target,
             epoch: slot.validation.epoch(),
+            gated: false,
         });
         guard.0.next_token = token;
         Ok(Reservation {
