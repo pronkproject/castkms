@@ -35,8 +35,9 @@ are not a capture capability.
 
 An explicitly authorized service can replace the development monitor and
 publish attachment and EDID state through a narrow capability file. There is
-no cursor plane, audio, CEC, writeback, CRC collection, or delegated
-composition. No default framebuffer console client is started. Do not use the
+no audio, CEC, writeback or CRC collection. Cursor and overlay planes support
+software composition. No default framebuffer console client is started. Do not
+use the
 development driver for production casting until the required facilities have
 been implemented and qualified.
 
