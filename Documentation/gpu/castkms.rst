@@ -259,6 +259,34 @@ userspace release. Failure before publication reports that no access occurred
 and returns the queue slot. At most one source job is outstanding, and an
 unchanged content serial is not claimed again.
 
+Complete-scene renderer descriptions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Renderer contract version 6 adds ``RENDERER_DEQUEUE_SCENE`` alongside the
+existing single-image dequeue operation. Both use the same one-job queue and
+``RENDERER_RELEASE_SOURCE``. A renderer should allocate the advertised maximum
+of 64 KiB for the result. Insufficient capacity returns ``ENOSPC``; failure
+does not consume the scene or install any descriptors, even if userspace
+memory was partially written. Blank and unchanged scenes return ``ENODATA``.
+
+The version-one result contains a header followed by back-to-front layer
+records and output color records. Each layer includes its role, stacking
+position, format/modifier, memory planes, fractional source rectangle, signed
+destination position and scaled destination size. Its color records describe
+the selected sRGB curves and sign-magnitude matrices. Output records describe
+degamma and gamma tables and the output matrix. Equal stacking positions retain
+KMS plane creation order. Pixel alpha is premultiplied, sampling is nearest
+neighbor, and output color operations follow layer composition.
+
+Metadata is bounded to 24 layers, four memory planes per layer, sixteen plane
+color operations and 256 entries per output lookup table. These transport
+bounds do not advertise additional KMS planes or enable new renderer profiles.
+All buffer descriptors and the combined producer fence remain tied to one
+source-read claim. The renderer must check producer success before reading,
+then release with no access, completed CPU access or a submitted native fence.
+This interface describes accepted scenes; it does not yet negotiate supported
+scenes, perform capability transitions or deliver GPU capture destinations.
+
 The job also exports a sync-file wait for the exact producer dependencies
 captured when KMS accepted the scene. An already failed producer rejects
 dequeue with its completion error; pending producer work remains represented by
