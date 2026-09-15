@@ -21,10 +21,20 @@ struct Tagged<'a> {
     configuration: Option<Configuration>,
 }
 
+enum Change<'a> {
+    Tag(Tagged<'a>),
+    Cancel(&'a mut Output),
+}
+
+/// Plain retired metadata, released after the installation coordinator is unlocked.
+pub(crate) struct Retired {
+    _entries: [(Option<Pending>, Option<Contract>); OUTPUTS],
+}
+
 /// Holds every affected validation owner exclusively. Dropping does not install a gate.
 #[must_use = "commit only in the native installation success continuation"]
 pub(crate) struct Prepared<'a> {
-    changes: [Option<Tagged<'a>>; OUTPUTS],
+    changes: [Option<Change<'a>>; OUTPUTS],
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -49,6 +59,13 @@ impl Guard<'_> {
                 continue;
             };
             if update.token == 0 {
+                if slot
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.configuration.as_ref() != update.configuration)
+                {
+                    prepared.changes[index] = Some(Change::Cancel(slot));
+                }
                 continue;
             }
             let pending = slot
@@ -73,11 +90,11 @@ impl Guard<'_> {
                 pending.target.clone(),
                 update.scene,
             )?;
-            prepared.changes[index] = Some(Tagged {
+            prepared.changes[index] = Some(Change::Tag(Tagged {
                 gate,
                 pending,
                 configuration: update.configuration.cloned(),
-            });
+            }));
         }
         Ok(prepared)
     }
@@ -86,12 +103,25 @@ impl Guard<'_> {
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Prepared<'_> {
     /// No allocation, failure or native object release remains after successful swap.
-    pub(crate) fn commit(self) {
-        for change in self.changes.into_iter().flatten() {
-            change.gate.commit();
-            change.pending.configuration = change.configuration;
-            change.pending.gated = true;
+    pub(crate) fn commit(self) -> Retired {
+        let mut entries = core::array::from_fn(|_| (None, None));
+        for (index, change) in self.changes.into_iter().enumerate() {
+            match change {
+                Some(Change::Tag(change)) => {
+                    change.gate.commit();
+                    change.pending.configuration = change.configuration;
+                    change.pending.gated = true;
+                }
+                Some(Change::Cancel(slot)) => {
+                    if let Some(pending) = slot.pending.take() {
+                        let contract = slot.validation.cancel(pending.token);
+                        entries[index] = (Some(pending), contract);
+                    }
+                }
+                None => (),
+            }
         }
+        Retired { _entries: entries }
     }
 }
 
@@ -99,6 +129,51 @@ impl Prepared<'_> {
 #[kunit_tests(rust_castkms_transition_installation)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unrelated_configuration_changes_retire_only_after_installation() -> Result {
+        for gated in [false, true] {
+            let coordinator = Arc::pin_init(Coordinator::new(1), GFP_KERNEL)?;
+            let configuration = Configuration::new(1, [640, 480], 60000, 0)?;
+            let replacement = Configuration::new(1, [800, 600], 60000, 0)?;
+            let reservation = coordinator.reserve(
+                0,
+                Arc::new((), GFP_KERNEL)?,
+                configuration.clone(),
+                Contract::Host,
+            )?;
+            let mut updates = core::array::from_fn(|_| None);
+            updates[0] = Some(Update {
+                scene: SceneView::Disabled,
+                token: reservation.token(),
+                previous_configuration: Some(&configuration),
+                configuration: Some(&configuration),
+            });
+            let mut guard = coordinator.lock();
+            if gated {
+                guard.prepare(&updates)?.commit();
+            }
+            let epoch = guard.0.outputs[0].validation.epoch();
+            let update = updates[0].as_mut().ok_or(EINVAL)?;
+            update.token = 0;
+            // Compatible animation retains the pending transition.
+            guard.prepare(&updates)?.commit();
+            assert!(guard.pending(0, reservation.token()).is_ok());
+            updates[0].as_mut().ok_or(EINVAL)?.configuration = Some(&replacement);
+            drop(guard.prepare(&updates)?);
+            assert!(guard.pending(0, reservation.token()).is_ok());
+            assert_eq!(guard.0.outputs[0].validation.epoch(), epoch);
+            let retired = guard.prepare(&updates)?.commit();
+            assert!(matches!(guard.pending(0, reservation.token()), Err(ESTALE)));
+            if gated {
+                assert_ne!(guard.0.outputs[0].validation.epoch(), epoch);
+            }
+            drop(guard);
+            drop(retired);
+            assert_eq!(reservation.check(), Err(ESTALE));
+        }
+        Ok(())
+    }
 
     #[test]
     fn complete_cohort_changes_only_on_success() -> Result {
