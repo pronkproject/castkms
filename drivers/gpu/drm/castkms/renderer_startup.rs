@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! One candidate's private startup resources, without execution or pixel authority.
+//! Startup reservation and active-renderer ownership, without pixel authority.
 
 use crate::{
     host_compositor::compose::Completed,
@@ -23,6 +23,8 @@ use kernel::{
 enum State {
     Idle,
     Reserved(Arc<()>),
+    Active(Arc<()>),
+    Lost,
     Closed,
 }
 
@@ -47,7 +49,7 @@ impl Startup {
             let mut state = self.state.lock();
             match &*state {
                 State::Idle => *state = State::Reserved(identity.clone()),
-                State::Reserved(_) => return Err(EBUSY),
+                State::Reserved(_) | State::Active(_) | State::Lost => return Err(EBUSY),
                 State::Closed => return Err(ENODEV),
             }
         }
@@ -69,6 +71,28 @@ impl Startup {
         }
     }
 
+    fn activate<R>(
+        self: &Arc<Self>,
+        identity: &Arc<()>,
+        publish: impl FnOnce() -> Result<R>,
+    ) -> Result<(Active, R)> {
+        let mut state = self.state.lock();
+        match &*state {
+            State::Reserved(current) if Arc::ptr_eq(current, identity) => (),
+            State::Closed => return Err(ENODEV),
+            _ => return Err(ECANCELED),
+        }
+        let result = publish()?;
+        *state = State::Active(identity.clone());
+        Ok((
+            Active {
+                startup: self.clone(),
+                identity: identity.clone(),
+            },
+            result,
+        ))
+    }
+
     fn cancel(&self, identity: &Arc<()>) {
         let retired = {
             let mut state = self.state.lock();
@@ -82,14 +106,27 @@ impl Startup {
         drop(retired);
     }
 
-    /// Cancel the old control interval's candidate without affecting a later replacement.
-    pub(crate) fn cancel_current(&self) {
+    /// Invalidate startup state belonging to a replaced display-control interval.
+    pub(crate) fn invalidate_current(&self) {
         let retired = {
             let mut state = self.state.lock();
-            if matches!(*state, State::Reserved(_)) {
-                Some(core::mem::replace(&mut *state, State::Idle))
-            } else {
-                None
+            match &*state {
+                State::Reserved(_) => Some(core::mem::replace(&mut *state, State::Idle)),
+                State::Active(_) => Some(core::mem::replace(&mut *state, State::Lost)),
+                _ => None,
+            }
+        };
+        drop(retired);
+    }
+
+    fn lose(&self, identity: &Arc<()>) {
+        let retired = {
+            let mut state = self.state.lock();
+            match &*state {
+                State::Active(current) if Arc::ptr_eq(current, identity) => {
+                    Some(core::mem::replace(&mut *state, State::Lost))
+                }
+                _ => None,
             }
         };
         drop(retired);
@@ -123,6 +160,15 @@ impl Candidate {
     /// renderer or transfer ownership of the reservation.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
         self.startup.with_current(&self.identity, f)
+    }
+
+    /// Transfer this reservation into active-renderer ownership after publication.
+    ///
+    /// The callback and state transition run under the startup lock. Callback failure
+    /// leaves the candidate reserved. The returned owner marks unexpected loss when dropped;
+    /// it never reopens candidate admission.
+    pub(crate) fn activate<R>(&self, publish: impl FnOnce() -> Result<R>) -> Result<(Active, R)> {
+        self.startup.activate(&self.identity, publish)
     }
 
     pub(crate) fn cancel(&self) {
@@ -168,6 +214,30 @@ impl Candidate {
 impl Drop for Candidate {
     fn drop(&mut self) {
         self.cancel();
+    }
+}
+
+/// Device-wide active-renderer identity transferred from one startup candidate.
+#[must_use = "dropping active renderer ownership records terminal loss"]
+pub(crate) struct Active {
+    startup: Arc<Startup>,
+    identity: Arc<()>,
+}
+
+impl Active {
+    /// Check that this renderer remains the active device-wide incarnation.
+    pub(crate) fn check(&self) -> Result {
+        match &*self.startup.state.lock() {
+            State::Active(current) if Arc::ptr_eq(current, &self.identity) => Ok(()),
+            State::Closed => Err(ENODEV),
+            _ => Err(EIO),
+        }
+    }
+}
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        self.startup.lose(&self.identity);
     }
 }
 

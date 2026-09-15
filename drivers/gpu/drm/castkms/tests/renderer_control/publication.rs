@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::execution::Profile;
+use kernel::dma_fence::testing::ManualFence;
 
 #[kunit_tests(rust_castkms_renderer_publication)]
 mod cases {
@@ -58,6 +59,43 @@ mod cases {
         })
     }
 
+    #[test]
+    fn completed_probe_activation_transfers_device_wide_ownership() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            let before = device.execution.describe();
+            candidate.submit_private_probe(None)?;
+            let (active, _source, description) = candidate.activate(device)?;
+            check(description.generation == before.generation + 1)?;
+            check(description.profile == Profile::GpuV1)?;
+            check(description == device.execution.describe())?;
+            active.check()?;
+            check(matches!(device.startup.begin(), Err(EBUSY)))?;
+            drop(active);
+            check(matches!(device.startup.begin(), Err(EBUSY)))
+        })
+    }
+
+    #[test]
+    fn pending_probe_does_not_partially_activate_execution() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Candidate::begin(owner.access())?;
+            let before = device.execution.describe();
+            let mut completion = ManualFence::new()?;
+            candidate.submit_private_probe(Some(completion.fence()))?;
+            check(matches!(candidate.activate(device), Err(EAGAIN)))?;
+            check(device.execution.describe() == before)?;
+            candidate.validate()?;
+            completion.complete(Ok(()))?;
+            let (active, _, after) = candidate.activate(device)?;
+            check(after.generation == before.generation + 1)?;
+            active.check()
+        })
+    }
+
+    #[test]
     fn a_superseded_preparation_keeps_its_unpublished_storage() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;

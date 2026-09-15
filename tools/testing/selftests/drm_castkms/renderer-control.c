@@ -34,6 +34,8 @@ _Static_assert(sizeof(struct drm_castkms_renderer_get_snapshot) == 32,
 	       "renderer snapshot request ABI");
 _Static_assert(sizeof(struct drm_castkms_renderer_submit_probe) == 32,
 	       "renderer probe submission ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_commit_takeover) == 16,
+	       "renderer takeover commit ABI");
 
 static unsigned int open_files(void)
 {
@@ -75,7 +77,8 @@ static struct drm_castkms_renderer_files create_renderer(
 	return files;
 }
 
-static struct drm_castkms_renderer_query query_renderer(int fd)
+static struct drm_castkms_renderer_query query_renderer_profile(int fd,
+							 uint32_t profile)
 {
 	struct drm_castkms_renderer_query query;
 
@@ -83,10 +86,15 @@ static struct drm_castkms_renderer_query query_renderer(int fd)
 	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query) == 0);
 	CHECK(query.version == DRM_CASTKMS_RENDERER_VERSION);
 	CHECK(query.flags == 0);
-	CHECK(query.profile == DRM_CASTKMS_EXECUTION_HOST_V1);
+	CHECK(query.profile == profile);
 	CHECK(query.reserved == 0);
 	CHECK(query.generation != 0);
 	return query;
+}
+
+static struct drm_castkms_renderer_query query_renderer(int fd)
+{
+	return query_renderer_profile(fd, DRM_CASTKMS_EXECUTION_HOST_V1);
 }
 
 static struct drm_castkms_renderer_takeover begin_takeover(int fd,
@@ -129,6 +137,16 @@ static void submit_probe(int fd, uint64_t candidate_id, uint32_t source)
 	};
 
 	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+		    &request) == 0);
+}
+
+static void commit_takeover(int fd, uint64_t candidate_id)
+{
+	struct drm_castkms_renderer_commit_takeover request = {
+		.candidate_id = candidate_id,
+	};
+
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
 		    &request) == 0);
 }
 
@@ -244,6 +262,7 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_abort_takeover abort = {};
 	struct drm_castkms_renderer_get_snapshot snapshot_request = {};
 	struct drm_castkms_renderer_submit_probe probe = { .completion_fd = -1 };
+	struct drm_castkms_renderer_commit_takeover commit = {};
 	struct drm_castkms_renderer_snapshot snapshot;
 	struct drm_castkms_renderer_snapshot snapshot_duplicate;
 	drmModeConnector *connector;
@@ -444,6 +463,25 @@ int main(int argc, char **argv)
 	expect_ioctl_error(files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
 			   &begin, EBUSY);
+	commit.candidate_id = 0;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
+			   &commit, EINVAL);
+	commit.candidate_id = candidate.candidate_id + 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
+			   &commit, ENOENT);
+	commit.candidate_id = candidate.candidate_id;
+	commit.flags = 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
+			   &commit, EINVAL);
+	commit.flags = 0;
+	commit.reserved = 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
+			   &commit, EINVAL);
+	commit.reserved = 0;
 	abort.candidate_id = candidate.candidate_id + 1;
 	expect_ioctl_error(files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER,
@@ -504,7 +542,21 @@ int main(int argc, char **argv)
 	CHECK(close(files.renderer_fd) == 0);
 	next_files = create_renderer(peer, &request);
 	candidate = begin_takeover(next_files.renderer_fd, first.generation);
-	abort_takeover(next_files.renderer_fd, candidate.candidate_id);
+	submit_probe(next_files.renderer_fd, candidate.candidate_id,
+		     DRM_CASTKMS_RENDERER_PROBE_PRIVATE);
+	commit_takeover(next_files.renderer_fd, candidate.candidate_id);
+	commit_takeover(next_files.renderer_fd, candidate.candidate_id);
+	next = query_renderer_profile(next_files.renderer_fd,
+				      DRM_CASTKMS_EXECUTION_GPU_V1);
+	CHECK(next.generation == first.generation + 1);
+	abort.candidate_id = candidate.candidate_id;
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER,
+			   &abort, EALREADY);
+	begin.expected_generation = next.generation;
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
+			   &begin, EBUSY);
 	CHECK(close(next_files.renderer_fd) == 0);
 	CHECK(close(next_files.revoke_fd) == 0);
 	CHECK(close(files.revoke_fd) == 0);
