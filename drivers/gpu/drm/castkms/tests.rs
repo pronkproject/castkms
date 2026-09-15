@@ -71,6 +71,7 @@ mod host_worker;
 mod image_access;
 mod monitor;
 mod topology;
+mod composition_planes;
 mod output_identity;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
@@ -133,12 +134,16 @@ impl Fixture {
     }
 
     fn new_outputs(name: &'static kernel::str::CStr, count: u32) -> Result<Self> {
+        Self::new_features(name, count, false, false)
+    }
+
+    fn new_features(name: &'static kernel::str::CStr, count: u32, cursor: bool, overlay: bool) -> Result<Self> {
         let parent = faux::Registration::new_with_dma_mask(
             name,
             None,
             kernel::dma::DmaMask::new::<64>(),
         )?;
-        let state = device::Owner::new_outputs(count)?;
+        let state = device::Owner::new_features(count, cursor, overlay, cursor || overlay)?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
         let drm = TestDevice::new(drm)?;
@@ -208,7 +213,7 @@ impl Fixture {
             |mut transaction: Pin<&mut kernel::drm::kms::atomic::AtomicStateComposer<Driver>>| {
                 transaction.as_mut().set_crtc_config(crtc, Some(&scanout))?;
                 transaction
-                    .add_plane_state(self.drm.plane()?)?
+                    .add_plane_state(crtc.primary_plane())?
                     .set_producer_fence(producer.map(|fence| fence.to_owned_ref()));
                 Ok(())
             };
