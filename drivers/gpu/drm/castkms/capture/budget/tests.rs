@@ -17,7 +17,7 @@ mod cases {
     #[test]
     fn invalid_capacity_does_not_consume_storage() -> Result {
         let budget = Budget::new()?;
-        let layout = Layout::new(1920, 1080)?;
+        let layout = Layout::new(4096, 4095)?;
         check(matches!(budget.reserve(layout, 0), Err(EINVAL)))?;
         check(matches!(
             budget.reserve(layout, CAPACITY_LIMIT + 1),
@@ -30,7 +30,7 @@ mod cases {
     #[test]
     fn retained_queue_storage_blocks_replacement_without_waiting() -> Result {
         let budget = Budget::new()?;
-        let layout = Layout::new(1920, 1080)?;
+        let layout = Layout::new(4096, 4095)?;
         let retained = budget.reserve(layout, CAPACITY_LIMIT)?;
         check(matches!(budget.reserve(layout, 1), Err(EBUSY)))?;
         drop(retained);
@@ -59,7 +59,7 @@ mod cases {
     #[test]
     fn failed_reservations_do_not_consume_remaining_capacity() -> Result {
         let budget = Budget::new()?;
-        let large = Layout::new(1920, 1080)?;
+        let large = Layout::new(4096, 4095)?;
         let retained = budget.reserve(large, CAPACITY_LIMIT)?;
         for _ in 0..32 {
             check(matches!(budget.reserve(large, 1), Err(EBUSY)))?;
@@ -73,15 +73,15 @@ mod cases {
     #[test]
     fn a_charge_retains_its_budget_independently_of_the_issuer() -> Result {
         let budget = Budget::new()?;
-        let retained = budget.reserve(Layout::new(1920, 1080)?, CAPACITY_LIMIT)?;
+        let retained = budget.reserve(Layout::new(4096, 4095)?, CAPACITY_LIMIT)?;
         let observer = budget.clone();
         drop(budget);
         check(matches!(
-            observer.reserve(Layout::new(1920, 1080)?, 1),
+            observer.reserve(Layout::new(4096, 4095)?, 1),
             Err(EBUSY)
         ))?;
         drop(retained);
-        let _replacement = observer.reserve(Layout::new(1920, 1080)?, CAPACITY_LIMIT)?;
+        let _replacement = observer.reserve(Layout::new(4096, 4095)?, CAPACITY_LIMIT)?;
         Ok(())
     }
 }
