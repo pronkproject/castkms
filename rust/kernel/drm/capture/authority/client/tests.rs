@@ -87,7 +87,15 @@ unsafe impl ClientOwner for DescribingOwner {
     fn describe(&mut self) -> Result<Description> {
         let id = self.0.get().checked_add(1).ok_or(EOVERFLOW)?;
         self.0.set(id);
-        Description::new(id, [64, 32], crate::drm::fourcc::XRGB8888, 0, 8)
+        Description::new(
+            id,
+            [64, 32],
+            60_000,
+            0,
+            crate::drm::fourcc::XRGB8888,
+            0,
+            8,
+        )
     }
 }
 
