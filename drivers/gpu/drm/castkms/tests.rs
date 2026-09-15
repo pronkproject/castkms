@@ -74,6 +74,7 @@ mod monitor;
 mod audio;
 mod topology;
 mod composition_planes;
+mod renderer_capabilities;
 mod output_identity;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
