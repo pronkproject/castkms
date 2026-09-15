@@ -70,6 +70,15 @@ pub const ARGB16161616: u32 = fourcc_code(b'A', b'R', b'4', b'8');
 /// [63:0] A:B:G:R 16:16:16:16 little endian.
 pub const ABGR16161616: u32 = fourcc_code(b'A', b'B', b'4', b'8');
 
+/// 64 bpp RGB with binary16 components and unused alpha.
+pub const XRGB16161616F: u32 = fourcc_code(b'X', b'R', b'4', b'H');
+/// 64 bpp BGR with binary16 components and unused alpha.
+pub const XBGR16161616F: u32 = fourcc_code(b'X', b'B', b'4', b'H');
+/// 64 bpp RGBA with binary16 components.
+pub const ARGB16161616F: u32 = fourcc_code(b'A', b'R', b'4', b'H');
+/// 64 bpp BGRA with binary16 components.
+pub const ABGR16161616F: u32 = fourcc_code(b'A', b'B', b'4', b'H');
+
 /// [15:0] R:G:B 5:6:5 little endian.
 pub const RGB565: u32 = fourcc_code(b'R', b'G', b'1', b'6');
 
