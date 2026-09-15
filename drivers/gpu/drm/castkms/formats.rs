@@ -33,6 +33,12 @@ pub(crate) const FORMATS: &[u32] = &[
     NV61,
     NV24,
     NV42,
+    YUV420,
+    YVU420,
+    YUV422,
+    YVU422,
+    YUV444,
+    YVU444,
 ];
 
 /// Sampling factors and stored bits per sample in one format plane.
