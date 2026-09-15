@@ -1013,6 +1013,36 @@ pub trait RawPlaneState: AsRawPlaneState {
         S::Crtc: ModesettableCrtc + ModeObject<Driver = D>,
         Self::Plane: ModeObject<Driver = D>,
     {
+        self.atomic_helper_check_scaled(
+            crtc_state,
+            1 << 16,
+            1 << 16,
+            can_position,
+            can_update_disabled,
+        )
+    }
+
+    /// Check a plane with an inclusive source-to-destination scale range in 16.16 units.
+    ///
+    /// Both states must belong to the same transaction and assigned CRTC, as required by
+    /// [`Self::atomic_helper_check`]. A smaller ratio enlarges the source on screen.
+    fn atomic_helper_check_scaled<S, D>(
+        &mut self,
+        crtc_state: &CrtcStateMutator<'_, S>,
+        min_scale: u32,
+        max_scale: u32,
+        can_position: bool,
+        can_update_disabled: bool,
+    ) -> Result
+    where
+        D: KmsDriver,
+        S: FromRawCrtcState,
+        S::Crtc: ModesettableCrtc + ModeObject<Driver = D>,
+        Self::Plane: ModeObject<Driver = D>,
+    {
+        if min_scale == 0 || min_scale > max_scale || max_scale > i32::MAX as u32 {
+            return Err(EINVAL);
+        }
         let plane = self.as_raw();
         // SAFETY: The CRTC mutator holds a valid state throughout this call.
         let crtc = unsafe { &*crtc_state.as_raw() };
@@ -1028,8 +1058,8 @@ pub trait RawPlaneState: AsRawPlaneState {
             bindings::drm_atomic_helper_check_plane_state(
                 self.as_raw_mut(),
                 crtc_state.as_raw(),
-                bindings::DRM_PLANE_NO_SCALING as _, // TODO: add parameters for scaling
-                bindings::DRM_PLANE_NO_SCALING as _,
+                min_scale as _,
+                max_scale as _,
                 can_position,
                 can_update_disabled,
             )
