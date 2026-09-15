@@ -157,7 +157,8 @@ static struct drm_castkms_renderer_takeover begin_takeover(int fd,
 		    &request) == 0);
 	CHECK(result.candidate_id != 0);
 	CHECK(result.execution_generation == generation);
-	CHECK(result.profile == DRM_CASTKMS_EXECUTION_HOST_V1);
+	CHECK(result.profile == DRM_CASTKMS_EXECUTION_HOST_V1 ||
+	      result.profile == DRM_CASTKMS_EXECUTION_GPU_V1);
 	CHECK(result.width != 0 && result.height != 0);
 	CHECK(result.refresh_millihz != 0);
 	CHECK(result.reserved == 0);
@@ -194,6 +195,101 @@ static void commit_takeover(int fd, uint64_t candidate_id)
 
 	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
 		    &request) == 0);
+}
+
+static struct drm_castkms_renderer_capabilities query_capabilities(int fd)
+{
+	void *bytes = calloc(1, DRM_CASTKMS_CAPABILITY_QUERY_MAX_BYTES);
+	struct drm_castkms_renderer_query_capabilities request = {
+		.result = (uintptr_t)bytes,
+		.capacity = sizeof(struct drm_castkms_renderer_capabilities),
+	};
+	struct drm_castkms_renderer_capabilities result;
+
+	CHECK(bytes);
+	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY_CAPABILITIES,
+			   &request, ENOSPC);
+	memcpy(&result, bytes, sizeof(result));
+	CHECK(result.size > sizeof(result));
+	CHECK(result.size <= DRM_CASTKMS_CAPABILITY_QUERY_MAX_BYTES);
+	request.capacity = DRM_CASTKMS_CAPABILITY_QUERY_MAX_BYTES;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY_CAPABILITIES, &request) == 0);
+	memcpy(&result, bytes, sizeof(result));
+	CHECK(result.version == DRM_CASTKMS_CAPABILITY_VERSION);
+	CHECK(result.active_offset == sizeof(result));
+	CHECK(result.active_size >= sizeof(struct drm_castkms_capability_profile));
+	CHECK(result.active_offset + result.active_size <= result.size);
+	if (result.flags & DRM_CASTKMS_CAPABILITY_PENDING) {
+		CHECK(result.pending_offset == result.active_offset + result.active_size);
+		CHECK(result.pending_offset + result.pending_size == result.size);
+		CHECK(result.transition && result.pending_generation);
+	} else {
+		CHECK(!result.pending_offset && !result.pending_size);
+		CHECK(!result.transition && !result.pending_generation);
+	}
+	free(bytes);
+	return result;
+}
+
+static void tag_transition(int fd, uint32_t crtc, uint64_t token, bool test_only)
+{
+	drmModeAtomicReq *update = drmModeAtomicAlloc();
+
+	CHECK(update);
+	property(fd, update, crtc, DRM_MODE_OBJECT_CRTC,
+		 DRM_CASTKMS_TRANSITION_PROPERTY, token);
+	CHECK(drmModeAtomicCommit(fd, update,
+				 test_only ? DRM_MODE_ATOMIC_TEST_ONLY : 0, NULL) == 0);
+	drmModeAtomicFree(update);
+}
+
+static uint64_t register_linear_profile(int fd, uint64_t candidate)
+{
+	struct {
+		struct drm_castkms_capability_profile header;
+		struct drm_castkms_capability_format formats[2];
+	} profile = {
+		.header = {
+			.version = DRM_CASTKMS_CAPABILITY_VERSION,
+			.kind = DRM_CASTKMS_CAPABILITY_RENDERER,
+			.flags = DRM_CASTKMS_CAPABILITY_CROP | DRM_CASTKMS_CAPABILITY_FRACTIONAL |
+				 DRM_CASTKMS_CAPABILITY_POSITION | DRM_CASTKMS_CAPABILITY_SCALE |
+				 DRM_CASTKMS_CAPABILITY_SRGB | DRM_CASTKMS_CAPABILITY_PLANE_MATRIX |
+				 DRM_CASTKMS_CAPABILITY_OUTPUT_MATRIX,
+			.format_count = 2, .max_output = { 16384, 16384 },
+			.max_source = { 16384, 16384 }, .min_scale = 1 << 12,
+			.max_scale = 1 << 20, .max_layers = 24, .max_roles = { 1, 22, 1 },
+			.max_color_operations = 16, .max_lut_entries = 256,
+			.yuv_encodings = 7, .yuv_ranges = 3,
+		},
+	};
+	struct drm_castkms_renderer_profile_result result;
+	struct drm_castkms_renderer_register_profile request = {
+		.candidate_id = candidate, .profile = (uintptr_t)&profile,
+		.result = (uintptr_t)&result, .profile_size = sizeof(profile),
+	};
+	struct drm_castkms_renderer_capabilities state;
+
+	for (unsigned int i = 0; i < 2; i++) {
+		profile.formats[i] = (struct drm_castkms_capability_format) {
+			.fourcc = DRM_FORMAT_XRGB8888, .plane_count = 1,
+			.flags = DRM_CASTKMS_CAPABILITY_NATIVE | DRM_CASTKMS_CAPABILITY_IMPORTED |
+				 (i ? DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER : 0),
+			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = UINT32_MAX,
+		};
+	}
+	profile.header.reserved[0] = 1;
+	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
+	profile.header.reserved[0] = 0;
+	CHECK(!(query_capabilities(fd).flags & DRM_CASTKMS_CAPABILITY_PENDING));
+	/* Registration visibility survives an undeliverable reply. */
+	request.result = 1;
+	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EFAULT);
+	state = query_capabilities(fd);
+	CHECK(state.flags == DRM_CASTKMS_CAPABILITY_PENDING);
+	request.result = (uintptr_t)&result;
+	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EBUSY);
+	return state.transition;
 }
 
 static void retain_host_image(int master, uint32_t crtc, uint32_t connector,
@@ -333,6 +429,7 @@ int main(int argc, char **argv)
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
 	peer = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(peer >= 0 && !drmIsMaster(peer));
+	CHECK(drmSetClientCap(peer, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
 	resources = drmModeGetResources(fd);
 	CHECK(resources && resources->count_crtcs == 1 &&
 	      resources->count_connectors == 1);
@@ -604,8 +701,25 @@ int main(int argc, char **argv)
 	candidate = begin_takeover(next_files.renderer_fd, first.generation);
 	submit_probe(next_files.renderer_fd, candidate.candidate_id,
 		     DRM_CASTKMS_RENDERER_PROBE_PRIVATE);
+	uint64_t transition = register_linear_profile(next_files.renderer_fd,
+						      candidate.candidate_id);
+	struct drm_castkms_renderer_capabilities pending_caps =
+		query_capabilities(next_files.renderer_fd);
+	tag_transition(peer, request.crtc_id, transition, true);
+	CHECK(query_capabilities(next_files.renderer_fd).flags == DRM_CASTKMS_CAPABILITY_PENDING);
+	commit.candidate_id = candidate.candidate_id;
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
+			   &commit, EAGAIN);
+	tag_transition(peer, request.crtc_id, transition, false);
+	CHECK(query_capabilities(next_files.renderer_fd).flags ==
+	      (DRM_CASTKMS_CAPABILITY_PENDING | DRM_CASTKMS_CAPABILITY_GATED));
 	commit_takeover(next_files.renderer_fd, candidate.candidate_id);
 	commit_takeover(next_files.renderer_fd, candidate.candidate_id);
+	struct drm_castkms_renderer_capabilities active_caps =
+		query_capabilities(next_files.renderer_fd);
+	CHECK(active_caps.flags == 0);
+	CHECK(active_caps.active_generation == pending_caps.pending_generation);
+	CHECK(active_caps.validation_epoch == pending_caps.validation_epoch + 2);
 	next = query_renderer_profile(next_files.renderer_fd,
 				      DRM_CASTKMS_EXECUTION_GPU_V1);
 	CHECK(next.generation == first.generation + 1);
@@ -716,6 +830,29 @@ int main(int argc, char **argv)
 		    &release_source) == 0);
 	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 	free(scene_bytes);
+	/* A fresh endpoint requests fixed HOST policy while the GPU endpoint remains alive. */
+	struct drm_castkms_renderer_files host_files = create_renderer(peer, &request);
+	struct drm_castkms_renderer_takeover host_candidate =
+		begin_takeover(host_files.renderer_fd, next.generation);
+	CHECK(host_candidate.profile == DRM_CASTKMS_EXECUTION_GPU_V1);
+	struct drm_castkms_capability_profile host_profile = {
+		.version = DRM_CASTKMS_CAPABILITY_VERSION, .kind = DRM_CASTKMS_CAPABILITY_HOST,
+	};
+	struct drm_castkms_renderer_profile_result host_result;
+	struct drm_castkms_renderer_register_profile host_request = {
+		.candidate_id = host_candidate.candidate_id, .profile = (uintptr_t)&host_profile,
+		.result = (uintptr_t)&host_result, .profile_size = sizeof(host_profile),
+	};
+	CHECK(ioctl(host_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE,
+		    &host_request) == 0);
+	tag_transition(peer, request.crtc_id, host_result.transition, false);
+	commit_takeover(host_files.renderer_fd, host_candidate.candidate_id);
+	commit_takeover(host_files.renderer_fd, host_candidate.candidate_id);
+	CHECK(query_renderer(host_files.renderer_fd).generation == next.generation + 1);
+	CHECK(query_capabilities(host_files.renderer_fd).active_generation ==
+	      host_result.capability_generation);
+	CHECK(close(host_files.renderer_fd) == 0);
+	CHECK(close(host_files.revoke_fd) == 0);
 	CHECK(close(next_files.renderer_fd) == 0);
 	CHECK(close(next_files.revoke_fd) == 0);
 	CHECK(close(files.revoke_fd) == 0);
