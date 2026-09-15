@@ -152,7 +152,15 @@ impl Session {
             return Err(EBUSY);
         }
         state.proposal = Some(proposal);
+        drop(state);
+        self.notify_capabilities();
         Ok(description)
+    }
+
+    fn notify_capabilities(&self) {
+        if let Some(registered) = self.device.registration_guard() {
+            registered.hotplug_event();
+        }
     }
 
     /// A current pending observation for reconciliation, not permission to activate it.
@@ -241,7 +249,11 @@ impl Session {
         };
         candidate.cancel();
         drop(candidate);
+        let changed = proposal.is_some();
         drop(proposal);
+        if changed {
+            self.notify_capabilities();
+        }
         Ok(())
     }
 
@@ -517,7 +529,11 @@ impl Session {
         }
         drop(source);
         drop(active);
+        let changed = proposal.is_some();
         drop(proposal);
+        if changed {
+            self.notify_capabilities();
+        }
     }
 }
 
