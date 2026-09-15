@@ -77,6 +77,9 @@ fn yuv(format: u32) -> Option<(usize, usize, bool, bool, usize)> {
         YVU422 => (2, 1, true, true, 8),
         YUV444 => (1, 1, true, false, 8),
         YVU444 => (1, 1, true, true, 8),
+        P010 => (2, 2, false, false, 10),
+        P012 => (2, 2, false, false, 12),
+        P016 => (2, 2, false, false, 16),
         _ => return None,
     })
 }
@@ -135,8 +138,8 @@ pub(crate) fn pixel(
     mut read: impl FnMut(usize, usize, usize, &mut [u8]) -> Result,
 ) -> Result<u32> {
     let rgb = |r: u32, g: u32, b: u32| (r << 16) | (g << 8) | b;
-    if let Some((hs, vs, planar, swap, _depth)) = yuv(format) {
-        let bytes = 1;
+    if let Some((hs, vs, planar, swap, depth)) = yuv(format) {
+        let bytes = if depth == 8 { 1 } else { 2 };
         let mut luma = [0; 2];
         let mut chroma = [0; 4];
         read(0, x * bytes, y, &mut luma[..bytes])?;
@@ -146,7 +149,14 @@ pub(crate) fn pixel(
         } else {
             read(1, (x / hs) * bytes * 2, y / vs, &mut chroma[..bytes * 2])?;
         }
-        let sample = |b: &[u8]| -> i64 { i64::from(b[0]) * 256 };
+        // Retain sub-byte precision for high-bit-depth input until RGB quantization.
+        let sample = |b: &[u8]| -> i64 {
+            if depth == 8 {
+                i64::from(b[0]) * 256
+            } else {
+                i64::from(u16::from_le_bytes([b[0], b[1]]) & (u16::MAX << (16 - depth)))
+            }
+        };
         let yy = sample(&luma) - 16 * 256;
         let a = sample(&chroma[..bytes]) - 128 * 256;
         let b = sample(&chroma[bytes..]) - 128 * 256;
