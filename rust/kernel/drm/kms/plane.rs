@@ -150,6 +150,17 @@ pub trait DriverPlane: Send + Sync + Sized {
     /// Drivers may use this to instantiate their [`DriverPlane`] object.
     fn new(device: &Device<Self::Driver>, args: Self::Args) -> impl PinInit<Self, Error>;
 
+    /// Check a format/modifier tuple within this plane's static format envelope.
+    ///
+    /// DRM calls this during unpublished property construction as well as framebuffer
+    /// validation. The private payload is initialized, but native publication may not
+    /// be complete. Do not inspect mutable atomic state or treat success as admission
+    /// under a dynamically negotiated input contract; validate that during atomic check.
+    /// Without this hook, DRM uses the plane's supplied modifier list.
+    fn format_modifier_supported(&self, _format: u32, _modifier: u64) -> bool {
+        build_error::build_error("This should not be reachable")
+    }
+
     /// The optional [`drm_plane_helper_funcs.atomic_update`] hook for this plane.
     ///
     /// Drivers may use this to customize the atomic update phase of their [`Plane`] objects. If not
@@ -210,7 +221,11 @@ impl<T: DriverPlane> Plane<T> {
             late_register: None,
             early_unregister: None,
             atomic_print_state: None,
-            format_mod_supported: None,
+            format_mod_supported: if T::HAS_FORMAT_MODIFIER_SUPPORTED {
+                Some(format_modifier_supported_callback::<T>)
+            } else {
+                None
+            },
             format_mod_supported_async: None,
         },
 
@@ -1658,6 +1673,18 @@ unsafe extern "C" fn atomic_update_callback<T: DriverPlane>(
     let commit = unsafe { PlaneAtomicCommit::new(plane, &state) };
 
     T::atomic_update(commit);
+}
+
+unsafe extern "C" fn format_modifier_supported_callback<T: DriverPlane>(
+    plane: *mut bindings::drm_plane,
+    format: u32,
+    modifier: u64,
+) -> bool {
+    // SAFETY: The monomorphized vtable belongs to Plane<T>. Its private payload is
+    // initialized before native plane construction, which may invoke this callback.
+    // Borrow only that payload: the native plane may still be unpublished.
+    let driver = unsafe { &(*plane.cast::<Plane<T>>()).inner };
+    driver.format_modifier_supported(format, modifier)
 }
 
 unsafe extern "C" fn prepare_framebuffer_callback<T: DriverPlane>(
