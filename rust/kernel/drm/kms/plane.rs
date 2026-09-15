@@ -1309,6 +1309,30 @@ pub struct PlaneStateMutator<'a, T: FromRawPlaneState> {
 }
 
 impl<'a, T: FromRawPlaneState> PlaneStateMutator<'a, T> {
+    /// Set YUV encoding and range through the native property validators.
+    ///
+    /// Propagate errors: a failed second setter may leave the first candidate value changed.
+    pub fn set_yuv_color(&mut self, encoding: ColorEncoding, range: ColorRange) -> Result {
+        let encoding = match encoding {
+            ColorEncoding::Bt601 => bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT601,
+            ColorEncoding::Bt709 => bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT709,
+            ColorEncoding::Bt2020 => bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT2020,
+        };
+        let range = match range {
+            ColorRange::Limited => bindings::drm_color_range_DRM_COLOR_YCBCR_LIMITED_RANGE,
+            ColorRange::Full => bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE,
+        };
+        // SAFETY: The guard owns the unpublished state. Native setters validate
+        // property attachment and advertised values before changing the candidate.
+        unsafe {
+            let raw = self.as_raw_mut();
+            to_result(bindings::drm_atomic_set_color_property_for_plane(raw,
+                (*raw.plane).color_encoding_property, u64::from(encoding)))?;
+            to_result(bindings::drm_atomic_set_color_property_for_plane(raw,
+                (*raw.plane).color_range_property, u64::from(range)))
+        }
+    }
+
     /// Set an adjustable stacking position within the plane's advertised range.
     pub fn set_zpos(&mut self, zpos: u32) -> Result {
         // SAFETY: The guard owns unpublished state; setup made its property immutable
