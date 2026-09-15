@@ -35,6 +35,15 @@ pub(crate) struct Plane<'a> {
 }
 
 impl Plane<'_> {
+    pub(super) fn new(layer: &crate::scene::Primary, index: usize) -> Result<Plane<'_>> {
+        let framebuffer = layer.framebuffer();
+        Ok(Plane {
+            object: framebuffer.object_at(index)?,
+            pitch: framebuffer.pitch(index)?,
+            offset: framebuffer.offset(index)?,
+        })
+    }
+
     pub(crate) fn shares_storage_with(&self, other: &Self) -> bool {
         core::ptr::eq(self.object, other.object)
     }
