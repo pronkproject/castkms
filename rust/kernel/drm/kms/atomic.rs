@@ -278,6 +278,33 @@ impl<T: KmsDriver> AtomicState<T> {
         None
     }
 
+    /// Inspect each plane's new native state in this transaction.
+    pub fn for_each_new_plane_state(
+        &self,
+        mut f: impl FnMut(&Plane<T::Plane>, &OpaquePlaneState<T>),
+    ) {
+        // SAFETY: The state retains its initialized plane array and device topology.
+        let (planes, count) = unsafe {
+            let raw = self.as_raw();
+            ((*raw).planes, (*(*raw).dev).mode_config.num_total_plane)
+        };
+        if planes.is_null() {
+            return;
+        }
+        for index in 0..count as usize {
+            // SAFETY: The array contains num_total_plane initialized slots.
+            let entry = unsafe { &*planes.add(index) };
+            if entry.ptr.is_null() || entry.new_state.is_null() {
+                continue;
+            }
+            // SAFETY: Non-null entries retain a plane and its matching native state.
+            // References are bounded by the callback and cannot outlive the transaction.
+            unsafe {
+                f(Plane::from_raw(entry.ptr), OpaquePlaneState::from_raw(entry.new_state));
+            }
+        }
+    }
+
     /// Invoke `f` for every CRTC this [`AtomicState`] carries a new state for, passing the CRTC
     /// and that state.
     ///
@@ -468,6 +495,14 @@ impl<T: KmsDriver> AtomicStateReader<T> {
         NonNull::new(state).map(|s| unsafe { C::State::from_raw(s.as_ptr()) })
     }
 
+    /// Inspect every published new plane state without granting mutable access.
+    pub fn for_each_new_plane_state(
+        &self,
+        f: impl FnMut(&Plane<T::Plane>, &OpaquePlaneState<T>),
+    ) {
+        self.0.for_each_new_plane_state(f)
+    }
+
     /// Invoke `f` for every CRTC with a published new state in this commit.
     pub fn for_each_new_crtc_state<F>(&self, f: F)
     where
@@ -615,6 +650,22 @@ impl<T: KmsDriver> AtomicStateMutator<T> {
         F: FnMut(&Crtc<T::Crtc>, &OpaqueCrtcState<T>),
     {
         self.state.for_each_new_crtc_state(f)
+    }
+
+    /// Inspect new plane states while excluding all mutable plane-state guards.
+    ///
+    /// Nested traversal and reentrant plane mutation return `EBUSY`.
+    pub fn try_for_each_new_plane_state(
+        &self,
+        f: impl FnMut(&Plane<T::Plane>, &OpaquePlaneState<T>),
+    ) -> Result {
+        if self.borrowed_planes.get() != 0 {
+            return Err(EBUSY);
+        }
+        self.borrowed_planes.set(u32::MAX);
+        let _restore = ScopeGuard::new(|| self.borrowed_planes.set(0));
+        self.state.for_each_new_plane_state(f);
+        Ok(())
     }
 
     /// Inspect new CRTC states through a check token's shared composer.
