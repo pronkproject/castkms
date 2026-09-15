@@ -13,6 +13,7 @@ mod gem;
 mod host_compositor;
 mod host_snapshot;
 mod image_access;
+mod monitor;
 mod output;
 mod provenance;
 mod renderer;

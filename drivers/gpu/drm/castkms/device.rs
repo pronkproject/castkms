@@ -11,6 +11,7 @@ use super::{
     },
     execution::publication::Publication,
     host_compositor::configuration,
+    monitor::Monitor,
     renderer_startup,
     Driver,
     Output, //
@@ -27,6 +28,7 @@ pub(super) struct State {
     #[pin]
     pub(super) authority: Authority<MasterRef<Driver>>,
     pub(super) output: Arc<Output>,
+    pub(super) monitor: Arc<Monitor>,
     pub(super) host: Arc<configuration::Configuration>,
     pub(super) startup: Arc<renderer_startup::Startup>,
     pub(super) capture_grants: Arc<grants::Registry>,
@@ -37,6 +39,7 @@ pub(super) struct State {
 impl State {
     fn new(
         output: Arc<Output>,
+        monitor: Arc<Monitor>,
         host: Arc<configuration::Configuration>,
         startup: Arc<renderer_startup::Startup>,
     ) -> impl PinInit<Self, Error> {
@@ -44,6 +47,7 @@ impl State {
             execution: Arc::pin_init(Publication::new(), GFP_KERNEL)?,
             authority <- Authority::new(),
             output,
+            monitor,
             host,
             startup,
             capture_grants: grants::Registry::new()?,
@@ -53,6 +57,7 @@ impl State {
     }
 
     fn close(&self) {
+        self.monitor.close();
         self.capture_grants.close();
         self.capture_streams.close();
         self.authority.close();
@@ -72,10 +77,11 @@ pub(super) struct Owner {
 impl Owner {
     pub(super) fn new() -> Result<Self> {
         let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+        let monitor = Monitor::new()?;
         let host = configuration::Owner::new(output.clone())?;
         let startup = renderer_startup::Owner::new(output.identity())?;
         let state = Arc::pin_init(
-            State::new(output, host.configuration(), startup.startup()),
+            State::new(output, monitor, host.configuration(), startup.startup()),
             GFP_KERNEL,
         )?;
         Ok(Self {

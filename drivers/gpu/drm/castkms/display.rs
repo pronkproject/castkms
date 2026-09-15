@@ -3,6 +3,7 @@
 //! One development output and its accepted display descriptions.
 
 use super::{
+    monitor,
     output::SceneUpdate,
     provenance::{
         PreviousOwner,
@@ -35,7 +36,9 @@ pub(super) struct Crtc {}
 #[pin_data]
 pub(super) struct Encoder {}
 #[pin_data]
-pub(super) struct Connector {}
+pub(super) struct Connector {
+    monitor: Arc<monitor::Monitor>,
+}
 
 pub(super) struct ConnectorState;
 
@@ -356,21 +359,23 @@ impl encoder::DriverEncoder for Encoder {
 
 #[vtable]
 impl connector::DriverConnector for Connector {
-    type Args = ();
+    type Args = Arc<monitor::Monitor>;
     type Driver = Driver;
     type State = ConnectorState;
 
-    fn new(_: &Device<Driver>, _: ()) -> impl PinInit<Self, Error> {
-        try_pin_init!(Self {})
+    fn new(_: &Device<Driver>, monitor: Self::Args) -> impl PinInit<Self, Error> {
+        try_pin_init!(Self { monitor })
+    }
+
+    fn detect(connector: &connector::Connector<Self>, _: bool) -> connector::Status {
+        connector.monitor.status()
     }
 
     fn get_modes<'a>(
         connector: connector::ConnectorGuard<'a, Self>,
         _: &ModeConfigGuard<'a, Driver>,
     ) -> i32 {
-        let count = connector.add_modes_noedid((1920, 1080));
-        connector.set_preferred_mode((1920, 1080));
-        count
+        connector.monitor.get_modes(&connector)
     }
 }
 
@@ -439,8 +444,12 @@ impl KmsDriver for Driver {
             None,
             (),
         )?;
-        let connector =
-            connector::UnregisteredConnector::<Connector>::new(dev, connector::Type::Virtual, ())?;
+        let connector = connector::UnregisteredConnector::<Connector>::new(
+            dev,
+            connector::Type::Virtual,
+            dev.monitor.clone(),
+        )?;
+        connector.attach_edid_property();
         dev.execution.attach(connector)?;
         connector.attach_encoder(encoder)
     }
