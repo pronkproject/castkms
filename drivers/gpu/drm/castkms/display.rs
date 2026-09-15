@@ -216,21 +216,23 @@ impl plane::DriverPlane for Plane {
         try_pin_init!(Self { kind })
     }
 
+    fn format_modifier_supported(&self, _: u32, modifier: u64) -> bool {
+        // The generic framebuffer representation bounds storage metadata. Actual
+        // format/modifier eligibility belongs to the complete-scene contract.
+        modifier != fourcc::FORMAT_MOD_INVALID
+    }
+
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
         check_geometry(transaction, &mut state)?;
         state.color = crate::color::Pipeline::new(state.color_pipeline_snapshot(4)?)?;
-        if let Some(geometry) = state.geometry {
+        if state.geometry.is_some() {
             if state.plane().kind == scene::Kind::Cursor {
                 let framebuffer = state.framebuffer().ok_or(EINVAL)?;
                 if framebuffer.width() > 512 || framebuffer.height() > 512 {
                     return Err(EINVAL);
                 }
             }
-            super::execution::host::check_framebuffer(
-                state.framebuffer().ok_or(EINVAL)?,
-                geometry,
-            )?;
         }
         state.selection = Selection::for_update(
             transaction.plane_input(state.plane())?,
@@ -606,7 +608,8 @@ impl KmsDriver for Driver {
     ) -> Result<ModeConfigInfo> {
         Ok(ModeConfigInfo {
             min_resolution: (1, 1),
-            max_resolution: (8192, 8192),
+            max_resolution: (super::execution::potential::MAX_DIMENSION,
+                super::execution::potential::MAX_DIMENSION),
             max_cursor: (512, 512),
             preferred_depth: 24,
             preferred_fourcc: Some(fourcc::XRGB8888),
@@ -620,7 +623,7 @@ impl KmsDriver for Driver {
             let plane = plane::UnregisteredPlane::<Plane>::new(
                 dev,
                 0,
-                &super::execution::host::FORMATS,
+                &super::execution::potential::FORMATS,
                 Some(&[fourcc::FORMAT_MOD_LINEAR]),
                 plane::Type::Primary,
                 None,
@@ -683,7 +686,7 @@ impl KmsDriver for Driver {
                 let plane = plane::UnregisteredPlane::<Plane>::new(
                     dev,
                     (1 << dev.displays.len()) - 1,
-                    super::execution::host::FORMATS,
+                    &super::execution::potential::FORMATS,
                     Some(&[fourcc::FORMAT_MOD_LINEAR]),
                     plane::Type::Overlay,
                     None,
