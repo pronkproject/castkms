@@ -403,7 +403,11 @@ impl crtc::DriverCrtc for Crtc {
         state.output_color =
             crate::color::OutputColor::new(state.degamma_lut(), state.ctm(), state.gamma_lut())?;
         CrtcState::check_configuration(old, &mut state)?;
-        CrtcState::describe_scene(transaction, old, &mut state)
+        CrtcState::describe_scene(transaction, old, &mut state)?;
+        transaction.drm_dev().validation.lock().check(
+            state.crtc().index() as usize,
+            state.validation_view()?,
+        )
     }
 
     fn atomic_enable(commit: crtc::CrtcAtomicCommit<'_, Self>) {

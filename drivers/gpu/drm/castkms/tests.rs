@@ -314,7 +314,7 @@ mod cases {
         fixture.select(&fb, false, 0)?;
         check(fixture.has_owner(Some(&owner)))?;
         fixture.state.close();
-        fixture.select(&fb, false, 0)?;
+        check(fixture.select(&fb, false, 0) == Err(ENODEV))?;
         check(fixture.drm.device().output.inspect(|scene| scene.is_none()))?;
         Ok(())
     }
