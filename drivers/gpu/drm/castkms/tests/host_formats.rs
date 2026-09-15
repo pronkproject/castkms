@@ -8,8 +8,13 @@ use crate::{
     host_compositor::{compose, layout::Layout, pool::Pool},
 };
 use kernel::io::Io;
+use kernel::drm::kms::plane::{ColorEncoding, ColorRange};
 
 fn white_image(format: u32, shared: bool) -> Result {
+    white_image_in_range(format, shared, ColorRange::Limited)
+}
+
+fn white_image_in_range(format: u32, shared: bool, range: ColorRange) -> Result {
     let fixture = Fixture::new()?;
     let count = formats::plane_count(format);
     let mut objects = KVec::new();
@@ -40,14 +45,14 @@ fn white_image(format: u32, shared: bool) -> Result {
                     drm::fourcc::P010 | drm::fourcc::P012 | drm::fourcc::P016
                 ) {
                     if x % 2 == 0 {
-                        0
+                        if index == 0 && range == ColorRange::Full { 255 } else { 0 }
                     } else if index == 0 {
-                        235
+                        if range == ColorRange::Full { 255 } else { 235 }
                     } else {
                         128
                     }
                 } else if index == 0 {
-                    235
+                    if range == ColorRange::Full { 255 } else { 235 }
                 } else {
                     128
                 };
@@ -95,7 +100,8 @@ fn white_image(format: u32, shared: bool) -> Result {
     fixture.drm.update(|mut transaction| {
         transaction
             .as_mut()
-            .set_crtc_config(fixture.drm.crtc()?, Some(&scanout))
+            .set_crtc_config(fixture.drm.crtc()?, Some(&scanout))?;
+        transaction.add_plane_state(fixture.drm.plane()?)?.set_yuv_color(ColorEncoding::Bt601, range)
     })?;
     let pool = Pool::new(
         fixture.drm.device(),

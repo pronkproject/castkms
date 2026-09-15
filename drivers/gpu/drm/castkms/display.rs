@@ -221,7 +221,7 @@ impl plane::DriverPlane for Plane {
         if let Some(geometry) = state.geometry {
             state.prepared = Some(Arc::new(
                 scene::Primary {
-                    yuv: (plane::ColorEncoding::Bt601, plane::ColorRange::Limited),
+                    yuv: state.yuv_color()?,
                     color: state.color.clone(),
                     framebuffer: state.framebuffer().ok_or(EINVAL)?.to_owned_ref(),
                     geometry,
@@ -325,7 +325,8 @@ impl crtc::DriverCrtc for Crtc {
         let (transaction, old, mut state) = check.take_all();
         CrtcState::resolve_blank_owner(transaction, old, &mut state)?;
         state.validate_color_mgmt(256)?;
-        state.output_color = crate::color::OutputColor::new(state.degamma_lut(), state.ctm(), state.gamma_lut())?;
+        state.output_color =
+            crate::color::OutputColor::new(state.degamma_lut(), state.ctm(), state.gamma_lut())?;
         CrtcState::check_configuration(old, &mut state)
     }
 
@@ -496,6 +497,7 @@ impl KmsDriver for Driver {
                 scene::Kind::Primary,
             )?;
             plane.create_zpos_immutable_property(0)?;
+            plane.create_yuv_color_properties()?;
             plane.create_nearest_scaling_filter_property()?;
             if dev.enable_plane_pipeline {
                 plane.create_srgb_matrix_pipeline()?;
@@ -511,6 +513,7 @@ impl KmsDriver for Driver {
                     scene::Kind::Cursor,
                 )?;
                 cursor.create_zpos_immutable_property(31)?;
+                cursor.create_yuv_color_properties()?;
                 cursor.create_nearest_scaling_filter_property()?;
                 if dev.enable_plane_pipeline {
                     cursor.create_srgb_matrix_pipeline()?;
@@ -553,6 +556,7 @@ impl KmsDriver for Driver {
                     scene::Kind::Overlay,
                 )?;
                 plane.create_zpos_property(1, 1, 30)?;
+                plane.create_yuv_color_properties()?;
                 plane.create_nearest_scaling_filter_property()?;
                 if dev.enable_plane_pipeline {
                     plane.create_srgb_matrix_pipeline()?;
