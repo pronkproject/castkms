@@ -5,8 +5,9 @@ CastKMS virtual display
 
 CastKMS is being developed as a virtual display whose images will eventually
 be composed in userspace. The Rust driver provides a display device and an
-internal CPU capture path for kernel callers and tests. Public capture is not
-enabled. It is not a replacement for a working C CastKMS casting installation.
+internal CPU capture path for kernel callers and tests. Public image capture
+is not enabled. It is not a replacement for a working C CastKMS casting
+installation.
 
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create eight
 virtual outputs by default. The ``max_outputs`` parameter accepts one through
@@ -37,11 +38,67 @@ are not a capture capability.
 
 An explicitly authorized service can replace the development monitor and
 publish attachment and EDID state through a narrow capability file. There is
-no audio, CEC, writeback or CRC collection. Cursor and overlay planes support
-software composition. No default framebuffer console client is started. Do not
-use the
+no CEC, writeback or CRC collection. Cursor and overlay planes support software
+composition. With ALSA support enabled, attached audio sinks also expose
+playback and separately authorized audio capture. No default framebuffer
+console client is started. Do not use the
 development driver for production casting until the required facilities have
 been implemented and qualified.
+
+Audio playback and capture
+--------------------------
+
+``CONFIG_DRM_CASTKMS_AUDIO`` defaults to enabled when ALSA and its PCM core are
+built into the kernel. Each attached monitor with audio capabilities in a CTA
+EDID extension or a DisplayID CTA collection gets a playback-only ALSA card.
+Applications and sound servers can send stereo, signed 16-bit little-endian
+samples at 48 kHz to that card.
+The driver exposes the sink's ELD audio description, a stereo channel map and
+a jack control. It does not create an ALSA microphone or perform resampling.
+
+Audio capture requires its own explicit capability. The current top-level DRM
+master calls ``DRM_IOCTL_CASTKMS_CREATE_AUDIO_CAPTURE`` with the exact CRTC and
+connector it controls. The request points to an output structure containing
+two close-on-exec descriptors: a read-only audio stream and a revocation file.
+Neither image capture nor monitor or renderer control implicitly authorizes
+audio. The service can transfer the audio file while retaining the revocation
+file. Closing the issuing DRM file or the last revocation-file reference ends
+the stream, even if another process still holds an audio-file reference.
+
+``DRM_IOCTL_CASTKMS_AUDIO_QUERY`` on the audio file reports the format, queue
+capacity and dropped-frame count. Ordinary ``read()`` calls return complete
+four-byte stereo frames. The stream has its own ten-millisecond clock and
+supplies silence while playback is idle and the CRTC is active. Nonblocking
+reads return ``EAGAIN`` when no complete frames are available; ``poll()`` waits
+for data or termination.
+The queue holds at most 65,536 frames. Overflow discards old queued audio so a
+slow reader does not accumulate unbounded delay, and delayed timer callbacks
+perform at most forty milliseconds of catch-up work.
+
+Only one live audio stream can capture an attachment. Detach, replacement,
+master loss, device removal and explicit revocation discard queued samples
+and make the old stream terminal. A retained descriptor never follows a new
+attachment. Disabling the CRTC suspends frame delivery and discards queued
+samples without revoking the audio capability. Re-enabling allows delivery
+again; applications must prepare interrupted ALSA playback before restarting
+it. A black image on an active CRTC does not stop audio. Existing ALSA files
+are disconnected on detach without waiting for their owners to close them.
+Audio capture does not depend on whether video is
+composed in the kernel or by a userspace renderer.
+
+The file operations adapt an independently callable kernel audio provider;
+kernel clients do not construct userspace ioctl requests. These experimental
+facilities use ``kernel::sound::pcm`` for safe ALSA registration, callbacks,
+buffer access, controls and notifications. CastKMS owns the virtual playback
+engine, sample clocks, timer limits and CRTC interruption policy.
+ELD snapshots come from DRM's native EDID parser. The experimental userspace
+interfaces are distinct from the C driver's combined capture grant and audio
+tap ioctl. Consumers of that interface need to adopt the explicit audio-file
+pair. The ``audio`` selftest exercises real ALSA sample delivery, idle silence,
+descriptor revocation and attachment replacement on a disposable device::
+
+    make -C tools/testing/selftests TARGETS=drm_castkms
+    tools/testing/selftests/drm_castkms/audio /dev/dri/cardN
 
 Virtual monitor control
 -----------------------
