@@ -36,12 +36,17 @@ pub(super) struct Display {
 
 #[pin_data]
 pub(super) struct State {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) execution: Arc<Publication>,
     #[pin]
     pub(super) authority: Authority<MasterRef<Driver>>,
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) output: Arc<Output>,
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) monitor: Arc<Monitor>,
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) host: Arc<configuration::Configuration>,
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) startup: Arc<renderer_startup::Startup>,
     pub(super) capture_grants: Arc<grants::Registry>,
     pub(super) capture_streams: Arc<streams::Registry>,
@@ -54,11 +59,16 @@ impl State {
         displays: KVec<Arc<Display>>,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
+            #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             execution: displays.first().ok_or(EINVAL)?.execution.clone(),
             authority <- Authority::new(),
+            #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             output: displays.first().ok_or(EINVAL)?.output.clone(),
+            #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             monitor: displays.first().ok_or(EINVAL)?.monitor.clone(),
+            #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             host: displays.first().ok_or(EINVAL)?.host.clone(),
+            #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             startup: displays.first().ok_or(EINVAL)?.startup.clone(),
             capture_grants: grants::Registry::new()?,
             capture_streams: streams::Registry::new()?,
@@ -96,6 +106,7 @@ struct DisplayOwner {
 }
 
 impl Owner {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn new() -> Result<Self> {
         Self::new_outputs(1)
     }
