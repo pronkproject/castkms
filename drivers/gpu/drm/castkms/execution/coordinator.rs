@@ -23,7 +23,16 @@ struct Pending {
 
 struct Output {
     validation: Validation,
+    capability_generation: u64,
     pending: Option<Pending>,
+}
+
+/// One coordinator observation, not a reservation or source-read permission.
+pub(crate) struct Snapshot {
+    pub(crate) epoch: u64,
+    pub(crate) active: Contract,
+    pub(crate) generation: u64,
+    pub(crate) pending: Option<(u64, bool)>,
 }
 
 struct State {
@@ -59,6 +68,7 @@ impl Reservation {
     pub(crate) fn activate<R>(
         &self,
         configuration: Option<&Configuration>,
+        generation: u64,
         check: impl FnMut(&Contract) -> Result,
         publish: impl FnOnce() -> Result<R>,
     ) -> Result<R> {
@@ -72,9 +82,13 @@ impl Reservation {
                 return Err(ESTALE);
             }
             let slot = guard.0.outputs.get_mut(self.output).ok_or(EINVAL)?;
+            if generation <= slot.capability_generation {
+                return Err(ESTALE);
+            }
             let activation = slot.validation.prepare_activation(self.token, check)?;
             let result = publish()?;
             let retired = activation.commit();
+            slot.capability_generation = generation;
             (result, retired, slot.pending.take())
         };
         drop(retired);
@@ -118,6 +132,7 @@ impl Coordinator {
                     for _ in 0..count {
                         outputs.push(Output {
                             validation: Validation::new(Contract::Host),
+                            capability_generation: 1,
                             pending: None,
                         }, GFP_KERNEL)?;
                     }
@@ -243,6 +258,23 @@ impl Coordinator {
 }
 
 impl Guard<'_> {
+    pub(crate) fn snapshot(&self, output: usize) -> Result<Snapshot> {
+        if self.0.closed {
+            return Err(ENODEV);
+        }
+        let slot = self.0.outputs.get(output).ok_or(EINVAL)?;
+        let (epoch, active) = slot.validation.describe();
+        Ok(Snapshot {
+            epoch,
+            active,
+            generation: slot.capability_generation,
+            pending: slot
+                .pending
+                .as_ref()
+                .map(|pending| (pending.token, pending.gated)),
+        })
+    }
+
     fn pending(&self, output: usize, token: u64) -> Result<&Pending> {
         if self.0.closed {
             return Err(ENODEV);
