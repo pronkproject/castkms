@@ -44,6 +44,27 @@ pub(crate) const FORMATS: &[u32] = &[
     P016,
 ];
 
+/// Read per-pixel alpha, normalized to sixteen bits. Formats without alpha are opaque.
+pub(crate) fn alpha16(
+    format: u32,
+    x: usize,
+    y: usize,
+    mut read: impl FnMut(usize, usize, usize, &mut [u8]) -> Result,
+) -> Result<u32> {
+    let (bytes, shift, bits) = match format {
+        ARGB8888 | ABGR8888 => (4, 24, 8),
+        RGBA8888 | BGRA8888 => (4, 0, 8),
+        ARGB2101010 | ABGR2101010 => (4, 30, 2),
+        ARGB16161616 | ABGR16161616 => (8, 48, 16),
+        _ => return Ok(65535),
+    };
+    let mut sample = [0; 8];
+    read(0, x * bytes, y, &mut sample[..bytes])?;
+    let maximum = (1u64 << bits) - 1;
+    let alpha = (u64::from_le_bytes(sample) >> shift) & maximum;
+    Ok(((alpha * 65535 + maximum / 2) / maximum) as u32)
+}
+
 /// Sampling factors and stored bits per sample in one format plane.
 #[derive(Clone, Copy)]
 pub(crate) struct Plane {
