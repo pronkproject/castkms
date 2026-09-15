@@ -53,6 +53,10 @@ module! {
             default: false,
             description: "Enable eight shared overlay planes",
         },
+        enable_plane_pipeline: bool {
+            default: false,
+            description: "Enable per-plane sRGB and matrix color pipelines",
+        },
         max_outputs: u32 {
             default: 8,
             description: "Number of virtual display outputs (1-8)",
@@ -78,7 +82,8 @@ impl Drop for CastKms {
 impl kernel::Module for CastKms {
     fn init(_: &'static ThisModule) -> Result<Self> {
         Self::new_features(c"castkms", module_parameters::max_outputs.value(),
-            module_parameters::enable_cursor.value(), module_parameters::enable_overlay.value(), false)
+            module_parameters::enable_cursor.value(), module_parameters::enable_overlay.value(),
+            module_parameters::enable_plane_pipeline.value())
     }
 }
 

@@ -180,6 +180,7 @@ impl plane::DriverPlane for Plane {
     fn atomic_check(check: plane::PlaneAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
         check_geometry(transaction, &mut state)?;
+        state.color = crate::color::Pipeline::new(state.color_pipeline_snapshot(4)?)?;
         if let Some(geometry) = state.geometry {
             if state.plane().kind == scene::Kind::Cursor {
                 let framebuffer = state.framebuffer().ok_or(EINVAL)?;
@@ -496,6 +497,9 @@ impl KmsDriver for Driver {
             )?;
             plane.create_zpos_immutable_property(0)?;
             plane.create_nearest_scaling_filter_property()?;
+            if dev.enable_plane_pipeline {
+                plane.create_srgb_matrix_pipeline()?;
+            }
             let cursor = if dev.enable_cursor {
                 let cursor = plane::UnregisteredPlane::<Plane>::new(
                     dev,
@@ -508,6 +512,9 @@ impl KmsDriver for Driver {
                 )?;
                 cursor.create_zpos_immutable_property(31)?;
                 cursor.create_nearest_scaling_filter_property()?;
+                if dev.enable_plane_pipeline {
+                    cursor.create_srgb_matrix_pipeline()?;
+                }
                 cursor.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
                 Some(cursor)
             } else {
@@ -547,6 +554,9 @@ impl KmsDriver for Driver {
                 )?;
                 plane.create_zpos_property(1, 1, 30)?;
                 plane.create_nearest_scaling_filter_property()?;
+                if dev.enable_plane_pipeline {
+                    plane.create_srgb_matrix_pipeline()?;
+                }
                 plane.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
             }
         }
