@@ -36,6 +36,9 @@ pub(super) struct Display {
 
 #[pin_data]
 pub(super) struct State {
+    pub(super) enable_cursor: bool,
+    pub(super) enable_overlay: bool,
+    pub(super) enable_plane_pipeline: bool,
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) execution: Arc<Publication>,
     #[pin]
@@ -57,8 +60,14 @@ pub(super) struct State {
 impl State {
     fn new(
         displays: KVec<Arc<Display>>,
+        enable_cursor: bool,
+        enable_overlay: bool,
+        enable_plane_pipeline: bool,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
+            enable_cursor,
+            enable_overlay,
+            enable_plane_pipeline,
             #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             execution: displays.first().ok_or(EINVAL)?.execution.clone(),
             authority <- Authority::new(),
@@ -111,7 +120,12 @@ impl Owner {
         Self::new_outputs(1)
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn new_outputs(count: u32) -> Result<Self> {
+        Self::new_features(count, false, false, false)
+    }
+
+    pub(super) fn new_features(count: u32, enable_cursor: bool, enable_overlay: bool, enable_plane_pipeline: bool) -> Result<Self> {
         if count == 0 || count > MAX_OUTPUTS {
             return Err(EINVAL);
         }
@@ -139,7 +153,7 @@ impl Owner {
             owners.push(DisplayOwner { host, startup }, GFP_KERNEL)?;
         }
         let state = Arc::pin_init(
-            State::new(displays),
+            State::new(displays, enable_cursor, enable_overlay, enable_plane_pipeline),
             GFP_KERNEL,
         )?;
         Ok(Self {
