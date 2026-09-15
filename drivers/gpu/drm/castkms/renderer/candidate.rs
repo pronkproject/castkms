@@ -70,6 +70,11 @@ impl Candidate {
         &self.configuration
     }
 
+    /// Observe the execution description captured with this startup reservation.
+    pub(crate) fn execution(&self) -> Description {
+        self.execution
+    }
+
     /// Recheck authority and private reservation without changing active execution.
     ///
     /// Success is an observation only. A later operation must perform its own validation

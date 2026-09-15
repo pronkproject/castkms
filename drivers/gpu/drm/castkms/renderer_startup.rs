@@ -82,6 +82,19 @@ impl Startup {
         drop(retired);
     }
 
+    /// Cancel the old control interval's candidate without affecting a later replacement.
+    pub(crate) fn cancel_current(&self) {
+        let retired = {
+            let mut state = self.state.lock();
+            if matches!(*state, State::Reserved(_)) {
+                Some(core::mem::replace(&mut *state, State::Idle))
+            } else {
+                None
+            }
+        };
+        drop(retired);
+    }
+
     fn close(&self) {
         let retired = core::mem::replace(&mut *self.state.lock(), State::Closed);
         drop(retired);

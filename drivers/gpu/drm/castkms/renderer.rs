@@ -7,3 +7,4 @@ mod client_file;
 pub(crate) mod files;
 pub(crate) mod permission;
 mod revoker_file;
+mod session;
