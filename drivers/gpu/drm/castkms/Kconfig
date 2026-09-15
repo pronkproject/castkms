@@ -15,7 +15,8 @@ config DRM_CASTKMS
 	  and an optional pool of eight shared overlays support positioned, cropped
 	  and scaled composition. Output lookup tables and matrices, optional plane
 	  color pipelines and YUV color properties are applied in software. Tiled
-	  storage, audio and CEC are not supported. Do not use it as a replacement
+	  storage and CEC are not supported. Optional ALSA support exposes one
+	  playback card per attached audio sink. Do not use it as a replacement
 	  for the C CastKMS driver in a casting session.
 	  Captures embed the cursor. The version-one userspace renderer interface
 	  does not describe multiple layers or color operations.
