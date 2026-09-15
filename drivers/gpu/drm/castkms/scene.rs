@@ -27,6 +27,10 @@ use kernel::{
 pub(super) struct ContentSerial(NonZeroU64);
 
 impl ContentSerial {
+    pub(super) fn get(self) -> u64 {
+        self.0.get()
+    }
+
     /// Derive a candidate from the last accepted state without consuming a sequence number.
     pub(super) fn for_update(previous: Option<Self>, has_scene: bool) -> Result<Option<Self>> {
         // Blanking requires no content identity and must remain possible at exhaustion.

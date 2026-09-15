@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Independent immutable copies of completed host images, without export authority.
+//! Independent immutable copies of completed host images, without ambient export authority.
 
 use crate::{
     gem,
@@ -15,22 +15,30 @@ use crate::{
     },
     Driver, //
 };
+use core::ptr::NonNull;
 use kernel::{
+    bindings,
     drm::{
         auth::MasterRef,
         gem::{
             shmem,
+            IntoGEMObject,
             ObjectRef, //
         },
         Device, //
     },
+    error::from_err_ptr,
+    fs::File,
     io::{
         Io,
         IoBase,
         SysMem, //
     },
     prelude::*,
-    sync::Arc,
+    sync::{
+        aref::ARef,
+        Arc, //
+    },
     time::{
         Instant,
         Monotonic, //
@@ -51,10 +59,10 @@ impl Budget {
 
 /// A fresh copy retaining its actual origin, not a reusable host slot or compositor source.
 ///
-/// No mutable storage, GEM handle, or DMA-BUF is exposed. Creating this private copy does
-/// not authorize a recipient; the eventual startup controller must check current authority,
-/// output configuration and candidate identity before exposing it. Retained metadata remains
-/// historical if the display changes while the copy is made.
+/// No mutable storage or GEM handle is exposed. Creating this private copy does not authorize
+/// a recipient; an unpublished DMA-BUF file may be created only so the startup controller can
+/// install it after checking current authority, configuration and candidate identity. Retained
+/// metadata remains historical if the display changes while the copy is made.
 pub(crate) struct Snapshot {
     object: ObjectRef<shmem::Object<gem::Object>>,
     layout: Layout,
@@ -115,6 +123,33 @@ impl Snapshot {
 
     pub(crate) fn owner(&self) -> Option<&MasterRef<Driver>> {
         self.owner.as_ref()
+    }
+
+    pub(crate) fn content_serial_value(&self) -> u64 {
+        self.content.map_or(0, ContentSerial::get)
+    }
+
+    /// Create an unpublished read-only DMA-BUF file for this immutable copy.
+    ///
+    /// The returned file owns its export reference but grants no userspace access until a
+    /// caller installs it. The caller must revalidate recipient authority at installation.
+    pub(crate) fn export_file(&self) -> Result<ARef<File>> {
+        // SAFETY: The retained local GEM object is initialized. PRIME export acquires an
+        // independent reference, and read-only access matches this type's immutable storage.
+        let raw = from_err_ptr(unsafe {
+            bindings::drm_gem_prime_export(self.object.as_raw(), bindings::O_RDONLY as i32)
+        })?;
+        let buffer = NonNull::new(raw).ok_or(ENOMEM)?;
+        // SAFETY: Successful export transferred one DMA-BUF reference. Its file pointer is
+        // immutable and live for that reference; acquire a file reference for later install.
+        let file = unsafe {
+            bindings::get_file((*buffer.as_ptr()).file);
+            ARef::<File>::from_raw(NonNull::new_unchecked((*buffer.as_ptr()).file.cast()))
+        };
+        // SAFETY: Release the owned DMA-BUF reference returned by PRIME export. The acquired
+        // file reference independently retains the same DMA-BUF until installation or drop.
+        unsafe { bindings::dma_buf_put(buffer.as_ptr()) };
+        Ok(file)
     }
 
     /// Read the immutable private copy, without conferring permission to deliver its pixels.
