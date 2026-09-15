@@ -104,7 +104,11 @@ impl Monitor {
         self: &Arc<Self>,
         device: &Device<Driver, Registered>,
     ) -> Result<Control> {
-        if !Arc::ptr_eq(self, &device.monitor) {
+        if !device
+            .displays
+            .iter()
+            .any(|display| Arc::ptr_eq(self, &display.monitor))
+        {
             return Err(EINVAL);
         }
         let identity = Arc::new((), GFP_KERNEL)?;
