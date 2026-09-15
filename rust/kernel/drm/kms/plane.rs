@@ -878,6 +878,16 @@ pub trait RawPlaneState: AsRawPlaneState {
         self.as_raw().zpos
     }
 
+    /// Requested horizontal destination position, including off-screen positions.
+    fn crtc_x(&self) -> i32 {
+        self.as_raw().crtc_x
+    }
+
+    /// Requested vertical destination position, including off-screen positions.
+    fn crtc_y(&self) -> i32 {
+        self.as_raw().crtc_y
+    }
+
     /// Return the plane that this plane state belongs to.
     fn plane(&self) -> &Self::Plane {
         // SAFETY: The index is initialized by the time we expose Plane objects to users, and is
