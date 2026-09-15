@@ -10,7 +10,7 @@ use kernel::{
     }, //
 };
 
-const LIMIT: usize = 16 * 1024 * 1024;
+pub(crate) const LIMIT: usize = 512 * 1024 * 1024;
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 mod tests;

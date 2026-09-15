@@ -129,7 +129,7 @@ mod cases {
         fixture.state.close();
         drop(fb);
         // Retained consumer results must leave the whole private-image budget available.
-        let _capacity = fixture.host_budget.reserve(16 * 1024 * 1024)?;
+        let _capacity = fixture.host_budget.reserve(crate::host_compositor::budget::LIMIT)?;
         for source in &sources {
             check(source.prepared()?.is_some())?;
         }

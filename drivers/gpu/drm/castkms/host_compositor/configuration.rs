@@ -56,6 +56,11 @@ pub(crate) struct Configuration {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Configuration {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn reserve_for_test(&self, bytes: usize) -> Result<super::budget::Charge> {
+        self.budget.reserve(bytes)
+    }
+
     /// Allocate on demand, or reuse the worker for an identical layout.
     ///
     /// Call with the output's DRM device from sleepable context, without modeset,
