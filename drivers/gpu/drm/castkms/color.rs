@@ -78,6 +78,10 @@ pub(crate) struct Pipeline {
 }
 
 impl Pipeline {
+    pub(crate) fn operations(&self) -> &[Operation] {
+        &self.operations
+    }
+
     pub(crate) fn new(operations: KVec<Operation>) -> Result<Option<Arc<Self>>> {
         if operations
             .iter()
