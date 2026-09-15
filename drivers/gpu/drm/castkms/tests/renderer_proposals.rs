@@ -75,6 +75,80 @@ mod cases {
     use super::*;
 
     #[test]
+    fn tagged_test_only_does_not_gate_but_native_installation_does() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        enable(&fixture)?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+        let proposal = candidate.propose_profile(profile()?)?;
+        let update = |mut transaction: Pin<&mut kernel::drm::kms::atomic::AtomicStateComposer<Driver>>| {
+            transaction.as_mut().disable_plane(fixture.drm.plane()?)?;
+            transaction.add_crtc_state(fixture.drm.crtc()?)?.tag_transition(proposal.describe().transition);
+            Ok(())
+        };
+        fixture.drm.check(update)?;
+        enable(&fixture)?;
+        fixture.drm.update(update)?;
+        proposal.validate()?;
+        check(enable(&fixture) == Err(EOPNOTSUPP))?;
+        proposal.cancel();
+        enable(&fixture)
+    }
+
+    #[test]
+    fn cancellation_after_check_rejects_tagged_native_installation() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        enable(&fixture)?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+        let proposal = candidate.propose_profile(profile()?)?;
+        check(fixture.drm.update_after_check(|mut transaction| {
+            transaction.as_mut().disable_plane(fixture.drm.plane()?)?;
+            transaction.add_crtc_state(fixture.drm.crtc()?)?.tag_transition(proposal.describe().transition);
+            Ok(())
+        }, || {
+            proposal.cancel();
+            Ok(())
+        }) == Err(ESTALE))?;
+        check(fixture.drm.device().output.inspect(|scene| scene.is_some_and(|scene| scene.primary().is_some())))?;
+        enable(&fixture)
+    }
+
+    #[test]
+    fn compatible_animation_does_not_reuse_a_transaction_tag() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let image = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&image, false, 0)?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+        let mut formats = KVec::new();
+        formats.push(Format {
+            fourcc: image.format(), modifier: image.modifier(), planes: 1,
+            native: true, imported: true, pitch_alignment: 1, offset_alignment: 1,
+            max_pitch: u32::MAX,
+        }, GFP_KERNEL)?;
+        let compatible = Profile::new(*profile()?.limits(), formats)?;
+        let proposal = candidate.propose_profile(compatible)?;
+        fixture.drm.update(|transaction| {
+            transaction.add_crtc_state(fixture.drm.crtc()?)?.tag_transition(proposal.describe().transition);
+            Ok(())
+        })?;
+        for _ in 0..8 {
+            enable(&fixture)?;
+            proposal.validate()?;
+        }
+        proposal.cancel();
+        // A tag copied into ordinary updates would now reject this transaction as stale.
+        enable(&fixture)
+    }
+
+    #[test]
     fn proposal_does_not_restrict_animation_or_change_execution() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;

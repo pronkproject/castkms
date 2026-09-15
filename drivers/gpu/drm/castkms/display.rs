@@ -47,6 +47,8 @@ pub(super) struct Connector {
 pub(super) struct ConnectorState;
 
 pub(super) struct CrtcState {
+    transition: u64,
+    transition_origin: Option<scene::Configuration>,
     // Complete atomic metadata, independent of commit-tail publication and producer waits.
     checked_scene: Option<scene::Scene>,
     output_color: Option<Arc<crate::color::OutputColor>>,
@@ -94,6 +96,8 @@ impl crtc::DriverCrtcState for CrtcState {
     type Crtc = Crtc;
     fn new(_: &crtc::Crtc<Crtc>) -> Result<Self> {
         Ok(Self {
+            transition: 0,
+            transition_origin: None,
             output_color: None,
             checked_scene: None,
             configuration: None,
@@ -105,6 +109,9 @@ impl crtc::DriverCrtcState for CrtcState {
     }
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
+            // A transition tag belongs to one request, not subsequent animation.
+            transition: 0,
+            transition_origin: None,
             output_color: self.output_color.clone(),
             checked_scene: self.checked_scene.clone(),
             configuration: self.configuration.clone(),
@@ -254,6 +261,20 @@ impl plane::DriverPlane for Plane {
 }
 
 impl CrtcState {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn tag_transition(&mut self, token: u64) {
+        self.transition = token;
+    }
+
+    fn validation_update(&self) -> Result<crate::execution::coordinator::Update<'_>> {
+        Ok(crate::execution::coordinator::Update {
+            scene: self.validation_view()?,
+            token: self.transition,
+            previous_configuration: self.transition_origin.as_ref(),
+            configuration: self.configuration.as_ref(),
+        })
+    }
+
     fn validation_view(&self) -> Result<crate::execution::validation::SceneView<'_>> {
         match (&self.checked_scene, &self.configuration) {
             (Some(scene), Some(configuration)) => Ok(crate::execution::validation::SceneView::Enabled {
@@ -398,16 +419,19 @@ impl crtc::DriverCrtc for Crtc {
 
     fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
+        state.transition_origin = old.configuration.clone();
         CrtcState::resolve_blank_owner(transaction, old, &mut state)?;
         state.validate_color_mgmt(256)?;
         state.output_color =
             crate::color::OutputColor::new(state.degamma_lut(), state.ctm(), state.gamma_lut())?;
         CrtcState::check_configuration(old, &mut state)?;
         CrtcState::describe_scene(transaction, old, &mut state)?;
-        transaction.drm_dev().validation.lock().check(
-            state.crtc().index() as usize,
-            state.validation_view()?,
-        )
+        let mut updates = core::array::from_fn(|_| None);
+        *updates.get_mut(state.crtc().index() as usize).ok_or(EINVAL)? =
+            Some(state.validation_update()?);
+        let mut validation = transaction.drm_dev().validation.lock();
+        drop(validation.prepare(&updates)?);
+        Ok(())
     }
 
     fn atomic_enable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
@@ -664,19 +688,25 @@ impl KmsDriver for Driver {
 
     fn atomic_commit_install<'a>(install: atomic::Install<'a, Self>) -> atomic::InstallResult<'a, Self> {
         let device_state = core::ops::Deref::deref(install.state().drm_dev()).clone();
-        let validation = device_state.validation.lock();
+        let mut updates = core::array::from_fn(|_| None);
         let mut result = Ok(());
         install.state().for_each_new_crtc_state(|crtc, opaque| {
             if result.is_ok() {
                 let state = crtc::CrtcState::<CrtcState>::from_opaque(opaque);
-                result = state.validation_view().and_then(|scene| {
-                    validation.check(crtc.index() as usize, scene)
+                result = state.validation_update().and_then(|update| {
+                    *updates.get_mut(crtc.index() as usize).ok_or(EINVAL)? = Some(update);
+                    Ok(())
                 });
             }
         });
-        match result {
-            Ok(()) => install.install(),
-            Err(error) => install.reject(error),
+        if let Err(error) = result {
+            return install.reject(error);
         }
+        let mut validation = device_state.validation.lock();
+        let prepared = match validation.prepare(&updates) {
+            Ok(prepared) => prepared,
+            Err(error) => return install.reject(error),
+        };
+        install.install_then(|| prepared.commit())
     }
 }
