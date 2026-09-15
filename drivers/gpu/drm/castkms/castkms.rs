@@ -8,6 +8,7 @@ mod device;
 mod display;
 mod display_control;
 mod execution;
+mod formats;
 mod file;
 mod gem;
 mod host_compositor;
