@@ -54,7 +54,7 @@ module! {
             description: "Enable eight shared overlay planes",
         },
         enable_plane_pipeline: bool {
-            default: false,
+            default: true,
             description: "Enable per-plane sRGB and matrix color pipelines",
         },
         max_outputs: u32 {
