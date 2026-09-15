@@ -76,7 +76,24 @@ impl SourceJob {
 
     /// Describe the claimed source without exporting storage or changing its lifetime.
     pub(crate) fn description(&self) -> Result<Description> {
-        let primary = self.scene.primary().ok_or(ENODATA)?;
+        let primary = self.scene.primary().ok_or_else(|| {
+            if self.scene.layers().next().is_some() || self.scene.output_color.is_some() {
+                EOPNOTSUPP
+            } else {
+                ENODATA
+            }
+        })?;
+        // The v1 transport describes only one image and no color pipeline or
+        // destination origin. Never hand a renderer a partial description of a
+        // composed scene: a versioned layer transport is needed for those scenes.
+        if self.scene.layers().count() != 1 || self.scene.output_color.is_some()
+            || primary.color.is_some() || primary.geometry().position != [0, 0]
+            || (crate::formats::plane_count(primary.framebuffer().format()) > 1
+                && primary.yuv != (kernel::drm::kms::plane::ColorEncoding::Bt601,
+                    kernel::drm::kms::plane::ColorRange::Limited))
+        {
+            return Err(EOPNOTSUPP);
+        }
         let framebuffer = primary.framebuffer();
         let geometry = primary.geometry();
         Ok(Description {
