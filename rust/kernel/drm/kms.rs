@@ -14,6 +14,7 @@ mod lock;
 pub use lock::LockedState;
 pub mod modes;
 pub mod plane;
+pub mod colorop;
 pub mod vblank;
 
 #[cfg(CONFIG_KUNIT)]
