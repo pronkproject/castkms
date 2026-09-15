@@ -4,6 +4,7 @@
 
 mod authority;
 mod capture;
+mod color;
 mod device;
 mod display;
 mod display_control;
