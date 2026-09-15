@@ -34,6 +34,10 @@ impl Permission {
         self.target.device()
     }
 
+    pub(super) fn display(&self) -> &crate::device::Display {
+        self.target.display()
+    }
+
     /// Establish a kernel-issued target from stabilized top-level display control.
     ///
     /// File issuance must additionally verify the issuing file's master role and retain
