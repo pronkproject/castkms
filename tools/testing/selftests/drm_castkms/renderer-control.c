@@ -589,6 +589,23 @@ int main(int argc, char **argv)
 				   &dequeue_source, EFAULT);
 	CHECK(open_files() == before);
 	dequeue_source.result = (uintptr_t)&source;
+	/* Failed complete-scene publication must leave the shared source claim
+	 * available to the original single-image operation, with no leaked fds.
+	 */
+	struct drm_castkms_renderer_dequeue_scene scene_request = {
+		.result = 1,
+		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
+	};
+	before = open_files();
+	for (unsigned int i = 0; i < 8; i++)
+		expect_ioctl_error(next_files.renderer_fd,
+				   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+				   &scene_request, EFAULT);
+	CHECK(open_files() == before);
+	scene_request.capacity = 0;
+	expect_ioctl_error(next_files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+			   &scene_request, ENOSPC);
 	memset(&source, 0xa5, sizeof(source));
 	CHECK(ioctl(next_files.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
@@ -631,6 +648,34 @@ int main(int argc, char **argv)
 			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
 			   &dequeue_source, ENODATA);
 	CHECK(close(source.planes[0].dma_buf_fd) == 0);
+	connector = drmModeGetConnector(peer, connector_id);
+	CHECK(connector && connector->count_modes > 0);
+	CHECK(drmModeSetCrtc(peer, request.crtc_id, gpu_buffer.fb, 0, 0,
+			     &connector_id, 1, &connector->modes[0]) == 0);
+	drmModeFreeConnector(connector);
+	void *scene_bytes = calloc(1, DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES);
+	CHECK(scene_bytes);
+	scene_request.result = (uintptr_t)scene_bytes;
+	scene_request.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES;
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+		    &scene_request) == 0);
+	struct drm_castkms_renderer_scene *scene = scene_bytes;
+	struct drm_castkms_renderer_layer *layer = (void *)(scene + 1);
+	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
+	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
+	CHECK(scene->layer_count == 1 && scene->producer_fd == -1);
+	CHECK(scene->output_color_count == 0 && scene->reserved == 0);
+	CHECK(scene->content_serial != source.content_serial);
+	CHECK(layer->bytes == sizeof(*layer) && layer->color_count == 0);
+	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
+	CHECK(layer->format == DRM_FORMAT_XRGB8888 && layer->plane_count == 1);
+	CHECK(layer->width == gpu_buffer.dumb.width && layer->height == gpu_buffer.dumb.height);
+	CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	release_source.job_id = scene->job_id;
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+		    &release_source) == 0);
+	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
+	free(scene_bytes);
 	CHECK(close(next_files.renderer_fd) == 0);
 	CHECK(close(next_files.revoke_fd) == 0);
 	CHECK(close(files.revoke_fd) == 0);
