@@ -105,6 +105,50 @@ mod cases {
     }
 
     #[test]
+    fn installed_gate_checks_both_contracts_until_cancelled() -> Result {
+        let mut state = Validation::new(renderer([4, 8])?);
+        let epoch = state.epoch();
+        state
+            .prepare(epoch, 7, renderer([8, 4])?, SceneView::Disabled)?
+            .commit();
+        assert_ne!(state.epoch(), epoch);
+        let scene = Scene::blank(None);
+        state.check(SceneView::Enabled {
+            scene: &scene,
+            output: [4; 2],
+        })?;
+        for output in [[4, 8], [8, 4]] {
+            assert_eq!(
+                state.check(SceneView::Enabled {
+                    scene: &scene,
+                    output
+                }),
+                Err(EOPNOTSUPP)
+            );
+        }
+        let installed = state.epoch();
+        assert!(state.cancel(6).is_none());
+        assert_eq!(state.epoch(), installed);
+        drop(state.cancel(7).ok_or(EINVAL)?);
+        assert_ne!(state.epoch(), installed);
+        state.check(SceneView::Enabled {
+            scene: &scene,
+            output: [4, 8],
+        })?;
+        assert_eq!(
+            state.check(SceneView::Enabled {
+                scene: &scene,
+                output: [8, 4],
+            }),
+            Err(EOPNOTSUPP)
+        );
+        let cancelled = state.epoch();
+        assert!(state.cancel(7).is_none());
+        assert_eq!(state.epoch(), cancelled);
+        Ok(())
+    }
+
+    #[test]
     fn failed_validation_does_not_install_a_gate() -> Result {
         let mut state = Validation::new(Contract::Host);
         let epoch = state.epoch();
@@ -126,6 +170,57 @@ mod cases {
         assert!(matches!(
             state.prepare(epoch, 0, Contract::Host, SceneView::Disabled),
             Err(EINVAL)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn an_old_epoch_cannot_install_after_gate_cancellation() -> Result {
+        let mut state = Validation::new(Contract::Host);
+        let old = state.epoch();
+        state
+            .prepare(old, 1, Contract::Host, SceneView::Disabled)?
+            .commit();
+        let installed = state.epoch();
+        assert!(matches!(
+            state.prepare(installed, 2, Contract::Host, SceneView::Disabled),
+            Err(EBUSY)
+        ));
+        drop(state.cancel(1));
+        assert!(matches!(
+            state.prepare(old, 2, Contract::Host, SceneView::Disabled),
+            Err(ESTALE)
+        ));
+        let current = state.epoch();
+        state
+            .prepare(current, 2, Contract::Host, SceneView::Disabled)?
+            .commit();
+        Ok(())
+    }
+
+    #[test]
+    fn gate_installation_reserves_the_cancellation_epoch() -> Result {
+        let mut state = Validation::new(Contract::Host);
+        state.epoch = Epoch(u64::MAX - 2);
+        let epoch = state.epoch();
+        state
+            .prepare(epoch, 1, Contract::Host, SceneView::Disabled)?
+            .commit();
+        assert_eq!(state.epoch(), Epoch(u64::MAX - 1));
+        drop(state.cancel(1).ok_or(EINVAL)?);
+        assert_eq!(state.epoch(), Epoch(u64::MAX));
+        state.check(SceneView::Disabled)?;
+        let epoch = state.epoch();
+        assert!(matches!(
+            state.prepare(epoch, 2, Contract::Host, SceneView::Disabled),
+            Err(EOVERFLOW)
+        ));
+        assert!(state.gate.is_none());
+        state.epoch = Epoch(u64::MAX - 1);
+        let epoch = state.epoch();
+        assert!(matches!(
+            state.prepare(epoch, 2, Contract::Host, SceneView::Disabled),
+            Err(EOVERFLOW)
         ));
         Ok(())
     }

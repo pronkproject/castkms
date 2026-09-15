@@ -136,6 +136,21 @@ impl Validation {
         })
     }
 
+    /// Lift only the matching gate; return its ownership for release outside locks.
+    /// Neither the active contract nor any installed framebuffer is restored or replaced.
+    pub(crate) fn cancel(&mut self, proposal: u64) -> Option<Contract> {
+        if !self
+            .gate
+            .as_ref()
+            .is_some_and(|gate| gate.proposal == proposal)
+        {
+            return None;
+        }
+        let gate = self.gate.take()?;
+        // Preparation reserves this increment, and no operation increments a live gate.
+        self.epoch = Epoch(self.epoch.0 + 1);
+        Some(gate.target)
+    }
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
