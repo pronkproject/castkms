@@ -15,19 +15,17 @@ use crate::{
     },
     Driver, //
 };
-use core::ptr::NonNull;
 use kernel::{
-    bindings,
     drm::{
         auth::MasterRef,
         gem::{
             shmem,
-            IntoGEMObject,
+            BaseObject,
+            ExportAccess,
             ObjectRef, //
         },
         Device, //
     },
-    error::from_err_ptr,
     fs::File,
     io::{
         Io,
@@ -134,22 +132,10 @@ impl Snapshot {
     /// The returned file owns its export reference but grants no userspace access until a
     /// caller installs it. The caller must revalidate recipient authority at installation.
     pub(crate) fn export_file(&self) -> Result<ARef<File>> {
-        // SAFETY: The retained local GEM object is initialized. PRIME export acquires an
-        // independent reference, and read-only access matches this type's immutable storage.
-        let raw = from_err_ptr(unsafe {
-            bindings::drm_gem_prime_export(self.object.as_raw(), bindings::O_RDONLY as i32)
-        })?;
-        let buffer = NonNull::new(raw).ok_or(ENOMEM)?;
-        // SAFETY: Successful export transferred one DMA-BUF reference. Its file pointer is
-        // immutable and live for that reference; acquire a file reference for later install.
-        let file = unsafe {
-            bindings::get_file((*buffer.as_ptr()).file);
-            ARef::<File>::from_raw(NonNull::new_unchecked((*buffer.as_ptr()).file.cast()))
-        };
-        // SAFETY: Release the owned DMA-BUF reference returned by PRIME export. The acquired
-        // file reference independently retains the same DMA-BUF until installation or drop.
-        unsafe { bindings::dma_buf_put(buffer.as_ptr()) };
-        Ok(file)
+        Ok(self
+            .object
+            .export_dma_buf(ExportAccess::ReadOnly)?
+            .to_file())
     }
 
     /// Read the immutable private copy, without conferring permission to deliver its pixels.
