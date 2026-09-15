@@ -113,6 +113,10 @@ impl Access {
         self.policy.permission.target.device()
     }
 
+    pub(crate) fn display(&self) -> &crate::device::Display {
+        self.policy.permission.target.display()
+    }
+
     /// Authorize a control operation without requiring ownership of the displayed image.
     ///
     /// Native master, object-ID and accepted-output locks precede the revocation lock.
