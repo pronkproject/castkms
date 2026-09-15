@@ -14,7 +14,11 @@ use kernel::{
 };
 
 enum Description {
-    Attached(Option<Edid>),
+    Attached {
+        edid: Option<Edid>,
+        #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+        _audio: Option<crate::audio::Attachment>,
+    },
     Disconnected,
 }
 
@@ -29,6 +33,8 @@ enum State {
 
 #[pin_data]
 pub(crate) struct Monitor {
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    pub(crate) audio_link: Arc<crate::audio::playback::Gate>,
     #[pin]
     state: Mutex<State>,
 }
@@ -36,7 +42,9 @@ pub(crate) struct Monitor {
 impl Monitor {
     pub(crate) fn new() -> Result<Arc<Self>> {
         Arc::pin_init(
-            pin_init!(Self {
+            try_pin_init!(Self {
+                #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+                audio_link: crate::audio::playback::Gate::new(false)?,
                 state <- kernel::new_mutex!(State::Unmanaged),
             }),
             GFP_KERNEL,
@@ -47,7 +55,7 @@ impl Monitor {
         match &*self.state.lock() {
             State::Unmanaged
             | State::Managed {
-                description: Description::Attached(_),
+                description: Description::Attached { .. },
                 ..
             } => connector::Status::Connected,
             State::Managed {
@@ -65,7 +73,10 @@ impl Monitor {
         let state = self.state.lock();
         match &*state {
             State::Managed {
-                description: Description::Attached(Some(edid)),
+                description:
+                    Description::Attached {
+                        edid: Some(edid), ..
+                    },
                 ..
             } => match connector.add_edid_modes(edid) {
                 Ok(count) if count > 0 => count,
@@ -74,7 +85,7 @@ impl Monitor {
             },
             State::Unmanaged
             | State::Managed {
-                description: Description::Attached(None),
+                description: Description::Attached { edid: None, .. },
                 ..
             } => {
                 if connector.update_edid(None).is_err() {
@@ -187,8 +198,32 @@ pub(crate) struct Control {
 
 impl Control {
     pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
-        self.monitor
-            .publish(&self.identity, Description::Attached(edid))?;
+        #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+        let audio = {
+            let device = self.device.registration_guard().ok_or(ENODEV)?;
+            let index = device
+                .displays
+                .iter()
+                .position(|display| Arc::ptr_eq(&display.monitor, &self.monitor))
+                .ok_or(EINVAL)?;
+            match &edid {
+                Some(edid) => crate::audio::Attachment::new(
+                    &device,
+                    edid,
+                    index,
+                    self.monitor.audio_link.clone(),
+                )?,
+                None => None,
+            }
+        };
+        self.monitor.publish(
+            &self.identity,
+            Description::Attached {
+                edid,
+                #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+                _audio: audio,
+            },
+        )?;
         self.notify();
         Ok(())
     }

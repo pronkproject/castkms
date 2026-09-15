@@ -332,9 +332,13 @@ impl crtc::DriverCrtc for Crtc {
 
     fn atomic_enable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
         commit.crtc().vblank_on();
+        #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+        commit.crtc().display.monitor.audio_link.set_enabled(true);
     }
 
     fn atomic_disable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+        commit.crtc().display.monitor.audio_link.set_enabled(false);
         commit.crtc().vblank_off();
     }
 
