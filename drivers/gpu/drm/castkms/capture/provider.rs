@@ -146,7 +146,7 @@ impl Capture {
         }
         let permission = &self.policy.permission;
         permission.with_current(|current| {
-            permission.device().execution.check_host()?;
+            permission.display().execution.check_host()?;
             if current.configuration() != configuration {
                 return Err(ESTALE);
             }
@@ -158,7 +158,7 @@ impl Capture {
             .reserve(layout, capacity)?;
         let storage = Storage::new(charge, self.authority.clone())?;
         let registered = permission.with_current(|current| {
-            permission.device().execution.check_host()?;
+            permission.display().execution.check_host()?;
             if current.configuration() != configuration {
                 return Err(ESTALE);
             }
