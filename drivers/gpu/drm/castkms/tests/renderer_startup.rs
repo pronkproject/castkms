@@ -79,6 +79,7 @@ mod cases {
         let image = image(&fixture)?;
         let device = fixture.drm.device();
         let startup = &device.startup;
+        let _pressure = startup.reserve_for_test(device, (512 - 16) * 1024 * 1024)?;
         let capacity = (16usize * 1024 * 1024)
             .checked_div(image.layout().size())
             .ok_or(EINVAL)?;

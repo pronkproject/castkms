@@ -140,7 +140,7 @@ mod cases {
             &fixture.host_budget,
             Layout::new(1920, 1080)?,
         )?;
-        let budget = Budget::new()?;
+        let budget = Budget::limited_for_test(16 * 1024 * 1024)?;
         let image = compose::current(output, &pool)?.ok_or(EINVAL)?;
         let first = Snapshot::new(fixture.drm.device(), &budget, &image)?;
         let _second = Snapshot::new(fixture.drm.device(), &budget, &image)?;

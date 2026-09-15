@@ -42,6 +42,11 @@ pub(crate) struct Startup {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Startup {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn reserve_for_test(&self, device: &Device<Driver>, bytes: usize) -> Result<impl Sized> {
+        self.budget.reserve_for_test(device, bytes)
+    }
+
     /// Reserve a candidate without changing the active renderer or claiming sources.
     pub(crate) fn begin(self: &Arc<Self>) -> Result<Candidate> {
         let identity = Arc::new((), GFP_KERNEL)?;
