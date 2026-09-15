@@ -60,6 +60,10 @@ pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
         RGB888 | BGR888 => 24,
         RGB565 | BGR565 => 16,
         XRGB16161616 | ARGB16161616 | XBGR16161616 | ABGR16161616 => 64,
+        R1 => 1,
+        R2 => 2,
+        R4 => 4,
+        R8 => 8,
         _ => return Err(EINVAL),
     };
     Ok(Plane {
@@ -125,6 +129,11 @@ pub(crate) fn pixel(
             scale((word >> 16) & 65535, 16),
             scale((word >> 32) & 65535, 16),
         ),
+        R1 | R2 | R4 | R8 => {
+            let level = (bytes[0] >> (8 - bits - (x * bits % 8))) as u64 & ((1 << bits) - 1);
+            let gray = scale(level, bits as u32);
+            (gray, gray, gray)
+        }
         _ => return Err(EINVAL),
     };
     Ok(rgb(r, g, b))
