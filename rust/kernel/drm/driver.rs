@@ -161,6 +161,9 @@ pub trait Driver: 'static {
     /// userspace processes using the master node can invoke any ioctl.
     const FEAT_RENDER: bool = false;
 
+    /// Expose cursor hotspot properties for virtual displays with separately transported cursors.
+    const FEAT_CURSOR_HOTSPOT: bool = false;
+
     /// Observe installation or removal of the device's top-level DRM master.
     ///
     /// `Some` retains the installed identity; `None` announces its removal before DRM drops
