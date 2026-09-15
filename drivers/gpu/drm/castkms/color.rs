@@ -2,13 +2,50 @@
 
 //! Retained color policy and integer arithmetic for CPU composition.
 
+mod tables;
+
 use kernel::{
     drm::kms::{
+        colorop::Operation,
         crtc::{ColorLut},
     },
     prelude::*,
     sync::Arc,
 };
+
+pub(crate) struct Pipeline {
+    operations: KVec<Operation>,
+}
+
+impl Pipeline {
+    pub(crate) fn new(operations: KVec<Operation>) -> Result<Option<Arc<Self>>> {
+        if operations
+            .iter()
+            .all(|operation| matches!(operation, Operation::Bypass))
+        {
+            return Ok(None);
+        }
+        Ok(Some(Arc::new(Self { operations }, GFP_KERNEL)?))
+    }
+
+    /// Keep signed extended-range channels between matrices, clamping at curve boundaries.
+    pub(crate) fn apply(&self, channels: [u32; 3]) -> [u32; 3] {
+        let mut channels = channels.map(|value| value as i32);
+        for operation in &self.operations {
+            match operation {
+                Operation::Bypass => {}
+                Operation::SrgbEotf => {
+                    channels = channels.map(|value| curve(&tables::SRGB_EOTF, value))
+                }
+                Operation::SrgbInverseEotf => {
+                    channels = channels.map(|value| curve(&tables::SRGB_INVERSE_EOTF, value))
+                }
+                Operation::Matrix(coefficients) => channels = matrix(coefficients, channels),
+            }
+        }
+        channels.map(|value| value.clamp(0, 65535) as u32)
+    }
+}
 
 pub(crate) struct Gamma {
     entries: KVec<[u16; 3]>,
@@ -45,6 +82,10 @@ fn lookup(length: usize, input: i32, entry: impl Fn(usize) -> u16) -> i32 {
     let lower = u64::from(entry(index));
     let upper = u64::from(entry((index + 1).min(length - 1)));
     ((lower * (65535 - fraction) + upper * fraction + 32767) / 65535) as i32
+}
+
+fn curve(table: &[u16; 256], value: i32) -> i32 {
+    lookup(table.len(), value, |index| table[index])
 }
 
 fn matrix(coefficients: &[u64; 12], channels: [i32; 3]) -> [i32; 3] {
@@ -102,4 +143,13 @@ mod tests {
         assert_eq!(matrix(&[i64::MAX as u64; 12], [i32::MAX; 3]), [i32::MAX; 3]);
     }
 
+    #[test]
+    fn curves_clamp_and_preserve_endpoints() {
+        for table in [&tables::SRGB_EOTF, &tables::SRGB_INVERSE_EOTF] {
+            assert_eq!(curve(table, -1), 0);
+            assert_eq!(curve(table, 65536), 65535);
+        }
+        assert!(curve(&tables::SRGB_EOTF, 32768) < 15000);
+        assert!(curve(&tables::SRGB_INVERSE_EOTF, 32768) > 47000);
+    }
 }
