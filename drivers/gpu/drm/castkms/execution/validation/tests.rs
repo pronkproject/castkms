@@ -88,5 +88,83 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn abandoned_installation_preserves_epoch_and_acceptance() -> Result {
+        let mut state = Validation::new(Contract::Host);
+        let epoch = state.epoch();
+        let installation = state.prepare(epoch, 1, renderer([4; 2])?, SceneView::Disabled)?;
+        drop(installation);
+        assert_eq!(state.epoch(), epoch);
+        assert!(state.gate.is_none());
+        let scene = Scene::blank(None);
+        state.check(SceneView::Enabled {
+            scene: &scene,
+            output: [8; 2],
+        })?;
+        Ok(())
+    }
 
+    #[test]
+    fn failed_validation_does_not_install_a_gate() -> Result {
+        let mut state = Validation::new(Contract::Host);
+        let epoch = state.epoch();
+        let scene = Scene::blank(None);
+        assert!(matches!(
+            state.prepare(
+                epoch,
+                1,
+                renderer([4; 2])?,
+                SceneView::Enabled {
+                    scene: &scene,
+                    output: [8; 2]
+                }
+            ),
+            Err(EOPNOTSUPP)
+        ));
+        assert_eq!(state.epoch(), epoch);
+        assert!(state.gate.is_none());
+        assert!(matches!(
+            state.prepare(epoch, 0, Contract::Host, SceneView::Disabled),
+            Err(EINVAL)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn compatible_updates_do_not_advance_the_validation_epoch() -> Result {
+        let mut state = Validation::new(Contract::Host);
+        let epoch = state.epoch();
+        state
+            .prepare(epoch, 1, renderer([8; 2])?, SceneView::Disabled)?
+            .commit();
+        let epoch = state.epoch();
+        for size in [4, 8, 2, 8] {
+            let scene = Scene::blank(None);
+            state.check(SceneView::Enabled {
+                scene: &scene,
+                output: [size; 2],
+            })?;
+            assert_eq!(state.epoch(), epoch);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_outputs_gate_does_not_restrict_another() -> Result {
+        let mut first = Validation::new(Contract::Host);
+        let second = Validation::new(Contract::Host);
+        let epoch = first.epoch();
+        first
+            .prepare(epoch, 1, renderer([4; 2])?, SceneView::Disabled)?
+            .commit();
+        let scene = Scene::blank(None);
+        let view = SceneView::Enabled {
+            scene: &scene,
+            output: [8; 2],
+        };
+        assert_eq!(first.check(view), Err(EOPNOTSUPP));
+        second.check(view)?;
+        assert_eq!(second.epoch(), epoch);
+        Ok(())
+    }
 }
