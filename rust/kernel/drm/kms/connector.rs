@@ -29,6 +29,57 @@ use core::{
 };
 use macros::paste;
 
+/// A validated, owned copy of Extended Display Identification Data (EDID).
+///
+/// Construction checks the complete block count, headers, versions, and
+/// checksums through DRM's native parser. The original byte storage may be
+/// released as soon as construction returns.
+pub struct Edid(NonNull<bindings::drm_edid>);
+
+impl Edid {
+    /// Copy and validate a complete EDID.
+    pub fn new(bytes: &[u8]) -> Result<Self> {
+        const BLOCK_LEN: usize = 128;
+        const MAX_BLOCKS: usize = 256;
+
+        if bytes.is_empty()
+            || bytes.len() > BLOCK_LEN * MAX_BLOCKS
+            || !bytes.len().is_multiple_of(BLOCK_LEN)
+        {
+            return Err(EINVAL);
+        }
+        // SAFETY: `bytes` names initialized memory for the supplied length. The
+        // native helper copies it and returns an independently owned container.
+        let raw = unsafe { bindings::drm_edid_alloc(bytes.as_ptr().cast(), bytes.len()) };
+        let raw = NonNull::new(raw.cast_mut()).ok_or(ENOMEM)?;
+        // SAFETY: `raw` is the complete container returned by drm_edid_alloc.
+        if !unsafe { bindings::drm_edid_valid(raw.as_ptr()) } {
+            // SAFETY: No other owner exists and validation does not retain it.
+            unsafe { bindings::drm_edid_free(raw.as_ptr()) };
+            return Err(EINVAL);
+        }
+        Ok(Self(raw))
+    }
+
+    fn as_ptr(&self) -> *const bindings::drm_edid {
+        self.0.as_ptr()
+    }
+}
+
+// SAFETY: The native container is immutable after construction. Its only
+// exposed operation borrows it for native parsing, and Drop requires no task
+// affinity.
+unsafe impl Send for Edid {}
+// SAFETY: Shared references cannot mutate the container or expose its storage.
+unsafe impl Sync for Edid {}
+
+impl Drop for Edid {
+    fn drop(&mut self) {
+        // SAFETY: `self` is the unique owner of the container.
+        unsafe { bindings::drm_edid_free(self.0.as_ptr()) };
+    }
+}
+
 /// A macro for generating our type ID enumerator.
 macro_rules! declare_conn_types {
     ($( $oldname:ident as $newname:ident ),+) => {
@@ -515,6 +566,13 @@ impl<T: DriverConnector> UnregisteredConnector<T> {
         })
     }
 
+    /// Attach the standard immutable EDID property to this connector.
+    pub fn attach_edid_property(&self) {
+        // SAFETY: This connector is initialized and remains unpublished while
+        // its properties are configured.
+        unsafe { bindings::drm_connector_attach_edid_property(self.as_raw()) };
+    }
+
     /// Attach the HDR output metadata property to this [`Connector`].
     ///
     /// This property carries a blob supplied by userspace. Drivers must still validate and apply
@@ -789,6 +847,17 @@ impl<T: DriverConnector> ConnectorModeValidation<'_, T> {
 }
 
 impl<'a, T: DriverConnector> ConnectorGuard<'a, T> {
+    /// Update this connector's display information and EDID property.
+    ///
+    /// The connector must have attached the property during setup with
+    /// [`UnregisteredConnector::attach_edid_property`].
+    pub fn update_edid(&self, edid: Option<&Edid>) -> Result {
+        let raw = edid.map_or(core::ptr::null(), Edid::as_ptr);
+        // SAFETY: The connector is live and the guard holds the mode-config
+        // lock. A present EDID retains its validated native container.
+        to_result(unsafe { bindings::drm_edid_connector_update(self.as_raw(), raw) })
+    }
+
     /// Add modes for a [`ConnectorGuard`] without an EDID.
     ///
     /// Add the specified modes to the connector's mode list up to the given maximum resultion.
@@ -837,33 +906,11 @@ impl<'a, T: DriverConnector> ConnectorGuard<'a, T> {
     /// Parse an EDID, update the connector information, and add its advertised modes.
     ///
     /// Returns the number of modes added.
-    pub fn add_edid_modes(&self, edid: &[u8]) -> Result<i32> {
-        const EDID_BASE_BLOCK_LEN: usize = 128;
-
-        if edid.len() < EDID_BASE_BLOCK_LEN {
-            return Err(EINVAL);
-        }
-
-        // SAFETY: `edid` points to `edid.len()` initialized bytes, which the helper copies.
-        let drm_edid = unsafe { bindings::drm_edid_alloc(edid.as_ptr().cast(), edid.len()) };
-        if drm_edid.is_null() {
-            return Err(ENOMEM);
-        }
-
-        // SAFETY: The connector is live and the guard holds the mode-config lock. `drm_edid`
-        // points to an allocation returned by `drm_edid_alloc` above.
-        let ret = unsafe { bindings::drm_edid_connector_update(self.as_raw(), drm_edid) };
-        if let Err(err) = to_result(ret) {
-            // SAFETY: `drm_edid` was allocated above and has not been freed.
-            unsafe { bindings::drm_edid_free(drm_edid) };
-            return Err(err);
-        }
+    pub fn add_edid_modes(&self, edid: &Edid) -> Result<i32> {
+        self.update_edid(Some(edid))?;
 
         // SAFETY: The connector information was successfully updated from this EDID above.
         let count = unsafe { bindings::drm_edid_connector_add_modes(self.as_raw()) };
-        // SAFETY: `drm_edid` was allocated above and is no longer needed.
-        unsafe { bindings::drm_edid_free(drm_edid) };
-
         Ok(count)
     }
 }
