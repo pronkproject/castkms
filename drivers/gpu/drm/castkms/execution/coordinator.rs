@@ -61,7 +61,38 @@ impl Coordinator {
         drop(retired);
     }
 
+    /// Exercise gate enforcement without exposing an unauthenticated production setter.
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn gate_for_test(&self, output: usize, proposal: u64, target: Contract) -> Result {
+        let mut guard = self.lock();
+        if guard.0.closed {
+            return Err(ENODEV);
+        }
+        let validation = guard.0.outputs.get_mut(output).ok_or(EINVAL)?;
+        let epoch = validation.epoch();
+        validation
+            .prepare(epoch, proposal, target, SceneView::Disabled)?
+            .commit();
+        Ok(())
+    }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn cancel_for_test(&self, output: usize, proposal: u64) -> Result {
+        let retired = {
+            let mut guard = self.lock();
+            if guard.0.closed {
+                return Err(ENODEV);
+            }
+            guard
+                .0
+                .outputs
+                .get_mut(output)
+                .ok_or(EINVAL)?
+                .cancel(proposal)
+        };
+        drop(retired);
+        Ok(())
+    }
 }
 
 impl Guard<'_> {
