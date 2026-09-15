@@ -19,6 +19,10 @@ pub(crate) const FORMATS: &[u32] = &[
     BGR888,
     RGB565,
     BGR565,
+    XRGB16161616,
+    ARGB16161616,
+    XBGR16161616,
+    ABGR16161616,
 ];
 
 /// Sampling factors and stored bits per sample in one format plane.
