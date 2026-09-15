@@ -9,6 +9,7 @@ pub(crate) mod files;
 pub(crate) mod job;
 pub(crate) mod permission;
 mod probe;
+pub(crate) mod proposal;
 mod revoker_file;
 mod scene_file;
 pub(crate) mod session;
