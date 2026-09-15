@@ -243,6 +243,9 @@ impl ClientFile {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT => self.get_snapshot(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE => self.submit_probe(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER => self.commit_takeover(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE => {
+                super::scene_file::dequeue(&self.session, arg)
+            }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE => self.dequeue_source(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE => self.release_source(arg),
             _ => Err(ENOTTY),
