@@ -105,6 +105,10 @@ impl Validation {
         self.epoch
     }
 
+    pub(crate) fn describe(&self) -> (u64, Contract) {
+        (self.epoch.0, self.active.clone())
+    }
+
     /// The caller has excluded native installation and established that the latest
     /// installed scene has reached normal publication. A gate alone is insufficient.
     pub(crate) fn prepare_activation(&mut self, proposal: u64, mut check: impl FnMut(&Contract) -> Result) -> Result<Activation<'_>> {

@@ -339,12 +339,14 @@ impl Publication {
                 Slot::Closed => return Err(ENODEV),
                 _ => return Err(EAGAIN),
             };
-            entry.reservation.activate(configuration, check, || {
-                property.replace_blob(locked, &mut prepared.blob)?;
-                *description = change.next;
-                prepared.pending = None;
-                Ok(())
-            })?;
+            entry
+                .reservation
+                .activate(configuration, generation, check, || {
+                    property.replace_blob(locked, &mut prepared.blob)?;
+                    *description = change.next;
+                    prepared.pending = None;
+                    Ok(())
+                })?;
             pending.take()
         };
         drop(retired);
