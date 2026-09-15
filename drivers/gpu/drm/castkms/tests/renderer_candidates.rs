@@ -10,7 +10,10 @@ use crate::renderer::{
         Permission, //
     }, //
 };
-use kernel::drm::kms::testing::MasterFile;
+use kernel::{
+    dma_fence::testing::ManualFence,
+    drm::kms::testing::MasterFile, //
+};
 
 fn owner(fixture: &Fixture, file: &MasterFile<'_, Driver>) -> Result<Owner> {
     let permission = {
@@ -199,5 +202,35 @@ mod cases {
         let candidate =
             Candidate::begin_then_for_test(owner.access(), || fixture.select(&fb, false, 0))?;
         candidate.validate()
+    }
+
+    #[test]
+    fn private_probe_completion_survives_content_updates() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let fb = enable(&fixture)?;
+        let candidate = Candidate::begin(owner.access())?;
+        let mut completion = ManualFence::new()?;
+        candidate.submit_private_probe(Some(completion.fence()))?;
+        check(!candidate.probe_result()?)?;
+        fixture.select(&fb, false, 0)?;
+        check(!candidate.probe_result()?)?;
+        completion.complete(Ok(()))?;
+        check(candidate.probe_result()?)?;
+        check(candidate.submit_private_probe(None) == Err(EALREADY))
+    }
+
+    #[test]
+    fn startup_probe_can_complete_without_a_content_serial() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let owner = owner(&fixture, &file)?;
+        let _fb = enable(&fixture)?;
+        let candidate = Candidate::begin(owner.access())?;
+        candidate.submit_snapshot_probe(None, None)?;
+        check(candidate.probe_result()?)
     }
 }
