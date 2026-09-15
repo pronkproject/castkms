@@ -56,6 +56,7 @@
 #include <drm/drm_capture_grant.h>
 #include <drm/clients/drm_client_setup.h>
 #include <drm/drm_client.h>
+#include <drm/drm_colorop.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_damage_helper.h>
