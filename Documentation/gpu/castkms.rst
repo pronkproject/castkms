@@ -9,11 +9,12 @@ internal CPU capture path for kernel callers and tests. Public capture is not
 enabled. It is not a replacement for a working C CastKMS casting installation.
 
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create one
-always-connected virtual output. The driver accepts atomic modesetting and
-native linear XRGB8888 framebuffers allocated through the usual DRM dumb-buffer
-interface. Foreign storage may be imported through PRIME and described by a
-framebuffer, but is rejected for visible HOST scanout during atomic validation.
-Modes up to 1920 by 1080 are offered for development.
+virtual output. Without a monitor controller it presents an always-connected
+development monitor. The driver accepts atomic modesetting and native linear
+XRGB8888 framebuffers allocated through the usual DRM dumb-buffer interface.
+Foreign storage may be imported through PRIME and described by a framebuffer,
+but is rejected for visible HOST scanout during atomic validation. Modes up to
+1920 by 1080 are offered for development.
 That size is a temporary driver limit, not a receiver or transport policy.
 The virtual parent has DMA addressing configured before DRM registration so
 exporters can map imported attachments. Import retains the exporter's storage
@@ -32,10 +33,36 @@ capture adapter drives composition only when a kernel caller requests a frame
 through an authorized stream. Normal DRM operations on a caller's own buffers
 are not a capture capability.
 
-There is no cursor plane, configurable display attachment, EDID, audio, CEC,
-writeback, CRC collection, or delegated composition. No default framebuffer
-console client is started. Do not use the development driver for production
-casting until the required facilities have been implemented and qualified.
+An explicitly authorized service can replace the development monitor and
+publish attachment and EDID state through a narrow capability file. There is
+no cursor plane, audio, CEC, writeback, CRC collection, or delegated
+composition. No default framebuffer console client is started. Do not use the
+development driver for production casting until the required facilities have
+been implemented and qualified.
+
+Virtual monitor control
+-----------------------
+
+The current DRM master can issue one monitor-control capability for the
+virtual connector with ``DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL``. Issuance
+requires the master to hold the connector and replaces the standalone monitor
+with a disconnected managed monitor. A second capability is rejected while
+the first remains open.
+
+The anonymous close-on-exec control file supports only query, attach and detach
+operations. Attach accepts either a complete validated EDID or no EDID, in
+which case the driver publishes its fallback modes. Each successful change
+emits a normal DRM hotplug event. The capability does not expose DRM objects,
+framebuffers, capture images, modesetting, or renderer control. A second
+close-on-exec file lets the issuer revoke the capability without retaining its
+control endpoint.
+
+The control file itself carries authority after issuance. It can be passed to
+the display service and remains usable across later DRM master changes. Final
+control-file close or revocation-file close disconnects the managed interval,
+restores the standalone monitor and emits another hotplug event. Device removal
+instead makes the monitor terminally disconnected; a retained capability
+cannot recreate it.
 
 Execution description
 ---------------------
@@ -119,6 +146,13 @@ installation.
 unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;
 their data does not borrow the module's registration storage.
+
+``monitor.rs`` owns the kernel-facing monitor state machine. Its exclusive
+control object replaces and restores the standalone monitor independently of
+how that object is transported. ``monitor_file.rs`` is only the UAPI adapter:
+it checks master authority when issuing an anonymous capability and translates
+validated requests into control-object operations. Neither layer owns a
+capture stream or renderer permission.
 
 ``display.rs`` defines the output and its atomic checks. ``gem.rs`` defines the
 private buffer payload and opts into local allocation. Its optional storage
@@ -581,6 +615,7 @@ The userspace smoke tests require the libdrm development headers and library::
 
     make -C tools/testing/selftests/drm_castkms
     tools/testing/selftests/drm_castkms/execution /dev/dri/cardN
+    tools/testing/selftests/drm_castkms/monitor-control /dev/dri/cardN
     tools/testing/selftests/drm_castkms/capture-grant /dev/dri/cardN
     tools/testing/selftests/drm_castkms/capture-output /dev/dri/cardN
     tools/testing/selftests/drm_castkms/modeset /dev/dri/cardN
@@ -597,6 +632,13 @@ report the same HOST profile and generation. It also checks that the master
 cannot change the description. The test needs an unused node so its first
 file acquires master; reading the description itself does not require master,
 a capture grant or an active display. Neither file receives pixel access.
+
+The monitor-control test creates the anonymous capability through the current
+DRM master and checks that a non-master cannot do so. It verifies descriptor
+flags, version discovery, request validation, exclusive issuance, EDID-backed
+attachment and explicit disconnection. The capability remains effective after
+DRM master handoff. Its final close must restore the standalone monitor, and a
+new current master must then be able to issue the next capability.
 
 The capture-grant test exercises public issuance without displaying or reading
 an image. It checks master-file authority, distinct close-on-exec endpoints,
