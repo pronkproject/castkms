@@ -111,4 +111,9 @@ impl Mapping {
             }
         }
     }
+
+    /// Complete source CPU access before its read claim is released.
+    pub(super) fn finish(&self) -> Result {
+        Ok(())
+    }
 }

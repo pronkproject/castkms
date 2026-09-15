@@ -126,21 +126,30 @@ pub(crate) fn current_checked<G>(
         },
         admit,
         |scene, configuration, mapping| -> Result<_> {
-            scene.producer_result()?;
-            if let Some(mapping) = mapping {
-                slot.copy_from(mapping)?;
-            } else {
-                let dimensions = configuration.as_ref().ok_or(EINVAL)?.dimensions();
-                if (dimensions[0], dimensions[1]) != layout.dimensions() {
-                    return Err(EINVAL);
+            let result = (|| {
+                scene.producer_result()?;
+                if let Some(mapping) = mapping {
+                    slot.copy_from(mapping)?;
+                } else {
+                    let dimensions = configuration.as_ref().ok_or(EINVAL)?.dimensions();
+                    if (dimensions[0], dimensions[1]) != layout.dimensions() {
+                        return Err(EINVAL);
+                    }
+                    slot.clear()?;
                 }
-                slot.clear()?;
+                Ok((
+                    scene.content_serial(),
+                    scene.owner().cloned(),
+                    configuration.clone(),
+                ))
+            })();
+            // End exporter CPU access before releasing the read claim. Source reuse
+            // must not race cache maintenance, even when copying failed. Unmapping
+            // still happens after the claim, outside reservation and modeset locks.
+            if let Some(mapping) = mapping {
+                mapping.finish()?;
             }
-            Ok((
-                scene.content_serial(),
-                scene.owner().cloned(),
-                configuration.clone(),
-            ))
+            result
         },
     )?;
     let Some(metadata) = metadata else {
