@@ -43,6 +43,8 @@ pub(crate) struct HostAdmission<'a> {
 struct State {
     description: Description,
     slot: Slot,
+    next_proposal: u64,
+    pending: Option<super::proposal::Entry>,
 }
 
 enum Slot {
@@ -78,6 +80,8 @@ impl Publication {
             state <- kernel::new_mutex!(State {
                 description: super::initial(),
                 slot: Slot::Empty,
+                next_proposal: 1,
+                pending: None,
             }),
         })
     }
@@ -112,6 +116,120 @@ impl Publication {
     /// Observe metadata only; retaining it preserves neither authority nor an active renderer.
     pub(crate) fn describe(&self) -> Description {
         self.state.lock().description
+    }
+
+    /// Historical pending metadata only; observation grants no renderer authority.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn pending_profile(&self) -> Option<super::proposal::DescriptionSnapshot> {
+        self.state
+            .lock()
+            .pending
+            .as_ref()
+            .map(|entry| entry.description.clone())
+    }
+
+    /// Install one bounded proposal under the caller's display/authority/startup locks.
+    /// No scene compatibility or activation is implied by successful registration.
+    pub(crate) fn propose(
+        self: &Arc<Self>,
+        expected: Description,
+        worker: &Arc<()>,
+        profile: Arc<super::capabilities::Profile>,
+    ) -> Result<super::proposal::Registration> {
+        let mut state = self.state.lock();
+        match state.slot {
+            Slot::Ready(_) => (),
+            Slot::Closed => return Err(ENODEV),
+            _ => return Err(EAGAIN),
+        }
+        if state.description != expected {
+            return Err(ESTALE);
+        }
+        if state.pending.is_some() {
+            return Err(EBUSY);
+        }
+        let generation = super::proposal::next_generation(state.next_proposal)?;
+        let description = super::proposal::DescriptionSnapshot {
+            generation,
+            expected,
+            profile,
+        };
+        state.pending = Some(super::proposal::Entry {
+            description: description.clone(),
+            worker: worker.clone(),
+        });
+        state.next_proposal = generation;
+        Ok(super::proposal::Registration {
+            publication: self.clone(),
+            description,
+        })
+    }
+
+    pub(super) fn check_proposal(&self, generation: u64) -> Result {
+        let state = self.state.lock();
+        if matches!(state.slot, Slot::Closed) {
+            return Err(ENODEV);
+        }
+        match &state.pending {
+            Some(entry)
+                if entry.description.generation == generation
+                    && entry.description.expected == state.description =>
+            {
+                Ok(())
+            }
+            _ => Err(ESTALE),
+        }
+    }
+
+    pub(super) fn cancel_proposal(&self, generation: u64) {
+        let retired = {
+            let mut state = self.state.lock();
+            if state
+                .pending
+                .as_ref()
+                .is_some_and(|entry| entry.description.generation == generation)
+            {
+                state.pending.take()
+            } else {
+                None
+            }
+        };
+        drop(retired);
+    }
+
+    /// Cancel only the named worker's proposal, without touching active execution.
+    pub(crate) fn cancel_worker_proposal(&self, worker: &Arc<()>) {
+        let retired = {
+            let mut state = self.state.lock();
+            if state
+                .pending
+                .as_ref()
+                .is_some_and(|entry| Arc::ptr_eq(&entry.worker, worker))
+            {
+                state.pending.take()
+            } else {
+                None
+            }
+        };
+        drop(retired);
+    }
+
+    /// A newly reserved worker supersedes metadata from an invalidated reservation.
+    /// The caller must hold its current, exclusive startup reservation.
+    pub(crate) fn retire_other_worker_proposal(&self, worker: &Arc<()>) {
+        let retired = {
+            let mut state = self.state.lock();
+            if state
+                .pending
+                .as_ref()
+                .is_some_and(|entry| !Arc::ptr_eq(&entry.worker, worker))
+            {
+                state.pending.take()
+            } else {
+                None
+            }
+        };
+        drop(retired);
     }
 
     /// Exclude execution publication while admitting one HOST source read.
@@ -182,10 +300,14 @@ impl Publication {
 
     /// Release the control handle outside its mutex, preserving the installed native blob.
     pub(crate) fn close(&self) {
-        let slot = {
+        let (slot, pending) = {
             let mut state = self.state.lock();
-            core::mem::replace(&mut state.slot, Slot::Closed)
+            (
+                core::mem::replace(&mut state.slot, Slot::Closed),
+                state.pending.take(),
+            )
         };
+        drop(pending);
         if let Slot::Ready(property) = slot {
             drop(property);
         }

@@ -4,6 +4,7 @@
 
 pub(crate) mod host;
 pub(crate) mod capabilities;
+pub(crate) mod proposal;
 
 pub(crate) mod property;
 pub(crate) mod publication;
