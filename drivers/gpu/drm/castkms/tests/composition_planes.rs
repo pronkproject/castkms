@@ -109,4 +109,29 @@ mod cases {
         Ok(())
     }
 
+    #[test]
+    fn gamma_only_updates_recompose_unchanged_sources() -> Result {
+        let fixture = Fixture::new()?;
+        let primary = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&primary, false, 0)?;
+        let pool = Pool::new(
+            fixture.drm.device(),
+            &fixture.host_budget,
+            Layout::new(640, 480)?,
+        )?;
+        fixture.drm.update(|transaction| {
+            transaction
+                .add_crtc_state(fixture.drm.crtc()?)?
+                .set_gamma_lut(Some(&[ColorLut::new(65535, 0, 0)]))
+        })?;
+        check(pixels(&fixture, &pool)? == [0xff0000; 4])?;
+        fixture.drm.update(|transaction| {
+            transaction
+                .add_crtc_state(fixture.drm.crtc()?)?
+                .set_gamma_lut(None)
+        })?;
+        check(pixels(&fixture, &pool)? == [0; 4])?;
+        Ok(())
+    }
+
 }
