@@ -192,7 +192,7 @@ impl Session {
             {
                 return if *current == id {
                     active.check()?;
-                    if self.access.device().execution.describe() == *description {
+                    if self.access.display().execution.describe() == *description {
                         Ok(*description)
                     } else {
                         Err(EIO)
