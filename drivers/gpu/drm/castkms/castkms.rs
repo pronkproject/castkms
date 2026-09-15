@@ -152,6 +152,7 @@ impl drm::Driver for Driver {
         for display in &dev.displays {
             display.startup.invalidate_current();
         }
+        dev.validation.invalidate_all();
         dev.capture_streams.revoke_all();
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
         dev.audio_grants.revoke_all();
