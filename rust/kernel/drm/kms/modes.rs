@@ -6,6 +6,9 @@
 
 use bindings;
 
+#[cfg(CONFIG_KUNIT)]
+use crate::prelude::kunit_tests;
+
 use crate::{
     error::{code::EINVAL, code::EOVERFLOW, Result},
     types::Opaque,
@@ -324,5 +327,53 @@ impl DisplayMode {
     pub fn cea_vic(&self) -> u8 {
         // SAFETY: `drm_match_cea_mode` only reads this valid display mode.
         unsafe { bindings::drm_match_cea_mode(self.as_raw()) }
+    }
+}
+
+#[cfg(CONFIG_KUNIT)]
+#[kunit_tests(rust_drm_display_modes)]
+mod tests {
+    use super::*;
+
+    fn mode(flags: ModeFlags) -> Result<DisplayMode> {
+        DisplayMode::from_timings(ModeTimings {
+            clock_khz: 25_175,
+            hdisplay: 640,
+            hsync_start: 656,
+            hsync_end: 752,
+            htotal: 800,
+            vdisplay: 480,
+            vsync_start: 490,
+            vsync_end: 492,
+            vtotal: 525,
+            flags,
+        })
+    }
+
+    #[test]
+    fn refresh_preserves_fractional_millihertz() -> Result {
+        if mode(ModeFlags::default())?.vrefresh_millihz()? != 59_940 {
+            return Err(EINVAL);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scan_flags_adjust_refresh() -> Result {
+        if mode(ModeFlags::INTERLACE)?.vrefresh_millihz()? != 119_881
+            || mode(ModeFlags::DBLSCAN)?.vrefresh_millihz()? != 29_970
+        {
+            return Err(EINVAL);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn flags_retain_the_native_representation() -> Result {
+        let flags = ModeFlags::PHSYNC | ModeFlags::NVSYNC;
+        if mode(flags)?.flags().bits() != flags.bits() {
+            return Err(EINVAL);
+        }
+        Ok(())
     }
 }
