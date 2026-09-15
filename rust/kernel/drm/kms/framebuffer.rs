@@ -421,6 +421,12 @@ impl<T: KmsDriver> Framebuffer<T> {
         unsafe { (*(*self.0.get()).format).format }
     }
 
+    /// Whether the native format descriptor identifies YUV color components.
+    pub fn is_yuv(&self) -> bool {
+        // SAFETY: An initialized framebuffer retains its immutable format descriptor.
+        unsafe { (*(*self.0.get()).format).is_yuv }
+    }
+
     /// Return the explicit DRM format modifier, or `None` for implicit layout.
     ///
     /// An implicit layout must not be presented to an external importer as an explicitly
