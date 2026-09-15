@@ -312,7 +312,7 @@ impl Publication {
         locked: &LockedState<'_, Driver>,
         prepared: &mut Prepared,
         generation: u64,
-        configuration: &crate::scene::Configuration,
+        configuration: Option<&crate::scene::Configuration>,
         check: impl FnMut(&super::validation::Contract) -> Result,
     ) -> Result {
         if !Arc::ptr_eq(&self.origin, &prepared.origin) {
