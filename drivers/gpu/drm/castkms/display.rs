@@ -115,7 +115,7 @@ fn check_geometry(
     state.geometry = None;
     if let Some(crtc) = state.crtc() {
         let crtc_state = transaction.add_crtc_state(crtc)?;
-        state.atomic_helper_check(&crtc_state, false, false)?;
+        state.atomic_helper_check_scaled(&crtc_state, 1 << 12, 1 << 20, true, true)?;
         if crtc_state.active() && state.visible() {
             state.geometry = Some(scene::Geometry {
                 source: [
@@ -443,6 +443,7 @@ impl KmsDriver for Driver {
                 None,
                 (),
             )?;
+            plane.create_nearest_scaling_filter_property()?;
             let crtc = crtc::UnregisteredCrtc::<Crtc>::new(
                 dev,
                 plane,
