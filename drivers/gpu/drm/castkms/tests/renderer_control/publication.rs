@@ -20,6 +20,57 @@ mod cases {
     use super::*;
 
     #[test]
+    fn session_retains_negotiation_across_activation_reply_retries() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let session = Session::new(owner.access(), device.to_registered_ref())?;
+            let pending = session.begin(device.execution.describe().generation)?;
+            let id = pending.id();
+            pending.publish()?;
+            session.candidate(id)?.submit_private_probe(None)?;
+            let proposal =
+                session.propose_profile(id, crate::tests::renderer_proposals::profile()?)?;
+            check(session.pending_profile()?.ok_or(EINVAL)?.transition == proposal.transition)?;
+            check(session.activate(id) == Err(EAGAIN))?;
+            device.atomic_update(|mut transaction| {
+                transaction.as_mut().disable_plane(crtc.primary_plane())?;
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(proposal.transition);
+                Ok(())
+            })?;
+            let description = session.activate(id)?;
+            check(session.activate(id)? == description)?;
+            check(session.pending_profile()?.is_none())?;
+            check(session.abort(id) == Err(EALREADY))?;
+            session.close_for_test();
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn session_abort_and_close_release_pending_profile_ownership() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let session = Session::new(owner.access(), device.to_registered_ref())?;
+            for close in [false, true] {
+                let pending = session.begin(device.execution.describe().generation)?;
+                let id = pending.id();
+                pending.publish()?;
+                session.propose_profile(id, crate::tests::renderer_proposals::profile()?)?;
+                check(session.pending_profile()?.is_some())?;
+                if close {
+                    session.close_for_test();
+                } else {
+                    session.abort(id)?;
+                }
+                check(device.execution.pending_profile().is_none())?;
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
     fn negotiated_activation_requires_a_published_gate() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
