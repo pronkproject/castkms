@@ -113,7 +113,9 @@ impl drm::Driver for Driver {
     }
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
-        dev.startup.invalidate_current();
+        for display in &dev.displays {
+            display.startup.invalidate_current();
+        }
         dev.capture_streams.revoke_all();
         dev.authority.changed(master);
     }
