@@ -8,7 +8,10 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 2
+#define DRM_CASTKMS_RENDERER_VERSION 3
+
+#define DRM_CASTKMS_RENDERER_PROBE_PRIVATE 1
+#define DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE 2
 
 /**
  * struct drm_castkms_create_monitor_control - create virtual monitor control
@@ -238,6 +241,33 @@ struct drm_castkms_renderer_get_snapshot {
 	__u32 reserved[3];
 };
 
+/**
+ * struct drm_castkms_renderer_submit_probe - publish candidate test work
+ * @candidate_id: active candidate returned by BEGIN_TAKEOVER
+ * @completion_fd: sync_file for submitted native work, or -1 when already done
+ * @source: one DRM_CASTKMS_RENDERER_PROBE_* value
+ * @flags: must be zero
+ * @reserved: must be zero
+ *
+ * A private probe uses only renderer-owned storage and carries no display
+ * content identity. A startup-image probe additionally requires one successful
+ * GET_SNAPSHOT on the same candidate; the kernel retains the identity that it
+ * delivered rather than accepting content metadata from userspace.
+ *
+ * The completion fence must cover every native access made by the probe. A
+ * value of -1 declares that all access completed before this ioctl. Success
+ * records exactly one submission without activating delegated execution or
+ * granting access to live compositor sources. Fence failure later makes the
+ * probe unsuccessful.
+ */
+struct drm_castkms_renderer_submit_probe {
+	__u64 candidate_id;
+	__s32 completion_fd;
+	__u32 source;
+	__u32 flags;
+	__u32 reserved[3];
+};
+
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
 #define DRM_CASTKMS_CREATE_RENDERER_CONTROL 0x01
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
@@ -247,6 +277,7 @@ struct drm_castkms_renderer_get_snapshot {
 #define DRM_CASTKMS_RENDERER_BEGIN_TAKEOVER 0x05
 #define DRM_CASTKMS_RENDERER_ABORT_TAKEOVER 0x06
 #define DRM_CASTKMS_RENDERER_GET_SNAPSHOT 0x07
+#define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x08
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
@@ -277,6 +308,9 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_GET_SNAPSHOT,
 			struct drm_castkms_renderer_get_snapshot),
+	DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_SUBMIT_PROBE,
+			struct drm_castkms_renderer_submit_probe),
 };
 
 #define DRM_CASTKMS_EXECUTION_VERSION 1

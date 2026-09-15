@@ -32,6 +32,8 @@ _Static_assert(sizeof(struct drm_castkms_renderer_snapshot) == 48,
 	       "renderer snapshot ABI");
 _Static_assert(sizeof(struct drm_castkms_renderer_get_snapshot) == 32,
 	       "renderer snapshot request ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_submit_probe) == 32,
+	       "renderer probe submission ABI");
 
 static unsigned int open_files(void)
 {
@@ -115,6 +117,18 @@ static void abort_takeover(int fd, uint64_t candidate_id)
 	};
 
 	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER,
+		    &request) == 0);
+}
+
+static void submit_probe(int fd, uint64_t candidate_id, uint32_t source)
+{
+	struct drm_castkms_renderer_submit_probe request = {
+		.candidate_id = candidate_id,
+		.completion_fd = -1,
+		.source = source,
+	};
+
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
 		    &request) == 0);
 }
 
@@ -229,7 +243,9 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_begin_takeover begin = {};
 	struct drm_castkms_renderer_abort_takeover abort = {};
 	struct drm_castkms_renderer_get_snapshot snapshot_request = {};
+	struct drm_castkms_renderer_submit_probe probe = { .completion_fd = -1 };
 	struct drm_castkms_renderer_snapshot snapshot;
+	struct drm_castkms_renderer_snapshot snapshot_duplicate;
 	drmModeConnector *connector;
 	drmModeRes *resources;
 	struct buffer buffer, capture_output;
@@ -274,6 +290,16 @@ int main(int argc, char **argv)
 	expect_ioctl_error(files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT,
 			   &snapshot_request, ENODATA);
+	probe.candidate_id = candidate.candidate_id;
+	probe.source = DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, ENODATA);
+	submit_probe(files.renderer_fd, candidate.candidate_id,
+		     DRM_CASTKMS_RENDERER_PROBE_PRIVATE);
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EALREADY);
 	abort_takeover(files.renderer_fd, candidate.candidate_id);
 	CHECK(close(files.renderer_fd) == 0);
 	CHECK(close(files.revoke_fd) == 0);
@@ -368,6 +394,53 @@ int main(int argc, char **argv)
 				   &snapshot_request, EFAULT);
 	CHECK(open_files() == before);
 	snapshot = get_snapshot(files.renderer_fd, candidate.candidate_id);
+	snapshot_request.result = (uintptr_t)&snapshot_duplicate;
+	before = open_files();
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT,
+			   &snapshot_request, EALREADY);
+	CHECK(open_files() == before);
+	probe.candidate_id = 0;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EINVAL);
+	probe.candidate_id = candidate.candidate_id + 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, ENOENT);
+	probe.candidate_id = candidate.candidate_id;
+	probe.source = 0;
+	probe.completion_fd = 123456;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EINVAL);
+	probe.source = DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE;
+	probe.completion_fd = -2;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EINVAL);
+	probe.completion_fd = fd;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EINVAL);
+	probe.completion_fd = -1;
+	probe.flags = 1;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EINVAL);
+	probe.flags = 0;
+	for (unsigned int i = 0; i < 3; i++) {
+		probe.reserved[i] = 1;
+		expect_ioctl_error(files.renderer_fd,
+				   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+				   &probe, EINVAL);
+		probe.reserved[i] = 0;
+	}
+	submit_probe(files.renderer_fd, candidate.candidate_id,
+		     DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE);
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EALREADY);
 	expect_ioctl_error(files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
 			   &begin, EBUSY);
@@ -382,6 +455,10 @@ int main(int argc, char **argv)
 			   &abort, EINVAL);
 	abort.flags = 0;
 	abort_takeover(files.renderer_fd, candidate.candidate_id);
+	probe.candidate_id = candidate.candidate_id;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, ENOENT);
 	snapshot_request.result = (uintptr_t)&snapshot;
 	expect_ioctl_error(files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT,
@@ -397,6 +474,10 @@ int main(int argc, char **argv)
 	CHECK(close(duplicate) == 0);
 	expect_ioctl_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY,
 			   &next, EKEYREVOKED);
+	probe.candidate_id = replacement.candidate_id;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
+			   &probe, EKEYREVOKED);
 	CHECK(close(files.renderer_fd) == 0);
 	check_snapshot(&snapshot, 0x57);
 	CHECK(close(snapshot.dma_buf_fd) == 0);

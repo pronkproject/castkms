@@ -7,11 +7,13 @@ use crate::{execution::Profile, CastKms};
 use core::{ffi::c_void, ptr::NonNull};
 use kernel::{
     bindings,
+    dma_fence::Fence,
     error::from_err_ptr,
     drm::fourcc,
     fs::{
         file::FileDescriptorReservation,
-        File, //
+        File,
+        LocalFile, //
     },
     module::this_module,
     prelude::*,
@@ -97,6 +99,18 @@ struct SnapshotResult {
 // SAFETY: SnapshotResult contains only integers and has no padding.
 unsafe impl AsBytes for SnapshotResult {}
 
+#[repr(C)]
+struct SubmitProbe {
+    candidate_id: u64,
+    completion_fd: i32,
+    source: u32,
+    flags: u32,
+    reserved: [u32; 3],
+}
+
+// SAFETY: Every bit pattern is valid for SubmitProbe's integer fields.
+unsafe impl FromBytes for SubmitProbe {}
+
 struct ClientFile {
     session: Arc<Session>,
 }
@@ -161,6 +175,7 @@ impl ClientFile {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER => self.begin(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER => self.abort(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT => self.get_snapshot(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE => self.submit_probe(arg),
             _ => Err(ENOTTY),
         }
     }
@@ -292,6 +307,43 @@ impl ClientFile {
             .write(&result)?;
         candidate.publish_snapshot(&snapshot, || descriptor.fd_install(file))?;
         Ok(())
+    }
+
+    fn submit_probe(&self, arg: usize) -> Result {
+        const {
+            assert!(
+                core::mem::size_of::<SubmitProbe>()
+                    == core::mem::size_of::<uapi::drm_castkms_renderer_submit_probe>()
+            )
+        };
+        let mut reader =
+            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<SubmitProbe>()).reader();
+        let request = reader.read::<SubmitProbe>()?;
+        if request.candidate_id == 0
+            || request.completion_fd < -1
+            || request.flags != 0
+            || request.reserved.iter().any(|field| *field != 0)
+        {
+            return Err(EINVAL);
+        }
+        let startup_image = match request.source {
+            uapi::DRM_CASTKMS_RENDERER_PROBE_PRIVATE => false,
+            uapi::DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE => true,
+            _ => return Err(EINVAL),
+        };
+        let candidate = self.session.candidate(request.candidate_id)?;
+        let completion = if request.completion_fd == -1 {
+            None
+        } else {
+            let file = LocalFile::fget(request.completion_fd.try_into().map_err(|_| EBADF)?)
+                .map_err(|_| EBADF)?;
+            Some(Fence::from_sync_file(&file)?)
+        };
+        if startup_image {
+            candidate.submit_snapshot_probe(completion)
+        } else {
+            candidate.submit_private_probe(completion)
+        }
     }
 }
 
