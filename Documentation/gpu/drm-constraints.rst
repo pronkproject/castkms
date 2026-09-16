@@ -19,10 +19,11 @@ CastKMS provider is attached to these helpers. The native test provider uses
 framebuffer metadata, not GPU allocation or PRIME import. Those boundaries
 must not be inferred from successful native tests.
 
-Only one independent output is admitted per transaction involving constraints.
-Such a transaction must contain exactly one CRTC, and asynchronous plane
-updates are rejected. Drivers which do not attach constraints keep their
-ordinary atomic behavior.
+Selecting constraints or updating an enabled scene admits only one independent
+output per transaction involving constraints. A full disable may include
+multiple CRTCs when every CRTC in the transaction is disabled, plane-free and
+retains its accepted binding. Asynchronous plane updates are rejected. Drivers
+which do not attach constraints keep their ordinary atomic behavior.
 
 Descriptions and identities
 ===========================
@@ -184,6 +185,13 @@ listing, synchronizing with acceptance already in progress. Retained snapshots
 and accepted-selection references remain valid. A fully disabled, plane-free
 update may still retain the same accepted binding after closure or backend
 failure. That path selects nothing new and still obeys native retirement.
+
+Device-wide shutdown may disable several outputs in one transaction. Each
+binding is checked before the single state installation. The caller's modeset
+locks keep those selections unchanged through installation; the helper does
+not hold several list locks at once. Closure or withdrawal does not invalidate
+that operation, since it accepts no new backend work. Enabling an output or
+changing any binding in the same transaction remains unsupported.
 
 State reset restores the accepted binding even after closure. It is not
 default-contract restoration or the start of a new owner interval. Full
