@@ -130,13 +130,45 @@ retry_conn:
 		goto retry_conn;
 	}
 	KUNIT_EXPECT_PTR_EQ(test, curr_connector, &priv->connector);
+	KUNIT_EXPECT_TRUE(test,
+			  drm_modeset_is_locked(&priv->drm.mode_config.connection_mutex));
 
+	/* A repeated lookup must preserve the acquisition context's lock. */
+	curr_connector = drm_atomic_get_connector_for_encoder(&priv->encoder, &ctx);
+	KUNIT_EXPECT_PTR_EQ(test, curr_connector, &priv->connector);
+	KUNIT_EXPECT_TRUE(test,
+			  drm_modeset_is_locked(&priv->drm.mode_config.connection_mutex));
+
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+}
+
+static void drm_test_drm_atomic_get_connector_for_encoder_unassigned(struct kunit *test)
+{
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_atomic_test_priv *priv;
+	struct drm_connector *connector;
+	int ret;
+
+	priv = create_device(test);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv);
+
+	drm_modeset_acquire_init(&ctx, 0);
+	ret = drm_modeset_lock(&priv->drm.mode_config.connection_mutex, &ctx);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	if (!ret) {
+		connector = drm_atomic_get_connector_for_encoder(&priv->encoder, &ctx);
+		KUNIT_EXPECT_PTR_EQ(test, connector, ERR_PTR(-EINVAL));
+		KUNIT_EXPECT_TRUE(test,
+				  drm_modeset_is_locked(&priv->drm.mode_config.connection_mutex));
+	}
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 }
 
 static struct kunit_case drm_atomic_get_connector_for_encoder_tests[] = {
 	KUNIT_CASE(drm_test_drm_atomic_get_connector_for_encoder),
+	KUNIT_CASE(drm_test_drm_atomic_get_connector_for_encoder_unassigned),
 	{ }
 };
 

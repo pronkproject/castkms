@@ -1268,6 +1268,10 @@ EXPORT_SYMBOL(drm_atomic_get_new_connector_for_encoder);
  * threaded interrupt handlers, or hooks from other frameworks (ALSA,
  * CEC, etc.).
  *
+ * The connection mutex is acquired with @ctx and remains held on return,
+ * including when no connector is found. The caller must release the locks
+ * through @ctx after finishing with the connector and its state.
+ *
  * Returns:
  * The connector connected to @encoder, or an error pointer otherwise.
  * When the error is EDEADLK, a deadlock has been detected and the
@@ -1298,7 +1302,6 @@ drm_atomic_get_connector_for_encoder(const struct drm_encoder *encoder,
 		}
 	}
 	drm_connector_list_iter_end(&conn_iter);
-	drm_modeset_unlock(&dev->mode_config.connection_mutex);
 
 	return out_connector;
 }
