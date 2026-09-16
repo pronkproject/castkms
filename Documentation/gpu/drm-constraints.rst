@@ -293,6 +293,10 @@ entry before target programming and readback. Kernel Rust updates use the
 native prepared-request
 runner, closing old source admission and retaining retirement fences without
 waiting under modeset locks for unsubmitted readers.
+A pending-claim test acquires the old CRTC lock while the request waits,
+withdraws the checked target, then releases its read. The rebuilt request
+rejects the stale target, publishes no replacement job and reopens old read
+admission without changing selection.
 The provider has no userspace descriptors, physical GPU or external producer.
 
 Use ``kunit.filter_glob=*constraints*`` for the constraints suites and run the
