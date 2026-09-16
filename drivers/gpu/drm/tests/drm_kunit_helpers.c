@@ -200,7 +200,7 @@ drm_kunit_helper_create_primary_plane(struct kunit *test,
 					     funcs,
 					     formats,
 					     num_formats,
-					     default_plane_modifiers,
+					     modifiers,
 					     DRM_PLANE_TYPE_PRIMARY,
 					     NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, plane);

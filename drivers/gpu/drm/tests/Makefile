@@ -90,6 +90,8 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_fixp_test.o \
 	drm_kunit_edid.o
 
+obj-$(CONFIG_DRM_KUNIT_TEST) += drm_kunit_helpers_test.o
+
 ifeq ($(CONFIG_DRM_CLIENT),y)
 obj-$(CONFIG_DRM_KUNIT_TEST) += drm_atomic_prepare_client_test.o
 endif
