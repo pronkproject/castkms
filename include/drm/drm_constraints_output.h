@@ -13,14 +13,15 @@ struct drm_constraints_entry;
  * @check: validate the complete proposed scene against the retained backend
  *
  * Check is called with modeset locks and the list lock held, both during
- * validation and before acceptance. It must not change external state, acquire
- * modeset locks, reenter list operations or wait for userspace. All resources
- * required to accept the entry must be ready before offering it. Return zero
- * or a negative errno. Backend is the entry's retained provider context.
- * The table must remain valid throughout the CRTC lifetime.
+ * validation and before acceptance. It must not modify the transaction or its
+ * proposed object states, change external state, acquire modeset locks, reenter
+ * list operations or wait for userspace. All resources required to accept the
+ * entry must be ready before offering it. Return zero or a negative errno.
+ * Backend is the entry's retained provider context. The table must remain valid
+ * throughout the CRTC lifetime.
  */
 struct drm_constraints_output_ops {
-	int (*check)(struct drm_atomic_commit *state,
+	int (*check)(const struct drm_atomic_commit *state,
 		     const struct drm_crtc_state *crtc_state, void *backend);
 };
 
