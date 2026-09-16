@@ -200,9 +200,41 @@ reuse. Admission under the evidence rechecks live renderer authority and
 rejects a different output, configuration or execution incarnation.
 
 These are internal provider records, not userspace receipt handles. The
-renderer endpoint discards them on release. They grant no capture authority
-and name no private allocation; private-image binding, destination claims
-and delegated output delivery remain unimplemented.
+renderer endpoint discards them on release. Evidence alone grants no capture
+authority and names no private allocation.
+
+Private images
+--------------
+
+The kernel renderer provider can register private backing allocations and
+reserve one for a source-to-private-image job. It claims the source only
+after that independent storage and its cleanup record are available. The
+job's completion must cover both source reads and private-image writes.
+Its result binds the original content evidence to the reserved storage.
+Keeping that result prevents overwrite without holding a source-read claim.
+
+The trusted renderer owns the native format interpretation and must verify
+that its layout fits the supplied allocations. The kernel neither maps the
+image nor applies the HOST compositor's linear-format restrictions. All
+backing allocations must remain private to the rendering service, including
+imports and aliases. They must not be exported to an encoder or capture
+recipient. Native queue, mapping and reservation dependencies must also
+exclude downstream release waits from source-reading work; kernel pool
+bookkeeping alone cannot prove that property.
+
+Registration tracks known aliases by DMA-BUF and reservation identity. It
+rejects overlap with current source storage again at source admission.
+Device-wide limits of 128 images and 512 MiB include registrations retained
+after their caller drops its handle. Private use names are increasing and
+never reused. Removing a handle does not bypass a pending native use or
+the allocation accounting. An abandoned claim with unknown completion
+quarantines its storage and reports a failed reuse attempt, rather than
+pretending the allocation is available. Recovery from that fault is not
+implemented.
+
+Private-image registration and bound rendering are kernel-provider APIs.
+The renderer file does not expose them. Destination claims and delegated
+output delivery remain unimplemented.
 
 GPU envelope and remaining work
 ========================================
