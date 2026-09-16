@@ -834,6 +834,7 @@ retry_commit:
 
 	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -844,6 +845,7 @@ retry_commit:
 
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1037,6 +1039,7 @@ retry_commit:
 
 	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1047,6 +1050,7 @@ retry_commit:
 
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1057,6 +1061,7 @@ retry_commit:
 
 	ret = drm_atomic_commit(state);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1119,6 +1124,7 @@ retry_commit:
 
 	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1129,6 +1135,7 @@ retry_commit:
 
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1139,6 +1146,7 @@ retry_commit:
 
 	ret = drm_atomic_commit(state);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1192,6 +1200,7 @@ retry_commit:
 
 	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1202,6 +1211,7 @@ retry_commit:
 
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1212,6 +1222,7 @@ retry_commit:
 
 	ret = drm_atomic_commit(state);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1266,6 +1277,7 @@ retry_commit:
 
 	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1276,6 +1288,7 @@ retry_commit:
 
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1286,6 +1299,7 @@ retry_commit:
 
 	ret = drm_atomic_commit(state);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1334,6 +1348,7 @@ retry_commit:
 
 	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1344,6 +1359,7 @@ retry_commit:
 
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
@@ -1354,6 +1370,7 @@ retry_commit:
 
 	ret = drm_atomic_commit(state);
 	if (ret == -EDEADLK) {
+		drm_atomic_commit_clear(state);
 		drm_modeset_backoff(&ctx);
 		goto retry_commit;
 	}
