@@ -10,7 +10,12 @@ use super::{
 };
 use crate::{
     capture::provider::{delegated_destination::Image, delegated_request::Status, Grantor},
-    renderer::{job::Completion, render_job::Rendered},
+    renderer::{
+        job::Completion,
+        output_broker::Registration,
+        render_job::Rendered,
+        routing::{Owner as RouteOwner, Prepared},
+    },
     renderer_startup::Active,
 };
 use kernel::{
@@ -25,6 +30,8 @@ struct Output {
     grantor: Option<Grantor>,
     rendered: Arc<Rendered>,
     destination: Arc<Image>,
+    route: Option<RouteOwner>,
+    queue: Registration,
 }
 
 #[kunit_tests(rust_castkms_delegated_outputs)]
@@ -102,6 +109,15 @@ mod cases {
             let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let (active, execution) = activate(&renderer, &registered, crtc)?;
             let grantor = grant(&file, crtc, &connectors[index])?;
+            let route = owner.access().display().renderer_routes.publish(
+                Prepared::new()?,
+                &renderer,
+                &active,
+            )?;
+            let queue = grantor
+                .capture()
+                .describe_delegated()?
+                .register_routed_queue(1)?;
             let private = renderer.register_private_image(
                 &active,
                 [640, 480],
@@ -132,11 +148,30 @@ mod cases {
                     grantor: Some(grantor),
                     rendered,
                     destination,
+                    route: Some(route),
+                    queue,
                 },
                 GFP_KERNEL,
             )?;
         }
         // Same device and same master do not make output identities interchangeable.
+        let wrong_scope = outputs[1]
+            .grantor
+            .as_ref()
+            .ok_or(EINVAL)?
+            .capture()
+            .describe_delegated()?;
+        check(
+            outputs[0]
+                ._owner
+                .access()
+                .display()
+                .renderer_routes
+                .lookup()?
+                .register_queue(&wrong_scope, 1)
+                .err()
+                == Some(EACCES),
+        )?;
         let wrong_output = outputs[1].destination.request(None)?;
         check(
             wrong_output
@@ -194,6 +229,41 @@ mod cases {
             Ok(())
         })?;
         check(pending.status() == Status::Pending)?;
+        // Identical stream-local names on distinct routes remain independently discoverable.
+        for output in &outputs[1..] {
+            output
+                .queue
+                .with_queue(|queue| queue.queue_to(1, &output.destination, None))?;
+        }
+        drop(outputs[1].route.take());
+        check(
+            outputs[1]
+                ._owner
+                .access()
+                .display()
+                .renderer_routes
+                .lookup()
+                .err()
+                == Some(ENODEV),
+        )?;
+        outputs[1].queue.with_queue(|queue| {
+            queue.dequeue(|result| check(result.use_id == 1 && result.result == Err(ECANCELED)))
+        })?;
+        for output in &outputs[2..] {
+            let route = output.route.as_ref().ok_or(EINVAL)?;
+            let job = route.try_claim(&output.rendered).ok_or(EINVAL)?;
+            check(job.queue_id == output.queue.id())?;
+            check(core::ptr::eq(
+                job.output.claim.destination(),
+                &*output.destination,
+            ))?;
+            job.output.claim.release(Completion::Cpu);
+            output.queue.with_queue(|queue| {
+                check(queue.advance() == 1)?;
+                queue.dequeue(|result| check(result.use_id == 1 && result.result == Ok(())))
+            })?;
+            check(pending.status() == Status::Pending)?;
+        }
         native.complete(Ok(()))?;
         wait(&pending, Status::Complete(Err(EKEYREVOKED)))?;
         for output in &outputs[1..] {
