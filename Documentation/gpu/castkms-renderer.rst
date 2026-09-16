@@ -19,6 +19,22 @@ The KMS client still owns scene allocation and atomic updates; the renderer
 does not acquire modesetting authority through its endpoint. Pronk must
 coordinate the transition token with that client.
 
+Use raw ``ioctl()`` (retrying ``EINTR`` as appropriate) for anonymous renderer
+files: pending activation may return ``EAGAIN`` and requires returning to the
+event loop, not libdrm's unconditional retry. For the ordinary DRM atomic
+commit, a pending ``PREPARE_FD`` now returns ``EBUSY`` without consuming the
+ticket. ``drmModeAtomicCommit()`` may be used; wait/query before retrying.
+Never echo ``PREPARE_FD`` readback into an atomic property dump/restore.
+
+When updating an integration, use renderer protocol 8, capability encoding 2,
+and monitor protocol 2 from the same header revision. Registration now has two
+zero-required reserved words. Monitor creation is input-only and returns its
+descriptors through an explicit ``files`` pointer. The single-framebuffer
+dequeue ioctl is removed: use ``DEQUEUE_SCENE`` even for a single primary.
+Capability constant names distinguish ``KIND_*``, ``PROFILE_*``, ``FORMAT_*``
+and ``STATE_*`` fields. YUV capability masks use the named bits derived from
+the scene's ``DRM_CASTKMS_YUV_ENCODING_*`` and ``DRM_CASTKMS_YUV_RANGE_*`` values.
+
 Profiles and queries
 ====================
 

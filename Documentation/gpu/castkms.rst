@@ -200,7 +200,7 @@ The execution blob describes coarse renderer identity, not scene admission.
 Clients must query the active capability contract rather than branch on
 HOST_V1 versus GPU_V1 to decide whether a scene is supported. Plane
 properties describe a static baseline, not the complete negotiated modifier
-set. Renderer version 7 exposes immutable active and pending profiles,
+set. Renderer version 8 exposes immutable active and pending profiles,
 tagged transition scenes and negotiated HOST handback; see
 :doc:`castkms-renderer` for the protocol and its remaining limits.
 GPU_V1 alone does not promise a complete GPU capture path or
@@ -306,7 +306,7 @@ bounds do not advertise additional KMS planes or enable new renderer profiles.
 All buffer descriptors and the combined producer fence remain tied to one
 source-read claim. The renderer must check producer success before reading,
 then release with no access, completed CPU access or a submitted native fence.
-This interface describes accepted scenes. The separate version-7 capability
+This interface describes accepted scenes. The separate version-8 capability
 protocol negotiates supported scenes and transitions; neither interface
 delivers GPU capture destinations.
 
