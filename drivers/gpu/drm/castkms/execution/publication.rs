@@ -365,15 +365,15 @@ impl Publication {
                 pending,
                 ..
             } = &mut *state;
-            let entry = pending
-                .as_ref()
-                .filter(|entry| entry.description.generation == generation)
-                .ok_or(ESTALE)?;
             let property = match slot {
                 Slot::Ready(property) => property,
                 Slot::Closed => return Err(ENODEV),
                 _ => return Err(EAGAIN),
             };
+            let entry = pending
+                .as_ref()
+                .filter(|entry| entry.description.generation == generation)
+                .ok_or(ESTALE)?;
             entry
                 .reservation
                 .activate(configuration, generation, check, || {

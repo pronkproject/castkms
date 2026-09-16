@@ -847,14 +847,25 @@ mod cases {
     fn closing_publication_rejects_prepared_metadata_without_consuming_it() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let proposal = gate_profile(&candidate, device, crtc, true)?;
             let before = device.execution.describe();
             let mut prepared = device.execution.prepare(device, Profile::HostV1)?;
             let proposed = prepared.description()?;
             device.execution.close();
-            candidate.with_activation_control(device, |_, locked| {
-                check(device.execution.publish(locked, &mut prepared) == Err(ENODEV))
-            })?;
+            owner
+                .access()
+                .with_installed_transition(device, |current, locked| {
+                    check(
+                        device.execution.publish_proposal(
+                            locked,
+                            &mut prepared,
+                            proposal.describe().generation,
+                            current.configuration(),
+                            |contract| current.check_contract(contract),
+                        ) == Err(ENODEV),
+                    )
+                })?;
             check(matches!(
                 device.execution.prepare(device, Profile::HostV1),
                 Err(ENODEV)
