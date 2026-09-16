@@ -164,7 +164,15 @@ impl Registration {
         &self,
         operation: impl FnOnce(&mut Queue) -> Result<R>,
     ) -> Result<R> {
-        operation(&mut self.endpoint.queue.lock())
+        let (changed, result) = {
+            let mut queue = self.endpoint.queue.lock();
+            let changed = queue.changed().clone();
+            (changed, operation(&mut queue))
+        };
+        // A worker may have observed an in-lock notification and skipped this busy
+        // recipient. Notify after unlocking so accepted demand cannot lose its wakeup.
+        changed.notify_all();
+        result
     }
 }
 
