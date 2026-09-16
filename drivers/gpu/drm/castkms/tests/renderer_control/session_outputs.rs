@@ -33,7 +33,18 @@ impl Drop for Fixture {
 }
 
 fn with_session(f: impl FnOnce(Fixture) -> Result) -> Result {
-    with_display(|device, crtc, connector, _, file| {
+    with_session_display(|_, _, _, fixture| f(fixture))
+}
+
+fn with_session_display(
+    f: impl FnOnce(
+        &Device<Driver, Registered>,
+        &Crtc<display::Crtc>,
+        &CrtcScanout<'_, Driver>,
+        Fixture,
+    ) -> Result,
+) -> Result {
+    with_display(|device, crtc, connector, scanout, file| {
         let owner = owner(&file, crtc, connector)?;
         let session = Session::new(owner.access(), device.to_registered_ref())?;
         let pending = session.begin(device.execution.describe().generation)?;
@@ -68,15 +79,20 @@ fn with_session(f: impl FnOnce(Fixture) -> Result) -> Result {
             .output
             .with_accepted(|accepted| accepted.map(|accepted| ARef::from(accepted.source)))
             .ok_or(EINVAL)?;
-        f(Fixture {
-            _owner: owner,
-            _grantor: grantor,
-            session,
-            registration,
-            destination,
-            private,
-            source,
-        })
+        f(
+            device,
+            crtc,
+            scanout,
+            Fixture {
+                _owner: owner,
+                _grantor: grantor,
+                session,
+                registration,
+                destination,
+                private,
+                source,
+            },
+        )
     })
 }
 
@@ -100,6 +116,54 @@ fn wait_result(registration: &Registration, expected: Result) -> Result {
 #[kunit_tests(rust_castkms_session_outputs)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn source_animation_progresses_with_published_and_submitted_output() -> Result {
+        with_session_display(|device, crtc, scanout, fixture| {
+            fixture.session.register_image(
+                2,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            fixture
+                .registration
+                .with_queue(|queue| queue.queue_to(1, &fixture.destination, None))?;
+            let output = fixture.session.begin_output(1)?;
+            let output_id = output.id();
+            device.atomic_update(|transaction| transaction.set_crtc_config(crtc, Some(scanout)))?;
+            let source = fixture.session.begin_source(2)?;
+            let source_id = source.id();
+            // Each family can publish while the other family owns an unpublished claim.
+            output.publish(|| {})?;
+            source.publish(|| {})?;
+            fixture.session.release_source(source_id, Completion::Cpu)?;
+            let mut native = ManualFence::new()?;
+            fixture
+                .session
+                .release_output(output_id, Completion::Submitted(native.fence()))?;
+            for _ in 0..16 {
+                device.atomic_update(|transaction| {
+                    transaction.set_crtc_config(crtc, Some(scanout))
+                })?;
+                let source = device
+                    .output
+                    .with_accepted(|accepted| accepted.map(|accepted| ARef::from(accepted.source)))
+                    .ok_or(EINVAL)?;
+                let pending = fixture.session.begin_source(2)?;
+                let id = pending.id();
+                pending.publish(|| {})?;
+                fixture.session.release_source(id, Completion::Cpu)?;
+                source.seal();
+                check(source.prepared()?.ok_or(EINVAL)?.completion()?.is_none())?;
+                check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+                fixture
+                    .registration
+                    .with_queue(|queue| check(queue.advance() == 0 && !queue.has_results()))?;
+            }
+            native.complete(Ok(()))?;
+            wait_result(&fixture.registration, Ok(()))
+        })
+    }
 
     #[test]
     fn publication_rollback_preserves_the_private_image() -> Result {
