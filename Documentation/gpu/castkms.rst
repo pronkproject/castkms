@@ -196,9 +196,9 @@ and color operations are described above. Imported storage additionally needs
 usable CPU-access and mapping support. Atomic layout validation alone does not
 qualify an exporter's runtime mapping or synchronization behavior.
 
-The execution blob is not a complete capability description. The experimental
-HOST_V1 name has been retained while its implementation has expanded; clients
-must not infer the original single-plane/1080p limits from that name. Plane
+The execution blob describes coarse renderer identity, not scene admission.
+Clients must query the active capability contract rather than branch on
+HOST_V1 versus GPU_V1 to decide whether a scene is supported. Plane
 properties describe a static baseline, not the complete negotiated modifier
 set. Renderer version 7 exposes immutable active and pending profiles,
 tagged transition scenes and negotiated HOST handback; see
