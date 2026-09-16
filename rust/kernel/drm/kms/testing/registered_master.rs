@@ -73,6 +73,50 @@ impl<'a, T: KmsDriver> RegisteredMasterFile<'a, T> {
         }
     }
 
+    /// Borrow a numbered CRTC in the registered device's static topology.
+    /// Registration retains the completed list and excludes object destruction.
+    pub fn crtc_at(&self, index: usize) -> Result<&Crtc<T::Crtc>> {
+        // SAFETY: Registration retains every static CRTC. Bounds are checked before walking
+        // the list, and Rust construction enforces the driver's nominated concrete type.
+        unsafe {
+            let config = &(*self.registered.as_raw()).mode_config;
+            if index >= config.num_crtc as usize {
+                return Err(EINVAL);
+            }
+            let mut entry = config.crtc_list.next;
+            for _ in 0..index {
+                entry = (*entry).next;
+            }
+            let raw = crate::container_of!(entry, bindings::drm_crtc, head);
+            Ok(Crtc::from_raw(raw))
+        }
+    }
+
+    /// Retain a connector at the current native iteration position.
+    /// The owned reference survives list changes; the index is not a persistent identity.
+    pub fn connector_at(&self, index: usize) -> Result<ARef<Connector<T::Connector>>> {
+        let mut iterator = bindings::drm_connector_list_iter::default();
+        // SAFETY: Registration retains the initialized connector list and its device.
+        unsafe { bindings::drm_connector_list_iter_begin(self.registered.as_raw(), &mut iterator) };
+        let mut iterator = ScopeGuard::new_with_data(iterator, |mut iterator| {
+            // SAFETY: End the initialized iterator on every return path.
+            unsafe { bindings::drm_connector_list_iter_end(&mut iterator) };
+        });
+        let mut position = 0;
+        loop {
+            // SAFETY: The iterator retains its current connector until advancement or end.
+            let raw = unsafe { bindings::drm_connector_list_iter_next(&mut *iterator) };
+            if raw.is_null() {
+                return Err(EINVAL);
+            }
+            if position == index {
+                // SAFETY: Acquire independent ownership before ending native iteration.
+                return Ok(unsafe { Connector::<T::Connector>::from_raw(raw) }.into());
+            }
+            position += 1;
+        }
+    }
+
     /// Retain the sole connector, with native iteration protecting its lookup lifetime.
     ///
     /// The reference does not prove continuing registration or lease membership.
