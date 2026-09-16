@@ -38,6 +38,22 @@ mod cases {
     use super::*;
 
     #[test]
+    fn default_quota_failure_unwinds_partially_attached_topology() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        counts.constraints_capacity.store(1, Ordering::Relaxed);
+        counts.output_count.store(2, Ordering::Relaxed);
+        let parent = faux::Registration::new(c"rust-kms-constraints-quota-unwind", None)?;
+        let result = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?).err();
+        assert_eq!(result, Some(ENOSPC));
+        assert_ne!(counts.constraints_id.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.plane_states.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.connector_states.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn target_buffers_precede_selection_and_binding_reaches_commit_tail() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         counts.constraints_capacity.store(4, Ordering::Relaxed);
