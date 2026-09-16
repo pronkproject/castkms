@@ -42,6 +42,20 @@ impl Capture {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Delegated {
+    /// Publish demand to the discovered worker without transferring capture ownership.
+    pub(crate) fn register_routed_queue(
+        &self,
+        capacity: u32,
+    ) -> Result<crate::renderer::output_broker::Registration> {
+        self.capture
+            .policy
+            .permission
+            .display()
+            .renderer_routes
+            .lookup()?
+            .register_queue(self, capacity)
+    }
+
     /// Discover the current output worker, then intersect both authorities at admission.
     pub(crate) fn create_routed_queue(
         &self,
