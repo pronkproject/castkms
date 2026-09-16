@@ -43,6 +43,17 @@ struct drm_constraints_entry *
 drm_constraints_entry_create(struct drm_constraints_domain *domain, u32 crtc_id,
 			     struct drm_constraints_description *description,
 			     const struct drm_constraints_entry_ops *ops, void *data);
+
+/*
+ * Retain metadata for a backend with no per-entry private resources or release
+ * callback. Common DRM owns destruction, so the entry does not pin a provider
+ * module merely to retain a fixed default description. Device/state lifetime
+ * must independently protect any resources used by the provider's checks or
+ * execution. This is not suitable for a backend needing retained private data.
+ */
+struct drm_constraints_entry *
+drm_constraints_entry_create_stateless(struct drm_constraints_domain *domain, u32 crtc_id,
+				      struct drm_constraints_description *description);
 struct drm_constraints_entry *drm_constraints_entry_get(struct drm_constraints_entry *entry);
 void drm_constraints_entry_put(struct drm_constraints_entry *entry);
 u64 drm_constraints_entry_id(const struct drm_constraints_entry *entry);

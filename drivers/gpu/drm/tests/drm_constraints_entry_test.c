@@ -107,6 +107,37 @@ static void identities_are_not_reused_across_outputs(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_constraints_entry_crtc(entry), 23);
 }
 
+static void stateless_entries_retain_only_common_resources(struct kunit *test)
+{
+	struct entry_fixture *f = new_fixture(test, 1);
+	struct drm_constraints_entry *entry;
+	const struct drm_constraints_size *size;
+#if defined(MODULE) && defined(CONFIG_MODULE_UNLOAD)
+	int refs = module_refcount(THIS_MODULE);
+#endif
+
+	entry = drm_constraints_entry_create_stateless(f->domain, 19, f->description);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_entry_data(entry), NULL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_entry_description(entry), f->description);
+	KUNIT_EXPECT_EQ(test, drm_constraints_entry_crtc(entry), 19);
+	KUNIT_EXPECT_GT(test, drm_constraints_entry_id(entry), 0);
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_entry_create_stateless(f->domain, 19, f->description),
+		ERR_PTR(-ENOSPC));
+#if defined(MODULE) && defined(CONFIG_MODULE_UNLOAD)
+	KUNIT_EXPECT_EQ(test, module_refcount(THIS_MODULE), refs);
+#endif
+	kunit_release_action(test, put_description, f->description);
+	kunit_release_action(test, put_domain, f->domain);
+	size = drm_constraints_description_output(drm_constraints_entry_description(entry));
+	KUNIT_EXPECT_EQ(test, size->max_width, 64);
+	KUNIT_EXPECT_EQ(test, f->released, 0);
+	kunit_release_action(test, put_entry, entry);
+	KUNIT_EXPECT_EQ(test, f->released, 0);
+}
+
 static void retained_entries_keep_their_quota(struct kunit *test)
 {
 	struct entry_fixture *fixture = new_fixture(test, 1);
@@ -153,6 +184,7 @@ static void rejected_creation_leaves_provider_owned_by_caller(struct kunit *test
 static struct kunit_case drm_constraints_entry_tests[] = {
 	KUNIT_CASE(entries_retain_provider_and_description),
 	KUNIT_CASE(identities_are_not_reused_across_outputs),
+	KUNIT_CASE(stateless_entries_retain_only_common_resources),
 	KUNIT_CASE(retained_entries_keep_their_quota),
 	KUNIT_CASE(identities_remain_scoped_to_their_domain),
 	KUNIT_CASE(rejected_creation_leaves_provider_owned_by_caller),

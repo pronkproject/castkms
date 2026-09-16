@@ -109,6 +109,23 @@ put_module:
 }
 EXPORT_SYMBOL_GPL(drm_constraints_entry_create);
 
+static void stateless_release(void *data)
+{
+}
+
+static const struct drm_constraints_entry_ops stateless_ops = {
+	.owner = THIS_MODULE,
+	.release = stateless_release,
+};
+
+struct drm_constraints_entry *
+drm_constraints_entry_create_stateless(struct drm_constraints_domain *domain, u32 crtc_id,
+				      struct drm_constraints_description *description)
+{
+	return drm_constraints_entry_create(domain, crtc_id, description, &stateless_ops, NULL);
+}
+EXPORT_SYMBOL_GPL(drm_constraints_entry_create_stateless);
+
 struct drm_constraints_entry *drm_constraints_entry_get(struct drm_constraints_entry *entry)
 {
 	kref_get(&entry->ref);
