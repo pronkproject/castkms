@@ -96,6 +96,20 @@ static int find_entry(struct drm_constraints_catalog *catalog, u64 id)
 	return -ENOENT;
 }
 
+struct drm_constraints_entry *
+drm_constraints_catalog_selected(struct drm_constraints_catalog *catalog)
+{
+	struct drm_constraints_entry *entry;
+	int index;
+
+	mutex_lock(&catalog->lock);
+	index = find_entry(catalog, catalog->info.selected_id);
+	entry = drm_constraints_entry_get(catalog->entries[index].entry);
+	mutex_unlock(&catalog->lock);
+	return entry;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_catalog_selected);
+
 int drm_constraints_catalog_add(struct drm_constraints_catalog *catalog,
 				struct drm_constraints_entry *entry)
 {
