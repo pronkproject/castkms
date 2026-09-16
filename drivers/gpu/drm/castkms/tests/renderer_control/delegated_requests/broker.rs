@@ -35,6 +35,27 @@ mod cases {
     use super::*;
 
     #[test]
+    fn recipient_queue_exclusion_does_not_block_another_recipient() -> Result {
+        with_output(|fixture| {
+            let broker = Broker::new()?;
+            let busy = register(&broker, &fixture)?;
+            let ready = register(&broker, &fixture)?;
+            busy.with_queue(|queue| queue.queue_to(1, &fixture.destination, None))?;
+            ready.with_queue(|queue| queue.queue_to(1, &destination(&fixture)?, None))?;
+            busy.with_queue(|_| {
+                let job = broker.try_claim(&fixture.rendered).ok_or(EINVAL)?;
+                check(job.queue_id == ready.id())?;
+                job.output.claim.release(Completion::WithoutAccess);
+                check(broker.try_claim(&fixture.rendered).is_none())
+            })?;
+            let job = broker.try_claim(&fixture.rendered).ok_or(EINVAL)?;
+            check(job.queue_id == busy.id())?;
+            job.output.claim.release(Completion::WithoutAccess);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn revoked_recipient_does_not_block_an_independent_grant() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let fixture = output_fixture(device, crtc, connector, &file)?;
