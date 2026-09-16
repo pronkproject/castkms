@@ -8,7 +8,7 @@ use kernel::{
     sync::{aref::ARef, Arc, Mutex},
 };
 
-const MAX_IMAGES: usize = 128;
+pub(crate) const MAX_IMAGES: usize = 128;
 const MAX_BYTES: usize = 512 * 1024 * 1024;
 const MAX_BUFFERS: usize = 4;
 
