@@ -42,6 +42,11 @@ struct drm_connector_state;
 struct dma_fence;
 struct drm_framebuffer;
 struct drm_colorop;
+struct drm_mode_object;
+
+int drm_atomic_get_property_from_state(struct drm_atomic_commit *state,
+				       struct drm_mode_object *object,
+				       struct drm_property *property, u64 *value);
 
 int __must_check
 drm_atomic_set_legacy_cursor_position(struct drm_atomic_commit *state,

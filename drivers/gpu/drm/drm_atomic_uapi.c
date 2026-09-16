@@ -684,6 +684,72 @@ drm_atomic_plane_get_property(struct drm_plane *plane,
 	return 0;
 }
 
+/**
+ * drm_atomic_get_property_from_state - read a proposed object's mutable property
+ * @state: atomic transaction owning the proposed object state
+ * @object: CRTC or plane on the transaction's device
+ * @property: mutable property attached to @object
+ * @value: output value, unchanged on failure
+ *
+ * The caller holds the object's modeset lock. This only reads state already
+ * included in the transaction; it never adds objects, acquires locks or falls
+ * back to current accepted state. Property decoding uses the same native getter
+ * as ordinary atomic readback, including the driver's atomic_get_property hook.
+ * The caller separately establishes authority to inspect the object.
+ *
+ * Returns: zero, -ENOENT for omitted state, -EOPNOTSUPP for unsupported object
+ * types, or another negative errno. Invalid attachment or immutable properties
+ * return -EINVAL; cross-device objects return -EXDEV.
+ */
+int drm_atomic_get_property_from_state(struct drm_atomic_commit *state,
+				       struct drm_mode_object *object,
+				       struct drm_property *property, u64 *value)
+{
+	u64 result;
+	int ret;
+
+	if (!object || !property || !value || !object->properties ||
+	    (property->flags & DRM_MODE_PROP_IMMUTABLE) ||
+	    drm_mode_obj_find_prop_id(object, property->base.id) != property)
+		return -EINVAL;
+	if (property->dev != state->dev)
+		return -EXDEV;
+	switch (object->type) {
+	case DRM_MODE_OBJECT_CRTC: {
+		struct drm_crtc *crtc = obj_to_crtc(object);
+		struct drm_crtc_state *proposed;
+
+		if (crtc->dev != state->dev)
+			return -EXDEV;
+		drm_modeset_lock_assert_held(&crtc->mutex);
+		proposed = drm_atomic_get_new_crtc_state(state, crtc);
+		if (!proposed)
+			return -ENOENT;
+		ret = drm_atomic_crtc_get_property(crtc, proposed, property, &result);
+		break;
+	}
+	case DRM_MODE_OBJECT_PLANE: {
+		struct drm_plane *plane = obj_to_plane(object);
+		struct drm_plane_state *proposed;
+
+		if (plane->dev != state->dev)
+			return -EXDEV;
+		drm_modeset_lock_assert_held(&plane->mutex);
+		proposed = drm_atomic_get_new_plane_state(state, plane);
+		if (!proposed)
+			return -ENOENT;
+		ret = drm_atomic_plane_get_property(plane, proposed, property, &result);
+		break;
+	}
+	default:
+		return -EOPNOTSUPP;
+	}
+	if (!ret)
+		*value = result;
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_atomic_get_property_from_state);
+
 static int drm_atomic_color_set_data_property(struct drm_colorop *colorop,
 					      struct drm_colorop_state *state,
 					      struct drm_property *property,
