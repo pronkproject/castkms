@@ -97,6 +97,8 @@ impl Owner {
             .device()
             .validation
             .revoke_owner(&self.access.policy.transition_owner);
+        drop(revoked);
+        self.access.device().changed.notify_all();
     }
 }
 

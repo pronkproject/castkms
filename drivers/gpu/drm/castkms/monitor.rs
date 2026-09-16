@@ -291,6 +291,7 @@ impl Control {
 
     fn notify(&self) {
         if let Some(device) = self.device.registration_guard() {
+            device.changed.notify_all();
             device.hotplug_event();
         }
     }

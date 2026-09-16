@@ -42,6 +42,11 @@ impl Capture {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Delegated {
+    /// Shared advisory notifications do not identify a grant or authorize any operation.
+    pub(super) fn changed(&self) -> kernel::sync::Arc<kernel::sync::poll::PollCondVar> {
+        self.capture.policy.permission.device().changed.clone()
+    }
+
     pub(super) fn request_budget(
         &self,
     ) -> &kernel::sync::Arc<crate::capture::request_budget::Budget> {

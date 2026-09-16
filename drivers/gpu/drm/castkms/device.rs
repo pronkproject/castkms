@@ -22,7 +22,7 @@ use kernel::{
     alloc::kvec::KVec,
     drm::auth::MasterRef,
     prelude::*,
-    sync::Arc, //
+    sync::{poll::PollCondVar, Arc}, //
 };
 
 pub(super) const MAX_OUTPUTS: u32 = 8;
@@ -38,6 +38,8 @@ pub(super) struct Display {
 
 #[pin_data]
 pub(super) struct State {
+    /// Advisory wakeups only. Consumers register before rechecking their exact authority.
+    pub(crate) changed: Arc<PollCondVar>,
     pub(crate) validation: Arc<crate::execution::coordinator::Coordinator>,
     pub(super) enable_cursor: bool,
     pub(super) enable_overlay: bool,
@@ -67,11 +69,13 @@ pub(super) struct State {
 impl State {
     fn new(
         displays: KVec<Arc<Display>>,
+        changed: Arc<PollCondVar>,
         enable_cursor: bool,
         enable_overlay: bool,
         enable_plane_pipeline: bool,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
+            changed,
             validation: Arc::pin_init(
                 crate::execution::coordinator::Coordinator::new(displays.len()),
                 GFP_KERNEL,
@@ -118,6 +122,7 @@ impl State {
         for display in &self.displays {
             display.execution.close();
         }
+        self.changed.notify_all();
     }
 }
 
@@ -150,12 +155,13 @@ impl Owner {
         }
         let mut owners = KVec::with_capacity(count as usize, GFP_KERNEL)?;
         let mut displays = KVec::with_capacity(count as usize, GFP_KERNEL)?;
+        let changed = Arc::pin_init(kernel::new_poll_condvar!(), GFP_KERNEL)?;
         for _ in 0..count {
             let execution = Arc::pin_init(Publication::new(), GFP_KERNEL)?;
-            let output = Arc::pin_init(Output::new(), GFP_KERNEL)?;
+            let output = Arc::pin_init(Output::new_notified(Some(changed.clone())), GFP_KERNEL)?;
             let monitor = Monitor::new()?;
             let host = configuration::Owner::new(output.clone(), execution.clone())?;
-            let startup = renderer_startup::Owner::new(output.identity())?;
+            let startup = renderer_startup::Owner::new_notified(output.identity(), changed.clone())?;
             displays.push(
                 Arc::new(
                     Display {
@@ -172,7 +178,7 @@ impl Owner {
             owners.push(DisplayOwner { host, startup }, GFP_KERNEL)?;
         }
         let state = Arc::pin_init(
-            State::new(displays, enable_cursor, enable_overlay, enable_plane_pipeline),
+            State::new(displays, changed, enable_cursor, enable_overlay, enable_plane_pipeline),
             GFP_KERNEL,
         )?;
         Ok(Self {

@@ -14,7 +14,7 @@ use kernel::{
         Fence, Status as FenceStatus,
     },
     prelude::*,
-    sync::{aref::ARef, Arc, Mutex},
+    sync::{aref::ARef, poll::PollCondVar, Arc, Mutex},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +46,7 @@ struct State {
 #[pin_data]
 pub(crate) struct Request {
     destination: Arc<Image>,
+    changed: Option<Arc<PollCondVar>>,
     _charge: Option<Arc<crate::capture::request_budget::Charge>>,
     #[pin]
     state: Mutex<State>,
@@ -58,7 +59,7 @@ impl Image {
         use_id: u64,
         reuse: Option<ARef<Fence>>,
     ) -> Result<Arc<Request>> {
-        self.request_accounted(use_id, reuse, None)
+        self.request_accounted(use_id, reuse, None, None)
     }
 
     pub(super) fn request_accounted(
@@ -66,16 +67,18 @@ impl Image {
         use_id: u64,
         reuse: Option<ARef<Fence>>,
         charge: Option<Arc<crate::capture::request_budget::Charge>>,
+        changed: Option<Arc<PollCondVar>>,
     ) -> Result<Arc<Request>> {
         let request = Arc::pin_init(
             pin_init!(Request {
                 destination: self.clone(),
+                changed,
                 _charge: charge,
                 state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: None, completion: None }),
             }),
             GFP_KERNEL,
         )?;
-        let usage = self.reserve(use_id, reuse)?;
+        let usage = self.reserve_notified(use_id, reuse, request.changed.clone())?;
         request.state.lock().usage = Some(usage);
         Ok(request)
     }
@@ -83,6 +86,12 @@ impl Image {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Request {
+    fn notify(&self) {
+        if let Some(changed) = &self.changed {
+            changed.notify_all();
+        }
+    }
+
     /// Stop unclaimed work immediately; claimed work retains storage until native retirement.
     pub(crate) fn cancel(&self) {
         let retired = {
@@ -103,6 +112,7 @@ impl Request {
             }
         };
         drop(retired);
+        self.notify();
     }
 
     fn fail_queued(&self, error: Error) {
@@ -119,12 +129,27 @@ impl Request {
             }
         };
         drop(retired);
+        self.notify();
     }
 
-    /// Reconcile queued authority loss. Submitted work remains pending until actual cleanup.
+    /// Reconcile queued authority and reuse failure without requiring a private image.
+    /// Submitted work remains pending until actual cleanup.
     pub(crate) fn status(&self) -> Status {
         if matches!(self.state.lock().phase, Phase::Queued) {
             if let Err(error) = self.destination.scope().with_current(|_| Ok(())) {
+                self.fail_queued(error);
+            }
+        }
+        let usage = {
+            let state = self.state.lock();
+            if matches!(state.phase, Phase::Queued) {
+                state.usage.clone()
+            } else {
+                None
+            }
+        };
+        if let Some(usage) = usage {
+            if let Err(error) = usage.ready() {
                 self.fail_queued(error);
             }
         }
@@ -265,7 +290,10 @@ impl Request {
         } else {
             result
         });
-        state.usage.take()
+        let usage = state.usage.take();
+        drop(state);
+        self.notify();
+        usage
     }
 }
 
@@ -350,6 +378,7 @@ impl Claim {
             state.completion = fence.clone();
             state.phase = Phase::Submitted;
         }
+        self.request.notify();
         if let Some(retirement) = self.retirement.take() {
             match fence {
                 Some(fence) => retirement.submit(&fence),
@@ -363,6 +392,7 @@ impl Drop for Claim {
     fn drop(&mut self) {
         if let Some(retirement) = self.retirement.take() {
             self.request.state.lock().phase = Phase::Lost;
+            self.request.notify();
             // Unknown access is not completion. Retain E, D, accounting and callback code;
             // native-driver recovery or a future explicit recovery protocol must resolve it.
             core::mem::forget(retirement);
