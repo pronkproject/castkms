@@ -14,8 +14,9 @@ config DRM_CASTKMS
 	  including CPU-mappable imports, at sizes through 8192x8192. Cursor planes
 	  and an optional pool of eight shared overlays support positioned, cropped
 	  and scaled composition. Output lookup tables and matrices, optional plane
-	  color pipelines and YUV color properties are applied in software. Tiled
-	  storage and CEC are not supported. Optional ALSA support exposes one
+	  color pipelines and YUV color properties are applied in software. The
+	  in-kernel compositor does not support tiled storage. CEC is unsupported.
+	  Optional ALSA support exposes one
 	  playback card per attached audio sink and separately authorized audio
 	  capture. Captures embed the cursor. An authorized userspace renderer can
 	  negotiate complete scenes independently of the in-kernel compositor's
@@ -36,7 +37,8 @@ config DRM_CASTKMS_KUNIT_TEST
 	depends on DRM_CASTKMS && KUNIT=y
 	default KUNIT_ALL_TESTS
 	help
-	  Test scene replacement, blanking and terminal output shutdown without
-	  accessing display pixels. Atomic callback tests use private unregistered
-	  devices with synthetic master observations to inspect scene ownership.
-	  These tests run when CastKMS is loaded.
+	  Test composition, display authority, source retirement, renderer
+	  transitions, capture delivery and audio with owned test buffers.
+	  Registered and unregistered fixtures exercise the real driver callbacks;
+	  native completion tests do not qualify external GPU rendering. These
+	  tests run when CastKMS is loaded.
