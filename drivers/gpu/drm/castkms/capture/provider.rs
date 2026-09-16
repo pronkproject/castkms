@@ -19,6 +19,7 @@ pub(crate) mod delegated_queue;
 mod frame;
 mod request;
 mod storage;
+mod recipient_storage;
 
 pub(crate) use creator::Creator;
 pub(crate) use delegated::Delegated;

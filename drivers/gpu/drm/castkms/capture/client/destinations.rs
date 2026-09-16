@@ -23,7 +23,12 @@ impl Destinations {
         })
     }
 
-    pub(super) fn insert(&mut self, id: u64, image: Image) -> Result {
+    pub(super) fn insert(
+        &mut self,
+        id: u64,
+        mut image: Image,
+        retain: impl FnOnce(&mut Image) -> Result,
+    ) -> Result {
         self.images.insert(id, || {
             if !image.buffer().is_writable() {
                 return Err(EACCES);
@@ -33,6 +38,7 @@ impl Destinations {
             if image.buffer().size() > ALLOCATION_LIMIT {
                 return Err(E2BIG);
             }
+            retain(&mut image)?;
             Ok(Arc::new(image, GFP_KERNEL)?)
         })
     }

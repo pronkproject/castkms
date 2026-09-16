@@ -31,6 +31,27 @@ mod cases {
     use super::*;
 
     #[test]
+    fn known_alias_rejection_does_not_consume_a_destination_name() -> Result {
+        with_exporter(|fixture| {
+            let _connector = fixture.drm.publish_connector_identity()?;
+            let creator = fixture.drm.master_file()?;
+            let _fb = select(fixture, &creator)?;
+            let grantor = grant(fixture, &creator)?;
+            let mut client = Client::new(grantor.capture())?;
+            client.register_destination(1, image(fixture)?)?;
+            let retained = client.destination(1)?;
+            let alias = Image::new(
+                retained.buffer().into(), retained.layout(), fourcc::XRGB8888,
+                fourcc::FORMAT_MOD_LINEAR, retained.pitch(), retained.offset(),
+            )?;
+            check(client.register_destination(2, alias) == Err(EEXIST))?;
+            client.register_destination(2, image(fixture)?)?;
+            client.unregister_destination(1)?;
+            client.unregister_destination(2)
+        })
+    }
+
+    #[test]
     fn names_are_independent_and_removed_storage_survives_only_by_reference() -> Result {
         with_exporter(|fixture| {
             let _connector = fixture.drm.publish_connector_identity()?;
