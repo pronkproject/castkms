@@ -22,7 +22,8 @@ pub use description::{
 pub use entry::{
     Backend,
     Domain,
-    Entry, //
+    Entry,
+    OpaqueEntry, //
 };
 
 pub use list::{

@@ -22,6 +22,7 @@ use crate::{
 use core::{
     ffi::c_void,
     marker::PhantomData,
+    ops::Deref,
     ptr::NonNull, //
 };
 
@@ -78,6 +79,85 @@ impl Domain {
 /// implementation attribute selects the implementing module by default.
 #[vtable]
 pub unsafe trait Backend: Send + Sync + 'static {}
+
+/// Immutable entry metadata without access to provider-private resources.
+///
+/// Retaining an entry preserves its description and any backend resources until final release.
+/// It does not establish readiness, select the entry or authorize source reads. Operations and
+/// final reference release require a context that may sleep.
+///
+/// # Invariants
+///
+/// Every reference retains a live native entry. Native ownership retains any release callback
+/// and its module independently of the Rust view's type.
+#[repr(transparent)]
+pub struct OpaqueEntry(Opaque<bindings::drm_constraints_entry>);
+
+// SAFETY: Native entry ownership and immutable metadata are synchronized independently of type.
+unsafe impl Send for OpaqueEntry {}
+// SAFETY: No provider-private data can be accessed through this view.
+unsafe impl Sync for OpaqueEntry {}
+
+// SAFETY: Native get/put retain the allocation, description and any provider resources.
+unsafe impl AlwaysRefCounted for OpaqueEntry {
+    fn inc_ref(&self) {
+        // SAFETY: The shared reference retains an initialized native entry.
+        unsafe { bindings::drm_constraints_entry_get(self.0.get()) };
+    }
+
+    unsafe fn dec_ref(ptr: NonNull<Self>) {
+        // SAFETY: The caller transfers one reference to the transparently represented entry.
+        unsafe { bindings::drm_constraints_entry_put(ptr.as_ptr().cast()) };
+    }
+}
+
+impl OpaqueEntry {
+    /// Create an entry for a backend with no private per-entry resources.
+    ///
+    /// Common DRM owns destruction, so a fixed default does not pin its provider's module.
+    /// The device and accepted state must independently retain any resources used for execution.
+    /// Resource-owning providers must use [`Entry::new`] instead.
+    pub fn new_stateless(
+        domain: &Domain,
+        crtc_id: u32,
+        description: &Description,
+    ) -> Result<ARef<Self>> {
+        // SAFETY: Construction borrows live inputs and returns an owned entry or an error.
+        let raw = from_err_ptr(unsafe {
+            bindings::drm_constraints_entry_create_stateless(
+                domain.0.get(),
+                crtc_id,
+                description.0.get(),
+            )
+        })?;
+        // SAFETY: Successful construction transfers one initialized native reference.
+        Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
+    }
+
+    /// Positive identity, unique for the domain's lifetime.
+    pub fn id(&self) -> u64 {
+        // SAFETY: The shared reference retains the entry's immutable metadata.
+        unsafe { bindings::drm_constraints_entry_id(self.0.get()) }
+    }
+
+    /// CRTC object ID, not modesetting authority or a retained object reference.
+    pub fn crtc_id(&self) -> u32 {
+        // SAFETY: The shared reference retains the entry's immutable metadata.
+        unsafe { bindings::drm_constraints_entry_crtc(self.0.get()) }
+    }
+
+    /// Test exact namespace membership, independent of numeric ID equality.
+    pub fn in_domain(&self, domain: &Domain) -> bool {
+        // SAFETY: Both native references remain initialized and live throughout the comparison.
+        unsafe { bindings::drm_constraints_entry_in_domain(self.0.get(), domain.0.get()) }
+    }
+
+    /// Borrow the immutable description retained by the native entry.
+    pub fn description(&self) -> &Description {
+        // SAFETY: Native ownership retains an initialized description for the entry's lifetime.
+        unsafe { &*bindings::drm_constraints_entry_description(self.0.get()).cast() }
+    }
+}
 
 /// Immutable entry retaining its domain, description and typed provider resources.
 ///
@@ -156,35 +236,20 @@ impl<B: Backend> Entry<B> {
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
     }
 
-    /// Positive identity, unique for the domain's lifetime.
-    pub fn id(&self) -> u64 {
-        // SAFETY: The shared reference retains the entry's immutable metadata.
-        unsafe { bindings::drm_constraints_entry_id(self.raw.get()) }
-    }
-
-    /// CRTC object ID, not modesetting authority or a retained object reference.
-    pub fn crtc_id(&self) -> u32 {
-        // SAFETY: The shared reference retains the entry's immutable metadata.
-        unsafe { bindings::drm_constraints_entry_crtc(self.raw.get()) }
-    }
-
-    /// Test exact namespace membership, independent of numeric ID equality.
-    pub fn in_domain(&self, domain: &Domain) -> bool {
-        // SAFETY: Both native references remain initialized and live throughout the comparison.
-        unsafe { bindings::drm_constraints_entry_in_domain(self.raw.get(), domain.0.get()) }
-    }
-
-    /// Borrow the immutable description retained by the native entry.
-    pub fn description(&self) -> &Description {
-        // SAFETY: Native entry ownership retains an initialized description. The transparent
-        // view borrows that allocation no longer than the entry reference.
-        unsafe { &*bindings::drm_constraints_entry_description(self.raw.get()).cast() }
-    }
-
     /// Borrow the backend retained by this exact entry, not a mutable current-backend pointer.
     pub fn backend(&self) -> ArcBorrow<'_, B> {
         // SAFETY: The type invariant establishes a foreign Arc<B>, retained throughout the borrow.
         unsafe { Arc::<B>::borrow(bindings::drm_constraints_entry_data(self.raw.get())) }
+    }
+}
+
+impl<B: Backend> Deref for Entry<B> {
+    type Target = OpaqueEntry;
+
+    fn deref(&self) -> &OpaqueEntry {
+        // SAFETY: Both types transparently represent the same live native entry. The opaque
+        // view preserves native ownership without exposing or changing the backend's type.
+        unsafe { &*self.raw.get().cast() }
     }
 }
 
