@@ -79,6 +79,18 @@ int drm_constraints_list_forget(struct drm_constraints_list *list, u64 id);
 int drm_constraints_list_suggest(struct drm_constraints_list *list, u64 id);
 
 /*
+ * Retire every offer except the exact selected fixed default, clearing any
+ * suggestion. The caller supplies the output's retained default and excludes
+ * competing publication/selection across owner recovery. This does not disable
+ * output, restore selection or revoke pixel access. Closed lists stay closed;
+ * a missing, withdrawn or unselected default is rejected without modification.
+ * Retained snapshots and backend references remain valid. Final resource
+ * release runs outside the list lock. No-op retirement preserves generation.
+ */
+int drm_constraints_list_retain_default(struct drm_constraints_list *list,
+				       struct drm_constraints_entry *entry);
+
+/*
  * Validate or accept an exact retained entry under the list lock. The caller
  * first stabilizes modesetting authority and all affected object state. Callback
  * lock order is caller locks -> list lock -> provider locks; callbacks must

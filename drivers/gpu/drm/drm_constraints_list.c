@@ -232,6 +232,44 @@ int drm_constraints_list_suggest(struct drm_constraints_list *list, u64 id)
 }
 EXPORT_SYMBOL_GPL(drm_constraints_list_suggest);
 
+int drm_constraints_list_retain_default(struct drm_constraints_list *list,
+				       struct drm_constraints_entry *entry)
+{
+	struct drm_constraints_entry *retired[DRM_CONSTRAINTS_MAX_ENTRIES];
+	unsigned int count = 0, i;
+	int index, ret = 0;
+
+	if (!entry)
+		return -EINVAL;
+	mutex_lock(&list->lock);
+	index = find_entry(list, drm_constraints_entry_id(entry));
+	if (list->closed || index < 0 || list->entries[index].entry != entry ||
+	    !list->entries[index].selectable)
+		ret = -ESTALE;
+	else if (list->info.selected_id != drm_constraints_entry_id(entry))
+		ret = -EBUSY;
+	else if (list->info.count == 1 && !list->info.suggested_id)
+		ret = 0;
+	else if (list->info.generation == U64_MAX)
+		ret = -EOVERFLOW;
+	else {
+		for (i = 0; i < list->info.count; i++)
+			if (i != index)
+				retired[count++] = list->entries[i].entry;
+		memset(list->entries, 0, list->info.count * sizeof(*list->entries));
+		list->entries[0].entry = entry;
+		list->entries[0].selectable = true;
+		list->info.count = 1;
+		list->info.suggested_id = 0;
+		list->info.generation++;
+	}
+	mutex_unlock(&list->lock);
+	for (i = 0; i < count; i++)
+		drm_constraints_entry_put(retired[i]);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_list_retain_default);
+
 static int validate_entry(struct drm_constraints_list *list,
 			  struct drm_constraints_entry *entry)
 {
