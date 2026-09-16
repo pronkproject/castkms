@@ -153,7 +153,9 @@ static void describe_output(int master, const struct drm_mode_create_capture_gra
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
 	CHECK(!memcmp(&first, &next, sizeof(first)));
 	/* Changed timings create another mode interval without changing visible geometry. */
-	mode.clock++;
+	/* A one-kHz clock delta can compare equal after DRM's picosecond conversion. */
+	CHECK(mode.htotal < UINT16_MAX);
+	mode.htotal++;
 	CHECK(drmModeSetCrtc(master, request->crtc_id, buffer.fb, 0, 0,
 			     &connector_id, 1, &mode) == 0);
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
