@@ -54,8 +54,9 @@ struct drm_constraints_format {
  * Range rules require a zero mask. Enum rules require a nonempty mask and
  * describe values 0..63; bitmask rules may permit only zero. Blob contents,
  * object references and interactions between properties remain provider checks.
- * Rules apply to the enabled CRTC and planes used by the scene, not unused
- * objects. Their declared type must match the attached property's native type.
+ * Rules describe standard scalar scene properties, not request-only sentinels
+ * or driver-private properties. They apply to enabled CRTCs and used planes,
+ * not unused objects. Their type must match the attached property's native type.
  */
 struct drm_constraints_property {
 	u32 object_id;
