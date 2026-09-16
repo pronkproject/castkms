@@ -67,6 +67,54 @@ mod cases {
     use super::*;
 
     #[test]
+    fn retained_producer_notifications_follow_completed_private_content() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let (active, execution) = activate(&candidate, device, crtc)?;
+            let image = candidate.register_private_image(
+                &active,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            let (mut scene, configuration) = device
+                .output
+                .with_accepted(|accepted| {
+                    accepted.and_then(|accepted| {
+                        Some((accepted.scene?.clone(), accepted.configuration.clone()))
+                    })
+                })
+                .ok_or(EINVAL)?;
+            let mut producer = ManualFence::new()?;
+            let mut layer = scene.primary().ok_or(EINVAL)?.clone();
+            layer.producer = Some(Arc::new(
+                kernel::drm::kms::framebuffer::dependencies::Dependencies::acquire(
+                    layer.framebuffer(),
+                    Some(producer.fence()),
+                )?,
+                GFP_KERNEL,
+            )?);
+            scene.set_layer(0, Some(Arc::new(layer, GFP_KERNEL)?));
+            device.output.publish_with_configuration(
+                kernel::drm::preparation::Source::new(2)?,
+                crate::output::SceneUpdate::Replace(Some(scene)),
+                configuration,
+            );
+            let mut job = candidate.claim_render(&active, execution, None, image.prepare(1)?)?;
+            job.observe_producers(&device.changed)?;
+            let rendered = job.release(Completion::Cpu).ok_or(EINVAL)?;
+            check(rendered.content().status() == Status::Pending)?;
+            let observer = kernel::sync::poll::testing::Observer::new(device.changed.clone())?;
+            producer.complete(Err(EIO))?;
+            check(observer.notifications() > 0)?;
+            check(rendered.content().status() == Status::Complete(Err(EIO)))?;
+            drop(rendered);
+            drop(image.prepare(2)?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn observed_source_admission_does_not_keep_the_worker_alive() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
