@@ -188,13 +188,13 @@ impl Profile {
             self.check_color(layer.color.as_deref())?;
             use kernel::drm::kms::plane::{ColorEncoding, ColorRange};
             let encoding = match layer.yuv.0 {
-                ColorEncoding::Bt601 => 0,
-                ColorEncoding::Bt709 => 1,
-                ColorEncoding::Bt2020 => 2,
+                ColorEncoding::Bt601 => kernel::uapi::DRM_CASTKMS_YUV_ENCODING_BT601 as usize,
+                ColorEncoding::Bt709 => kernel::uapi::DRM_CASTKMS_YUV_ENCODING_BT709 as usize,
+                ColorEncoding::Bt2020 => kernel::uapi::DRM_CASTKMS_YUV_ENCODING_BT2020 as usize,
             };
             let range = match layer.yuv.1 {
-                ColorRange::Limited => 0,
-                ColorRange::Full => 1,
+                ColorRange::Limited => kernel::uapi::DRM_CASTKMS_YUV_RANGE_LIMITED as usize,
+                ColorRange::Full => kernel::uapi::DRM_CASTKMS_YUV_RANGE_FULL as usize,
             };
             if image.is_yuv()
                 && (!self.limits.color.yuv_encodings[encoding]
