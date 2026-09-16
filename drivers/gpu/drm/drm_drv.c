@@ -46,6 +46,7 @@
 #include <drm/drm_cache.h>
 #include <drm/drm_client_event.h>
 #include <drm/drm_color_mgmt.h>
+#include <drm/drm_constraints_owner.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
 #include <drm/drm_managed.h>
@@ -1168,6 +1169,8 @@ EXPORT_SYMBOL(drm_dev_register);
 void drm_dev_unregister(struct drm_device *dev)
 {
 	dev->registered = false;
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
+		drm_constraints_owner_stop(dev);
 
 	drm_client_sysrq_unregister(dev);
 	drm_panic_unregister(dev);

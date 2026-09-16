@@ -106,7 +106,41 @@ static void recovery_work_can_release_the_final_device_reference(struct kunit *t
 	}
 }
 
+static void observe_unload(struct drm_device *dev)
+{
+	int *status = dev->dev_private;
+
+	mutex_lock(&dev->master_mutex);
+	*status = drm_constraints_owner_check(dev);
+	drm_constraints_owner_lost(dev);
+	mutex_unlock(&dev->master_mutex);
+}
+
+static void unregistration_stops_recovery_before_driver_unload(struct kunit *test)
+{
+	static const struct drm_driver driver = {
+		.driver_features = DRIVER_MODESET | DRIVER_ATOMIC,
+		.unload = observe_unload,
+		.name = "constraints-unregister-test",
+	};
+	struct device *parent = drm_kunit_helper_alloc_device(test);
+	struct drm_device *dev;
+	int status = 0;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
+	dev = __drm_kunit_helper_alloc_drm_device_with_driver(test, parent,
+							   sizeof(*dev), 0, &driver);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(dev, 2), 0);
+	dev->dev_private = &status;
+	drm_dev_unregister(dev);
+	drm_constraints_owner_flush(dev);
+	KUNIT_EXPECT_EQ(test, status, -ENODEV);
+	dev->dev_private = NULL;
+}
+
 static struct kunit_case drm_constraints_device_tests[] = {
+	KUNIT_CASE(unregistration_stops_recovery_before_driver_unload),
 	KUNIT_CASE(recovery_work_can_release_the_final_device_reference),
 	KUNIT_CASE(device_publishes_one_validated_domain),
 	KUNIT_CASE(registered_devices_cannot_change_domains),
