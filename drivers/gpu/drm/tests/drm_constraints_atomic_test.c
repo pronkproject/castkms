@@ -839,6 +839,70 @@ static void default_restoration_rechecks_default_availability(struct kunit *test
 	KUNIT_EXPECT_EQ(test, f->installs, 2);
 }
 
+static void recovery_restores_all_defaults_before_retiring_offers(struct kunit *test)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture(test);
+	struct atomic_fixture *outputs[] = { f, other };
+	struct drm_constraints_snapshot *snapshot;
+	unsigned int i;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		struct atomic_fixture *output = outputs[i];
+		struct drm_atomic_commit *state = new_update(test, output,
+							    output->target, output->tiled);
+
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+		KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_commit), 0);
+		drm_atomic_commit_clear(state);
+		output->backends[1].failed = true;
+	}
+	other->backends[0].failed = true;
+	KUNIT_EXPECT_EQ(test, drm_constraints_recover(f->dev), -EIO);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+	KUNIT_EXPECT_PTR_EQ(test, other->crtc->state->constraints, other->target);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		KUNIT_EXPECT_FALSE(test, outputs[i]->crtc->state->enable);
+		KUNIT_EXPECT_PTR_EQ(test, outputs[i]->plane->state->fb, NULL);
+		snapshot = drm_constraints_list_snapshot(
+			drm_constraints_crtc_list(outputs[i]->crtc), 0);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, snapshot);
+		KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_info(snapshot)->count, 2);
+		drm_constraints_snapshot_put(snapshot);
+	}
+	other->backends[0].failed = false;
+	KUNIT_ASSERT_EQ(test, drm_constraints_recover(f->dev), 0);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		struct atomic_fixture *output = outputs[i];
+
+		KUNIT_EXPECT_PTR_EQ(test, output->crtc->state->constraints, output->initial);
+		snapshot = drm_constraints_list_snapshot(
+			drm_constraints_crtc_list(output->crtc), 0);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, snapshot);
+		KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_info(snapshot)->count, 1);
+		KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_info(snapshot)->selected_id,
+				 drm_constraints_entry_id(output->initial));
+		drm_constraints_snapshot_put(snapshot);
+	}
+}
+
+static void recovery_does_not_reopen_closed_lists(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_commit), 0);
+	drm_atomic_commit_clear(state);
+	drm_constraints_list_close(drm_constraints_crtc_list(f->crtc));
+	KUNIT_EXPECT_EQ(test, drm_constraints_recover(f->dev), -ESTALE);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->enable);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+}
+
 static void closure_rejects_checked_activation(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1209,25 +1273,30 @@ static int commit_prepared_update(struct drm_atomic_commit *state)
 struct shutdown_worker {
 	struct drm_device *dev;
 	struct completion finished;
+	bool recover;
+	int result;
 };
 
 static int shutdown_device(void *data)
 {
 	struct shutdown_worker *worker = data;
 
-	drm_atomic_helper_shutdown(worker->dev);
+	if (worker->recover)
+		worker->result = drm_constraints_recover(worker->dev);
+	else
+		drm_atomic_helper_shutdown(worker->dev);
 	complete(&worker->finished);
 	while (!kthread_should_stop())
 		schedule_timeout_interruptible(1);
 	return 0;
 }
 
-static void prepared_shutdown_retains_pending_native_reads(struct kunit *test)
+static void check_prepared_shutdown(struct kunit *test, bool recover)
 {
 	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
 	struct atomic_fixture *f = new_fixture_with_preparation(test, true);
 	struct atomic_fixture *outputs[] = { f, other };
-	struct shutdown_worker worker = { .dev = f->dev };
+	struct shutdown_worker worker = { .dev = f->dev, .recover = recover };
 	struct drm_prepare_source *source;
 	struct drm_prepare_read_claim *read;
 	struct dma_fence *fence;
@@ -1262,7 +1331,8 @@ static void prepared_shutdown_retains_pending_native_reads(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
 	drm_prepare_read_release(read, fence);
 	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
-		drm_constraints_list_close(drm_constraints_crtc_list(outputs[i]->crtc));
+		if (!recover)
+			drm_constraints_list_close(drm_constraints_crtc_list(outputs[i]->crtc));
 		outputs[i]->backends[1].failed = true;
 	}
 	init_completion(&worker.finished);
@@ -1282,12 +1352,24 @@ static void prepared_shutdown_retains_pending_native_reads(struct kunit *test)
 	f->installed = NULL;
 	KUNIT_EXPECT_FALSE(test, early);
 	KUNIT_EXPECT_TRUE(test, completion_done(&worker.finished));
-	KUNIT_EXPECT_EQ(test, f->installs, 3);
+	KUNIT_EXPECT_EQ(test, worker.result, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, recover ? 5 : 3);
 	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
 		KUNIT_EXPECT_FALSE(test, outputs[i]->crtc->state->enable);
 		KUNIT_EXPECT_PTR_EQ(test, outputs[i]->plane->state->fb, NULL);
-		KUNIT_EXPECT_PTR_EQ(test, outputs[i]->crtc->state->constraints, outputs[i]->target);
+		KUNIT_EXPECT_PTR_EQ(test, outputs[i]->crtc->state->constraints,
+				    recover ? outputs[i]->initial : outputs[i]->target);
 	}
+}
+
+static void prepared_shutdown_retains_pending_native_reads(struct kunit *test)
+{
+	check_prepared_shutdown(test, false);
+}
+
+static void recovery_retains_pending_native_reads(struct kunit *test)
+{
+	check_prepared_shutdown(test, true);
 }
 
 static void proposed_scene_obeys_scalar_property_rules(struct kunit *test)
@@ -1537,6 +1619,9 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(framebuffer_removal_can_disable_unavailable_output),
 	KUNIT_CASE(default_restoration_requires_quiescent_output),
 	KUNIT_CASE(default_restoration_rechecks_default_availability),
+	KUNIT_CASE(recovery_restores_all_defaults_before_retiring_offers),
+	KUNIT_CASE(recovery_does_not_reopen_closed_lists),
+	KUNIT_CASE(recovery_retains_pending_native_reads),
 	KUNIT_CASE(closure_rejects_checked_activation),
 	KUNIT_CASE(shutdown_cannot_select_through_closed_list),
 	KUNIT_CASE(predecessor_backend_survives_native_read),
