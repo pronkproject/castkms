@@ -30,7 +30,10 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 	if (!entry || !state || !state->crtc)
 		return -EINVAL;
 	drm_modeset_lock_assert_held(&state->crtc->mutex);
-	if (state->state && state->state->checked)
+	if (!state->state || state->state->dev != state->crtc->dev ||
+	    drm_atomic_get_new_crtc_state(state->state, state->crtc) != state)
+		return -EINVAL;
+	if (state->state->checked)
 		return -EBUSY;
 	catalog = drm_constraints_crtc_catalog(state->crtc);
 	if (!catalog)

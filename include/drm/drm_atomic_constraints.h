@@ -7,7 +7,8 @@ struct drm_crtc_state;
 struct drm_constraints_entry;
 
 /*
- * Set a candidate binding in mutable atomic state under the CRTC modeset lock.
+ * Set a candidate binding in a transaction's owned, unchecked proposed CRTC
+ * state under its modeset lock. Live, detached and retiring states are invalid.
  * This retains entry, not availability or authority; real acceptance rechecks.
  * Omission retains duplicated state. A NULL entry is invalid, not a default.
  */
