@@ -12,6 +12,7 @@ mod client_file;
 pub(crate) mod files;
 pub(crate) mod job;
 pub(crate) mod permission;
+pub(crate) mod private_registry;
 mod probe;
 pub(crate) mod proposal;
 mod revoker_file;
