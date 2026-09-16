@@ -155,6 +155,45 @@ mod cases {
     }
 
     #[test]
+    fn private_write_completion_wakes_waiting_output_claims() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let fixture = output_fixture(device, crtc, connector, &file)?;
+            let mut queue = queue(&fixture, 1)?;
+            let private = fixture.renderer.register_private_image(
+                &fixture.active,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            let mut completion = ManualFence::new()?;
+            let rendered = Arc::new(
+                fixture
+                    .renderer
+                    .claim_render(
+                        &fixture.active,
+                        fixture.execution,
+                        None,
+                        private.prepare(1)?,
+                    )?
+                    .release(Completion::Submitted(completion.fence()))
+                    .ok_or(EINVAL)?,
+                GFP_KERNEL,
+            )?;
+            queue.queue_to(1, &fixture.destination, None)?;
+            check(queue.try_claim(&rendered).is_none())?;
+            let observer = Observer::new(queue.changed().clone())?;
+            completion.complete(Ok(()))?;
+            wait_notification(&observer, 0)?;
+            let job = queue.try_claim(&rendered).ok_or(EINVAL)?;
+            job.claim.release(Completion::Cpu);
+            let before = observer.notifications();
+            drop(rendered);
+            wait_notification(&observer, before)?;
+            drop(private.prepare(2)?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn failed_publication_preserves_terminal_credit_and_identity() -> Result {
         with_output(|fixture| {
             check(queue(&fixture, 0).err() == Some(EINVAL))?;
