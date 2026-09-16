@@ -781,6 +781,60 @@ static void framebuffer_removal_can_disable_unavailable_output(struct kunit *tes
 	check_framebuffer_removal(test, true);
 }
 
+static void default_restoration_requires_quiescent_output(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+	struct drm_constraints_entry *selected;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_commit), 0);
+	drm_atomic_commit_clear(state);
+	KUNIT_EXPECT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), -EBUSY);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, f->tiled);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	f->backends[1].failed = true;
+	drm_atomic_helper_shutdown(f->dev);
+	KUNIT_ASSERT_FALSE(test, f->crtc->state->enable);
+	KUNIT_ASSERT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+	KUNIT_EXPECT_EQ(test, f->installs, 3);
+	selected = drm_constraints_list_selected(drm_constraints_crtc_list(f->crtc));
+	KUNIT_EXPECT_PTR_EQ(test, selected, f->initial);
+	drm_constraints_entry_put(selected);
+	KUNIT_ASSERT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 3);
+}
+
+static void default_restoration_rechecks_default_availability(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+	struct drm_constraints_list *list = drm_constraints_crtc_list(f->crtc);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_commit), 0);
+	drm_atomic_commit_clear(state);
+	drm_atomic_helper_shutdown(f->dev);
+	KUNIT_ASSERT_FALSE(test, f->crtc->state->enable);
+	f->backends[0].failed = true;
+	KUNIT_EXPECT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), -EIO);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	KUNIT_EXPECT_EQ(test, f->installs, 2);
+	f->backends[0].failed = false;
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_list_withdraw(list, drm_constraints_entry_id(f->initial)), 0);
+	KUNIT_EXPECT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), -ESTALE);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	drm_constraints_list_close(list);
+	KUNIT_EXPECT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), -ESTALE);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	KUNIT_EXPECT_EQ(test, f->installs, 2);
+}
+
 static void closure_rejects_checked_activation(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1477,6 +1531,8 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(closure_after_check_still_permits_disable),
 	KUNIT_CASE(framebuffer_removal_preserves_accepted_binding),
 	KUNIT_CASE(framebuffer_removal_can_disable_unavailable_output),
+	KUNIT_CASE(default_restoration_requires_quiescent_output),
+	KUNIT_CASE(default_restoration_rechecks_default_availability),
 	KUNIT_CASE(closure_rejects_checked_activation),
 	KUNIT_CASE(shutdown_cannot_select_through_closed_list),
 	KUNIT_CASE(predecessor_backend_survives_native_read),
