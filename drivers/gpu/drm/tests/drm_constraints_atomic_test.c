@@ -20,6 +20,7 @@
 #include <drm/drm_constraints_device.h>
 #include <drm/drm_constraints_entry.h>
 #include <drm/drm_constraints_output.h>
+#include <drm/drm_constraints_owner.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_kunit_helpers.h>
@@ -903,6 +904,70 @@ static void recovery_does_not_reopen_closed_lists(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
 }
 
+static int owner_status(struct drm_device *dev)
+{
+	int ret;
+
+	mutex_lock(&dev->master_mutex);
+	ret = drm_constraints_owner_check(dev);
+	mutex_unlock(&dev->master_mutex);
+	return ret;
+}
+
+static void owner_recovery_excludes_replacement_until_success(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+	int pending;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_commit), 0);
+	drm_atomic_commit_clear(state);
+	KUNIT_EXPECT_EQ(test, owner_status(f->dev), 0);
+	f->backends[0].failed = true;
+	mutex_lock(&f->dev->master_mutex);
+	drm_constraints_owner_lost(f->dev);
+	drm_constraints_owner_lost(f->dev);
+	pending = drm_constraints_owner_check(f->dev);
+	mutex_unlock(&f->dev->master_mutex);
+	drm_constraints_owner_flush(f->dev);
+	KUNIT_EXPECT_EQ(test, pending, -EBUSY);
+	KUNIT_EXPECT_EQ(test, owner_status(f->dev), -EIO);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->enable);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	f->backends[0].failed = false;
+	mutex_lock(&f->dev->master_mutex);
+	drm_constraints_owner_retry(f->dev);
+	pending = drm_constraints_owner_check(f->dev);
+	mutex_unlock(&f->dev->master_mutex);
+	drm_constraints_owner_flush(f->dev);
+	KUNIT_EXPECT_EQ(test, pending, -EBUSY);
+	KUNIT_EXPECT_EQ(test, owner_status(f->dev), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+}
+
+static void owner_recovery_stops_after_unplug_or_cleanup(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+
+	f->dev->unplugged = true;
+	mutex_lock(&f->dev->master_mutex);
+	drm_constraints_owner_lost(f->dev);
+	mutex_unlock(&f->dev->master_mutex);
+	drm_constraints_owner_flush(f->dev);
+	KUNIT_EXPECT_EQ(test, owner_status(f->dev), -ENODEV);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	f->dev->unplugged = false;
+	drm_constraints_owner_stop(f->dev);
+	mutex_lock(&f->dev->master_mutex);
+	drm_constraints_owner_retry(f->dev);
+	drm_constraints_owner_lost(f->dev);
+	mutex_unlock(&f->dev->master_mutex);
+	drm_constraints_owner_flush(f->dev);
+	KUNIT_EXPECT_EQ(test, owner_status(f->dev), -ENODEV);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
 static void closure_rejects_checked_activation(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1622,6 +1687,8 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(recovery_restores_all_defaults_before_retiring_offers),
 	KUNIT_CASE(recovery_does_not_reopen_closed_lists),
 	KUNIT_CASE(recovery_retains_pending_native_reads),
+	KUNIT_CASE(owner_recovery_excludes_replacement_until_success),
+	KUNIT_CASE(owner_recovery_stops_after_unplug_or_cleanup),
 	KUNIT_CASE(closure_rejects_checked_activation),
 	KUNIT_CASE(shutdown_cannot_select_through_closed_list),
 	KUNIT_CASE(predecessor_backend_survives_native_read),

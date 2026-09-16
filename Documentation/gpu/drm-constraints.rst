@@ -239,6 +239,18 @@ disabled. The caller keeps replacement owners excluded, resolves the failure
 and retries. Closed lists stay closed. Neither recovery nor offer retirement
 grants pixel access or supplies the caller's owner-exclusion policy.
 
+Devices with constraints also own a recovery coordinator. Its loss notification
+marks recovery pending under the native master mutex and queues work retaining
+the device. The worker performs the blocking recovery outside that mutex.
+Readiness checks distinguish pending work, success, recovery failure and terminal
+shutdown. Failure remains visible until an explicit retry succeeds. Mode-config
+cleanup stops recovery before destroying any display objects.
+
+These coordinator operations require native master-entry paths to check readiness
+before publishing replacement ownership. Merely retaining a master identity or
+observing the coordinator does not authorize display changes. The coordinator
+does not itself revoke source grants; loss notification follows that revocation.
+
 Rust access and tests
 =====================
 

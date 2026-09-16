@@ -40,6 +40,7 @@ struct drm_display_mode;
 struct drm_capture_target;
 struct drm_capture_files;
 struct drm_constraints_domain;
+struct drm_constraints_owner;
 
 /**
  * struct drm_mode_config_funcs - basic driver provided mode setting functions
@@ -424,6 +425,8 @@ struct drm_mode_config {
 	struct drm_prepare_display *preparation;
 	/** @constraints_domain: Optional device-lifetime constraints identity domain. */
 	struct drm_constraints_domain *constraints_domain;
+	/** @constraints_owner: Optional recovery before replacement master admission. */
+	struct drm_constraints_owner *constraints_owner;
 	/** @prop_prepare_fd: Transient preparation descriptor on participating CRTCs. */
 	struct drm_property *prop_prepare_fd;
 

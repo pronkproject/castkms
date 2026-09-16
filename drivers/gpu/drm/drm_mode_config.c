@@ -29,6 +29,7 @@
 #include <drm/drm_encoder.h>
 #include <drm/drm_file.h>
 #include <drm/drm_constraints_device.h>
+#include <drm/drm_constraints_owner.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_mode_config.h>
@@ -716,6 +717,8 @@ void drm_mode_config_cleanup(struct drm_device *dev)
 	struct drm_property_blob *blob, *bt;
 	struct drm_plane *plane, *plt;
 	struct drm_colorop *colorop, *copt;
+
+	drm_constraints_owner_stop(dev);
 
 	list_for_each_entry_safe(encoder, enct, &dev->mode_config.encoder_list,
 				 head) {
