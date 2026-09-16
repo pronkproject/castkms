@@ -19,6 +19,9 @@
  * As it relies on drm_atomic_helper_reset_crtc(), the same limitations
  * apply.
  *
+ * Acquired modeset locks remain held in @ctx. The caller must release them
+ * after finishing the operation or back off when a deadlock is detected.
+ *
  * Returns:
  *
  * 0 on success or a negative error code on failure. If the error
@@ -29,32 +32,16 @@ int drm_bridge_helper_reset_crtc(struct drm_bridge *bridge,
 {
 	struct drm_connector *connector;
 	struct drm_encoder *encoder = bridge->encoder;
-	struct drm_device *dev = encoder->dev;
 	struct drm_crtc *crtc;
-	int ret;
-
-	ret = drm_modeset_lock(&dev->mode_config.connection_mutex, ctx);
-	if (ret)
-		return ret;
 
 	connector = drm_atomic_get_connector_for_encoder(encoder, ctx);
-	if (IS_ERR(connector)) {
-		ret = PTR_ERR(connector);
-		goto out;
-	}
+	if (IS_ERR(connector))
+		return PTR_ERR(connector);
 
-	if (!connector->state) {
-		ret = -EINVAL;
-		goto out;
-	}
+	if (!connector->state)
+		return -EINVAL;
 
 	crtc = connector->state->crtc;
-	ret = drm_atomic_helper_reset_crtc(crtc, ctx);
-	if (ret)
-		goto out;
-
-out:
-	drm_modeset_unlock(&dev->mode_config.connection_mutex);
-	return ret;
+	return drm_atomic_helper_reset_crtc(crtc, ctx);
 }
 EXPORT_SYMBOL(drm_bridge_helper_reset_crtc);

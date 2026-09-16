@@ -728,13 +728,17 @@ retry_commit:
 	drm_modeset_acquire_init(&ctx, 0);
 
 retry_reset:
-	ret = drm_bridge_helper_reset_crtc(&bridge_priv->bridge, &ctx);
+	ret = drm_modeset_lock(&priv->drm.mode_config.connection_mutex, &ctx);
+	if (!ret)
+		ret = drm_bridge_helper_reset_crtc(&bridge_priv->bridge, &ctx);
 	if (ret == -EDEADLK) {
 		drm_modeset_backoff(&ctx);
 		goto retry_reset;
 	}
 	KUNIT_ASSERT_EQ(test, ret, 0);
 
+	KUNIT_EXPECT_TRUE(test,
+			  drm_modeset_is_locked(&priv->drm.mode_config.connection_mutex));
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 
@@ -774,6 +778,8 @@ retry_reset:
 	}
 	KUNIT_EXPECT_LT(test, ret, 0);
 
+	KUNIT_EXPECT_TRUE(test,
+			  drm_modeset_is_locked(&priv->drm.mode_config.connection_mutex));
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 
