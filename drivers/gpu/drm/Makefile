@@ -96,6 +96,7 @@ drm-y := \
 	drm_constraints_encoding.o \
 	drm_constraints_device.o \
 	drm_constraints_recovery.o \
+	drm_constraints_owner.o \
 	drm_constraints_output.o \
 	drm_crtc.o \
 	drm_displayid.o \

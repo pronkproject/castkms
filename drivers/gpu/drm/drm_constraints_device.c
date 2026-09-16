@@ -4,12 +4,14 @@
 #include <linux/export.h>
 #include <drm/drm_constraints_device.h>
 #include <drm/drm_constraints_entry.h>
+#include <drm/drm_constraints_owner.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
 
 int drm_constraints_device_init(struct drm_device *dev, unsigned int limit)
 {
 	struct drm_constraints_domain *domain;
+	int ret;
 
 	if (!drm_core_check_feature(dev, DRIVER_ATOMIC))
 		return -EINVAL;
@@ -18,6 +20,11 @@ int drm_constraints_device_init(struct drm_device *dev, unsigned int limit)
 	domain = drm_constraints_domain_create(limit);
 	if (IS_ERR(domain))
 		return PTR_ERR(domain);
+	ret = drm_constraints_owner_init(dev);
+	if (ret) {
+		drm_constraints_domain_put(domain);
+		return ret;
+	}
 	dev->mode_config.constraints_domain = domain;
 	return 0;
 }
@@ -25,6 +32,7 @@ EXPORT_SYMBOL_GPL(drm_constraints_device_init);
 
 void drm_constraints_device_fini(struct drm_device *dev)
 {
+	drm_constraints_owner_fini(dev);
 	if (dev->mode_config.constraints_domain) {
 		drm_constraints_domain_put(dev->mode_config.constraints_domain);
 		dev->mode_config.constraints_domain = NULL;

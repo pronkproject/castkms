@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <linux/module.h>
+#include <linux/completion.h>
 #include <drm/drm_constraints_device.h>
 #include <drm/drm_constraints_entry.h>
+#include <drm/drm_constraints_owner.h>
+#include <drm/drm_drv.h>
 #include <drm/drm_kunit_helpers.h>
+#include <drm/drm_managed.h>
 #include <kunit/test.h>
 
 struct domain_fixture {
@@ -62,7 +66,48 @@ static void retained_domain_outlives_device_cleanup(struct kunit *test)
 	drm_constraints_domain_put(domain);
 }
 
+static void complete_cleanup(struct drm_device *dev, void *data)
+{
+	complete(data);
+}
+
+static void recovery_work_can_release_the_final_device_reference(struct kunit *test)
+{
+	static const struct drm_driver driver = {
+		.driver_features = DRIVER_MODESET | DRIVER_ATOMIC,
+		.name = "constraints-owner-test",
+	};
+	static const struct drm_mode_config_funcs mode_ops;
+	struct completion *cleaned = kunit_kzalloc(test, sizeof(*cleaned), GFP_KERNEL);
+	struct domain_fixture *fixture;
+	struct device *parent;
+	struct drm_device *dev;
+
+	KUNIT_ASSERT_NOT_NULL(test, cleaned);
+	init_completion(cleaned);
+	parent = drm_kunit_helper_alloc_device(test);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
+	fixture = devm_drm_dev_alloc(parent, &driver, struct domain_fixture, drm);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture);
+	dev = &fixture->drm;
+	dev->mode_config.funcs = &mode_ops;
+	/* Registered first so completion runs after managed mode-config cleanup. */
+	KUNIT_ASSERT_EQ(test, drmm_add_action_or_reset(dev, complete_cleanup, cleaned), 0);
+	KUNIT_ASSERT_EQ(test, drmm_mode_config_init(dev), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(dev, 2), 0);
+	mutex_lock(&dev->master_mutex);
+	drm_constraints_owner_lost(dev);
+	/* The queued reference keeps dev and its mutex alive after parent removal. */
+	drm_kunit_helper_free_device(test, parent);
+	mutex_unlock(&dev->master_mutex);
+	if (!wait_for_completion_timeout(cleaned, HZ)) {
+		KUNIT_FAIL(test, "Recovery did not finish managed device cleanup");
+		wait_for_completion(cleaned);
+	}
+}
+
 static struct kunit_case drm_constraints_device_tests[] = {
+	KUNIT_CASE(recovery_work_can_release_the_final_device_reference),
 	KUNIT_CASE(device_publishes_one_validated_domain),
 	KUNIT_CASE(registered_devices_cannot_change_domains),
 	KUNIT_CASE(retained_domain_outlives_device_cleanup),
