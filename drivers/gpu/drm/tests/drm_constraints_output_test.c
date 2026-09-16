@@ -34,7 +34,8 @@ static const struct drm_constraints_entry_ops entry_ops = {
 	.release = release_backend,
 };
 
-static int check(struct drm_atomic_commit *state, const struct drm_crtc_state *crtc, void *backend)
+static int check(const struct drm_atomic_commit *state,
+		 const struct drm_crtc_state *crtc, void *backend)
 {
 	return 0;
 }
