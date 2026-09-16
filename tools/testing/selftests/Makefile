@@ -20,6 +20,7 @@ TARGETS += devices/error_logs
 TARGETS += devices/probe
 TARGETS += dmabuf-heaps
 TARGETS += drm_castkms
+TARGETS += drm_constraints
 TARGETS += drm_preparation
 TARGETS += drivers/dma-buf
 TARGETS += drivers/ntsync
