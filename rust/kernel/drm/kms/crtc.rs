@@ -731,6 +731,12 @@ pub unsafe trait ModesettableCrtc: AsRawCrtc {
 /// This is implemented internally by DRM, and provides many of the basic methods for working with
 /// CRTCs.
 pub trait RawCrtc: AsRawCrtc {
+    /// DRM object ID, not a reference or modesetting authority.
+    fn object_id(&self) -> u32 {
+        // SAFETY: The initialized CRTC retains its immutable base identity for its lifetime.
+        unsafe { (*self.as_raw()).base.id }
+    }
+
     /// Return the index of this CRTC.
     fn index(&self) -> u32 {
         // SAFETY: The index is initialized by the time we expose Crtc objects to users, and is
