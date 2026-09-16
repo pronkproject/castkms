@@ -33,42 +33,51 @@ struct Fixture {
 
 fn with_output(f: impl FnOnce(Fixture) -> Result) -> Result {
     with_display(|device, crtc, connector, _, file| {
-        let owner = owner(&file, crtc, connector)?;
-        let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-        let (active, execution) = activate(&renderer, device, crtc)?;
-        let grantor = grant(&file, crtc, connector)?;
-        let private = renderer.register_private_image(
-            &active,
-            [640, 480],
-            &[buffer(device, ExportAccess::ReadWrite)?],
+        f(output_fixture(device, crtc, connector, &file)?)
+    })
+}
+
+fn output_fixture(
+    device: &Device<Driver, Registered>,
+    crtc: &Crtc<display::Crtc>,
+    connector: &Connector<display::Connector>,
+    file: &RegisteredMasterFile<'_, Driver>,
+) -> Result<Fixture> {
+    let owner = owner(file, crtc, connector)?;
+    let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+    let (active, execution) = activate(&renderer, device, crtc)?;
+    let grantor = grant(file, crtc, connector)?;
+    let private = renderer.register_private_image(
+        &active,
+        [640, 480],
+        &[buffer(device, ExportAccess::ReadWrite)?],
+    )?;
+    let rendered = Arc::new(
+        renderer
+            .claim_render(&active, execution, None, private.prepare(1)?)?
+            .release(Completion::Cpu)
+            .ok_or(EINVAL)?,
+        GFP_KERNEL,
+    )?;
+    let destination = grantor
+        .capture()
+        .describe_delegated()?
+        .register_destination(
+            &buffer(device, ExportAccess::ReadWrite)?,
+            fourcc::XRGB8888,
+            0,
+            2560,
+            0,
         )?;
-        let rendered = Arc::new(
-            renderer
-                .claim_render(&active, execution, None, private.prepare(1)?)?
-                .release(Completion::Cpu)
-                .ok_or(EINVAL)?,
-            GFP_KERNEL,
-        )?;
-        let destination = grantor
-            .capture()
-            .describe_delegated()?
-            .register_destination(
-                &buffer(device, ExportAccess::ReadWrite)?,
-                fourcc::XRGB8888,
-                0,
-                2560,
-                0,
-            )?;
-        f(Fixture {
-            owner,
-            renderer,
-            active,
-            execution,
-            grantor,
-            private,
-            rendered,
-            destination,
-        })
+    Ok(Fixture {
+        owner,
+        renderer,
+        active,
+        execution,
+        grantor,
+        private,
+        rendered,
+        destination,
     })
 }
 
@@ -100,6 +109,50 @@ fn private_available(image: &Arc<Image>, use_id: u64) -> Result {
 #[kunit_tests(rust_castkms_delegated_requests)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn closing_master_preserves_native_cleanup_but_not_frame_authority() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let fixture = output_fixture(device, crtc, connector, &file)?;
+            let request = fixture.destination.request(1, None)?;
+            let mut native = ManualFence::new()?;
+            request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                .ok_or(EINVAL)?
+                .release(Completion::Submitted(native.fence()));
+            drop(fixture.rendered);
+            drop(file);
+            check(request.status() == Status::Pending)?;
+            check(fixture.private.prepare(2).err() == Some(EBUSY))?;
+            native.complete(Ok(()))?;
+            wait(&request, Status::Complete(Err(EACCES)))?;
+            check(request.content_serial().is_none())?;
+            private_available(&fixture.private, 2)
+        })
+    }
+
+    #[test]
+    fn device_shutdown_does_not_shortcut_native_output_retirement() -> Result {
+        let display = CastKms::new(c"castkms-delegated-shutdown")?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let fixture = output_fixture(device, crtc, connector, &file)?;
+            let request = fixture.destination.request(1, None)?;
+            let mut native = ManualFence::new()?;
+            request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                .ok_or(EINVAL)?
+                .release(Completion::Submitted(native.fence()));
+            drop(fixture.rendered);
+            display.state.close();
+            check(request.status() == Status::Pending)?;
+            check(fixture.private.prepare(2).err() == Some(EBUSY))?;
+            native.complete(Ok(()))?;
+            wait(&request, Status::Complete(Err(ENODEV)))?;
+            check(request.content_serial().is_none())?;
+            check(fixture.destination.reserve(2, None).err() == Some(ENODEV))?;
+            private_available(&fixture.private, 2)
+        })
+    }
 
     #[test]
     fn independent_recipients_retire_shared_private_storage_separately() -> Result {
