@@ -460,10 +460,21 @@ impl Candidate {
         content: &super::content::Released,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<R> {
+        self.with_observed_content(&active.observation(), content, |_| f())
+    }
+
+    /// Recheck content through a non-owning active-incarnation observation. The callback
+    /// may validate another capability under the same display guards, without pixel access.
+    pub(crate) fn with_observed_content<R>(
+        &self,
+        active: &renderer_startup::Observation,
+        content: &super::content::Released,
+        f: impl FnOnce(&display_control::Current<'_>) -> Result<R>,
+    ) -> Result<R> {
         self.access.with_current(|current| {
             active.with_candidate(&self.resources, || {
                 content.check(&current, self.access.display().execution.describe())?;
-                f()
+                f(&current)
             })
         })
     }
