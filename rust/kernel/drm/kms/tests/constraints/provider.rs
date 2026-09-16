@@ -493,7 +493,8 @@ mod cases {
         drop(reader);
         assert_eq!(error.load(Ordering::Acquire), 0);
         assert_eq!(result, Err(ESTALE));
-        assert_eq!(builds, 2);
+        // Lock-debug deadlock injection can add retries before or after the preparation wait.
+        assert!(builds >= 2);
         assert_eq!(output.selected().id(), initial);
         assert!(counts.constraints_work.take().is_none());
         assert!(old.render().is_ok());
