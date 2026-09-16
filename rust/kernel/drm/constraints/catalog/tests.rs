@@ -122,4 +122,32 @@ mod cases {
         assert_eq!(catalog.snapshot(before.generation)?.info(), before);
         Ok(())
     }
+
+    #[test]
+    fn identity_lookup_retains_typed_backend_without_reserving_offer() -> Result {
+        let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
+        let domain = Domain::new(2)?;
+        let initial = entry(&domain, &drops)?;
+        let target = entry(&domain, &drops)?;
+        let catalog = Catalog::new(&domain, &initial, 2)?;
+        assert!(matches!(catalog.lookup(0), Err(EINVAL)));
+        assert!(matches!(catalog.lookup(target.id()), Err(ESTALE)));
+        catalog.add(&target)?;
+        let retained = catalog.lookup(target.id())?;
+        assert_eq!(retained.id(), target.id());
+        assert!(retained.in_domain(&domain));
+        catalog.withdraw(target.id())?;
+        assert!(matches!(catalog.lookup(target.id()), Err(ESTALE)));
+        catalog.forget(target.id())?;
+        drop(target);
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+        assert_eq!(retained.backend().0.load(Ordering::Relaxed), 0);
+        drop(retained);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        catalog.withdraw(initial.id())?;
+        assert_eq!(catalog.lookup(initial.id())?.id(), initial.id());
+        catalog.close();
+        assert!(matches!(catalog.lookup(initial.id()), Err(ESTALE)));
+        Ok(())
+    }
 }
