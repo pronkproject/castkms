@@ -113,6 +113,20 @@ impl<B: Backend> Catalog<B> {
         unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) }
     }
 
+    /// Resolve an ID in this output's catalog without reserving subsequent acceptance.
+    ///
+    /// Zero returns EINVAL. Unknown, withdrawn unselected and closed entries return ESTALE.
+    /// A withdrawn selected entry may be retained for repeated selection while the catalog
+    /// remains open. Successful lookup grants neither readiness nor modesetting authority.
+    pub fn lookup(&self, id: u64) -> Result<ARef<Entry<B>>> {
+        // SAFETY: Native lookup synchronizes availability and returns an owned reference to
+        // an entry of B retained by this live catalog, or an error without transferring ownership.
+        let raw =
+            from_err_ptr(unsafe { bindings::drm_constraints_catalog_lookup(self.raw.get(), id) })?;
+        // SAFETY: Successful lookup transfers a non-null initialized entry with backend type B.
+        Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
+    }
+
     /// Copy a coherent bounded snapshot. Nonzero expected generation must match or returns ESTALE.
     /// A successful snapshot reserves neither availability nor later acceptance.
     pub fn snapshot(&self, generation: u64) -> Result<Snapshot<B>> {
