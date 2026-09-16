@@ -456,6 +456,66 @@ static int swap_update(struct drm_atomic_commit *state)
 	return drm_atomic_helper_swap_state(state, false);
 }
 
+static int rebind_live_state(struct drm_atomic_commit *state)
+{
+	struct atomic_fixture *f = state->dev->dev_private;
+
+	return drm_atomic_set_constraints_for_crtc(f->crtc->state, f->target);
+}
+
+static int rebind_unowned_state(struct drm_atomic_commit *state)
+{
+	struct atomic_fixture *f = state->dev->dev_private;
+	struct drm_crtc_state *detached = f->crtc->funcs->atomic_duplicate_state(f->crtc);
+	int ret;
+
+	if (!detached)
+		return -ENOMEM;
+	detached->state = state;
+	ret = drm_atomic_set_constraints_for_crtc(detached, f->target);
+	f->crtc->funcs->atomic_destroy_state(f->crtc, detached);
+	return ret;
+}
+
+static int rebind_proposed_state(struct drm_atomic_commit *state)
+{
+	struct atomic_fixture *f = state->dev->dev_private;
+
+	return drm_atomic_set_constraints_for_crtc(
+		drm_atomic_get_new_crtc_state(state, f->crtc), f->target);
+}
+
+static int rebind_retiring_state(struct drm_atomic_commit *state)
+{
+	struct atomic_fixture *f = state->dev->dev_private;
+
+	return drm_atomic_set_constraints_for_crtc(
+		drm_atomic_get_old_crtc_state(state, f->crtc), f->target);
+}
+
+static void selection_requires_owned_mutable_proposed_state(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, NULL, f->linear);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, rebind_live_state), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+	KUNIT_EXPECT_EQ(test, run_update(state, rebind_unowned_state), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_crtc_state(state, f->crtc)->constraints,
+			    f->initial);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, rebind_proposed_state), -EBUSY);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_new_crtc_state(state, f->crtc)->constraints,
+			    f->initial);
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, rebind_live_state), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+	KUNIT_EXPECT_EQ(test, run_update(state, rebind_retiring_state), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_old_crtc_state(state, f->crtc)->constraints,
+			    f->initial);
+}
+
 static void validation_includes_unchanged_active_planes(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -990,6 +1050,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(asynchronous_updates_are_not_admitted),
 	KUNIT_CASE(multi_output_transactions_are_not_admitted),
 	KUNIT_CASE(validation_includes_unchanged_active_planes),
+	KUNIT_CASE(selection_requires_owned_mutable_proposed_state),
 	KUNIT_CASE(core_validation_observes_selected_constraints),
 	KUNIT_CASE(state_swap_accepts_retained_backend),
 	KUNIT_CASE(state_swap_rechecks_withdrawn_target),
