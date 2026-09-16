@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
-//! Referenced allocation metadata owned by common DRM code.
+//! Referenced allocation and scalar property metadata owned by common DRM code.
 
+use super::Property;
 use crate::{
     error::from_err_ptr,
     prelude::*,
@@ -90,7 +91,7 @@ impl Format {
     }
 }
 
-/// Independently referenced, immutable allocation description.
+/// Independently referenced, immutable allocation and scalar property description.
 ///
 /// These bounds are necessary, not sufficient, for displaying a scene. Construction and final
 /// reference release require a context that may sleep.
@@ -120,22 +121,24 @@ unsafe impl AlwaysRefCounted for Description {
 }
 
 impl Description {
-    /// Validate and copy bounded allocation metadata into native owned storage.
+    /// Validate and copy bounded allocation metadata and scalar rules into native owned storage.
     ///
     /// Rejects empty or over-limit format lists, invalid dimensions, unknown fourcc values,
     /// invalid modifiers and duplicate plane/format/modifier tuples. Arbitrary supported tiled
     /// modifiers are not restricted to the kernel compositor's linear layouts.
-    pub fn new(output: Size, formats: &[Format]) -> Result<ARef<Self>> {
+    /// Scalar rules must be valid and distinct by object/property ID; an empty rule list is valid.
+    pub fn new(output: Size, formats: &[Format], properties: &[Property]) -> Result<ARef<Self>> {
         let count = formats.len().try_into().map_err(|_| E2BIG)?;
-        // SAFETY: Transparent wrappers have native layout, both inputs remain readable for the
+        let property_count = properties.len().try_into().map_err(|_| E2BIG)?;
+        // SAFETY: Transparent wrappers have native layout, all inputs remain readable for the
         // call, and native construction copies all input without retaining borrowed pointers.
         let raw = from_err_ptr(unsafe {
             bindings::drm_constraints_description_create(
                 &output.0,
                 formats.as_ptr().cast(),
                 count,
-                core::ptr::null(),
-                0,
+                properties.as_ptr().cast(),
+                property_count,
             )
         })?;
         // SAFETY: Successful construction transfers one non-null initialized native reference.
@@ -158,6 +161,21 @@ impl Description {
             let ptr = bindings::drm_constraints_description_formats(self.0.get(), &mut count);
             slice::from_raw_parts(ptr.cast(), count as usize)
         }
+    }
+
+    /// Borrow immutable scalar property rules. An empty slice imposes no additional scalar rules.
+    pub fn properties(&self) -> &[Property] {
+        let mut count = 0;
+        // SAFETY: The description remains live and count is writable. Native code returns its
+        // bounded immutable property array, or NULL with count zero.
+        let ptr =
+            unsafe { bindings::drm_constraints_description_properties(self.0.get(), &mut count) };
+        if count == 0 {
+            return &[];
+        }
+        // SAFETY: Nonempty native arrays are initialized, non-null and retained by this borrow.
+        // Property transparently represents one native record.
+        unsafe { slice::from_raw_parts(ptr.cast(), count as usize) }
     }
 }
 

@@ -31,7 +31,7 @@ unsafe impl Backend for TestBackend {}
 
 fn entry(domain: &Domain, drops: &Arc<AtomicU32>) -> Result<ARef<Entry<TestBackend>>> {
     let size = Size::exact(128, 64);
-    let description = Description::new(size, &[Format::new(7, fourcc::XRGB8888, 0, size)])?;
+    let description = Description::new(size, &[Format::new(7, fourcc::XRGB8888, 0, size)], &[])?;
     Entry::new(
         domain,
         9,

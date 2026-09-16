@@ -15,7 +15,7 @@ mod cases {
             fourcc::FORMAT_MOD_LINEAR,
             Size::exact(128, 64),
         )];
-        let description = Description::new(Size::new(64, 32, 256, 128), &formats)?;
+        let description = Description::new(Size::new(64, 32, 256, 128), &formats, &[])?;
         formats[0] = Format::new(9, fourcc::ARGB8888, 1, Size::exact(32, 16));
         assert_eq!(formats[0].plane_id(), 9);
         assert_eq!(description.output().minimum(), (64, 32));
@@ -36,17 +36,17 @@ mod cases {
     fn native_validation_rejects_bad_or_duplicate_records() -> Result {
         let size = Size::exact(128, 64);
         let format = Format::new(7, fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size);
-        assert!(matches!(Description::new(size, &[]), Err(EINVAL)));
+        assert!(matches!(Description::new(size, &[], &[]), Err(EINVAL)));
         assert!(matches!(
-            Description::new(Size::exact(0, 64), &[format]),
+            Description::new(Size::exact(0, 64), &[format], &[]),
             Err(EINVAL)
         ));
         assert!(matches!(
-            Description::new(size, &[format, format]),
+            Description::new(size, &[format, format], &[]),
             Err(EEXIST)
         ));
         assert!(matches!(
-            Description::new(size, &[Format::new(7, 0, 0, size)]),
+            Description::new(size, &[Format::new(7, 0, 0, size)], &[]),
             Err(EINVAL)
         ));
         Ok(())
@@ -60,10 +60,63 @@ mod cases {
             Format::new(7, fourcc::XRGB8888, 0, Size::exact(128, 64)),
             Format::new(7, fourcc::ARGB8888, X_TILED, Size::exact(256, 128)),
         ];
-        let description = Description::new(Size::exact(128, 64), &formats)?;
+        let description = Description::new(Size::exact(128, 64), &formats, &[])?;
         assert_eq!(description.formats()[1].modifier(), X_TILED);
         assert_eq!(description.formats()[1].size().minimum(), (256, 128));
         assert_eq!(description.formats()[1].size().maximum(), (256, 128));
+        Ok(())
+    }
+
+    #[test]
+    fn property_views_preserve_native_scalar_semantics() -> Result {
+        let size = Size::exact(128, 64);
+        let formats = [Format::new(7, fourcc::XRGB8888, 0, size)];
+        let mut rules = [
+            Property::unsigned_range(7, 23, 32768, 65535),
+            Property::signed_range(7, 24, -4, 4),
+            Property::enum_values(7, 25, 1 << 63),
+            Property::bitmask(7, 26, 3),
+        ];
+        let description = Description::new(size, &formats, &rules)?;
+        rules[0] = Property::unsigned_range(7, 23, 0, 1);
+        assert!(rules[0].matches(1));
+        let stored = description.properties();
+        assert_eq!(stored.len(), 4);
+        assert_eq!(stored[0].object_id(), 7);
+        assert_eq!(stored[0].property_id(), 23);
+        assert_eq!(stored[0].property_type(), bindings::DRM_MODE_PROP_RANGE);
+        assert_eq!(stored[0].bounds(), (32768, 65535));
+        assert!(!stored[0].matches(1));
+        assert!(stored[1].matches((-4i64) as u64));
+        assert!(!stored[1].matches((-5i64) as u64));
+        assert_eq!(stored[2].mask(), 1 << 63);
+        assert!(stored[2].matches(63));
+        assert!(!stored[2].matches(64));
+        assert!(stored[3].matches(3));
+        assert!(!stored[3].matches(4));
+        assert!(Description::new(size, &formats, &[])?
+            .properties()
+            .is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn native_validation_rejects_invalid_property_input() -> Result {
+        let size = Size::exact(128, 64);
+        let formats = [Format::new(7, fourcc::XRGB8888, 0, size)];
+        let rule = Property::unsigned_range(7, 23, 0, 1);
+        assert!(matches!(
+            Description::new(size, &formats, &[rule, rule]),
+            Err(EEXIST)
+        ));
+        assert!(matches!(
+            Description::new(size, &formats, &[Property::signed_range(7, 23, 1, -1)]),
+            Err(EINVAL)
+        ));
+        assert!(matches!(
+            Description::new(size, &formats, &[Property::enum_values(7, 23, 0)]),
+            Err(EINVAL)
+        ));
         Ok(())
     }
 }
