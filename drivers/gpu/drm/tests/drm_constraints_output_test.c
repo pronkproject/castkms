@@ -303,4 +303,5 @@ static struct kunit_suite drm_constraints_output_test_suite = {
 
 kunit_test_suite(drm_constraints_output_test_suite);
 
+MODULE_DESCRIPTION("DRM constraints output scope tests");
 MODULE_LICENSE("Dual MIT/GPL");

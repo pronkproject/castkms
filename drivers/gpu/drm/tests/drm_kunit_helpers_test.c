@@ -62,4 +62,5 @@ static struct kunit_suite drm_kunit_helpers_test_suite = {
 
 kunit_test_suite(drm_kunit_helpers_test_suite);
 
+MODULE_DESCRIPTION("DRM KUnit fixture allocation metadata tests");
 MODULE_LICENSE("GPL");

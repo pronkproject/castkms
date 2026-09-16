@@ -76,4 +76,5 @@ static struct kunit_suite drm_constraints_device_test_suite = {
 
 kunit_test_suite(drm_constraints_device_test_suite);
 
+MODULE_DESCRIPTION("DRM constraints device ownership tests");
 MODULE_LICENSE("Dual MIT/GPL");

@@ -913,4 +913,5 @@ static struct kunit_suite drm_constraints_atomic_test_suite = {
 
 kunit_test_suite(drm_constraints_atomic_test_suite);
 
+MODULE_DESCRIPTION("DRM constraints atomic acceptance and retirement tests");
 MODULE_LICENSE("Dual MIT/GPL");

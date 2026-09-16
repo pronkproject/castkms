@@ -228,4 +228,5 @@ static struct kunit_suite drm_constraints_test_suite = {
 
 kunit_test_suite(drm_constraints_test_suite);
 
+MODULE_DESCRIPTION("DRM immutable constraints description tests");
 MODULE_LICENSE("Dual MIT/GPL");

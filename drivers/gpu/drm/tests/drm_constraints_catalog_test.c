@@ -441,4 +441,5 @@ static struct kunit_suite drm_constraints_catalog_test_suite = {
 
 kunit_test_suite(drm_constraints_catalog_test_suite);
 
+MODULE_DESCRIPTION("DRM constraints catalog serialization tests");
 MODULE_LICENSE("Dual MIT/GPL");
