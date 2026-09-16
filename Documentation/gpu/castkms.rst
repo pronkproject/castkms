@@ -821,7 +821,7 @@ explicitly linear framebuffer without mapping or reading its pixels. It
 closes both the DMA-BUF descriptor and the imported buffer handle before
 submitting updates, so the framebuffer must retain the storage through
 teardown. Import and framebuffer creation succeed, but the HOST profile
-rejects visible foreign storage. Legacy modesets, legacy page flips and
+rejects visible foreign storage. Non-atomic modesets, page flips and
 test-only, blocking and nonblocking atomic replacements must fail without
 replacing the active native framebuffer.
 
