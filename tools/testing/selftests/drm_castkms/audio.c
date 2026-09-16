@@ -128,7 +128,8 @@ static void reconfigure_prepared(int fd)
 
 int main(int argc, char **argv)
 {
-	struct drm_castkms_create_monitor_control monitor = { .control_fd = -1 };
+	struct drm_castkms_monitor_files monitor_files;
+	struct drm_castkms_create_monitor_control monitor = { .files = (uintptr_t)&monitor_files };
 	struct drm_castkms_monitor_attach attach = {0};
 	struct drm_castkms_monitor_detach detach = {0};
 	struct drm_castkms_audio_query query = {0};
@@ -162,7 +163,7 @@ int main(int argc, char **argv)
 	audio_edid(edid);
 	attach.edid_ptr = (uintptr_t)edid;
 	attach.edid_size = sizeof(edid);
-	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 	connector = drmModeGetConnector(fd, connector_id);
 	CHECK(connector && connector->count_modes > 0);
 	mode = connector->modes[0];
@@ -207,11 +208,11 @@ int main(int argc, char **argv)
 	}
 	CHECK(drmModeSetCrtc(fd, crtc_id, buffer.fb, 0, 0, &connector_id, 1, &mode) == 0);
 	reconfigure_prepared(pcm);
-	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
+	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
 	audio_terminal(audio.audio_fd);
 	CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_PREPARE) < 0);
 	CHECK(close(pcm) == 0);
-	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 	next = audio_capture(fd, crtc_id, connector_id);
 	audio_terminal(audio.audio_fd);
 	CHECK(close(next.revoke_fd) == 0);
@@ -222,7 +223,7 @@ int main(int argc, char **argv)
 	CHECK(close(fd) == 0);
 	audio_terminal(next.audio_fd);
 	CHECK(close(next.audio_fd) == 0 && close(next.revoke_fd) == 0);
-	CHECK(close(monitor.control_fd) == 0 && close(monitor.revoke_fd) == 0);
+	CHECK(close(monitor_files.control_fd) == 0 && close(monitor_files.revoke_fd) == 0);
 	puts("PASS: audio playback, silence, attachment replacement, revocation and creator close");
 	return 0;
 }

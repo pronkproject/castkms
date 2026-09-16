@@ -6,7 +6,7 @@
 
 #include <linux/types.h>
 
-#define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
+#define DRM_CASTKMS_MONITOR_CONTROL_VERSION 2
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
 #define DRM_CASTKMS_RENDERER_VERSION 7
 
@@ -164,8 +164,7 @@ struct drm_castkms_renderer_query_capabilities {
  * struct drm_castkms_create_monitor_control - create virtual monitor control
  * @connector_id: DRM object ID of the virtual connector
  * @flags: must be zero
- * @control_fd: returned close-on-exec monitor-control file descriptor
- * @revoke_fd: returned close-on-exec revocation file descriptor
+ * @files: pointer to writable struct drm_castkms_monitor_files storage
  * @reserved: must be zero
  *
  * The calling DRM file must be the current master and hold the connector.
@@ -175,13 +174,20 @@ struct drm_castkms_renderer_query_capabilities {
  * fallback monitor. The control capability remains valid across DRM master
  * changes and may be transferred like any other file descriptor. The issuer
  * retains the revocation file.
+ * All request fields are input. Failure installs no descriptors and does not
+ * replace the fallback monitor; partially copied output must be ignored.
  */
 struct drm_castkms_create_monitor_control {
 	__u32 connector_id;
 	__u32 flags;
+	__u64 files;
+	__u64 reserved[2];
+};
+
+/* Returned close-on-exec descriptors; monitor control and revocation. */
+struct drm_castkms_monitor_files {
 	__s32 control_fd;
 	__s32 revoke_fd;
-	__u32 reserved;
 };
 
 /**
@@ -723,7 +729,7 @@ enum {
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_AUDIO_QUERY,
 			struct drm_castkms_audio_query),
 	DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL =
-		DRM_IOWR(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_MONITOR_CONTROL,
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_MONITOR_CONTROL,
 			 struct drm_castkms_create_monitor_control),
 	DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_RENDERER_CONTROL,

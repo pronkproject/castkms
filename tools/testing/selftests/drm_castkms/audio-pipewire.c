@@ -111,7 +111,8 @@ static void expect_signal(int fd)
 
 int main(int argc, char **argv)
 {
-	struct drm_castkms_create_monitor_control monitor = { .control_fd = -1 };
+	struct drm_castkms_monitor_files monitor_files;
+	struct drm_castkms_create_monitor_control monitor = { .files = (uintptr_t)&monitor_files };
 	struct drm_castkms_monitor_attach attach = {0};
 	struct drm_castkms_monitor_detach detach = {0};
 	struct drm_castkms_audio_files audio, next;
@@ -145,7 +146,7 @@ int main(int argc, char **argv)
 	audio_edid(edid);
 	attach.edid_ptr = (uintptr_t)edid;
 	attach.edid_size = sizeof(edid);
-	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 	connector = drmModeGetConnector(fd, connector_id);
 	CHECK(connector && connector->count_modes > 0);
 	mode = connector->modes[0];
@@ -164,10 +165,10 @@ int main(int argc, char **argv)
 	CHECK(drmModeSetCrtc(fd, crtc, buffer.fb, 0, 0, &connector_id, 1, &mode) == 0);
 	expect_signal(audio.audio_fd);
 	stop_player();
-	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
+	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
 	audio_terminal(audio.audio_fd);
 	usleep(500000);
-	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 	next = audio_capture(fd, crtc, connector_id);
 	start_player();
 	expect_signal(next.audio_fd);
@@ -179,7 +180,7 @@ int main(int argc, char **argv)
 	CHECK(close(audio.audio_fd) == 0 && close(audio.revoke_fd) == 0);
 	CHECK(drmModeSetCrtc(fd, crtc, 0, 0, 0, NULL, 0, NULL) == 0);
 	destroy_buffer(fd, &buffer);
-	CHECK(close(monitor.control_fd) == 0 && close(monitor.revoke_fd) == 0);
+	CHECK(close(monitor_files.control_fd) == 0 && close(monitor_files.revoke_fd) == 0);
 	CHECK(close(fd) == 0);
 	puts("PASS: PipeWire discovery, sample delivery, modeset recovery and reattachment");
 	return 0;

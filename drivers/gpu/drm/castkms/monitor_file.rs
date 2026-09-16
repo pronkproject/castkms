@@ -54,10 +54,10 @@ struct Lease {
 }
 
 impl Lease {
-    fn new(control: Control) -> Result<Arc<Self>> {
+    fn new() -> Result<Arc<Self>> {
         Arc::pin_init(
             pin_init!(Self {
-                control <- kernel::new_mutex!(Some(control)),
+                control <- kernel::new_mutex!(None),
             }),
             GFP_KERNEL,
         )
@@ -260,9 +260,10 @@ pub(crate) fn create(
     request: &mut uapi::drm_castkms_create_monitor_control,
     file: &DrmFile<DriverFile>,
 ) -> Result<u32> {
-    if request.flags != 0 || request.reserved != 0 {
+    if request.flags != 0 || request.reserved != [0; 2] || request.files == 0 {
         return Err(EINVAL);
     }
+    let result = usize::try_from(request.files).map_err(|_| EFAULT)?;
     let connector = dev.lookup_connector(file, request.connector_id)?;
     let control_reservation =
         FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
@@ -275,7 +276,8 @@ pub(crate) fn create(
             return Err(EACCES);
         }
     }
-    let lease = Lease::new(connector.monitor.acquire(dev)?)?;
+    let pending = connector.monitor.reserve(dev)?;
+    let lease = Lease::new()?;
     {
         let guard = snapshot.master().lock_current().ok_or(EACCES)?;
         if !guard.is_master_file(file) || !guard.holds_object(&*connector) {
@@ -283,15 +285,42 @@ pub(crate) fn create(
         }
     }
     let revoke_file = RevokerFile::new(lease.clone())?;
-    let control_file = HolderFile::new(lease)?;
-    request.control_fd = control_reservation
+    let control_file = HolderFile::new(lease.clone())?;
+    let control_fd = control_reservation
         .reserved_fd()
         .try_into()
         .map_err(|_| EOVERFLOW)?;
-    request.revoke_fd = revoke_reservation
+    let revoke_fd = revoke_reservation
         .reserved_fd()
         .try_into()
         .map_err(|_| EOVERFLOW)?;
+    #[repr(C)]
+    struct Files {
+        control_fd: i32,
+        revoke_fd: i32,
+    }
+    // SAFETY: Two initialized integers without padding.
+    unsafe impl AsBytes for Files {}
+    const {
+        assert!(
+            core::mem::size_of::<Files>()
+                == core::mem::size_of::<uapi::drm_castkms_monitor_files>()
+        );
+    }
+    let files = Files {
+        control_fd,
+        revoke_fd,
+    };
+    UserSlice::new(UserPtr::from_addr(result), core::mem::size_of_val(&files))
+        .writer()
+        .write(&files)?;
+    {
+        let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+        if !guard.is_master_file(file) || !guard.holds_object(&*connector) {
+            return Err(EACCES);
+        }
+    }
+    *lease.control.lock() = Some(pending.publish()?);
     control_reservation.fd_install(control_file);
     revoke_reservation.fd_install(revoke_file);
     Ok(0)
