@@ -72,7 +72,7 @@ fn with_output(f: impl FnOnce(Fixture) -> Result) -> Result {
     })
 }
 
-fn wait(request: &Request, expected: Status) -> Result {
+pub(super) fn wait(request: &Request, expected: Status) -> Result {
     let start = Instant::<Monotonic>::now();
     while request.status() == Status::Pending {
         if start.elapsed() > Delta::from_secs(2) {
