@@ -45,6 +45,8 @@ const _: () = {
             == core::mem::size_of::<uapi::drm_castkms_renderer_query_capabilities>()
     );
     assert!(core::mem::size_of::<Description>() == 72);
+    assert!(uapi::DRM_CASTKMS_CAPABILITY_QUERY_MAX_BYTES as usize
+        == core::mem::size_of::<Description>() + 2 * capability_description::MAX_BYTES);
     assert!(
         core::mem::size_of::<Description>()
             == core::mem::size_of::<uapi::drm_castkms_renderer_capabilities>()
