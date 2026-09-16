@@ -7,6 +7,9 @@ desktop session. The test checks installed output fences, cleanup after invalid
 geometry, test-only requests and rejection on an inactive output. It does not
 qualify writeback or delayed preparation. Build it with `make atomic-signaling`
 in this directory and pass the device path as its optional first argument.
+The legacy property completion check requires `vkms.enable_preparation=1`;
+it is skipped when that device capability is absent. Atomic completion checks
+still run on VKMS without preparation enabled.
 Pass `--preparation-client` after that path to negotiate explicit preparation
 while still submitting blocking updates without tickets. With preparation
 enabled on VKMS, both forms exercise the kernel's internal preparation path.

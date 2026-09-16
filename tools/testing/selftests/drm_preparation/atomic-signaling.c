@@ -187,9 +187,14 @@ static void output_fence(struct fixture *f)
 static void legacy_output_fence(struct fixture *f)
 {
 	uint32_t id = property(f->fd, f->crtc, DRM_MODE_OBJECT_CRTC, "OUT_FENCE_PTR", NULL);
+	uint64_t preparation = 0;
 	int fence = -1, ret;
 	struct pollfd pollfd;
 
+	if (drmGetCap(f->fd, DRM_CAP_ATOMIC_PREPARATION, &preparation) || !preparation) {
+		ksft_test_result_skip("Legacy property completion requires device preparation support\n");
+		return;
+	}
 	if (drmSetClientCap(f->fd, DRM_CLIENT_CAP_ATOMIC, 0))
 		ksft_exit_fail_msg("Cannot disable atomic negotiation: %m\n");
 	ret = drmModeObjectSetProperty(f->fd, f->crtc, DRM_MODE_OBJECT_CRTC, id,
