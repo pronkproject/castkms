@@ -30,6 +30,7 @@
 #include <drm/drm_blend.h>
 #include <drm/drm_bridge.h>
 #include <drm/drm_connector.h>
+#include <drm/drm_constraints_entry.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_framebuffer.h>
@@ -163,6 +164,8 @@ void __drm_atomic_helper_crtc_duplicate_state(struct drm_crtc *crtc,
 {
 	memcpy(state, crtc->state, sizeof(*state));
 	state->prepare_source = NULL;
+	if (state->constraints)
+		drm_constraints_entry_get(state->constraints);
 
 	if (state->mode_blob)
 		drm_property_blob_get(state->mode_blob);
@@ -221,6 +224,8 @@ EXPORT_SYMBOL(drm_atomic_helper_crtc_duplicate_state);
  */
 void __drm_atomic_helper_crtc_destroy_state(struct drm_crtc_state *state)
 {
+	if (state->constraints)
+		drm_constraints_entry_put(state->constraints);
 	if (state->prepare_source)
 		drm_prepare_source_put(state->prepare_source);
 	if (state->commit) {

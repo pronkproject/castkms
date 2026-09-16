@@ -36,6 +36,7 @@
 #include <drm/drm_mode_config.h>
 
 struct drm_connector;
+struct drm_constraints_entry;
 struct drm_device;
 struct drm_framebuffer;
 struct drm_mode_set;
@@ -109,6 +110,12 @@ struct drm_crtc_state {
 	struct drm_crtc *crtc;
 	/** @prepare_source: Owned read-accounting generation for this output use. */
 	struct drm_prepare_source *prepare_source;
+	/**
+	 * @constraints: Owned immutable constraints and backend binding, or NULL
+	 * when constraints selection is not enabled. Duplicated with atomic state
+	 * so accepted updates retain their own backend through delayed publication.
+	 */
+	struct drm_constraints_entry *constraints;
 
 	/**
 	 * @enable: Whether the CRTC should be enabled, gates all other state.

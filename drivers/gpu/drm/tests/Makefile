@@ -22,6 +22,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_gamma_test.o \
 	drm_atomic_flip_test.o \
 	drm_atomic_color_test.o \
+	drm_atomic_constraints_test.o \
 	drm_atomic_fence_test.o \
 	drm_atomic_prepare_test.o \
 	drm_atomic_prepare_set_test.o \
