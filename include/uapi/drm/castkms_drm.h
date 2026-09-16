@@ -66,13 +66,14 @@
  * overlay and cursor. YUV masks use bit positions from the scene encoding.
  * Sampling is nearest-neighbor, blending is premultiplied source-over and
  * stacking follows the scene description. A profile grants no buffer access.
- * Version 2 adds inclusive min_output/min_source bounds (width, height).
+ * min_output/min_source and max_output/max_source bound width and height
+ * inclusively.
  * RENDERER bounds must be positive with min <= max on each axis. Equal bounds
  * express exact geometry, e.g. min_output == max_output for a fixed-size pool.
  * Source bounds describe full framebuffers, not cropped extents; output bounds
  * describe the composed image, not an individual layer's destination rectangle.
- * Version 1 is not accepted by this encoding. Header and 32-byte format-record
- * layouts are fixed within a version; new record fields require a new version.
+ * Header and 32-byte format-record layouts are fixed within a version;
+ * new record fields require a new version.
  */
 struct drm_castkms_capability_profile {
 	__u32 version;
@@ -114,7 +115,7 @@ struct drm_castkms_capability_format {
  * Register one immutable target for an existing BEGIN_TAKEOVER candidate.
  * profile points to exactly profile_size bytes of capability encoding.
  * result points to drm_castkms_renderer_profile_result; flags and reserved
- * must be zero. Renderer version 8 adds explicit reserved request space.
+ * must be zero.
  * HOST requires no userspace probe; a RENDERER target requires normal probe
  * completion. Registration does not change KMS acceptance. Include transition
  * in CASTKMS_TRANSITION on an ordinary compatible atomic update, then invoke
@@ -675,7 +676,6 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_RENDERER_GET_SNAPSHOT 0x07
 #define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x08
 #define DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER 0x09
-/* 0x0a was the removed single-framebuffer dequeue; do not reuse it. */
 #define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x0b
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
 #define DRM_CASTKMS_RENDERER_REGISTER_PROFILE 0x0d
@@ -764,8 +764,7 @@ enum {
  * HOST_V1 and GPU_V1 are coarse execution identities, not admission policies.
  * The blob is not a whole-scene capability table. Use renderer QUERY_CAPABILITIES
  * for active/pending contracts; plane properties are only a static baseline.
- * Do not assume the original single-plane limits or infer negotiated modifier
- * support from this execution blob.
+ * Do not infer geometry limits or negotiated modifier support from this blob.
  *
  * GPU_V1 identifies one activated userspace renderer. New HOST source reads are
  * rejected while that renderer owns execution; work admitted before activation
