@@ -17,10 +17,9 @@ config DRM_CASTKMS
 	  color pipelines and YUV color properties are applied in software. Tiled
 	  storage and CEC are not supported. Optional ALSA support exposes one
 	  playback card per attached audio sink and separately authorized audio
-	  capture. Do not use it as a replacement for the C CastKMS driver in a
-	  casting session.
-	  Captures embed the cursor. The version-one userspace renderer interface
-	  does not describe multiple layers or color operations.
+	  capture. Captures embed the cursor. An authorized userspace renderer can
+	  negotiate complete scenes independently of the in-kernel compositor's
+	  format and geometry limits.
 
 	  The module is called castkms.
 
