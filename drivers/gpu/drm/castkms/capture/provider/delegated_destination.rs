@@ -4,17 +4,18 @@
 
 use super::delegated::Delegated;
 use crate::{
+    capture::reuse::Dependencies,
     display_control::Current,
     image_storage::{Pool, Registration},
 };
 use core::sync::atomic::{AtomicBool, Ordering};
 use kernel::{
     dma_buf::DmaBuf,
-    dma_fence::{Fence, Status},
-    dma_resv::{Snapshot, Usage},
+    dma_fence::Fence,
+    dma_resv::Usage,
     drm::fourcc,
     prelude::*,
-    sync::{aref::ARef, Arc, Mutex},
+    sync::{aref::ARef, poll::PollCondVar, Arc, Mutex},
 };
 
 /// Checked complete rows for the initial delegated output layout, not a source limit.
@@ -126,16 +127,29 @@ impl Image {
         use_id: u64,
         reuse: Option<ARef<Fence>>,
     ) -> Result<Arc<Use>> {
+        self.reserve_notified(use_id, reuse, None)
+    }
+
+    pub(super) fn reserve_notified(
+        self: &Arc<Self>,
+        use_id: u64,
+        reuse: Option<ARef<Fence>>,
+        changed: Option<Arc<PollCondVar>>,
+    ) -> Result<Arc<Use>> {
         if use_id == 0 {
             return Err(EINVAL);
         }
-        let usage = Arc::new(
-            Use {
+        let dependencies = Dependencies::new(
+            reuse.as_deref(),
+            &self.buffer().reservation().snapshot(Usage::Read)?,
+            changed,
+        )?;
+        let usage = Arc::pin_init(
+            pin_init!(Use {
                 image: self.clone(),
-                reuse,
-                dependencies: self.buffer().reservation().snapshot(Usage::Read)?,
+                dependencies <- kernel::new_mutex!(dependencies),
                 active: AtomicBool::new(false),
-            },
+            }),
             GFP_KERNEL,
         )?;
         self.scope.with_current(|current| {
@@ -162,10 +176,11 @@ impl Image {
 }
 
 /// One exclusive provider use. Owning it grants no pixel access or native exclusion.
+#[pin_data(PinnedDrop)]
 pub(crate) struct Use {
     image: Arc<Image>,
-    reuse: Option<ARef<Fence>>,
-    dependencies: Snapshot,
+    #[pin]
+    dependencies: Mutex<Dependencies>,
     active: AtomicBool,
 }
 
@@ -187,21 +202,16 @@ impl Use {
     /// This observation is not native exclusion. The recipient and trusted renderer must
     /// serialize subsequent external use until the output stage has released its write.
     pub(crate) fn ready(&self) -> Result<bool> {
-        let mut pending = false;
-        let dependencies = self.image.buffer().reservation().snapshot(Usage::Read)?;
-        let retained = Iterator::chain(self.reuse.iter().map(|f| &**f), self.dependencies.iter());
-        for fence in Iterator::chain(retained, dependencies.iter()) {
-            match fence.status() {
-                Status::Pending => pending = true,
-                Status::Complete(result) => result?,
-            }
-        }
-        Ok(!pending)
+        let snapshot = self.image.buffer().reservation().snapshot(Usage::Read)?;
+        let mut dependencies = self.dependencies.lock();
+        dependencies.observe(&snapshot)?;
+        dependencies.ready()
     }
 }
 
-impl Drop for Use {
-    fn drop(&mut self) {
+#[pinned_drop]
+impl PinnedDrop for Use {
+    fn drop(self: Pin<&mut Self>) {
         self.retire();
     }
 }

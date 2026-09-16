@@ -243,6 +243,45 @@ mod cases {
     }
 
     #[test]
+    fn newly_observed_reuse_failure_stays_terminal() -> Result {
+        crate::tests::with_exporter(|exporter| {
+            let framebuffer =
+                exporter.framebuffer(crate::provenance::Provenance::from_snapshot(None))?;
+            let backing = framebuffer
+                .object_at(0)?
+                .export_dma_buf(ExportAccess::ReadWrite)?;
+            with_display(|device, crtc, connector, _, file| {
+                let owner = owner(&file, crtc, connector)?;
+                let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                let (_active, _) = activate(&candidate, device, crtc)?;
+                let grantor = grant(&file, crtc, connector)?;
+                let image = grantor
+                    .capture()
+                    .describe_delegated()?
+                    .register_destination(&backing, fourcc::XRGB8888, 0, 2560, 0)?;
+                let usage = image.reserve(1, None)?;
+                check(usage.ready() == Ok(true))?;
+                let mut reuse = ManualFence::new()?;
+                exporter.drm.add_framebuffer_fence(
+                    &framebuffer,
+                    0,
+                    &reuse.fence(),
+                    kernel::dma_resv::Usage::Read,
+                )?;
+                check(usage.ready() == Ok(false))?;
+                reuse.complete(Err(EIO))?;
+                check(
+                    backing
+                        .reservation()
+                        .snapshot(kernel::dma_resv::Usage::Read)?
+                        .is_empty(),
+                )?;
+                check(usage.ready() == Err(EIO))
+            })
+        })
+    }
+
+    #[test]
     fn recipient_registration_capacity_does_not_consume_private_credits() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
