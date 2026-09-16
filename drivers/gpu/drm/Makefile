@@ -38,6 +38,7 @@ drm-y := \
 	drm_atomic_request_apply.o \
 	drm_atomic_plane.o \
 	drm_atomic_color.o \
+	drm_atomic_constraints.o \
 	drm_atomic_user_input.o \
 	drm_atomic_user_value.o \
 	drm_atomic_user_request.o \

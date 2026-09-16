@@ -68,6 +68,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_constraints_catalog_test.o \
 	drm_constraints_device_test.o \
 	drm_constraints_output_test.o \
+	drm_constraints_atomic_test.o \
 	drm_crtc_test.o \
 	drm_damage_helper_test.o \
 	drm_dp_mst_helper_test.o \
