@@ -47,6 +47,7 @@ pub(crate) struct Completion {
     pub(crate) use_id: u64,
     pub(crate) result: Result,
     pub(crate) content: Option<ContentSerial>,
+    pub(crate) completed_at: Option<kernel::time::Instant<kernel::time::Monotonic>>,
     pub(crate) native: Option<ARef<Fence>>,
 }
 
@@ -224,6 +225,7 @@ impl Queue {
                 use_id: completed.use_id,
                 result,
                 content: result.ok().and_then(|()| request.content_serial()),
+                completed_at: result.ok().and_then(|()| request.completed_at()),
                 native: request.native_completion(),
             })
         })

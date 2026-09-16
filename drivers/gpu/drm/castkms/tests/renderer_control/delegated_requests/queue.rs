@@ -31,6 +31,33 @@ mod cases {
     use kernel::sync::poll::testing::Observer;
 
     #[test]
+    fn repeated_output_preserves_original_private_image_production_time() -> Result {
+        with_output(|fixture| {
+            let mut queue = queue(&fixture, 1)?;
+            let produced = fixture.rendered.content().completed_at()?;
+            for use_id in 1..=2 {
+                fsleep(Delta::from_millis(1));
+                queue.queue_to(use_id, &fixture.destination, None)?;
+                let job = queue.try_claim(&fixture.rendered).ok_or(EINVAL)?;
+                let mut native = ManualFence::new()?;
+                job.claim.release(Completion::Submitted(native.fence()));
+                native.complete(Ok(()))?;
+                wait_ready(&mut queue)?;
+                queue.dequeue(|result| {
+                    check(result.result == Ok(()))?;
+                    check(result.completed_at.ok_or(EINVAL)? - produced == Delta::from_nanos(0))
+                })?;
+            }
+            queue.queue_to(3, &fixture.destination, None)?;
+            queue.cancel(3)?;
+            queue.advance();
+            queue.dequeue(|result| {
+                check(result.result == Err(ECANCELED) && result.completed_at.is_none())
+            })
+        })
+    }
+
+    #[test]
     fn lost_native_access_is_not_published_as_completed_output() -> Result {
         with_output(|fixture| {
             let mut queue = queue(&fixture, 1)?;

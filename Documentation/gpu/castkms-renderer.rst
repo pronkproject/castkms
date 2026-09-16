@@ -303,6 +303,11 @@ new frame. Requests retain the concrete output fence once submission is
 reported, including after cancellation or revocation. It is cleanup evidence,
 not independent permission to publish a frame, and its success does not
 override a terminal request error. No future-work fence is manufactured.
+Successful output metadata retains the private image's production time:
+the latest original producer/source fence signaling time, or the CPU
+completion report time when applicable. Repeated output from the same
+private image preserves that timestamp; recipient writes and dequeue do
+not create a new image-production time. Failed output carries no timestamp.
 Completion reconciliation can lag native fence signaling. Once
 reconciled, a request has one terminal result; cleanup queries do not authorize
 new frame publication. The stage releases its hold on private storage
