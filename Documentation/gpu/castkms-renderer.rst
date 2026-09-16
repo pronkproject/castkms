@@ -224,7 +224,8 @@ bookkeeping alone cannot prove that property.
 
 Registration tracks known aliases by DMA-BUF and reservation identity. It
 rejects overlap with current source storage again at source admission.
-Device-wide limits of 128 images and 512 MiB include registrations retained
+Device-wide limits of 128 images and 512 MiB cover private and delegated
+recipient storage together, including registrations retained
 after their caller drops its handle. Private use names are increasing and
 never reused. Removing a handle does not bypass a pending native use or
 the allocation accounting. An abandoned claim with unknown completion
@@ -233,8 +234,60 @@ pretending the allocation is available. Recovery from that fault is not
 implemented.
 
 Private-image registration and bound rendering are kernel-provider APIs.
-The renderer file does not expose them. Destination claims and delegated
-output delivery remain unimplemented.
+The renderer file does not expose them.
+
+Delegated output stages
+-----------------------
+
+The kernel capture provider registers recipient destinations under an exact
+capture grant, configuration and execution generation. Its initial output
+layout is complete linear XRGB8888 rows; that output subset does not restrict
+the renderer's private-image layout or negotiated source formats/modifiers.
+Destination dimensions follow the GPU envelope rather than the HOST layout
+ceiling. Registration checks writable access, row bounds and known aliases
+against private storage and current compositor sources. Source overlap is
+checked again when a write is claimed.
+
+An exported DMA-BUF is not revocable. Trusted importers must supply backing
+compatible with every prior recipient of that allocation and use fresh
+backing across incompatible grants or audiences. Renaming a pool or creating
+another DMA-BUF wrapper does not establish fresh storage. The common ledger
+rejects known live aliases but cannot detect arbitrary descriptor forwarding
+or all exporter-specific aliases. The output worker must initialize exposed
+padding, unused channel bits and allocation regions; registration alone does
+not sanitize pixels.
+
+Each request reserves a monotonically named destination use without retaining
+a source claim or private frame. Explicit reuse fences and initially acquired
+implicit dependencies retain their individual status. Pending dependencies
+are distinct from completed errors, including EAGAIN. External users must
+stop submitting new destination work before reservation; observing fences
+does not establish native exclusion. A pending destination leaves the request
+source-unbound and does not acquire private storage from an attempted claim.
+
+Output admission requires successful private-image production and destination
+reuse, plus live renderer and capture authority under one stabilized display
+scope. Cleanup storage is allocated before admitting the bounded private-to-
+recipient stage. Its native completion covers private reads and recipient
+writes, never compositor source retirement. CPU completion includes cache
+maintenance; a no-access report promises that neither allocation was touched.
+
+Closing handles or canceling a submitted request does not release either
+allocation before native completion. Revocation rejects new claims. An already
+claimed stage may submit while cancellation is being resolved, but a revoked
+in-flight request produces an error after native retirement, not a successful
+new frame. Completion reconciliation can lag native fence signaling. Once
+reconciled, a request has one terminal result; cleanup queries do not authorize
+new frame publication. The stage releases its hold on private storage
+independently of result dequeue or the recipient's later use. Unreported
+claimed access is explicitly lost and quarantined, not normal completion
+or permission to reuse storage.
+
+These are internal provider operations and lifecycle tests. Public output-job
+transport, wakeup/queue integration, negotiated destination layouts and real
+GPU rendering remain unimplemented. The public capture endpoint still uses
+HOST delivery; the renderer endpoint does not publish private-image or output
+claims.
 
 GPU envelope and remaining work
 ========================================
