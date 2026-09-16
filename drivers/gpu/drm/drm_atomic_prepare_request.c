@@ -78,6 +78,7 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 		if (dev->mode_config.preparation) {
 			ret = prepare_request(state, owner, &ticket);
 			if (ret == -EAGAIN) {
+				state->acquire_ctx = NULL;
 				drm_atomic_commit_put(state);
 				state = NULL;
 				drm_modeset_drop_locks(&ctx);
@@ -102,6 +103,7 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 retry_lock:
 		if (ret != -EDEADLK || !ctx.contended)
 			break;
+		state->acquire_ctx = NULL;
 		drm_atomic_commit_put(state);
 		state = NULL;
 		ret = drm_modeset_backoff(&ctx);
@@ -109,8 +111,11 @@ retry_lock:
 			break;
 	}
 
-	if (state)
+	if (state) {
+		/* A commit-tail reference may outlive the request's stack context. */
+		state->acquire_ctx = NULL;
 		drm_atomic_commit_put(state);
+	}
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 	if (ticket)

@@ -38,6 +38,8 @@ struct request_fixture {
 	int signaling_error;
 	int install_error;
 	bool nonblock;
+	bool retain_state;
+	struct drm_atomic_commit *retained;
 };
 
 static int check_request(struct drm_device *dev, struct drm_atomic_commit *state)
@@ -57,6 +59,8 @@ static int install_request(struct drm_device *dev, struct drm_atomic_commit *sta
 	int ret;
 
 	f->nonblock = nonblock;
+	if (f->retain_state)
+		f->retained = drm_atomic_commit_get(state);
 	if (f->install_error)
 		return f->install_error;
 	ret = drm_atomic_helper_swap_state(state, false);
@@ -82,6 +86,8 @@ static void stop_reader(void *data)
 		drm_prepare_read_abandon(f->read);
 	if (f->source)
 		drm_prepare_source_put(f->source);
+	if (f->retained)
+		drm_atomic_commit_put(f->retained);
 }
 
 static struct request_fixture *new_request(struct kunit *test, bool enabled)
@@ -694,7 +700,44 @@ static void unrelated_deadlock_is_not_retried(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installations, 0);
 }
 
+static void retained_state_has_no_request_stack_pointer(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	f->retain_state = true;
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_request(f->dev, build_request, f), 0);
+	KUNIT_ASSERT_NOT_NULL(test, f->retained);
+	KUNIT_EXPECT_PTR_EQ(test, f->retained->acquire_ctx, NULL);
+}
+
+static void rejected_retained_state_has_no_request_stack_pointer(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	f->retain_state = true;
+	f->install_error = -EBUSY;
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_request(f->dev, build_request, f), -EBUSY);
+	KUNIT_ASSERT_NOT_NULL(test, f->retained);
+	KUNIT_EXPECT_PTR_EQ(test, f->retained->acquire_ctx, NULL);
+}
+
+static void submitted_state_has_no_request_stack_pointer(struct kunit *test)
+{
+	const struct drm_atomic_request_callbacks callbacks = { .build = build_request };
+	struct request_fixture *f = new_request(test, true);
+
+	f->retain_state = true;
+	KUNIT_ASSERT_EQ(test, drm_atomic_submit_request_with_callbacks(f->dev, NULL,
+								     &callbacks, f), 0);
+	KUNIT_ASSERT_NOT_NULL(test, f->retained);
+	KUNIT_EXPECT_TRUE(test, f->nonblock);
+	KUNIT_EXPECT_PTR_EQ(test, f->retained->acquire_ctx, NULL);
+}
+
 static struct kunit_case cases[] = {
+	KUNIT_CASE(retained_state_has_no_request_stack_pointer),
+	KUNIT_CASE(rejected_retained_state_has_no_request_stack_pointer),
+	KUNIT_CASE(submitted_state_has_no_request_stack_pointer),
 	KUNIT_CASE(unrelated_deadlock_is_not_retried),
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(ordinary_request_needs_no_accounting),
