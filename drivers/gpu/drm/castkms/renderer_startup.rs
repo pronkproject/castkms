@@ -283,6 +283,14 @@ pub(crate) struct Active {
 }
 
 impl Active {
+    /// Observe this incarnation without extending its unique active-owner lifetime.
+    pub(crate) fn observation(&self) -> Observation {
+        Observation {
+            startup: self.startup.clone(),
+            identity: self.identity.clone(),
+        }
+    }
+
     /// Check that this renderer remains the active device-wide incarnation.
     pub(crate) fn check(&self) -> Result {
         match &*self.startup.state.lock() {
@@ -318,6 +326,34 @@ impl Active {
             return Err(EINVAL);
         }
         self.with_current(f)
+    }
+}
+
+/// Retained identity only: dropping the active owner still invalidates every observation.
+#[derive(Clone)]
+pub(crate) struct Observation {
+    startup: Arc<Startup>,
+    identity: Arc<()>,
+}
+
+impl Observation {
+    /// Apply the active incarnation's checks without keeping its owner alive.
+    pub(crate) fn with_candidate<R>(
+        &self,
+        candidate: &Candidate,
+        f: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
+        if !Arc::ptr_eq(&self.startup, &candidate.startup)
+            || !Arc::ptr_eq(&self.identity, &candidate.identity)
+        {
+            return Err(EINVAL);
+        }
+        match &*self.startup.state.lock() {
+            State::Active(current) if Arc::ptr_eq(current, &self.identity) => f(),
+            State::Replacing { active, .. } if Arc::ptr_eq(active, &self.identity) => f(),
+            State::Closed => Err(ENODEV),
+            _ => Err(EIO),
+        }
     }
 }
 
