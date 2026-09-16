@@ -203,4 +203,42 @@ mod cases {
             check(image.reserve(u64::MAX, None).err() == Some(EOVERFLOW))
         })
     }
+
+    #[test]
+    fn retained_implicit_reuse_failure_survives_reservation_cleanup() -> Result {
+        crate::tests::with_exporter(|exporter| {
+            let framebuffer =
+                exporter.framebuffer(crate::provenance::Provenance::from_snapshot(None))?;
+            let backing = framebuffer
+                .object_at(0)?
+                .export_dma_buf(ExportAccess::ReadWrite)?;
+            let mut reuse = ManualFence::new()?;
+            exporter.drm.add_framebuffer_fence(
+                &framebuffer,
+                0,
+                &reuse.fence(),
+                kernel::dma_resv::Usage::Read,
+            )?;
+            with_display(|device, crtc, connector, _, file| {
+                let owner = owner(&file, crtc, connector)?;
+                let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                let (_active, _) = activate(&candidate, device, crtc)?;
+                let grantor = grant(&file, crtc, connector)?;
+                let image = grantor
+                    .capture()
+                    .describe_delegated()?
+                    .register_destination(&backing, fourcc::XRGB8888, 0, 2560, 0)?;
+                let usage = image.reserve(1, None)?;
+                check(usage.ready() == Ok(false))?;
+                reuse.complete(Err(EAGAIN))?;
+                check(
+                    backing
+                        .reservation()
+                        .snapshot(kernel::dma_resv::Usage::Read)?
+                        .is_empty(),
+                )?;
+                check(usage.ready() == Err(EAGAIN))
+            })
+        })
+    }
 }
