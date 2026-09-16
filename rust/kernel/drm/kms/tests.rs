@@ -75,7 +75,9 @@ struct Counts {
     checked_constraints_id: AtomicU64,
     committed_constraints_id: AtomicU64,
     constraints_render: AtomicU32,
+    output_count: AtomicU32,
     constraints_work: constraints::Published,
+    constraints_work_secondary: constraints::Published,
     constraints_work_error: AtomicI32,
     // Borrowed only by synchronous preparation callbacks while their source is retained.
     preparation_source: AtomicPtr<bindings::drm_prepare_source>,
@@ -539,57 +541,71 @@ impl KmsDriver for TestDriver {
         } else {
             None
         };
-        let plane = plane::UnregisteredPlane::<TestPlane>::new(
-            dev,
-            0,
-            &[fourcc::XRGB8888, fourcc::NV12],
-            Some(&[fourcc::FORMAT_MOD_LINEAR]),
-            plane::Type::Primary,
-            None,
-            (),
-        )?;
-        dev.plane.store(plane.as_raw(), Ordering::Relaxed);
-        if dev.fail_after_plane {
-            dev.counts.setup_failures.fetch_add(1, Ordering::Relaxed);
+        let output_count = dev.counts.output_count.load(Ordering::Relaxed).max(1);
+        if output_count > 2 {
             return Err(EINVAL);
         }
-        let crtc = crtc::UnregisteredCrtc::<TestCrtc>::new(
-            dev,
-            plane,
-            None::<&plane::UnregisteredPlane<TestPlane>>,
-            None,
-            (),
-        )?;
-        dev.crtc.store(crtc.as_raw(), Ordering::Relaxed);
-        let encoder = encoder::UnregisteredEncoder::<TestEncoder>::new(
-            dev,
-            encoder::Type::Virtual,
-            crtc.mask(),
-            0,
-            None,
-            (),
-        )?;
-        let connector = connector::UnregisteredConnector::<TestConnector>::new(
-            dev,
-            connector::Type::Virtual,
-            (),
-        )?;
-        connector.attach_encoder(encoder)?;
-        dev.connector.store(connector.as_raw(), Ordering::Relaxed);
-        if let Some(domain) = domain {
-            use crate::drm::constraints::{Description, Format, OpaqueEntry, Size};
-
-            let size = Size::new(1, 1, 640, 480);
-            let description = Description::new(
-                size,
-                &[Format::new(
-                    plane.object_id(), fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size,
-                )],
-                &[],
+        for index in 0..output_count {
+            let plane = plane::UnregisteredPlane::<TestPlane>::new(
+                dev,
+                0,
+                &[fourcc::XRGB8888, fourcc::NV12],
+                Some(&[fourcc::FORMAT_MOD_LINEAR]),
+                plane::Type::Primary,
+                None,
+                (),
             )?;
-            let entry = OpaqueEntry::new_stateless(&domain, crtc.object_id(), &description)?;
-            dev.attach_constraints(crtc, &entry, 4)?;
-            dev.counts.constraints_id.store(entry.id(), Ordering::Relaxed);
+            if index == 0 {
+                dev.plane.store(plane.as_raw(), Ordering::Relaxed);
+            }
+            if dev.fail_after_plane {
+                dev.counts.setup_failures.fetch_add(1, Ordering::Relaxed);
+                return Err(EINVAL);
+            }
+            let crtc = crtc::UnregisteredCrtc::<TestCrtc>::new(
+                dev,
+                plane,
+                None::<&plane::UnregisteredPlane<TestPlane>>,
+                None,
+                (),
+            )?;
+            if index == 0 {
+                dev.crtc.store(crtc.as_raw(), Ordering::Relaxed);
+            }
+            let encoder = encoder::UnregisteredEncoder::<TestEncoder>::new(
+                dev,
+                encoder::Type::Virtual,
+                crtc.mask(),
+                0,
+                None,
+                (),
+            )?;
+            let connector = connector::UnregisteredConnector::<TestConnector>::new(
+                dev,
+                connector::Type::Virtual,
+                (),
+            )?;
+            connector.attach_encoder(encoder)?;
+            if index == 0 {
+                dev.connector.store(connector.as_raw(), Ordering::Relaxed);
+            }
+            if let Some(domain) = &domain {
+                use crate::drm::constraints::{Description, Format, OpaqueEntry, Size};
+
+                let size = Size::new(1, 1, 640, 480);
+                let description = Description::new(
+                    size,
+                    &[Format::new(
+                        plane.object_id(), fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size,
+                    )],
+                    &[],
+                )?;
+                let entry = OpaqueEntry::new_stateless(domain, crtc.object_id(), &description)?;
+                dev.attach_constraints(crtc, &entry, 4)?;
+                if index == 0 {
+                    dev.counts.constraints_id.store(entry.id(), Ordering::Relaxed);
+                }
+            }
         }
         Ok(())
     }
