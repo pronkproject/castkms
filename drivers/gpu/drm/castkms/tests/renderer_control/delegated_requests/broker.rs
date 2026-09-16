@@ -35,6 +35,26 @@ mod cases {
     use super::*;
 
     #[test]
+    fn busy_recipient_notifies_again_after_releasing_queue_exclusion() -> Result {
+        with_output(|fixture| {
+            let broker = Broker::new()?;
+            let registration = register(&broker, &fixture)?;
+            let changed = registration.with_queue(|queue| Ok(queue.changed().clone()))?;
+            let observer = kernel::sync::poll::testing::Observer::new(changed)?;
+            let during = registration.with_queue(|queue| {
+                queue.queue_to(1, &fixture.destination, None)?;
+                check(observer.notifications() != 0)?;
+                check(broker.try_claim(&fixture.rendered).is_none())?;
+                Ok(observer.notifications())
+            })?;
+            check(observer.notifications() > during)?;
+            let job = broker.try_claim(&fixture.rendered).ok_or(EINVAL)?;
+            job.output.claim.release(Completion::WithoutAccess);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn recipient_queue_exclusion_does_not_block_another_recipient() -> Result {
         with_output(|fixture| {
             let broker = Broker::new()?;
