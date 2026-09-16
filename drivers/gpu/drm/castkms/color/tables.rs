@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 
-//! sRGB transfer tables shared numerically with the C CastKMS compositor.
+//! Fixed-point sRGB transfer tables for software color operations.
 
 pub(super) const SRGB_EOTF: [u16; 256] = [
     0x0, 0x13, 0x27, 0x3b, 0x4f, 0x63, 0x77, 0x8b, 0x9f, 0xb3, 0xc6, 0xdb, 0xf0, 0x107, 0x11f,
