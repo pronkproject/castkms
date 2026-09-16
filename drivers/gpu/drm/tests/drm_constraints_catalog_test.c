@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <linux/err.h>
+#include <linux/completion.h>
+#include <linux/kthread.h>
 #include <linux/module.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_constraints_catalog.h>
@@ -298,6 +300,102 @@ static void equal_ids_do_not_authorize_foreign_entries(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, context.calls, 0);
 }
 
+static void closing_rejects_checked_but_unaccepted_selection(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 1);
+	struct install_context context = {};
+	struct drm_constraints_snapshot *before = snapshot(test, fixture->catalog, 0);
+
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_catalog_check(fixture->catalog, fixture->initial, validate, &context), 0);
+	drm_constraints_catalog_close(fixture->catalog);
+	drm_constraints_catalog_close(fixture->catalog);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, fixture->initial, install, &context),
+		-ESTALE);
+	KUNIT_EXPECT_EQ(test, context.calls, 1);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_catalog_snapshot(fixture->catalog, 0),
+			   ERR_PTR(-ESTALE));
+	KUNIT_EXPECT_EQ(test, drm_constraints_catalog_add(fixture->catalog, fixture->initial), -ESTALE);
+	KUNIT_EXPECT_EQ(test, drm_constraints_catalog_suggest(fixture->catalog, 0), -ESTALE);
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_info(before)->selected_id,
+			drm_constraints_entry_id(fixture->initial));
+}
+
+struct close_race {
+	struct drm_constraints_catalog *catalog;
+	struct drm_constraints_entry *entry;
+	struct completion installing;
+	struct completion finish;
+	struct completion closing;
+	struct completion closed;
+	int result;
+};
+
+static int paused_install(struct drm_constraints_entry *entry, void *data)
+{
+	struct close_race *race = data;
+
+	complete(&race->installing);
+	return wait_for_completion_timeout(&race->finish, HZ) ? 0 : -ETIMEDOUT;
+}
+
+static int accept_worker(void *data)
+{
+	struct close_race *race = data;
+
+	race->result = drm_constraints_catalog_accept(race->catalog, race->entry,
+						      paused_install, race);
+	while (!kthread_should_stop())
+		schedule_timeout_interruptible(1);
+	return 0;
+}
+
+static int close_worker(void *data)
+{
+	struct close_race *race = data;
+
+	complete(&race->closing);
+	drm_constraints_catalog_close(race->catalog);
+	complete(&race->closed);
+	while (!kthread_should_stop())
+		schedule_timeout_interruptible(1);
+	return 0;
+}
+
+static void closing_waits_for_irrevocable_acceptance(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct task_struct *accepting, *closing;
+	struct close_race race = { .catalog = fixture->catalog, .entry = target };
+
+	init_completion(&race.installing);
+	init_completion(&race.finish);
+	init_completion(&race.closing);
+	init_completion(&race.closed);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(fixture->catalog, target), 0);
+	accepting = kthread_run(accept_worker, &race, "constraints-accept");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, accepting);
+	KUNIT_EXPECT_NE(test, wait_for_completion_timeout(&race.installing, HZ), 0);
+	closing = kthread_run(close_worker, &race, "constraints-close");
+	if (IS_ERR(closing)) {
+		complete(&race.finish);
+		kthread_stop(accepting);
+		KUNIT_FAIL(test, "cannot start close worker");
+		return;
+	}
+	KUNIT_EXPECT_NE(test, wait_for_completion_timeout(&race.closing, HZ), 0);
+	KUNIT_EXPECT_EQ(test, wait_for_completion_timeout(&race.closed, msecs_to_jiffies(20)), 0);
+	complete(&race.finish);
+	kthread_stop(accepting);
+	kthread_stop(closing);
+	KUNIT_EXPECT_EQ(test, race.result, 0);
+	KUNIT_EXPECT_TRUE(test, completion_done(&race.closed));
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_catalog_snapshot(fixture->catalog, 0),
+			   ERR_PTR(-ESTALE));
+}
+
 static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(snapshots_retain_immutable_entries),
 	KUNIT_CASE(changes_invalidate_expected_generations),
@@ -309,6 +407,8 @@ static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(accepted_selection_survives_withdrawal),
 	KUNIT_CASE(failed_installation_preserves_selection),
 	KUNIT_CASE(equal_ids_do_not_authorize_foreign_entries),
+	KUNIT_CASE(closing_rejects_checked_but_unaccepted_selection),
+	KUNIT_CASE(closing_waits_for_irrevocable_acceptance),
 	{}
 };
 

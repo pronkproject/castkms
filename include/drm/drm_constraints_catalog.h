@@ -38,6 +38,16 @@ drm_constraints_catalog_get(struct drm_constraints_catalog *catalog);
 void drm_constraints_catalog_put(struct drm_constraints_catalog *catalog);
 
 /*
+ * Permanently exclude new selection and listing, synchronizing with acceptance
+ * already in progress. Accepted bindings and retained snapshots remain valid.
+ * This is not native completion or source revocation: the provider separately
+ * closes source admission and quiesces output before restoring a default for
+ * another owner. Do not hold locks needed by a catalog callback or call from
+ * such a callback. Closing is idempotent and cannot fail on generation overflow.
+ */
+void drm_constraints_catalog_close(struct drm_constraints_catalog *catalog);
+
+/*
  * Provider operations. Add requires complete, ready resources; publication is
  * not itself selection. Withdraw marks an entry unavailable for selection.
  * Forget removes a withdrawn, unselected entry without invalidating
