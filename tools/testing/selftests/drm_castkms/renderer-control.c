@@ -98,6 +98,39 @@ static void check_transition_property(int fd, uint32_t crtc)
 	drmModeFreeObjectProperties(properties);
 }
 
+static void check_plane_blending(int fd)
+{
+	drmModePlaneRes *planes = drmModeGetPlaneResources(fd);
+
+	CHECK(planes && planes->count_planes);
+	for (uint32_t plane = 0; plane < planes->count_planes; plane++) {
+		drmModeObjectProperties *properties = drmModeObjectGetProperties(
+			fd, planes->planes[plane], DRM_MODE_OBJECT_PLANE);
+		unsigned int found = 0;
+
+		CHECK(properties);
+		for (uint32_t i = 0; i < properties->count_props; i++) {
+			drmModePropertyRes *description = drmModeGetProperty(
+				fd, properties->props[i]);
+
+			CHECK(description);
+			if (!strcmp(description->name, "pixel blend mode")) {
+				CHECK(description->flags & DRM_MODE_PROP_ENUM);
+				CHECK(description->count_enums == 1);
+				CHECK(!strcmp(description->enums[0].name,
+					      "Pre-multiplied"));
+				CHECK(properties->prop_values[i] ==
+				      description->enums[0].value);
+				found++;
+			}
+			drmModeFreeProperty(description);
+		}
+		CHECK(found == 1);
+		drmModeFreeObjectProperties(properties);
+	}
+	drmModeFreePlaneResources(planes);
+}
+
 static void expect_ioctl_error(int fd, unsigned long command, void *request,
 			       int expected)
 {
@@ -474,6 +507,7 @@ int main(int argc, char **argv)
 	CHECK(fd >= 0);
 	CHECK(drmSetMaster(fd) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
+	check_plane_blending(fd);
 	peer = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(peer >= 0 && !drmIsMaster(peer));
 	CHECK(drmSetClientCap(peer, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
