@@ -141,10 +141,35 @@ static void attaching_requires_disabled_unregistered_output(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_constraints_device_init(&fixture->drm, 8), -EBUSY);
 }
 
+static void publishing_revalidates_complete_object_scope(struct kunit *test)
+{
+	struct output_fixture *fixture = new_fixture(test, "constraints-output");
+	struct output_fixture *other = new_fixture(test, "constraints-foreign");
+	struct drm_constraints_entry *initial = new_entry(test, fixture, fixture->crtc->base.id,
+							  fixture->plane->base.id);
+	struct drm_constraints_entry *target = new_entry(test, fixture, fixture->crtc->base.id,
+							 fixture->plane->base.id);
+	struct drm_constraints_entry *foreign = new_entry(test, other, fixture->crtc->base.id,
+							  fixture->plane->base.id);
+	struct drm_constraints_entry *wrong_plane = new_entry(test, fixture, fixture->crtc->base.id,
+							      U32_MAX);
+	struct drm_constraints_entry *selected;
+
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, target), -EOPNOTSUPP);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, initial, 4, &output_ops), 0);
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, foreign), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, wrong_plane), -EINVAL);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(fixture->crtc, target), 0);
+	selected = drm_constraints_catalog_selected(drm_constraints_crtc_catalog(fixture->crtc));
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, selected), 0);
+	KUNIT_EXPECT_PTR_EQ(test, selected, initial);
+}
+
 static struct kunit_case drm_constraints_output_tests[] = {
 	KUNIT_CASE(reset_and_pristine_state_retain_accepted_binding),
 	KUNIT_CASE(attaching_rejects_foreign_device_and_objects),
 	KUNIT_CASE(attaching_requires_disabled_unregistered_output),
+	KUNIT_CASE(publishing_revalidates_complete_object_scope),
 	{}
 };
 

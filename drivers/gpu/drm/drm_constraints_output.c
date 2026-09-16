@@ -89,6 +89,19 @@ struct drm_constraints_catalog *drm_constraints_crtc_catalog(struct drm_crtc *cr
 }
 EXPORT_SYMBOL_GPL(drm_constraints_crtc_catalog);
 
+int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry *entry)
+{
+	int ret;
+
+	if (!crtc->constraints_output)
+		return -EOPNOTSUPP;
+	ret = validate_scope(crtc, entry);
+	if (ret)
+		return ret;
+	return drm_constraints_catalog_add(crtc->constraints_output->catalog, entry);
+}
+EXPORT_SYMBOL_GPL(drm_constraints_crtc_add);
+
 void drm_constraints_crtc_state_init(struct drm_crtc_state *state)
 {
 	if (state->crtc->constraints_output)
