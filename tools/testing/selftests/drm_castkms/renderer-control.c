@@ -281,6 +281,14 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate,
 			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = UINT32_MAX,
 		};
 	}
+	for (unsigned int i = 0; i < 2; i++) {
+		request.reserved[i] = 1;
+		expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
+		request.reserved[i] = 0;
+	}
+	_Static_assert(sizeof(request) == 48, "renderer v8 registration layout");
+	expect_ioctl_error(fd, _IOC(_IOC_WRITE, DRM_IOCTL_BASE,
+		DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_PROFILE, 32), &request, ENOTTY);
 	profile.header.reserved[0] = 1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
 	profile.header.reserved[0] = 0;
