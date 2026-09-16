@@ -4,7 +4,9 @@ use super::*;
 use crate::{
     drm::{
         constraints::{
+            Backend,
             Description,
+            Entry,
             Format,
             Size, //
         },
@@ -43,6 +45,35 @@ fn entry(domain: &Domain, drops: &Arc<AtomicU32>) -> Result<ARef<Entry<TestBacke
 #[kunit_tests(rust_drm_constraints_list)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn stateless_and_typed_backends_share_one_retained_list() -> Result {
+        let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
+        let domain = Domain::new(2)?;
+        let target = entry(&domain, &drops)?;
+        let initial = OpaqueEntry::new_stateless(&domain, 9, target.description())?;
+        let list = List::new(&domain, &initial, 2)?;
+        list.add(&target)?;
+        let snapshot = list.snapshot(0)?;
+        let retained = list.lookup(target.id())?;
+        assert_eq!(list.selected().id(), initial.id());
+        assert!(retained.in_domain(&domain));
+        list.withdraw(target.id())?;
+        list.forget(target.id())?;
+        list.close();
+        drop(list);
+        drop(initial);
+        drop(target);
+        drop(domain);
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+        assert_eq!(snapshot.entries().len(), 2);
+        assert!(snapshot.entries().all(|offer| offer.entry.crtc_id() == 9));
+        drop(snapshot);
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+        drop(retained);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
 
     #[test]
     fn snapshot_retains_entries_after_list_closes_and_drops() -> Result {
@@ -138,7 +169,7 @@ mod cases {
         list.forget(target.id())?;
         drop(target);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
-        assert_eq!(retained.backend().0.load(Ordering::Relaxed), 0);
+        assert_eq!(retained.description().output().minimum(), (128, 64));
         drop(retained);
         assert_eq!(drops.load(Ordering::Relaxed), 1);
         list.withdraw(initial.id())?;
