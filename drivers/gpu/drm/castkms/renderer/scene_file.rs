@@ -205,13 +205,13 @@ pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
             encoded.word(value)?;
         }
         encoded.word(match layer.yuv.0 {
-            ColorEncoding::Bt601 => 0,
-            ColorEncoding::Bt709 => 1,
-            ColorEncoding::Bt2020 => 2,
+            ColorEncoding::Bt601 => uapi::DRM_CASTKMS_YUV_ENCODING_BT601,
+            ColorEncoding::Bt709 => uapi::DRM_CASTKMS_YUV_ENCODING_BT709,
+            ColorEncoding::Bt2020 => uapi::DRM_CASTKMS_YUV_ENCODING_BT2020,
         })?;
         encoded.word(match layer.yuv.1 {
-            ColorRange::Limited => 0,
-            ColorRange::Full => 1,
+            ColorRange::Limited => uapi::DRM_CASTKMS_YUV_RANGE_LIMITED,
+            ColorRange::Full => uapi::DRM_CASTKMS_YUV_RANGE_FULL,
         })?;
         encoded.word(framebuffer.plane_count() as u32)?;
         encoded.word(operations.len() as u32)?;

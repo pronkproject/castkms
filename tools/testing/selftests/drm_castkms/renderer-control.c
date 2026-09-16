@@ -808,6 +808,8 @@ int main(int argc, char **argv)
 	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
 	CHECK(scene->layer_count == 1 && scene->producer_fd == -1 && !scene->reserved);
 	CHECK(layer->format == DRM_FORMAT_XRGB8888);
+	CHECK(layer->color_encoding == DRM_CASTKMS_YUV_ENCODING_BT601);
+	CHECK(layer->color_range == DRM_CASTKMS_YUV_RANGE_FULL);
 	CHECK(layer->width == gpu_buffer.dumb.width && layer->height == gpu_buffer.dumb.height);
 	CHECK(layer->plane_count == 1 && layer->planes[0].dma_buf_fd >= 0);
 	for (unsigned int i = layer->plane_count; i < DRM_CASTKMS_RENDERER_MAX_PLANES; i++)
