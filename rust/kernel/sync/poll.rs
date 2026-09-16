@@ -22,6 +22,9 @@ use core::{
     ops::Deref, //
 };
 
+#[cfg(CONFIG_KUNIT)]
+pub mod testing;
+
 /// Creates a [`PollCondVar`] initialiser with the given name and a newly-created lock class.
 #[macro_export]
 macro_rules! new_poll_condvar {
