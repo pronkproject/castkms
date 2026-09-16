@@ -39,6 +39,26 @@ mod cases {
         crate::execution::capabilities::Profile::new(*reference.limits(), formats)
     }
 
+    fn gate_profile(
+        candidate: &Arc<Candidate>,
+        device: &Device<Driver, Registered>,
+        crtc: &Crtc<display::Crtc>,
+        host: bool,
+    ) -> Result<crate::renderer::proposal::Proposal> {
+        let proposal = if host {
+            candidate.propose_host()?
+        } else {
+            candidate.propose_profile(linear_profile()?)?
+        };
+        device.atomic_update(|transaction| {
+            transaction
+                .add_crtc_state(crtc)?
+                .tag_transition(proposal.describe().transition);
+            Ok(())
+        })?;
+        Ok(proposal)
+    }
+
     #[test]
     fn negotiated_gpu_contract_accepts_tiling_float_and_larger_modes() -> Result {
         with_display(|device, crtc, connector, scanout, file| {
@@ -577,15 +597,18 @@ mod cases {
     fn completed_probe_activation_transfers_device_wide_ownership() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let before = device.execution.describe();
             candidate.submit_private_probe(None)?;
-            let (active, _source, description) = candidate.activate(device)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _source, description) = proposal.activate(device)?;
             check(description.generation == before.generation + 1)?;
             check(description.profile == Profile::GpuV1)?;
             check(description == device.execution.describe())?;
             active.check()?;
-            check(matches!(device.startup.begin(), Err(EBUSY)))?;
+            let replacement = device.startup.begin()?;
+            replacement.check()?;
+            drop(replacement);
             drop(active);
             check(matches!(device.startup.begin(), Err(EBUSY)))
         })
@@ -595,9 +618,10 @@ mod cases {
     fn active_renderer_claim_retires_only_after_explicit_release() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             candidate.submit_private_probe(None)?;
-            let (active, _, description) = candidate.activate(device)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, description) = proposal.activate(device)?;
             let source = device
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
@@ -685,9 +709,10 @@ mod cases {
     fn dropped_renderer_job_fails_source_preparation() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             candidate.submit_private_probe(None)?;
-            let (active, _, description) = candidate.activate(device)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, description) = proposal.activate(device)?;
             let source = device
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
@@ -703,9 +728,10 @@ mod cases {
     fn cpu_renderer_release_completes_source_preparation() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             candidate.submit_private_probe(None)?;
-            let (active, _, description) = candidate.activate(device)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, description) = proposal.activate(device)?;
             let source = device
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
@@ -722,9 +748,10 @@ mod cases {
     fn submitted_renderer_release_transfers_native_completion() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             candidate.submit_private_probe(None)?;
-            let (active, _, description) = candidate.activate(device)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, description) = proposal.activate(device)?;
             let source = device
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
@@ -752,15 +779,16 @@ mod cases {
     fn pending_probe_does_not_partially_activate_execution() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let before = device.execution.describe();
             let mut completion = ManualFence::new()?;
             candidate.submit_private_probe(Some(completion.fence()))?;
-            check(matches!(candidate.activate(device), Err(EAGAIN)))?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            check(matches!(proposal.activate(device), Err(EAGAIN)))?;
             check(device.execution.describe() == before)?;
             candidate.validate()?;
             completion.complete(Ok(()))?;
-            let (active, _, after) = candidate.activate(device)?;
+            let (active, _, after) = proposal.activate(device)?;
             check(after.generation == before.generation + 1)?;
             active.check()
         })
