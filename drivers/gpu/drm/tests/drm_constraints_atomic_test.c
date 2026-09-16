@@ -9,6 +9,7 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare.h>
 #include <drm/drm_atomic_prepare_commit.h>
+#include <drm/drm_atomic_prepare_display.h>
 #include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
@@ -47,6 +48,7 @@ struct atomic_fixture {
 	struct drm_framebuffer *tiled;
 	unsigned int installs;
 	bool require_primary;
+	struct completion *installed;
 };
 
 static void destroy_fb(struct drm_framebuffer *fb)
@@ -98,8 +100,11 @@ static int commit_update(struct drm_device *dev, struct drm_atomic_commit *state
 	struct atomic_fixture *f = dev->dev_private;
 	int ret = drm_atomic_helper_swap_state(state, false);
 
-	if (!ret)
+	if (!ret) {
 		f->installs++;
+		if (f->installed)
+			complete(f->installed);
+	}
 	return ret;
 }
 
@@ -175,7 +180,7 @@ new_fb(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier, u
 	return fb;
 }
 
-static struct atomic_fixture *new_fixture(struct kunit *test)
+static struct atomic_fixture *new_fixture_with_preparation(struct kunit *test, bool preparation)
 {
 	static const u32 formats[] = { DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888 };
 	static const u64 modifiers[] = {
@@ -194,6 +199,8 @@ static struct atomic_fixture *new_fixture(struct kunit *test)
 	f->dev->mode_config.funcs = &mode_ops;
 	f->dev->mode_config.min_width = f->dev->mode_config.min_height = 1;
 	f->dev->mode_config.max_width = f->dev->mode_config.max_height = 1024;
+	if (preparation)
+		KUNIT_ASSERT_EQ(test, drm_atomic_prepare_display_init(f->dev, 8), 0);
 	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(f->dev, 8), 0);
 	f->plane = drm_kunit_helper_create_primary_plane(test, f->dev, NULL, NULL,
 							 formats, ARRAY_SIZE(formats), modifiers);
@@ -216,6 +223,11 @@ static struct atomic_fixture *new_fixture(struct kunit *test)
 	f->linear = new_fb(test, f, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, 128);
 	f->tiled = new_fb(test, f, DRM_FORMAT_ARGB8888, I915_FORMAT_MOD_X_TILED, 128);
 	return f;
+}
+
+static struct atomic_fixture *new_fixture(struct kunit *test)
+{
+	return new_fixture_with_preparation(test, false);
 }
 
 /* Allocate f before the shared device so backend data outlives its cleanup. */
@@ -1110,6 +1122,113 @@ static void multi_output_shutdown_rechecks_every_binding(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, other->crtc->state->constraints, other->initial);
 }
 
+static int commit_prepared_update(struct drm_atomic_commit *state)
+{
+	struct drm_crtc *crtc = NULL;
+	struct drm_crtc_state *proposed;
+	struct drm_prepare_ticket *ticket;
+	int i, ret = drm_atomic_check_only(state);
+
+	if (ret)
+		return ret;
+	for_each_new_crtc_in_state(state, crtc, proposed, i)
+		break;
+	if (!crtc)
+		return -EINVAL;
+	ticket = drm_atomic_prepare_crtcs(&crtc, 1, NULL);
+	if (IS_ERR(ticket))
+		return PTR_ERR(ticket);
+	ret = drm_atomic_commit_prepare(state, ticket, drm_atomic_prepare_display_observe);
+	if (!ret)
+		ret = commit_update(state->dev, state, false);
+	drm_prepare_ticket_put(ticket);
+	return ret;
+}
+
+struct shutdown_worker {
+	struct drm_device *dev;
+	struct completion finished;
+};
+
+static int shutdown_device(void *data)
+{
+	struct shutdown_worker *worker = data;
+
+	drm_atomic_helper_shutdown(worker->dev);
+	complete(&worker->finished);
+	while (!kthread_should_stop())
+		schedule_timeout_interruptible(1);
+	return 0;
+}
+
+static void prepared_shutdown_retains_pending_native_reads(struct kunit *test)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture_with_preparation(test, true);
+	struct atomic_fixture *outputs[] = { f, other };
+	struct shutdown_worker worker = { .dev = f->dev };
+	struct drm_prepare_source *source;
+	struct drm_prepare_read_claim *read;
+	struct dma_fence *fence;
+	struct task_struct *task;
+	struct completion installed;
+	unsigned int i;
+	bool early;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		struct atomic_fixture *output = outputs[i];
+		struct drm_atomic_commit *state = new_update(test, output,
+							    output->target, output->tiled);
+
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+		KUNIT_ASSERT_EQ(test, run_update(state, commit_prepared_update), 0);
+		drm_atomic_commit_clear(state);
+	}
+	fence = kzalloc_obj(*fence);
+	KUNIT_ASSERT_NOT_NULL(test, fence);
+	dma_fence_init(fence, &read_fence_ops, NULL, dma_fence_context_alloc(1), 1);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, finish_read, fence), 0);
+	KUNIT_ASSERT_EQ(test, drm_modeset_lock(&f->crtc->mutex, NULL), 0);
+	source = drm_atomic_prepare_crtc_source(f->crtc);
+	if (!IS_ERR(source))
+		drm_prepare_source_get(source);
+	drm_modeset_unlock(&f->crtc->mutex);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, source);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_source, source), 0);
+	read = drm_prepare_source_claim(source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
+	drm_prepare_read_release(read, fence);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		drm_constraints_list_close(drm_constraints_crtc_list(outputs[i]->crtc));
+		outputs[i]->backends[1].failed = true;
+	}
+	init_completion(&worker.finished);
+	init_completion(&installed);
+	f->installed = &installed;
+	task = kthread_run(shutdown_device, &worker, "constraints-shutdown");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, task);
+	KUNIT_EXPECT_NE(test, wait_for_completion_timeout(&installed, HZ), 0);
+	early = wait_for_completion_timeout(&worker.finished, msecs_to_jiffies(20));
+	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(fence));
+	read = drm_prepare_source_claim(source);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(read) && PTR_ERR(read) == -EBUSY);
+	if (!IS_ERR(read))
+		drm_prepare_read_release(read, NULL);
+	dma_fence_signal(fence);
+	kthread_stop(task);
+	f->installed = NULL;
+	KUNIT_EXPECT_FALSE(test, early);
+	KUNIT_EXPECT_TRUE(test, completion_done(&worker.finished));
+	KUNIT_EXPECT_EQ(test, f->installs, 3);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		KUNIT_EXPECT_FALSE(test, outputs[i]->crtc->state->enable);
+		KUNIT_EXPECT_PTR_EQ(test, outputs[i]->plane->state->fb, NULL);
+		KUNIT_EXPECT_PTR_EQ(test, outputs[i]->crtc->state->constraints, outputs[i]->target);
+	}
+}
+
 static void proposed_scene_obeys_scalar_property_rules(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1364,6 +1483,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(independent_outputs_keep_exact_bindings_during_animation),
 	KUNIT_CASE(shutdown_disables_all_unavailable_outputs),
 	KUNIT_CASE(multi_output_shutdown_rechecks_every_binding),
+	KUNIT_CASE(prepared_shutdown_retains_pending_native_reads),
 	KUNIT_CASE(proposed_scene_obeys_scalar_property_rules),
 	KUNIT_CASE(installation_rechecks_proposed_property_values),
 	KUNIT_CASE(complete_scene_checks_overlay_and_cursor_contracts),
