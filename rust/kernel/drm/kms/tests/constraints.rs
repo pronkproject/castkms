@@ -38,6 +38,40 @@ mod cases {
     use super::*;
 
     #[test]
+    fn teardown_releases_bindings_but_retained_snapshots_keep_quota() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        counts.constraints_capacity.store(1, Ordering::Relaxed);
+        let parent = faux::Registration::new(c"rust-kms-constraints-retained-quota", None)?;
+        let dev = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let output = dev.constraints_output(0)?;
+        let domain = ARef::from(output.domain());
+        let initial = ARef::from(output.default_entry());
+        let description = ARef::from(initial.description());
+        let snapshot = output.snapshot(0)?;
+        let crtc_id = initial.crtc_id();
+        let initial_id = initial.id();
+        drop(output);
+        drop(dev);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.crtc_states.load(Ordering::Relaxed), 0);
+        assert!(matches!(
+            OpaqueEntry::new_stateless(&domain, crtc_id, &description),
+            Err(ENOSPC)
+        ));
+        drop(initial);
+        assert_eq!(snapshot.info().selected_id, initial_id);
+        assert!(matches!(
+            OpaqueEntry::new_stateless(&domain, crtc_id, &description),
+            Err(ENOSPC)
+        ));
+        drop(snapshot);
+        // Retained metadata grants no device access; allocation here only probes quota release.
+        let next = OpaqueEntry::new_stateless(&domain, crtc_id, &description)?;
+        assert!(next.id() > initial_id);
+        Ok(())
+    }
+
+    #[test]
     fn default_quota_failure_unwinds_partially_attached_topology() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         counts.constraints_capacity.store(1, Ordering::Relaxed);
