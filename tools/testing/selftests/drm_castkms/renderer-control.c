@@ -927,7 +927,7 @@ int main(int argc, char **argv)
 		    &release_source) == 0);
 	expect_ioctl_error(next_files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
-			   &scene_request, ENODATA);
+			   &scene_request, EBUSY);
 	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &ticket_state) == 0);
 	CHECK(ticket_state.status == DRM_PREPARE_READY);
@@ -964,6 +964,17 @@ int main(int argc, char **argv)
 		    &release_source) == 0);
 	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 	CHECK(layer[1].kind == DRM_CASTKMS_RENDERER_LAYER_OVERLAY);
+	CHECK(close(layer[1].planes[0].dma_buf_fd) == 0);
+	uint64_t retry_serial = scene->content_serial;
+	uint64_t previous_job = scene->job_id;
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+		    &scene_request) == 0);
+	CHECK(scene->content_serial == retry_serial && scene->job_id > previous_job);
+	CHECK(scene->layer_count == 2 && scene->producer_fd == -1);
+	release_source.job_id = scene->job_id;
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+		    &release_source) == 0);
+	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 	CHECK(close(layer[1].planes[0].dma_buf_fd) == 0);
 	free(scene_bytes);
 	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE,

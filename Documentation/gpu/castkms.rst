@@ -236,7 +236,8 @@ installation.
 
 After a candidate's private probe completes, activation publishes one GPU
 execution generation and transfers the startup reservation into a terminal
-renderer incarnation. The active session may claim each changed scene once.
+renderer incarnation. The active session claims changed scenes and may retry a
+scene after releasing it without access, while source admission remains open.
 Each kernel job owns both retained scene metadata and its preparation read
 claim; the framebuffer reference alone does not delay source reuse.
 
@@ -244,8 +245,11 @@ The renderer dequeue ioctl prepares ordinary source DMA-BUFs and reserves every
 descriptor before copying bounded scene metadata. Only the final, infallible
 publication step installs close-on-exec descriptors and makes the job require a
 userspace release. Failure before publication reports that no access occurred
-and returns the queue slot. At most one source job is outstanding, and an
-unchanged content serial is not claimed again.
+and returns the queue slot. At most one source job is outstanding. Once a
+CPU or submitted report has retained a private-image result, the unchanged
+content serial is not claimed again. A no-access report produces no private
+image and leaves that scene retryable under a new job ID; preparation holds
+and seals still reject new reads.
 
 Complete-scene renderer descriptions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -254,8 +258,8 @@ Complete-scene renderer descriptions
 ``RENDERER_RELEASE_SOURCE`` to end its read claim. A renderer should allocate
 the advertised maximum of 64 KiB for the result. Insufficient capacity returns
 ``ENOSPC``; failure does not consume the scene or install any descriptors, even
-if userspace memory was partially written. Blank and unchanged scenes return
-``ENODATA``.
+if userspace memory was partially written. Blank scenes and content already
+reported as composed or submitted return ``ENODATA``.
 
 The version-one result contains a header followed by back-to-front layer
 records and output color records. Each layer includes its role, stacking

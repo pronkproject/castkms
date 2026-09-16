@@ -503,7 +503,10 @@ struct drm_castkms_renderer_source_plane {
  * promises all CPU access and coherency operations ended. SUBMITTED transfers
  * a native fence covering every submitted source read and private-image write
  * and promises no later submission under this job. Repeating the accepted
- * release for the latest job succeeds.
+ * release for the latest job succeeds. NO_ACCESS produces no private image
+ * and leaves the scene eligible for another dequeue under a new job ID.
+ * That retry still requires current authority and open source-read admission;
+ * it cannot reopen a source sealed or held by display preparation.
  */
 struct drm_castkms_renderer_release_source {
 	__u64 job_id;
