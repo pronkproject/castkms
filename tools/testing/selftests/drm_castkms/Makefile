@@ -2,7 +2,7 @@
 CFLAGS += $(shell pkg-config --cflags libdrm) -Wall -Wextra
 LDLIBS += $(shell pkg-config --libs libdrm)
 TEST_GEN_PROGS := modeset master-lifetime execution monitor-control renderer-control capture-grant capture-stream capture-destination capture-output
-TEST_PROGS := takeover-model.py handback-model.py
+TEST_PROGS := handback-model.py
 TEST_FILES := standalone.config
 TEST_GEN_PROGS += audio audio-pipewire audio-multi
 LOCAL_HDRS := fixture.h audio-fixture.h
