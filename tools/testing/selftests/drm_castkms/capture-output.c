@@ -164,7 +164,6 @@ int main(int argc, char **argv)
 	struct drm_capture_result result;
 	struct buffer source, changed, output, replacement;
 	drmModeRes *resources;
-	drmModePlaneRes *planes;
 	drmModeConnector *connector;
 	drmModeModeInfo mode = {};
 	drmVersion *version;
@@ -185,10 +184,7 @@ int main(int argc, char **argv)
 	grant.connector_id = resources->connectors[0];
 	grant.files = (uintptr_t)&files;
 	drmModeFreeResources(resources);
-	planes = drmModeGetPlaneResources(master);
-	CHECK(planes && planes->count_planes == 1);
-	plane = planes->planes[0];
-	drmModeFreePlaneResources(planes);
+	plane = primary_plane(master, 0);
 	connector = drmModeGetConnector(master, grant.connector_id);
 	CHECK(connector);
 	for (int i = 0; i < connector->count_modes; i++) {

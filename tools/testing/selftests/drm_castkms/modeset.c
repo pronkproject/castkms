@@ -31,7 +31,6 @@ int main(int argc, char **argv)
 {
 	drmModeRes *resources;
 	drmModeConnector *connector;
-	drmModePlaneRes *planes;
 	drmModeAtomicReq *req;
 	drmModeCrtc *crtc;
 	drmVersion *version;
@@ -61,9 +60,7 @@ int main(int argc, char **argv)
 	CHECK(connector && connector->connection == DRM_MODE_CONNECTED);
 	CHECK(connector->count_modes > 0);
 	mode = &connector->modes[0];
-	planes = drmModeGetPlaneResources(fd);
-	CHECK(planes && planes->count_planes == 1);
-	plane_id = planes->planes[0];
+	plane_id = primary_plane(fd, 0);
 	a = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x33);
 	b = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x88);
 	CHECK(drmModeCreatePropertyBlob(fd, mode, sizeof(*mode), &mode_id) == 0);
@@ -192,7 +189,6 @@ int main(int argc, char **argv)
 	destroy_buffer(fd, &a);
 	CHECK(drmModeDestroyPropertyBlob(fd, mode_id) == 0);
 	CHECK(drmModeDestroyPropertyBlob(fd, slow_mode_id) == 0);
-	drmModeFreePlaneResources(planes);
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
 	CHECK(close(fd) == 0);

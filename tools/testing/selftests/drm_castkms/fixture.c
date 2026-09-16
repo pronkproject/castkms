@@ -37,6 +37,42 @@ void destroy_buffer(int fd, struct buffer *b)
 		CHECK(drmIoctl(fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy) == 0);
 }
 
+uint32_t primary_plane(int fd, unsigned int crtc_index)
+{
+	drmModePlaneRes *planes = drmModeGetPlaneResources(fd);
+	uint32_t found = 0;
+
+	CHECK(planes && crtc_index < 32);
+	for (uint32_t i = 0; i < planes->count_planes; i++) {
+		drmModePlane *plane = drmModeGetPlane(fd, planes->planes[i]);
+		drmModeObjectProperties *props;
+
+		CHECK(plane);
+		if (!(plane->possible_crtcs & (1U << crtc_index))) {
+			drmModeFreePlane(plane);
+			continue;
+		}
+		props = drmModeObjectGetProperties(fd, plane->plane_id, DRM_MODE_OBJECT_PLANE);
+		CHECK(props);
+		for (uint32_t p = 0; p < props->count_props; p++) {
+			drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[p]);
+
+			CHECK(prop);
+			if (!strcmp(prop->name, "type") &&
+			    props->prop_values[p] == DRM_PLANE_TYPE_PRIMARY) {
+				CHECK(!found);
+				found = plane->plane_id;
+			}
+			drmModeFreeProperty(prop);
+		}
+		drmModeFreeObjectProperties(props);
+		drmModeFreePlane(plane);
+	}
+	drmModeFreePlaneResources(planes);
+	CHECK(found);
+	return found;
+}
+
 void property(int fd, drmModeAtomicReq *req, uint32_t id, uint32_t type,
 		     const char *name, uint64_t value)
 {
