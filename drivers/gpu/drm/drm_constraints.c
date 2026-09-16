@@ -99,14 +99,14 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 			    properties[i].property_id == properties[j].property_id)
 				return ERR_PTR(-EEXIST);
 	}
-	description = kzalloc(struct_size(description, formats, count), GFP_KERNEL);
+	description = kvzalloc(struct_size(description, formats, count), GFP_KERNEL);
 	if (!description)
 		return ERR_PTR(-ENOMEM);
 	if (property_count) {
 		description->properties = kmemdup(properties, sizeof(*properties) * property_count,
 						 GFP_KERNEL);
 		if (!description->properties) {
-			kfree(description);
+			kvfree(description);
 			return ERR_PTR(-ENOMEM);
 		}
 	}
@@ -133,7 +133,7 @@ static void description_free(struct kref *ref)
 		container_of(ref, struct drm_constraints_description, ref);
 
 	kfree(description->properties);
-	kfree(description);
+	kvfree(description);
 }
 
 void drm_constraints_description_put(struct drm_constraints_description *description)

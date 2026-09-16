@@ -7,7 +7,7 @@
 struct drm_constraints_description;
 
 /* Kernel prototype limits, not an allocated userspace ABI. */
-#define DRM_CONSTRAINTS_MAX_FORMATS 256
+#define DRM_CONSTRAINTS_MAX_FORMATS 4096
 #define DRM_CONSTRAINTS_MAX_PROPERTIES 64
 
 /**

@@ -66,10 +66,14 @@ needed for final release. Availability never changes an ID's meaning. The
 domain's quota includes entries retained by snapshots, accepted state and
 retiring work, not just currently offered entries.
 
-The current native bounds are 256 format records and 64 scalar property
+The current native bounds are 4096 format records and 64 scalar property
 records per description, and at most 64 entries per output list. Providers
 choose their retained-entry quota and may choose a smaller list limit.
 These are kernel prototype bounds, not allocated wire-ABI constants.
+Format capacity accounts for per-plane expansion: the same format/modifier
+alternative on ten planes consumes ten records. Large immutable descriptions
+permit virtual allocation rather than requiring contiguous memory. The
+16-MiB snapshot bound covers a full list of maximum-sized descriptions.
 
 Lists and snapshots
 ======================

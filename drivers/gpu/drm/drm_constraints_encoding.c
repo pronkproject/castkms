@@ -23,6 +23,14 @@ static_assert(offsetof(struct drm_constraints_encoded_list, reserved) == 48);
 static_assert(offsetof(struct drm_constraints_encoded_entry, reserved) == 24);
 static_assert(offsetof(struct drm_constraints_encoded_format, modifier) == 24);
 static_assert(offsetof(struct drm_constraints_encoded_property, minimum) == 32);
+static_assert(sizeof(struct drm_constraints_encoded_list) +
+	      1ULL * DRM_CONSTRAINTS_MAX_ENTRIES *
+	      (sizeof(struct drm_constraints_encoded_entry) +
+	       sizeof(struct drm_constraints_encoded_description) +
+	       sizeof(struct drm_constraints_encoded_output) +
+	       DRM_CONSTRAINTS_MAX_FORMATS * sizeof(struct drm_constraints_encoded_format) +
+	       DRM_CONSTRAINTS_MAX_PROPERTIES * sizeof(struct drm_constraints_encoded_property)) <=
+	      DRM_CONSTRAINTS_ENCODING_MAX_SIZE);
 
 static size_t description_size(struct drm_constraints_description *description)
 {
