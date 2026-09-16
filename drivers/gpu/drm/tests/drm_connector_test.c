@@ -513,8 +513,6 @@ static void drm_test_connector_dynamic_register_cleanup(struct kunit *test)
 	drm_connector_put(&priv->connector);
 
 	drm_dev_unregister(dev);
-
-	drm_test_connector_dynamic_register_early_cleanup(test);
 }
 
 static void drm_test_drm_connector_dynamic_register_on_list(struct kunit *test)
