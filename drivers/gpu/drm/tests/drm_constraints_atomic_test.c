@@ -46,6 +46,7 @@ struct atomic_fixture {
 	struct drm_framebuffer *linear;
 	struct drm_framebuffer *tiled;
 	unsigned int installs;
+	bool require_primary;
 };
 
 static void destroy_fb(struct drm_framebuffer *fb)
@@ -77,7 +78,36 @@ create_fb(struct drm_device *dev, struct drm_file *file,
 	return fb;
 }
 
-static const struct drm_mode_config_funcs mode_ops = { .fb_create = create_fb };
+static int check_commit(struct drm_device *dev, struct drm_atomic_commit *state)
+{
+	struct atomic_fixture *f = dev->dev_private;
+	struct drm_crtc_state *crtc;
+	struct drm_crtc *output;
+	int i;
+
+	if (!f->require_primary)
+		return 0;
+	for_each_new_crtc_in_state(state, output, crtc, i)
+		if (crtc->enable && !(crtc->plane_mask & drm_plane_mask(output->primary)))
+			return -EINVAL;
+	return 0;
+}
+
+static int commit_update(struct drm_device *dev, struct drm_atomic_commit *state, bool nonblock)
+{
+	struct atomic_fixture *f = dev->dev_private;
+	int ret = drm_atomic_helper_swap_state(state, false);
+
+	if (!ret)
+		f->installs++;
+	return ret;
+}
+
+static const struct drm_mode_config_funcs mode_ops = {
+	.fb_create = create_fb,
+	.atomic_check = check_commit,
+	.atomic_commit = commit_update,
+};
 
 static void release_backend(void *data)
 {
@@ -696,6 +726,49 @@ static void closure_after_check_still_permits_disable(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
 }
 
+static void check_framebuffer_removal(struct kunit *test, bool unavailable)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *first = new_update(test, f, f->target, f->tiled);
+	struct drm_constraints_entry *selected;
+	unsigned int checks;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, first);
+	KUNIT_ASSERT_EQ(test, run_update(first, drm_atomic_commit), 0);
+	drm_atomic_commit_clear(first);
+	if (unavailable) {
+		/* Model a driver which needs its primary plane whenever enabled. */
+		f->require_primary = true;
+		f->backends[1].failed = true;
+		drm_constraints_list_close(drm_constraints_crtc_list(f->crtc));
+	}
+	checks = f->backends[1].checks;
+	/* Removal consumes its own reference, separate from fixture ownership. */
+	drm_framebuffer_get(f->tiled);
+	drm_framebuffer_remove(f->tiled);
+	KUNIT_EXPECT_EQ(test, f->installs, 2);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->crtc, NULL);
+	KUNIT_EXPECT_EQ(test, f->crtc->state->enable, !unavailable);
+	KUNIT_EXPECT_EQ(test, f->crtc->state->active, !unavailable);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	selected = drm_constraints_list_selected(drm_constraints_crtc_list(f->crtc));
+	KUNIT_EXPECT_PTR_EQ(test, selected, f->target);
+	drm_constraints_entry_put(selected);
+	if (unavailable)
+		KUNIT_EXPECT_EQ(test, f->backends[1].checks, checks);
+}
+
+static void framebuffer_removal_preserves_accepted_binding(struct kunit *test)
+{
+	check_framebuffer_removal(test, false);
+}
+
+static void framebuffer_removal_can_disable_unavailable_output(struct kunit *test)
+{
+	check_framebuffer_removal(test, true);
+}
+
 static void closure_rejects_checked_activation(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1203,6 +1276,8 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(accepted_selection_persists_without_reselection),
 	KUNIT_CASE(closed_failed_backend_can_be_disabled),
 	KUNIT_CASE(closure_after_check_still_permits_disable),
+	KUNIT_CASE(framebuffer_removal_preserves_accepted_binding),
+	KUNIT_CASE(framebuffer_removal_can_disable_unavailable_output),
 	KUNIT_CASE(closure_rejects_checked_activation),
 	KUNIT_CASE(shutdown_cannot_select_through_closed_list),
 	KUNIT_CASE(predecessor_backend_survives_native_read),
