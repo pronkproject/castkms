@@ -113,6 +113,7 @@ impl Monitor {
         count
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn acquire(
         self: &Arc<Self>,
         device: &Device<Driver, Registered>,
