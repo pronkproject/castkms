@@ -171,7 +171,13 @@ int main(int argc, char **argv)
 	req = drmModeAtomicAlloc();
 	CHECK(req);
 	property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "CRTC_W", mode->hdisplay / 2);
-	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_TEST_ONLY, NULL) != 0);
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_TEST_ONLY, NULL) == 0);
+	/* Scaling is valid; reading beyond the framebuffer is not. */
+	property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "SRC_W",
+		 (uint64_t)(mode->hdisplay + 1) << 16);
+	errno = 0;
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_TEST_ONLY, NULL) != 0 &&
+	      errno == ENOSPC);
 	drmModeAtomicFree(req);
 	req = drmModeAtomicAlloc();
 	CHECK(req);

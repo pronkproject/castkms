@@ -132,9 +132,10 @@ static void unaccepted_replacement(int fd, const struct display *d,
 	property(fd, req, d->plane, DRM_MODE_OBJECT_PLANE, "FB_ID", candidate);
 	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_TEST_ONLY, NULL) == 0);
 	expect_framebuffer(fd, d, current);
-	property(fd, req, d->plane, DRM_MODE_OBJECT_PLANE, "CRTC_W", d->mode.hdisplay / 2);
+	property(fd, req, d->plane, DRM_MODE_OBJECT_PLANE, "SRC_W",
+		 (uint64_t)(d->mode.hdisplay + 1) << 16);
 	errno = 0;
-	CHECK(drmModeAtomicCommit(fd, req, 0, NULL) != 0 && errno == ERANGE);
+	CHECK(drmModeAtomicCommit(fd, req, 0, NULL) != 0 && errno == ENOSPC);
 	expect_framebuffer(fd, d, current);
 	drmModeAtomicFree(req);
 }
