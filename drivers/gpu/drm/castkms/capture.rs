@@ -15,4 +15,5 @@ pub(crate) mod negotiation;
 pub(crate) mod permission;
 pub(crate) mod provider;
 pub(crate) mod requests;
+pub(crate) mod request_budget;
 pub(crate) mod streams;
