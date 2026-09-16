@@ -8,6 +8,7 @@ mod delegated_authority;
 mod delegated_destinations;
 mod delegated_requests;
 mod delegated_outputs;
+mod delegated_geometry;
 
 use super::*;
 use crate::renderer::{
