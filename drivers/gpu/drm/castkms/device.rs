@@ -59,6 +59,7 @@ pub(super) struct State {
     pub(super) audio_grants: Arc<grants::Registry>,
     pub(super) capture_streams: Arc<streams::Registry>,
     pub(super) capture_budget: Arc<budget::Budget>,
+    pub(crate) private_images: Arc<crate::renderer::private_registry::Registry>,
     pub(super) displays: KVec<Arc<Display>>,
 }
 
@@ -93,11 +94,13 @@ impl State {
             audio_grants: grants::Registry::new()?,
             capture_streams: streams::Registry::new()?,
             capture_budget: budget::Budget::new()?,
+            private_images: crate::renderer::private_registry::Registry::new()?,
             displays,
         })
     }
 
     fn close(&self) {
+        self.private_images.close();
         self.validation.close();
         for display in &self.displays {
             display.monitor.close();
