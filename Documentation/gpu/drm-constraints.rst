@@ -226,6 +226,19 @@ restoration and revoke the departing owner's source access beforehand. It must
 not hold modeset locks across the request. The helper does not implement that
 authority policy or make the default immune to later backend failure.
 
+``drm_constraints_recover()`` performs device recovery under the same caller-owned
+authority exclusion. It first disables every participating output in one prepared
+request without changing the accepted backend identities. After native reads
+retire, it restores each fixed default. Only after every default is restored does
+it remove the other offers and clear suggestions. Independent snapshots and jobs
+continue to retain their original metadata and resources.
+
+Recovery is not an all-or-nothing modeset. If a later default fails validation,
+some outputs may already have their defaults restored; all outputs remain
+disabled. The caller keeps replacement owners excluded, resolves the failure
+and retries. Closed lists stay closed. Neither recovery nor offer retirement
+grants pixel access or supplies the caller's owner-exclusion policy.
+
 Rust access and tests
 =====================
 
