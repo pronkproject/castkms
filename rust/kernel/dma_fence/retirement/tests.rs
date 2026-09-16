@@ -3,8 +3,9 @@
 use super::*;
 use crate::{
     dma_fence::testing::ManualFence,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{delay::fsleep, Delta, Instant, Monotonic},
+    workqueue::{self, impl_has_work, new_work, Work, WorkItem},
 };
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -50,6 +51,29 @@ impl Drop for Payload {
 unsafe impl Retire for Payload {
     fn retire(self) {
         self.0.retired.fetch_add(1, Ordering::Release);
+    }
+}
+
+#[pin_data]
+struct Signaler {
+    #[pin]
+    work: Work<Self>,
+    #[pin]
+    completion: Mutex<Option<ManualFence>>,
+}
+
+impl_has_work! {
+    impl HasWork<Self> for Signaler { self.work }
+}
+
+impl WorkItem for Signaler {
+    type Pointer = Arc<Self>;
+
+    fn run(signaler: Arc<Self>) {
+        let completion = signaler.completion.lock().take();
+        if let Some(mut completion) = completion {
+            let _ = completion.complete(Ok(()));
+        }
     }
 }
 
@@ -124,5 +148,25 @@ mod cases {
             }
         }
         counts.wait(32)
+    }
+
+    #[test]
+    fn concurrent_signaling_and_callback_registration_retire_once() -> Result {
+        let counts = Counts::new()?;
+        for _ in 0..256 {
+            let completion = ManualFence::new()?;
+            let fence = completion.fence();
+            let owner = Retirement::new(Payload(counts.clone()))?;
+            let signaler = Arc::pin_init(
+                pin_init!(Signaler {
+                    work <- new_work!("dma-fence-retirement-signal"),
+                    completion <- crate::new_mutex!(Some(completion)),
+                }),
+                GFP_KERNEL,
+            )?;
+            assert!(workqueue::system_dfl().enqueue(signaler).is_ok());
+            owner.submit(&fence);
+        }
+        counts.wait(256)
     }
 }
