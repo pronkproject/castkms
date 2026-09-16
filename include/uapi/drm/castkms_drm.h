@@ -8,7 +8,7 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 2
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 8
+#define DRM_CASTKMS_RENDERER_VERSION 9
 
 /*
  * Request-only unsigned CRTC property. Zero means an ordinary update. A nonzero
@@ -492,17 +492,18 @@ struct drm_castkms_renderer_source_plane {
 
 
 /**
- * struct drm_castkms_renderer_release_source - resolve one source read
+ * struct drm_castkms_renderer_release_source - resolve a source-to-private job
  * @job_id: job returned by RENDERER_DEQUEUE_SCENE
  * @completion_fd: sync_file descriptor for SUBMITTED, otherwise -1
  * @kind: one DRM_CASTKMS_RENDERER_RELEASE_* value
  * @flags: must be zero
  * @reserved: must be zero
  *
- * NO_ACCESS promises no source access occurred. CPU_DONE promises all CPU
- * access and coherency operations ended. SUBMITTED transfers a native fence
- * covering every submitted source access and promises no later submission
- * under this job. Repeating the accepted release for the latest job succeeds.
+ * NO_ACCESS promises neither source nor private-image access occurred. CPU_DONE
+ * promises all CPU access and coherency operations ended. SUBMITTED transfers
+ * a native fence covering every submitted source read and private-image write
+ * and promises no later submission under this job. Repeating the accepted
+ * release for the latest job succeeds.
  */
 struct drm_castkms_renderer_release_source {
 	__u64 job_id;
@@ -513,7 +514,14 @@ struct drm_castkms_renderer_release_source {
 };
 
 /* Complete-scene stream, native byte order. All records are eight-byte aligned.
- * DEQUEUE_SCENE claims one complete scene until RELEASE_SOURCE.
+ * DEQUEUE_SCENE binds one complete scene to a registered private image until
+ * RELEASE_SOURCE. image_id names renderer-private storage registered on this
+ * endpoint. It must not alias any source or recipient allocation. The worker
+ * must isolate native source queues and mappings from downstream output waits.
+ * A busy private image returns EBUSY without admitting source access. A new
+ * dequeue withdraws retained content from the selected image before attempting
+ * reuse; it never ends outstanding native access. Failed descriptor publication
+ * admits no userspace access and permits retry with the same image_id.
  * The result consists of a scene header, layer records with their color records,
  * then output color records. Layer order is back-to-front, with zpos ties in
  * KMS plane creation order. Source rectangles use unsigned 16.16 pixels;
@@ -544,9 +552,39 @@ struct drm_castkms_renderer_release_source {
 
 struct drm_castkms_renderer_dequeue_scene {
 	__u64 result;
+	__u64 image_id;
 	__u32 capacity;
 	__u32 flags;
 	__u64 reserved;
+};
+
+/* Private storage is readable/writable only by the trusted renderer. Registration
+ * retains one to four distinct DMA-BUFs, not their native format interpretation.
+ * The renderer validates layout and import compatibility against its own profile.
+ * Dimensions must match the active output. New names are positive and increasing;
+ * rejected registration does not consume a name. Flags/reserved must be zero.
+ * Registration maps no pixels and authorizes no source or destination access.
+ * Known source, recipient and registered allocation aliases are rejected.
+ */
+struct drm_castkms_renderer_register_image {
+	__u64 image_id;
+	__u64 buffers; /* Pointer to num_buffers signed 32-bit DMA-BUF descriptors. */
+	__u32 width;
+	__u32 height;
+	__u32 num_buffers;
+	__u32 flags;
+	__u64 reserved[2];
+};
+
+/* Remove a name, not native work. Publishing/claimed source jobs return EBUSY.
+ * After release, removal is allowed while submitted native work retains storage
+ * and accounting. Successful removal is not a buffer-reuse or completion signal.
+ * Cleanup remains available after renderer revocation. Names are never reused.
+ */
+struct drm_castkms_renderer_unregister_image {
+	__u64 image_id;
+	__u32 flags;
+	__u32 reserved;
 };
 
 struct drm_castkms_renderer_scene {
@@ -680,9 +718,17 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
 #define DRM_CASTKMS_RENDERER_REGISTER_PROFILE 0x0d
 #define DRM_CASTKMS_RENDERER_QUERY_CAPABILITIES 0x0e
+#define DRM_CASTKMS_RENDERER_REGISTER_IMAGE 0x0f
+#define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x10
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
+	DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_IMAGE,
+			struct drm_castkms_renderer_register_image),
+	DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE,
+			struct drm_castkms_renderer_unregister_image),
 	DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_PROFILE,
 			struct drm_castkms_renderer_register_profile),

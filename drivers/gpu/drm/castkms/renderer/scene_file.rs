@@ -40,6 +40,7 @@ const _: () = {
 #[repr(C)]
 struct Request {
     result: u64,
+    image_id: u64,
     capacity: u32,
     flags: u32,
     reserved: u64,
@@ -148,6 +149,7 @@ pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
         .reader()
         .read::<Request>()?;
     if request.result == 0
+        || request.image_id == 0
         || request.flags != 0
         || request.reserved != 0
         || request.capacity as usize > MAX_BYTES
@@ -155,7 +157,7 @@ pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
         return Err(EINVAL);
     }
     let address = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
-    let pending = session.begin_source()?;
+    let pending = session.begin_source(request.image_id)?;
     let scene = pending.scene_description()?;
     let mut encoded = Encoding::new()?;
     let mut outputs = KVec::with_capacity(scene.layers.len() * 4 + 1, GFP_KERNEL)?;

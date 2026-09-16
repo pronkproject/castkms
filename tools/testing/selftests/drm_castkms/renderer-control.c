@@ -41,6 +41,12 @@ _Static_assert(sizeof(struct drm_castkms_renderer_source_plane) == 16,
 	       "renderer source plane ABI");
 _Static_assert(sizeof(struct drm_castkms_renderer_release_source) == 32,
 	       "renderer source release ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_dequeue_scene) == 32,
+	       "renderer scene request ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_register_image) == 48,
+	       "renderer private image registration ABI");
+_Static_assert(sizeof(struct drm_castkms_renderer_unregister_image) == 16,
+	       "renderer private image removal ABI");
 
 static unsigned int open_files(void)
 {
@@ -494,7 +500,7 @@ int main(int argc, char **argv)
 	};
 	drmModeConnector *connector;
 	drmModeRes *resources;
-	struct buffer buffer, capture_output, gpu_buffer;
+	struct buffer buffer, capture_output, gpu_buffer, private_buffer;
 	uint32_t connector_id;
 	unsigned int before;
 	int duplicate, fd, peer;
@@ -818,7 +824,31 @@ int main(int argc, char **argv)
 			   &begin, EBUSY);
 	struct drm_castkms_renderer_dequeue_scene scene_request = {
 		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
+		.image_id = 1,
 	};
+	private_buffer = create_buffer(peer, gpu_buffer.dumb.width,
+				       gpu_buffer.dumb.height, 0);
+	int private_fd;
+
+	CHECK(drmPrimeHandleToFD(peer, private_buffer.dumb.handle,
+				 DRM_CLOEXEC | DRM_RDWR, &private_fd) == 0);
+	struct drm_castkms_renderer_register_image private_image = {
+		.image_id = 1, .buffers = (uintptr_t)&private_fd,
+		.width = gpu_buffer.dumb.width, .height = gpu_buffer.dumb.height,
+		.num_buffers = 1,
+	};
+	private_image.flags = 1;
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+			   &private_image, EINVAL);
+	private_image.flags = 0;
+	private_image.buffers = 1;
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+			   &private_image, EFAULT);
+	private_image.buffers = (uintptr_t)&private_fd;
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+		    &private_image) == 0);
+	CHECK(close(private_fd) == 0);
+	struct drm_castkms_renderer_unregister_image remove_image = { .image_id = 1 };
 	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
 			   &scene_request, EINVAL);
 	scene_request.result = 1;
@@ -840,6 +870,8 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_scene *scene = scene_bytes;
 	struct drm_castkms_renderer_layer *layer = (void *)(scene + 1);
 	CHECK(scene->job_id && scene->content_serial);
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE,
+			   &remove_image, EBUSY);
 	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
 	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
 	CHECK(scene->layer_count == 1 && scene->producer_fd == -1 && !scene->reserved);
@@ -934,6 +966,10 @@ int main(int argc, char **argv)
 	CHECK(layer[1].kind == DRM_CASTKMS_RENDERER_LAYER_OVERLAY);
 	CHECK(close(layer[1].planes[0].dma_buf_fd) == 0);
 	free(scene_bytes);
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE,
+		    &remove_image) == 0);
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE,
+			   &remove_image, ENOENT);
 	/* A fresh endpoint requests fixed HOST policy while the GPU endpoint remains alive. */
 	struct drm_castkms_renderer_files host_files = create_renderer(peer, &request);
 	struct drm_castkms_renderer_takeover host_candidate =
@@ -963,6 +999,7 @@ int main(int argc, char **argv)
 	destroy_buffer(fd, &buffer);
 	destroy_buffer(fd, &capture_output);
 	destroy_buffer(peer, &gpu_buffer);
+	destroy_buffer(peer, &private_buffer);
 	CHECK(close(peer) == 0);
 	CHECK(close(fd) == 0);
 	puts("PASS: renderer capability publication, query and revocation");

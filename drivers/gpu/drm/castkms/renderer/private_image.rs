@@ -34,7 +34,6 @@ pub(crate) struct Image {
     state: Mutex<ImageState>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Image {
     pub(super) fn new(
         registry: &Arc<Registry>,

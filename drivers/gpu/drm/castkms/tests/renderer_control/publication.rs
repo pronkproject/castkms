@@ -492,6 +492,14 @@ mod cases {
                 Ok(())
             })?;
             let gpu = old.activate(old_id)?;
+            old.register_image(
+                1,
+                [640, 480],
+                &[super::private_images::buffer(
+                    device,
+                    kernel::drm::gem::ExportAccess::ReadWrite,
+                )?],
+            )?;
             let host = Session::new(owner.access(), device.to_registered_ref())?;
             let begin = host.begin(gpu.generation)?;
             let host_id = begin.id();
@@ -503,7 +511,7 @@ mod cases {
                     .tag_transition(pending.transition);
                 Ok(())
             })?;
-            let read = old.begin_source()?;
+            let read = old.begin_source(1)?;
             let read_id = read.id();
             read.publish(|| ())?;
             let result = host.activate(host_id)?;
@@ -511,7 +519,7 @@ mod cases {
             check(host.activate(host_id)? == result)?;
             check(host.abort(host_id) == Err(EALREADY))?;
             old.release_source(read_id, Completion::WithoutAccess)?;
-            check(old.begin_source().err() == Some(EIO))?;
+            check(old.begin_source(1).err() == Some(EIO))?;
             drop(host.begin(result.generation)?);
             old.close_for_test();
             host.close_for_test();
@@ -861,6 +869,94 @@ mod cases {
     }
 
     #[test]
+    fn session_retains_private_results_without_retaining_source_claims() -> Result {
+        for submitted in [false, true] {
+            with_display(|device, crtc, connector, _, file| {
+                let owner = owner(&file, crtc, connector)?;
+                let session = Session::new(owner.access(), device.to_registered_ref())?;
+                let pending = session.begin(device.execution.describe().generation)?;
+                let candidate_id = pending.id();
+                pending.publish()?;
+                session
+                    .candidate(candidate_id)?
+                    .submit_private_probe(None)?;
+                let proposal = session.propose_profile(candidate_id, linear_profile()?)?;
+                device.atomic_update(|transaction| {
+                    transaction
+                        .add_crtc_state(crtc)?
+                        .tag_transition(proposal.transition);
+                    Ok(())
+                })?;
+                session.activate(candidate_id)?;
+                let backing = super::private_images::buffer(
+                    device,
+                    kernel::drm::gem::ExportAccess::ReadWrite,
+                )?;
+                session.register_image(1, [640, 480], core::slice::from_ref(&backing))?;
+                let source = device
+                    .output
+                    .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                    .ok_or(EINVAL)?;
+                let job = session.begin_source(1)?;
+                let id = job.id();
+                check(session.unregister_image(1) == Err(EBUSY))?;
+                job.publish(|| ())?;
+                check(session.unregister_image(1) == Err(EBUSY))?;
+                let mut completion = ManualFence::new()?;
+                session.release_source(
+                    id,
+                    if submitted {
+                        Completion::Submitted(completion.fence())
+                    } else {
+                        Completion::Cpu
+                    },
+                )?;
+                let image = session.completed_image(1)?;
+                check(session.begin_source(1).err() == Some(ENODATA))?;
+                check(Arc::ptr_eq(&image, &session.completed_image(1)?))?;
+                source.seal();
+                if submitted {
+                    check(image.content().status() == kernel::dma_fence::Status::Pending)?;
+                    let prepared = source.prepared()?.ok_or(EINVAL)?;
+                    check(
+                        prepared.completion()?.ok_or(EINVAL)?.status()
+                            == kernel::dma_fence::Status::Pending,
+                    )?;
+                } else {
+                    check(image.content().status() == kernel::dma_fence::Status::Complete(Ok(())))?;
+                    check(source.prepared()?.is_some())?;
+                }
+                session.unregister_image(1)?;
+                check(session.completed_image(1).err() == Some(ENOENT))?;
+                drop(image);
+                if submitted {
+                    check(
+                        session.register_image(2, [640, 480], core::slice::from_ref(&backing))
+                            == Err(EEXIST),
+                    )?;
+                    completion.complete(Ok(()))?;
+                }
+                let start = kernel::time::Instant::<kernel::time::Monotonic>::now();
+                loop {
+                    match session.register_image(2, [640, 480], core::slice::from_ref(&backing)) {
+                        Ok(()) => break,
+                        Err(error)
+                            if error == EEXIST
+                                && start.elapsed() < kernel::time::Delta::from_secs(2) =>
+                        {
+                            kernel::time::delay::fsleep(kernel::time::Delta::from_millis(1));
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+                session.unregister_image(2)?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn session_publishes_one_changed_source_until_release() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
@@ -880,15 +976,23 @@ mod cases {
             })?;
             let execution = session.activate(candidate_id)?;
             check(execution.profile == Profile::GpuV1)?;
+            session.register_image(
+                1,
+                [640, 480],
+                &[super::private_images::buffer(
+                    device,
+                    kernel::drm::gem::ExportAccess::ReadWrite,
+                )?],
+            )?;
 
             let source = device
                 .output
                 .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
                 .ok_or(EINVAL)?;
-            let unpublished = session.begin_source()?;
+            let unpublished = session.begin_source(1)?;
             let unpublished_id = unpublished.id();
             drop(unpublished);
-            let pending = session.begin_source()?;
+            let pending = session.begin_source(1)?;
             let job_id = pending.id();
             check(job_id == unpublished_id + 1)?;
             let description = pending.scene_description()?;
@@ -903,24 +1007,25 @@ mod cases {
             check(description.content_serial != 0)?;
             check(layer.framebuffer().pitch(0)? == 2560)?;
             check(layer.framebuffer().offset(0)? == 0)?;
-            let buffer = layer.framebuffer().object_at(0)?.export_dma_buf(
-                kernel::drm::gem::ExportAccess::ReadOnly,
-            )?;
+            let buffer = layer
+                .framebuffer()
+                .object_at(0)?
+                .export_dma_buf(kernel::drm::gem::ExportAccess::ReadOnly)?;
             check(!buffer.is_writable())?;
-            check(session.begin_source().err() == Some(EBUSY))?;
+            check(session.begin_source(1).err() == Some(EBUSY))?;
             drop(description);
             let mut published = false;
             pending.publish(|| published = true)?;
             check(published)?;
-            check(session.begin_source().err() == Some(EBUSY))?;
+            check(session.begin_source(1).err() == Some(EBUSY))?;
             check(session.release_source(job_id + 1, Completion::WithoutAccess) == Err(ENOENT))?;
-            check(session.begin_source().err() == Some(EBUSY))?;
+            check(session.begin_source(1).err() == Some(EBUSY))?;
 
             source.seal();
             session.release_source(job_id, Completion::WithoutAccess)?;
             check(source.prepared()?.is_some())?;
             session.release_source(job_id, Completion::WithoutAccess)?;
-            check(session.begin_source().err() == Some(ENODATA))
+            check(session.begin_source(1).err() == Some(ENODATA))
         })
     }
 
