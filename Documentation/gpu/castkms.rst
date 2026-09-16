@@ -17,8 +17,10 @@ eight. Without monitor controllers the outputs present always-connected
 development monitors. The driver accepts atomic modesetting and linear RGB,
 monochrome and YUV framebuffers, including CPU-mappable PRIME imports for HOST
 composition. Tiled storage is not supported by the in-kernel compositor.
-Modes and framebuffer sizes are supported through 8192 by 8192; that bound
-is a driver limit, not a receiver or transport policy. Cursor planes, eight
+HOST modes and framebuffer sizes are supported through 8192 by 8192.
+Negotiated GPU execution has a static envelope through 16384 by 16384;
+the active renderer profile determines actual acceptance. Neither bound is
+a receiver or transport policy. Cursor planes, eight
 shared overlays and per-plane color pipelines are enabled by default. Their
 module parameters allow disabling them for compatibility and testing.
 The virtual parent has DMA addressing configured before DRM registration so
@@ -174,12 +176,12 @@ Execution description
 ---------------------
 
 The read-only ``CASTKMS_EXECUTION`` connector property contains a single
-``drm_castkms_execution`` blob. It describes the built-in renderer's HOST_V1
-profile at capability generation 1. Clients read the version, profile and
-generation together through the standard DRM property interface. The initial
-description remains fixed throughout the connector lifetime; runtime renderer
-transitions are not enabled. Reading it grants no capture permission and does
-not reserve acceptance of a later display update.
+``drm_castkms_execution`` blob. Each output starts with the built-in renderer's
+HOST_V1 profile at generation 1. Successful renderer takeover publishes GPU_V1
+with a new generation and closes new HOST source-read admission; previously
+admitted work retires normally. Clients read version, profile and generation
+together through the standard DRM property interface. Reading it grants no
+capture permission and does not reserve acceptance of a later display update.
 
 HOST_V1 currently accepts the CPU compositor's linear source formats,
 with dimensions through 8192 by 8192 and at most 512 MiB per source allocation.
@@ -187,6 +189,16 @@ Checked sampling supports cropping, positioning and scaling; cursor, overlays
 and color operations are described above. Imported storage additionally needs
 usable CPU-access and mapping support. Atomic layout validation alone does not
 qualify an exporter's runtime mapping or synchronization behavior.
+
+The execution blob is not a complete capability description. The experimental
+HOST_V1 name has been retained while its implementation has expanded; clients
+must not infer the original single-plane/1080p limits from that name. Plane
+properties describe a static baseline, not the complete negotiated modifier
+set. Renderer version 7 exposes immutable active and pending profiles,
+tagged transition scenes and negotiated HOST handback; see
+:doc:`castkms-renderer` for the protocol and its remaining limits.
+GPU_V1 alone does not promise a complete GPU capture path or
+support for arbitrary modifiers and scene operations.
 
 ``execution`` defines eligibility without acquiring a mapping or reading pixels.
 Its property adapter serializes a kernel-accessible description; neither the
@@ -284,8 +296,9 @@ bounds do not advertise additional KMS planes or enable new renderer profiles.
 All buffer descriptors and the combined producer fence remain tied to one
 source-read claim. The renderer must check producer success before reading,
 then release with no access, completed CPU access or a submitted native fence.
-This interface describes accepted scenes; it does not yet negotiate supported
-scenes, perform capability transitions or deliver GPU capture destinations.
+This interface describes accepted scenes. The separate version-7 capability
+protocol negotiates supported scenes and transitions; neither interface
+delivers GPU capture destinations.
 
 The job also exports a sync-file wait for the exact producer dependencies
 captured when KMS accepted the scene. An already failed producer rejects
@@ -414,8 +427,8 @@ lookup interface uses the same operation after acquiring the file. Rust accepts
 a thread-local file borrow because extraction does not use file-position state;
 it neither waits nor discards a completed producer error.
 
-That transport helper grants no source access. A future executor handoff still
-needs authorization, source lifetime management and close-on-exec descriptor
+That transport helper grants no source access. Renderer source handoff adds
+authorization, source lifetime management and close-on-exec descriptor
 publication after fallible setup. It must not turn preparation readiness or a
 userspace promise to submit work into a DMA fence.
 
@@ -471,8 +484,9 @@ do not grant permission to deliver the image.
 One output's snapshot budget is limited to 512 MiB independently of the host
 pool. Current and retired copies must share it; each allocation keeps its
 credit until final native release. Exhaustion rejects the optional copy
-without waiting or reserving a compositor source. The private copy interface
-does not yet export buffers or activate a userspace renderer.
+without waiting or reserving a compositor source. Renderer GET_SNAPSHOT can
+export an independently owned copy after recipient authorization; copying or
+exporting it does not itself activate a userspace renderer.
 
 These scanout and private-storage bounds are not public capture destination
 limits. The current HOST destination path accepts single-plane linear XRGB8888
