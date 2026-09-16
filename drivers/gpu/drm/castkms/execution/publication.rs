@@ -307,40 +307,6 @@ impl Publication {
         Prepared::new(device, self.origin.clone(), expected, profile)
     }
 
-    /// Publish prepared metadata during authorized control, retaining retired ownership.
-    ///
-    /// The caller coordinates actual renderer admission and execution eligibility within
-    /// the same control interval. This operation alone starts no renderer or source read.
-    /// Neither allocation nor native reference release occurs under the publication mutex.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
-    pub(crate) fn publish(
-        &self,
-        locked: &LockedState<'_, Driver>,
-        prepared: &mut Prepared,
-    ) -> Result {
-        if !Arc::ptr_eq(&self.origin, &prepared.origin) {
-            return Err(EINVAL);
-        }
-        let change = prepared.pending.ok_or(EALREADY)?;
-        let mut state = self.state.lock();
-        if state.description != change.expected {
-            return Err(ESTALE);
-        }
-        // Probe-only activation cannot bypass a proposed capability contract.
-        if state.pending.is_some() {
-            return Err(EAGAIN);
-        }
-        let property = match &mut state.slot {
-            Slot::Ready(property) => property,
-            Slot::Closed => return Err(ENODEV),
-            _ => return Err(EAGAIN),
-        };
-        property.replace_blob(locked, &mut prepared.blob)?;
-        state.description = change.next;
-        prepared.pending = None;
-        Ok(())
-    }
-
     /// Publish execution and its gated input contract under the same installation lock.
     pub(crate) fn publish_proposal(
         &self,

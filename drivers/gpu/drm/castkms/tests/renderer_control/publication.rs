@@ -548,23 +548,43 @@ mod cases {
     fn publishing_metadata_invalidates_the_old_candidate() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let before = device.execution.describe();
+            let proposal = gate_profile(&candidate, device, crtc, true)?;
             let mut prepared = device.execution.prepare(device, Profile::HostV1)?;
             let next = prepared.description()?;
             check(next.generation == before.generation + 1)?;
             check(device.execution.describe() == before)?;
-            candidate.with_activation_control(device, |_, locked| {
-                device.execution.publish(locked, &mut prepared)
-            })?;
+            owner
+                .access()
+                .with_installed_transition(device, |current, locked| {
+                    device.execution.publish_proposal(
+                        locked,
+                        &mut prepared,
+                        proposal.describe().generation,
+                        current.configuration(),
+                        |contract| current.check_contract(contract),
+                    )
+                })?;
             check(device.execution.describe() == next)?;
             check(prepared.description() == Err(EALREADY))?;
             check(candidate.validate() == Err(ESTALE))?;
             candidate.cancel();
-            let replacement = Candidate::begin(owner.access())?;
-            replacement.with_activation_control(device, |_, locked| {
-                check(device.execution.publish(locked, &mut prepared) == Err(EALREADY))
-            })
+            let replacement = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            replacement.validate()?;
+            owner
+                .access()
+                .with_installed_transition(device, |current, locked| {
+                    check(
+                        device.execution.publish_proposal(
+                            locked,
+                            &mut prepared,
+                            proposal.describe().generation,
+                            current.configuration(),
+                            |contract| current.check_contract(contract),
+                        ) == Err(EALREADY),
+                    )
+                })
         })
     }
 
@@ -572,16 +592,14 @@ mod cases {
     fn gpu_publication_closes_new_host_source_admission() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let host = device.host.configure(
                 device,
                 crate::host_compositor::layout::Layout::new(640, 480)?,
             )?;
-            let mut prepared = device.execution.prepare(device, Profile::GpuV1)?;
-            let description = prepared.description()?;
-            candidate.with_activation_control(device, |_, locked| {
-                device.execution.publish(locked, &mut prepared)
-            })?;
+            candidate.submit_private_probe(None)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (_active, _, description) = proposal.activate(device)?;
             check(description == device.execution.describe())?;
             check(device.execution.admit_host().err() == Some(EOPNOTSUPP))?;
             let request = host.request_outcome()?;
@@ -798,18 +816,38 @@ mod cases {
     fn a_superseded_preparation_keeps_its_unpublished_storage() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(owner.access())?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let mut first = device.execution.prepare(device, Profile::HostV1)?;
+            let proposal = gate_profile(&candidate, device, crtc, true)?;
             let mut stale = device.execution.prepare(device, Profile::HostV1)?;
             let proposed = stale.description()?;
-            candidate.with_activation_control(device, |_, locked| {
-                device.execution.publish(locked, &mut first)
-            })?;
+            owner
+                .access()
+                .with_installed_transition(device, |current, locked| {
+                    device.execution.publish_proposal(
+                        locked,
+                        &mut first,
+                        proposal.describe().generation,
+                        current.configuration(),
+                        |contract| current.check_contract(contract),
+                    )
+                })?;
             candidate.cancel();
-            let candidate = Candidate::begin(owner.access())?;
-            candidate.with_activation_control(device, |_, locked| {
-                check(device.execution.publish(locked, &mut stale) == Err(ESTALE))
-            })?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.validate()?;
+            owner
+                .access()
+                .with_installed_transition(device, |current, locked| {
+                    check(
+                        device.execution.publish_proposal(
+                            locked,
+                            &mut stale,
+                            proposal.describe().generation,
+                            current.configuration(),
+                            |contract| current.check_contract(contract),
+                        ) == Err(ESTALE),
+                    )
+                })?;
             check(stale.description()? == proposed)?;
             check(device.execution.describe() == proposed)
         })
@@ -821,25 +859,45 @@ mod cases {
         let other = CastKms::new(c"castkms-publication-other")?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let permission = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(permission.access())?;
+            let candidate = Arc::new(Candidate::begin(permission.access())?, GFP_KERNEL)?;
+            let proposal = gate_profile(&candidate, device, crtc, true)?;
             let mut prepared = device.execution.prepare(device, Profile::HostV1)?;
             let proposed = prepared.description()?;
             with_registered_display(
                 &other,
                 |other, other_crtc, other_connector, _, other_file| {
                     let owner = owner(&other_file, other_crtc, other_connector)?;
-                    let candidate = Candidate::begin(owner.access())?;
+                    let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                    let proposal = gate_profile(&candidate, other, other_crtc, true)?;
                     let before = other.execution.describe();
-                    candidate.with_activation_control(other, |_, locked| {
-                        check(other.execution.publish(locked, &mut prepared) == Err(EINVAL))
-                    })?;
+                    owner
+                        .access()
+                        .with_installed_transition(other, |current, locked| {
+                            check(
+                                other.execution.publish_proposal(
+                                    locked,
+                                    &mut prepared,
+                                    proposal.describe().generation,
+                                    current.configuration(),
+                                    |contract| current.check_contract(contract),
+                                ) == Err(EINVAL),
+                            )
+                        })?;
                     check(other.execution.describe() == before)
                 },
             )?;
             check(prepared.description()? == proposed)?;
-            candidate.with_activation_control(device, |_, locked| {
-                device.execution.publish(locked, &mut prepared)
-            })
+            permission
+                .access()
+                .with_installed_transition(device, |current, locked| {
+                    device.execution.publish_proposal(
+                        locked,
+                        &mut prepared,
+                        proposal.describe().generation,
+                        current.configuration(),
+                        |contract| current.check_contract(contract),
+                    )
+                })
         })
     }
 
@@ -881,14 +939,25 @@ mod cases {
         let other = CastKms::new(c"castkms-prepared-blob-other")?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let permission = owner(&file, crtc, connector)?;
-            let candidate = Candidate::begin(permission.access())?;
+            let candidate = Arc::new(Candidate::begin(permission.access())?, GFP_KERNEL)?;
+            let proposal = gate_profile(&candidate, device, crtc, true)?;
             let before = device.execution.describe();
             with_registered_display(&other, |other, _, _, _, _| {
                 let mut prepared = device.execution.prepare(other, Profile::HostV1)?;
                 let proposed = prepared.description()?;
-                candidate.with_activation_control(device, |_, locked| {
-                    check(device.execution.publish(locked, &mut prepared) == Err(EINVAL))
-                })?;
+                permission
+                    .access()
+                    .with_installed_transition(device, |current, locked| {
+                        check(
+                            device.execution.publish_proposal(
+                                locked,
+                                &mut prepared,
+                                proposal.describe().generation,
+                                current.configuration(),
+                                |contract| current.check_contract(contract),
+                            ) == Err(EINVAL),
+                        )
+                    })?;
                 check(prepared.description()? == proposed)?;
                 check(device.execution.describe() == before)
             })
