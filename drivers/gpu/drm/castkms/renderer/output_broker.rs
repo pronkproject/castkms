@@ -49,7 +49,6 @@ pub(crate) struct Broker {
     state: Mutex<State>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Broker {
     pub(crate) fn new() -> Result<Arc<Self>> {
         Arc::pin_init(

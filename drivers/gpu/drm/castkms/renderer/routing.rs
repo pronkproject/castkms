@@ -2,7 +2,11 @@
 
 //! Per-output worker discovery without active ownership or pixel authority.
 
-use super::candidate::Candidate;
+use super::{
+    candidate::Candidate,
+    output_broker::{Broker, Job, Registration},
+    render_job::Rendered,
+};
 use crate::{
     capture::provider::{delegated_queue::Queue, Delegated},
     output::Identity,
@@ -49,9 +53,10 @@ impl Registry {
         candidate: &Arc<Candidate>,
         active: &Active,
     ) -> Result<Owner> {
-        let route = Arc::from(prepared.0.write(Route {
+        let route = Arc::from(prepared.route.write(Route {
             candidate: candidate.clone(),
             active: active.observation(),
+            broker: prepared.broker,
         }));
         let retired = candidate.with_observed_identity(&route.active, |output| {
             if output != &self.output {
@@ -93,17 +98,26 @@ impl Registry {
             state.closed = true;
             state.current.take()
         };
+        if let Some(route) = &retired {
+            route.broker.close();
+        }
         drop(retired);
         self.changed.notify_all();
     }
 }
 
 /// Allocate before the operation that transfers unique active-worker ownership.
-pub(crate) struct Prepared(UniqueArc<MaybeUninit<Route>>);
+pub(crate) struct Prepared {
+    route: UniqueArc<MaybeUninit<Route>>,
+    broker: Arc<Broker>,
+}
 
 impl Prepared {
     pub(crate) fn new() -> Result<Self> {
-        Ok(Self(UniqueArc::new_uninit(GFP_KERNEL)?))
+        Ok(Self {
+            route: UniqueArc::new_uninit(GFP_KERNEL)?,
+            broker: Broker::new()?,
+        })
     }
 }
 
@@ -111,11 +125,16 @@ impl Prepared {
 pub(crate) struct Route {
     candidate: Arc<Candidate>,
     active: Observation,
+    broker: Arc<Broker>,
 }
 
 impl Route {
     pub(crate) fn create_queue(&self, scope: &Delegated, capacity: u32) -> Result<Queue> {
         scope.create_queue_observed(&self.candidate, &self.active, capacity)
+    }
+
+    pub(crate) fn register_queue(&self, scope: &Delegated, capacity: u32) -> Result<Registration> {
+        self.broker.register(|| self.create_queue(scope, capacity))
     }
 }
 
@@ -124,6 +143,13 @@ impl Route {
 pub(crate) struct Owner {
     registry: Arc<Registry>,
     route: Arc<Route>,
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Owner {
+    pub(crate) fn try_claim(&self, image: &Arc<Rendered>) -> Option<Job> {
+        self.route.broker.try_claim(image)
+    }
 }
 
 impl Drop for Owner {
@@ -140,6 +166,7 @@ impl Drop for Owner {
                 None
             }
         };
+        self.route.broker.close();
         drop(retired);
         self.registry.changed.notify_all();
     }
