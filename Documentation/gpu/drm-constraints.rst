@@ -108,7 +108,7 @@ Every offset is relative to the start of the complete snapshot. Per-plane
 format records are alternatives; scalar rules apply together. Unknown
 required records make an entry unusable, not unrestricted.
 
-The encoding is bounded to one MiB, including a maximum-size native list.
+The encoding is bounded to 16 MiB, including a maximum-size native list.
 All padding and reserved output fields are zero. A null buffer with zero
 capacity discovers the required size. An undersized buffer returns
 ``-ENOSPC`` and the required size without modifying any payload. Other errors
