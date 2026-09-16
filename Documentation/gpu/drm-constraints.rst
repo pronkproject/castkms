@@ -18,6 +18,8 @@ capability, listing ioctl, selection property or notification event. No
 CastKMS provider is attached to these helpers. The native test provider uses
 framebuffer metadata, not GPU allocation or PRIME import. Those boundaries
 must not be inferred from successful native tests.
+The Rust test provider uses private shmem allocations and CPU sampling; it
+does not establish physical-GPU or cross-device import support.
 
 Selecting constraints or updating an enabled scene admits only one independent
 output per transaction involving constraints. A full disable may include
@@ -269,6 +271,11 @@ named ``rust_drm_constraints_*``.
 The ``rust_drm_kms_constraints`` suite attaches a default to a Rust virtual
 output with shmem framebuffers and checks validation, installation rejection,
 retry and shutdown after provider failure. It does not execute a GPU backend.
+The ``rust_drm_constraints_provider`` suite prepares owned mappings before
+acceptance, retains the exact entry in each job, and attaches native source
+accounting at commit-tail publication. Its XRGB and NV12 CPU paths produce
+one-pixel results from private immutable test buffers after read admission.
+The provider has no userspace descriptors, physical GPU or external producer.
 
 Use ``kunit.filter_glob=*constraints*`` for the constraints suites and run the
 atomic property suite separately or with broader DRM tests. Build modular DRM
@@ -279,5 +286,6 @@ publication orderings; it is not GPU or ioctl qualification.
 
 Remaining integration includes userspace listing validation and error copyout,
 coalesced DRM-event notifications, client opt-in and normal atomic property
-decoding, owner-interval/default restoration, and a real provider/compositor
-consumer. No native test establishes those userspace or physical-GPU results.
+decoding, owner-interval/default restoration, CastKMS adoption and a real
+compositor consumer. Kernel-controlled provider coverage is test evidence,
+not independent production-ABI demand or physical-GPU qualification.

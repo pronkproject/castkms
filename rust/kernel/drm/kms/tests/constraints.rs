@@ -5,6 +5,9 @@ use crate::drm::constraints::{Description, Domain, Format, OpaqueEntry, Size};
 use crtc::{RawCrtc, RawCrtcState};
 use plane::RawPlane;
 
+mod provider;
+pub(super) use provider::{prepare, publish, verify, Prepared, Published};
+
 fn entry(domain: &Domain, crtc_id: u32, plane_id: u32) -> Result<ARef<OpaqueEntry>> {
     format_entry(domain, crtc_id, plane_id, fourcc::XRGB8888)
 }
