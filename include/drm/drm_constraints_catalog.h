@@ -56,6 +56,16 @@ struct drm_constraints_entry *
 drm_constraints_catalog_selected(struct drm_constraints_catalog *catalog);
 
 /*
+ * Resolve a positive ID to an owned candidate reference in this output catalog.
+ * Zero returns EINVAL; unknown, withdrawn unselected or closed entries return
+ * ESTALE. A withdrawn accepted entry remains resolvable for repeated selection.
+ * Lookup reserves neither availability nor authority. Atomic acceptance must
+ * recheck the retained entry, even if an earlier lookup succeeded.
+ */
+struct drm_constraints_entry *
+drm_constraints_catalog_lookup(struct drm_constraints_catalog *catalog, u64 id);
+
+/*
  * Provider operations. Add requires complete, ready resources; publication is
  * not itself selection. Withdraw marks an entry unavailable for selection.
  * Forget removes a withdrawn, unselected entry without invalidating
