@@ -22,6 +22,7 @@ pub(crate) struct Image {
     layout: Layout,
     pitch: usize,
     offset: usize,
+    storage: Option<crate::image_storage::Registration>,
 }
 
 impl Image {
@@ -59,11 +60,28 @@ impl Image {
             layout,
             pitch,
             offset,
+            storage: None,
         })
     }
 
     pub(crate) fn layout(&self) -> Layout {
         self.layout
+    }
+
+    /// Retain the device-wide recipient role through detached destination access.
+    pub(super) fn retain_storage(&mut self, storage: crate::image_storage::Registration) -> Result {
+        if self.storage.is_some() {
+            return Err(EALREADY);
+        }
+        let (width, height) = self.layout.dimensions();
+        if storage.dimensions() != [width, height]
+            || storage.buffers().len() != 1
+            || !core::ptr::eq(&*storage.buffers()[0], &*self.buffer)
+        {
+            return Err(EINVAL);
+        }
+        self.storage = Some(storage);
+        Ok(())
     }
 
     pub(crate) fn buffer(&self) -> &DmaBuf {

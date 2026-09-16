@@ -51,6 +51,10 @@ impl Negotiation {
         self.capture.describe_stream().map(|_| ())
     }
 
+    pub(super) fn retain_destination_storage(&self, image: &mut super::destination::Image) -> Result {
+        self.capture.retain_destination_storage(image)
+    }
+
     /// Observe current permission before returning even an unchanged offer.
     ///
     /// Failure leaves the previous description intact but grants no right to use it.

@@ -242,7 +242,9 @@ bookkeeping alone cannot prove that property.
 
 Registration tracks known aliases by DMA-BUF and reservation identity. It
 rejects overlap with current source storage again at source admission.
-Private and delegated recipient pools each have independent device-wide
+HOST capture destinations participate in the same alias ledger, including
+after namespace removal while detached delivery retains their storage.
+Private and recipient pools each have independent device-wide
 limits of 128 images and 512 MiB, including registrations retained after
 their caller drops its handle. Their common alias ledger does not let one
 pool consume the other's accounting credits. Private use names are increasing and

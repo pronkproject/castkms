@@ -57,13 +57,15 @@ mod cases {
                 second.buffer().reservation(),
             ))?;
             with_client(grantor.capture(), |file| {
-                let _first = register(file, 1, &first)?;
-                let _second = register(file, 2, &second)?;
-                let independent = destination(fixture, Layout::new(640, 480)?)?;
-                let _independent = register(file, 3, &independent)?;
+                let mut first_registration = register(file, 1, &first)?;
+                check(register(file, 2, &second).err() == Some(EEXIST))?;
                 let mut stream = ClientStream::open(file, 1, Description::query(file)?.id(), 1)?;
                 check(stream.queue_output(1, 1, None) == Err(EINVAL))?;
+                first_registration.unregister()?;
+                let _second = register(file, 2, &second)?;
                 check(stream.queue_output(1, 2, None) == Err(EINVAL))?;
+                let independent = destination(fixture, Layout::new(640, 480)?)?;
+                let _independent = register(file, 3, &independent)?;
                 let reuse = ManualFence::new()?;
                 stream.queue_output(1, 3, Some(&reuse.fence()))?;
                 stream.close()

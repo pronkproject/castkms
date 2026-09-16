@@ -70,6 +70,36 @@ mod cases {
     use super::*;
 
     #[test]
+    fn retained_host_destinations_cannot_be_registered_as_private_images() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let grantor = super::super::delegated_authority::grant(&file, crtc, connector)?;
+            let mut client = crate::capture::client::Client::new(grantor.capture())?;
+            let backing = buffer(device, ExportAccess::ReadWrite)?;
+            let image = crate::capture::destination::Image::new(
+                backing.clone(),
+                crate::host_compositor::layout::Layout::new(640, 480)?,
+                drm::fourcc::XRGB8888,
+                0,
+                2560,
+                0,
+            )?;
+            client.register_destination(1, image)?;
+            let retained = client.destination(1)?;
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let (active, _) = activate(&candidate, device, crtc)?;
+            check(candidate.register_private_image(&active, [640, 480], core::slice::from_ref(&backing)).err() == Some(EEXIST))?;
+            client.unregister_destination(1)?;
+            check(candidate.register_private_image(&active, [640, 480], core::slice::from_ref(&backing)).err() == Some(EEXIST))?;
+            drop(retained);
+            // Releasing the tracked role permits recipient registration again, not a
+            // claim that externally exposed backing is suitable for private content.
+            drop(device.image_storage.register(crate::image_storage::Pool::Recipient, [640, 480], &[backing])?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn retained_producer_notifications_follow_completed_private_content() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;

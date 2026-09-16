@@ -83,7 +83,8 @@ impl Client {
     /// It does not exclude another native or CPU user of the allocation.
     pub(crate) fn register_destination(&mut self, id: u64, image: Image) -> Result {
         self.negotiation.check_capture()?;
-        self.destinations.insert(id, image)
+        let negotiation = &self.negotiation;
+        self.destinations.insert(id, image, |image| negotiation.retain_destination_storage(image))
     }
 
     /// Retain the exact registered image for an independently bounded operation.

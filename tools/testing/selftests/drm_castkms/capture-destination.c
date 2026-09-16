@@ -101,12 +101,12 @@ int main(int argc, char **argv)
 		.id = 1, .width = 640, .height = 480, .format = DRM_FORMAT_XRGB8888,
 		.num_planes = 1, .modifier = DRM_FORMAT_MOD_LINEAR,
 	};
-	struct buffer scanout, output, read_only;
+	struct buffer scanout, output, read_only, extra[16];
 	drmModeRes *resources;
 	drmModeConnector *connector;
 	drmModeModeInfo mode = {};
 	drmVersion *version;
-	int master, duplicate, readonly_fd, output_fd;
+	int master, duplicate, readonly_fd, output_fd, extra_fd;
 
 	CHECK(argc == 2);
 	master = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -148,21 +148,41 @@ int main(int argc, char **argv)
 	duplicate = fcntl(files.capture_fd, F_DUPFD_CLOEXEC, 0);
 	CHECK(duplicate >= 0);
 	CHECK(register_destination(duplicate, &destination, 1) == -1 && errno == ESTALE);
-	for (uint64_t id = 2; id <= 16; id++)
+	CHECK(register_destination(files.capture_fd, &destination, 2) == -1 && errno == EEXIST);
+	for (uint64_t id = 2; id <= 16; id++) {
+		extra[id - 2] = create_buffer(master, 640, 480, 0x55);
+		CHECK(drmPrimeHandleToFD(master, extra[id - 2].dumb.handle,
+					 DRM_CLOEXEC | DRM_RDWR, &extra_fd) == 0);
+		destination.fds[0] = extra_fd;
+		destination.strides[0] = extra[id - 2].dumb.pitch;
 		CHECK(register_destination(files.capture_fd, &destination, id) == 0);
+		CHECK(close(extra_fd) == 0);
+	}
+	destination.fds[0] = output_fd;
+	destination.strides[0] = output.dumb.pitch;
 	CHECK(register_destination(files.capture_fd, &destination, 17) == -1 && errno == EBUSY);
 	CHECK(remove_destination(duplicate, 1) == 0);
 	CHECK(register_destination(files.capture_fd, &destination, 17) == 0);
-	for (uint64_t id = 2; id <= 16; id++)
+	for (uint64_t id = 2; id <= 16; id++) {
 		CHECK(remove_destination(files.capture_fd, id) == 0);
+		destroy_buffer(master, &extra[id - 2]);
+	}
+	extra[15] = create_buffer(master, 640, 480, 0x55);
+	CHECK(drmPrimeHandleToFD(master, extra[15].dumb.handle,
+				 DRM_CLOEXEC | DRM_RDWR, &extra_fd) == 0);
+	destination.fds[0] = extra_fd;
+	destination.strides[0] = extra[15].dumb.pitch;
 	CHECK(register_destination(files.capture_fd, &destination, UINT64_MAX) == 0);
 	CHECK(register_destination(files.capture_fd, &destination, 18) == -1 && errno == EOVERFLOW);
+	CHECK(close(extra_fd) == 0);
+	destination.fds[0] = output_fd;
 	CHECK(close(files.control_fd) == 0);
 	CHECK(register_destination(files.capture_fd, &destination, 18) == -1 && errno == EKEYREVOKED);
 	CHECK(close(output_fd) == 0);
 	/* Removing retained registrations does not need the original DMA-BUF descriptors. */
 	CHECK(remove_destination(duplicate, 17) == 0);
 	CHECK(remove_destination(files.capture_fd, UINT64_MAX) == 0);
+	destroy_buffer(master, &extra[15]);
 	CHECK(remove_destination(files.capture_fd, UINT64_MAX) == -1 && errno == ENOENT);
 	CHECK(drmIoctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM, &close_stream) == 0);
 	CHECK(close(duplicate) == 0);

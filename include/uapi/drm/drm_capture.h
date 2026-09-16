@@ -182,6 +182,8 @@ struct drm_capture_destroy_stream {
  * users. Callers must arrange destination reuse before writes.
  * Read-only storage returns EACCES, invalid metadata EINVAL, unsupported layouts
  * EOPNOTSUPP, unavailable registration slots EBUSY and revoked grants EKEYREVOKED.
+ * Providers may reject known aliases of retained image registrations with
+ * EEXIST. Removing a name does not remove alias tracking retained by active work.
  */
 struct drm_capture_register_destination {
 	__u64 id;
