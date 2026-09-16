@@ -4,8 +4,7 @@
 
 use super::{
     candidate::Candidate,
-    output_broker::{Broker, Job, Registration},
-    render_job::Rendered,
+    output_broker::{Broker, Registration},
 };
 use crate::{
     capture::provider::{delegated_queue::Queue, Delegated},
@@ -145,9 +144,17 @@ pub(crate) struct Owner {
     route: Arc<Route>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
-    pub(crate) fn try_claim(&self, image: &Arc<Rendered>) -> Option<Job> {
+    /// Retain discovery, not endpoint ownership or permission to claim any recipient.
+    pub(crate) fn broker(&self) -> Arc<Broker> {
+        self.route.broker.clone()
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn try_claim(
+        &self,
+        image: &Arc<super::render_job::Rendered>,
+    ) -> Option<super::output_broker::Job> {
         self.route.broker.try_claim(image)
     }
 }
