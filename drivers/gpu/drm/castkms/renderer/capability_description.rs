@@ -31,7 +31,9 @@ struct Header {
     max_lut_entries: u32,
     yuv_encodings: u32,
     yuv_ranges: u32,
-    reserved: [u32; 14],
+    min_output: [u32; 2],
+    min_source: [u32; 2],
+    reserved: [u32; 10],
 }
 
 // SAFETY: The header is entirely u32 fields, without padding or invalid bit patterns.
@@ -93,7 +95,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
     if header.version != uapi::DRM_CASTKMS_CAPABILITY_VERSION {
         return Err(EOPNOTSUPP);
     }
-    if header.reserved != [0; 14]
+    if header.reserved != [0; 10]
         || header.flags & !FEATURES != 0
         || header.yuv_encodings & !7 != 0
         || header.yuv_ranges & !3 != 0
@@ -139,8 +141,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
     Profile::new(
         Limits {
             geometry: GeometryLimits {
-                min_output: [1; 2],
-                min_source: [1; 2],
+                min_output: header.min_output,
+                min_source: header.min_source,
                 output: header.max_output,
                 source: header.max_source,
                 crop: has(uapi::DRM_CASTKMS_CAPABILITY_CROP),
@@ -201,6 +203,8 @@ pub(super) fn encode(contract: &Contract) -> Result<KVec<u8>> {
         }
         header.max_output = geometry.output;
         header.max_source = geometry.source;
+        header.min_output = geometry.min_output;
+        header.min_source = geometry.min_source;
         header.min_scale = geometry.min_scale;
         header.max_scale = geometry.max_scale;
         header.max_layers = limits.layers as u32;
@@ -263,8 +267,8 @@ mod tests {
         Profile::new(
             Limits {
                 geometry: GeometryLimits {
-                    min_output: [1; 2],
-                    min_source: [1; 2],
+                    min_output: [1920, 1080],
+                    min_source: [64, 32],
                     output: [16384; 2],
                     source: [16384; 2],
                     crop: true,
@@ -296,6 +300,8 @@ mod tests {
         let bytes = encode(&Contract::Renderer(Arc::new(profile, GFP_KERNEL)?))?;
         let decoded = decode(&bytes)?.ok_or(EINVAL)?;
         assert_eq!(decoded.limits().geometry.output, [16384; 2]);
+        assert_eq!(decoded.limits().geometry.min_output, [1920, 1080]);
+        assert_eq!(decoded.limits().geometry.min_source, [64, 32]);
         assert_eq!(decoded.formats()[0].modifier, Some(0x0100_0000_0000_0001));
         let again = encode(&Contract::Renderer(Arc::new(decoded, GFP_KERNEL)?))?;
         assert_eq!(&*bytes, &*again);
@@ -310,7 +316,7 @@ mod tests {
         bytes[8] = 1;
         assert!(matches!(decode(&bytes), Err(EINVAL)));
         bytes[8] = 0;
-        bytes[0..4].copy_from_slice(&2u32.to_ne_bytes());
+        bytes[0..4].copy_from_slice(&1u32.to_ne_bytes());
         assert!(matches!(decode(&bytes), Err(EOPNOTSUPP)));
         Ok(())
     }
