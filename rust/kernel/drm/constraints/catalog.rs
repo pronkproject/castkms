@@ -184,6 +184,40 @@ impl<B: Backend> Drop for Snapshot<B> {
 }
 
 impl<B: Backend> Snapshot<B> {
+    /// Encode the retained snapshot into independently owned kernel bytes.
+    ///
+    /// The bounded, versioned prototype uses native DRM meanings and contains no pointers or
+    /// retained resources. These bytes do not implement a userspace ioctl or confer authority.
+    /// Allocation may use virtual memory for large catalogs and requires sleepable context.
+    pub fn encode(&self) -> Result<KVVec<u8>> {
+        let mut required = 0;
+        // SAFETY: The live immutable snapshot permits size discovery with a null/zero buffer;
+        // required is a separate writable scalar and no buffer is accessed.
+        to_result(unsafe {
+            bindings::drm_constraints_snapshot_encode(
+                self.raw.as_ptr(),
+                core::ptr::null_mut(),
+                0,
+                &mut required,
+            )
+        })?;
+        let mut bytes = KVVec::<u8>::with_capacity(required, GFP_KERNEL)?;
+        // SAFETY: The allocation has at least required writable bytes and overlaps neither the
+        // snapshot nor the size output. Immutable metadata keeps the discovered size unchanged.
+        to_result(unsafe {
+            bindings::drm_constraints_snapshot_encode(
+                self.raw.as_ptr(),
+                bytes.as_mut_ptr().cast(),
+                required,
+                &mut required,
+            )
+        })?;
+        // SAFETY: Successful encoding initialized exactly required bytes within the reserved
+        // capacity. Byte values have no invalid bit patterns; the vector's length was zero.
+        unsafe { bytes.inc_len(required) };
+        Ok(bytes)
+    }
+
     /// Copy immutable metadata without consulting the live catalog.
     pub fn info(&self) -> SnapshotInfo {
         // SAFETY: A live snapshot owns initialized immutable metadata for the duration of self.

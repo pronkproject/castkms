@@ -150,4 +150,48 @@ mod cases {
         assert!(matches!(catalog.lookup(initial.id()), Err(ESTALE)));
         Ok(())
     }
+
+    #[test]
+    fn encoded_bytes_keep_metadata_without_retaining_backends() -> Result {
+        let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
+        let domain = Domain::new(2)?;
+        let initial = entry(&domain, &drops)?;
+        let target = entry(&domain, &drops)?;
+        let catalog = Catalog::new(&domain, &initial, 2)?;
+        catalog.add(&target)?;
+        catalog.suggest(target.id())?;
+        let snapshot = catalog.snapshot(0)?;
+        let info = snapshot.info();
+        let bytes = snapshot.encode()?;
+        assert!(bytes.len() <= bindings::DRM_CONSTRAINTS_ENCODING_MAX_SIZE as usize);
+        assert!(bytes.len() >= core::mem::size_of::<bindings::drm_constraints_encoded_list>());
+        let generation = core::mem::offset_of!(bindings::drm_constraints_encoded_list, generation);
+        let selected = core::mem::offset_of!(bindings::drm_constraints_encoded_list, selected_id);
+        let suggested = core::mem::offset_of!(bindings::drm_constraints_encoded_list, suggested_id);
+        assert_eq!(
+            u64::from_ne_bytes(bytes[generation..generation + 8].try_into().unwrap()),
+            info.generation
+        );
+        assert_eq!(
+            u64::from_ne_bytes(bytes[selected..selected + 8].try_into().unwrap()),
+            info.selected_id
+        );
+        assert_eq!(
+            u64::from_ne_bytes(bytes[suggested..suggested + 8].try_into().unwrap()),
+            info.suggested_id
+        );
+        catalog.close();
+        assert_eq!(snapshot.encode()?.as_slice(), bytes.as_slice());
+        drop(snapshot);
+        drop(catalog);
+        drop(initial);
+        drop(target);
+        drop(domain);
+        assert_eq!(drops.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            u64::from_ne_bytes(bytes[selected..selected + 8].try_into().unwrap()),
+            info.selected_id
+        );
+        Ok(())
+    }
 }
