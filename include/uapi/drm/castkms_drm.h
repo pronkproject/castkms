@@ -19,6 +19,7 @@
  * A token is metadata, not permission to render or access source buffers.
  */
 #define DRM_CASTKMS_TRANSITION_PROPERTY "CASTKMS_TRANSITION"
+#define DRM_CASTKMS_EXECUTION_PROPERTY "CASTKMS_EXECUTION"
 
 #define DRM_CASTKMS_CAPABILITY_VERSION 1
 #define DRM_CASTKMS_CAPABILITY_HOST 1
