@@ -194,7 +194,7 @@ pub(in crate::drm::kms::tests) fn publish(commit: &crtc::CrtcAtomicCommit<'_, Te
     Ok(())
 }
 
-fn nv12(
+pub(super) fn nv12(
     dev: &testing::TestDevice<TestDriver>,
     counts: &Arc<Counts>,
 ) -> Result<framebuffer::FramebufferRef<TestDriver>> {

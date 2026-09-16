@@ -263,6 +263,15 @@ NV12 shmem framebuffers while an enabled XRGB-only entry remains selected,
 then atomically switch the entry and scene and observe the target in the
 commit tail. Repeated or omitted selection preserves the list generation.
 
+``RawPlane::scene_property_id()`` resolves attached standard scalar properties
+without exposing raw property storage or reading live values. Setup and runtime
+views return the same identity; absent properties return ``None``. Rust
+providers can use those IDs to describe geometry, stacking, blending and color
+rules. Native registration still verifies property scope, type and permitted
+values. The Rust property test selects an NV12 scene with BT.709 limited-range
+color and restricted stacking, then rejects incompatible candidate values
+without changing the accepted binding or list generation.
+
 ``OpaqueEntry::new_stateless()`` uses common DRM destruction for backends
 without private per-entry resources. It avoids a permanent default retaining
 its provider module solely for a metadata release callback. Device and accepted

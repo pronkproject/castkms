@@ -27,6 +27,9 @@ use core::{
     ptr::{null, null_mut, NonNull},
 };
 
+mod properties;
+pub use properties::SceneProperty;
+
 /// Plane rotation and reflection properties.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Rotation(u32);
@@ -579,6 +582,8 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
 /// # Safety
 ///
 /// [`as_raw()`] must always return a valid pointer to an initialized [`struct drm_plane`].
+/// Property attachment and cleanup must not run concurrently with [`RawPlane`] methods.
+/// Setup views serialize attachment; runtime views expose completed property setup.
 ///
 /// [`struct drm_plane`]: srctree/include/drm/drm_plane.h
 /// [`as_raw()`]: AsRawPlane::as_raw()
@@ -666,6 +671,17 @@ pub unsafe trait ModesettablePlane: AsRawPlane {
 /// This is implemented internally by DRM, and provides many of the basic methods for working with
 /// planes.
 pub trait RawPlane: AsRawPlane {
+    /// Return the identity of an attached standard scene property, or `None` if absent.
+    ///
+    /// This exposes metadata, not the current value or permission to change it. Property
+    /// attachment belongs to exclusive setup; runtime views retain immutable property identities.
+    /// Constraint rules are still checked against native attachment, type and permitted values.
+    fn scene_property_id(&self, property: SceneProperty) -> Option<u32> {
+        // SAFETY: Setup views are not thread-safe; runtime views have completed property setup.
+        // The initialized plane and its property allocations remain live throughout the borrow.
+        unsafe { properties::id(self.as_raw(), property) }
+    }
+
     /// DRM object ID, not a reference or modesetting authority.
     fn object_id(&self) -> u32 {
         // SAFETY: The initialized plane retains its immutable base identity for its lifetime.

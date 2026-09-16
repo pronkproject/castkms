@@ -6,6 +6,7 @@ use crtc::{RawCrtc, RawCrtcState};
 use plane::RawPlane;
 
 mod provider;
+mod properties;
 pub(super) use provider::{prepare, publish, verify, Prepared, Published};
 
 fn entry(domain: &Domain, crtc_id: u32, plane_id: u32) -> Result<ARef<OpaqueEntry>> {

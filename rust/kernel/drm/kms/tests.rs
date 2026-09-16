@@ -76,6 +76,8 @@ struct Counts {
     committed_constraints_id: AtomicU64,
     constraints_render: AtomicU32,
     output_count: AtomicU32,
+    scene_properties: AtomicU32,
+    scene_color_range_id: AtomicU32,
     constraints_work: constraints::Published,
     constraints_work_secondary: constraints::Published,
     constraints_work_error: AtomicI32,
@@ -557,6 +559,15 @@ impl KmsDriver for TestDriver {
             )?;
             if index == 0 {
                 dev.plane.store(plane.as_raw(), Ordering::Relaxed);
+            }
+            if dev.counts.scene_properties.load(Ordering::Relaxed) != 0 {
+                plane.create_zpos_property(1, 1, 4)?;
+                plane.create_yuv_color_properties()?;
+                plane.create_nearest_scaling_filter_property()?;
+                dev.counts.scene_color_range_id.store(
+                    plane.scene_property_id(plane::SceneProperty::ColorRange).ok_or(EINVAL)?,
+                    Ordering::Relaxed,
+                );
             }
             if dev.fail_after_plane {
                 dev.counts.setup_failures.fetch_add(1, Ordering::Relaxed);
