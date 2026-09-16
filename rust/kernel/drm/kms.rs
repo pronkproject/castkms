@@ -241,6 +241,10 @@ pub trait KmsDriver: Driver<Kms = Self> + Sized {
     /// locks held. Inspect only: do not mutate state, acquire modeset locks, reenter list
     /// operations, change external state or wait for userspace. Resources must be ready before
     /// the entry is offered. Returning success is not permission to read source pixels.
+    ///
+    /// At acceptance, outer driver installation locks and preparation owner/ticket locks may
+    /// also be held. Do not reacquire them or call preparation operations which require them.
+    /// Additional provider locks must be ordered inside the list lock at both call sites.
     fn constraints_check(
         _state: &atomic::AtomicStateReader<Self>,
         _crtc: &crtc::OpaqueCrtcState<Self>,

@@ -164,11 +164,17 @@ runs the infallible state-installation continuation. Failure installs nothing.
 Success accepts the scene and exact backend binding together; selected-ID
 readback describes accepted state, not completed presentation.
 
-The caller stabilizes modesetting authority and affected object state. Lock
-ordering is caller authority/modeset locks, then list serialization, then
-provider locks needed by the callback. Callbacks must not reenter list
-operations or acquire caller locks again. Native list construction alone
-does not establish DRM-file, master or lease authority.
+The caller stabilizes modesetting authority and affected object state.
+Acceptance nests the driver's installation serialization inside modeset locks,
+then preparation owner/ticket serialization, then the constraints list lock.
+Provider locks needed by the constraints callback must be inside the list
+lock during both ordinary validation and acceptance. The callback must not
+reacquire an outer installation lock, reenter list operations or invoke
+preparation operations which acquire already-held owner/ticket locks. A driver
+implementing both installation and constraints callbacks must account for
+their nesting; they are not independent opportunities to acquire the same
+policy mutex. Native list construction alone does not establish DRM-file,
+master or lease authority.
 
 Retirement and shutdown
 =======================
