@@ -21,6 +21,7 @@ mod request;
 mod storage;
 
 pub(crate) use creator::Creator;
+pub(crate) use delegated::Delegated;
 pub(crate) use description::Description;
 pub(crate) use frame::Frame;
 pub(crate) use request::Request;

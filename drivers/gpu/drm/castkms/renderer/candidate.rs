@@ -506,6 +506,16 @@ impl Candidate {
         })
     }
 
+    /// Stabilize worker/output identity for routing metadata, not pixel admission.
+    /// The callback holds startup state and must not acquire display locks or drop DRM refs.
+    pub(super) fn with_observed_identity<R>(
+        &self,
+        active: &renderer_startup::Observation,
+        f: impl FnOnce(&crate::output::Identity) -> Result<R>,
+    ) -> Result<R> {
+        active.with_candidate(&self.resources, || f(self.access.display().output.identity()))
+    }
+
     fn snapshot_then(
         &self,
         image: &Completed,
