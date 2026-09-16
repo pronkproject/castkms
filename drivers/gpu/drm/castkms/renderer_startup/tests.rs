@@ -18,7 +18,7 @@ mod cases {
         let owner = owner()?;
         let startup = owner.startup();
         let candidate = startup.begin()?;
-        let (old, ()) = candidate.activate_negotiated(|| Ok(()))?;
+        let (old, ()) = candidate.activate(|| Ok(()))?;
         let pending = startup.begin()?;
         assert_eq!(pending.handback(|| Err::<(), _>(EIO)), Err(EIO));
         old.check()?;
@@ -37,12 +37,12 @@ mod cases {
         let owner = owner()?;
         let startup = owner.startup();
         let candidate = startup.begin()?;
-        let (old, ()) = candidate.activate_negotiated(|| Ok(()))?;
+        let (old, ()) = candidate.activate(|| Ok(()))?;
         let replacement = startup.begin()?;
         old.with_current(|| Ok(()))?;
         assert!(matches!(startup.begin(), Err(EBUSY)));
         assert!(matches!(
-            replacement.activate_negotiated(|| Err::<(), _>(EIO)),
+            replacement.activate(|| Err::<(), _>(EIO)),
             Err(EIO)
         ));
         old.check()?;
@@ -51,7 +51,7 @@ mod cases {
         let next = startup.begin()?;
         drop(replacement);
         next.check()?;
-        let (active, ()) = next.activate_negotiated(|| Ok(()))?;
+        let (active, ()) = next.activate(|| Ok(()))?;
         assert_eq!(old.check(), Err(EIO));
         drop(old);
         active.check()?;
@@ -63,33 +63,24 @@ mod cases {
         let owner = owner()?;
         let startup = owner.startup();
         let candidate = startup.begin()?;
-        let (old, ()) = candidate.activate_negotiated(|| Ok(()))?;
+        let (old, ()) = candidate.activate(|| Ok(()))?;
         let replacement = startup.begin()?;
         drop(old);
         assert_eq!(replacement.check(), Err(ECANCELED));
-        assert!(matches!(
-            replacement.activate_negotiated(|| Ok(())),
-            Err(ECANCELED)
-        ));
+        assert!(matches!(replacement.activate(|| Ok(())), Err(ECANCELED)));
         Ok(())
     }
 
     #[test]
     fn negotiated_workers_follow_modes_but_not_authority_changes() -> Result {
-        for negotiated in [false, true] {
-            let owner = owner()?;
-            let startup = owner.startup();
-            let candidate = startup.begin()?;
-            let (active, ()) = if negotiated {
-                candidate.activate_negotiated(|| Ok(()))?
-            } else {
-                candidate.activate(|| Ok(()))?
-            };
-            startup.configuration_changed();
-            assert_eq!(active.check(), if negotiated { Ok(()) } else { Err(EIO) });
-            startup.invalidate_current();
-            assert_eq!(active.check(), Err(EIO));
-        }
+        let owner = owner()?;
+        let startup = owner.startup();
+        let candidate = startup.begin()?;
+        let (active, ()) = candidate.activate(|| Ok(()))?;
+        startup.configuration_changed();
+        active.check()?;
+        startup.invalidate_current();
+        assert_eq!(active.check(), Err(EIO));
         Ok(())
     }
 
@@ -165,7 +156,7 @@ mod cases {
     }
 
     #[test]
-    fn active_renderer_ownership_never_reopens_candidate_admission() -> Result {
+    fn active_renderer_allows_replacement_until_ownership_is_lost() -> Result {
         let owner = owner()?;
         let startup = owner.startup();
         let candidate = startup.begin()?;
@@ -173,7 +164,9 @@ mod cases {
         assert_eq!(value, 19);
         candidate.cancel();
         active.check()?;
-        assert!(matches!(startup.begin(), Err(EBUSY)));
+        let replacement = startup.begin()?;
+        replacement.check()?;
+        drop(replacement);
         drop(active);
         assert!(matches!(startup.begin(), Err(EBUSY)));
         Ok(())

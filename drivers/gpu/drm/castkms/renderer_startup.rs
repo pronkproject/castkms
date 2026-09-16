@@ -23,7 +23,7 @@ use kernel::{
 enum State {
     Idle,
     Reserved(Arc<()>),
-    Active(Arc<()>, bool),
+    Active(Arc<()>),
     Replacing { active: Arc<()>, candidate: Arc<()> },
     Lost,
     Closed,
@@ -59,15 +59,13 @@ impl Startup {
             let mut state = self.state.lock();
             match &*state {
                 State::Idle => *state = State::Reserved(identity.clone()),
-                State::Active(active, true) => {
+                State::Active(active) => {
                     *state = State::Replacing {
                         active: active.clone(),
                         candidate: identity.clone(),
                     }
                 }
-                State::Reserved(_) | State::Active(..) | State::Replacing { .. } | State::Lost => {
-                    return Err(EBUSY)
-                }
+                State::Reserved(_) | State::Replacing { .. } | State::Lost => return Err(EBUSY),
                 State::Closed => return Err(ENODEV),
             }
         }
@@ -93,22 +91,17 @@ impl Startup {
     fn activate<R>(
         self: &Arc<Self>,
         identity: &Arc<()>,
-        follows_configuration: bool,
         publish: impl FnOnce() -> Result<R>,
     ) -> Result<(Active, R)> {
         let mut state = self.state.lock();
         match &*state {
             State::Reserved(current) if Arc::ptr_eq(current, identity) => (),
-            State::Replacing { candidate, .. }
-                if follows_configuration && Arc::ptr_eq(candidate, identity) =>
-            {
-                ()
-            }
+            State::Replacing { candidate, .. } if Arc::ptr_eq(candidate, identity) => (),
             State::Closed => return Err(ENODEV),
             _ => return Err(ECANCELED),
         }
         let result = publish()?;
-        *state = State::Active(identity.clone(), follows_configuration);
+        *state = State::Active(identity.clone());
         Ok((
             Active {
                 startup: self.clone(),
@@ -126,7 +119,7 @@ impl Startup {
                     Some(core::mem::replace(&mut *state, State::Idle))
                 }
                 State::Replacing { active, candidate } if Arc::ptr_eq(candidate, identity) => {
-                    let restored = State::Active(active.clone(), true);
+                    let restored = State::Active(active.clone());
                     Some(core::mem::replace(&mut *state, restored))
                 }
                 _ => None,
@@ -163,9 +156,9 @@ impl Startup {
             let mut state = self.state.lock();
             match &*state {
                 State::Reserved(_) => Some(core::mem::replace(&mut *state, State::Idle)),
-                State::Active(_, true) if configuration_only => None,
+                State::Active(_) if configuration_only => None,
                 State::Replacing { active, .. } if configuration_only => {
-                    let restored = State::Active(active.clone(), true);
+                    let restored = State::Active(active.clone());
                     Some(core::mem::replace(&mut *state, restored))
                 }
                 State::Replacing { .. } => Some(core::mem::replace(&mut *state, State::Lost)),
@@ -180,7 +173,7 @@ impl Startup {
         let retired = {
             let mut state = self.state.lock();
             match &*state {
-                State::Active(current, _) if Arc::ptr_eq(current, identity) => {
+                State::Active(current) if Arc::ptr_eq(current, identity) => {
                     Some(core::mem::replace(&mut *state, State::Lost))
                 }
                 State::Replacing { active, .. } if Arc::ptr_eq(active, identity) => {
@@ -228,15 +221,7 @@ impl Candidate {
     /// leaves the candidate reserved. The returned owner marks unexpected loss when dropped;
     /// it never reopens candidate admission.
     pub(crate) fn activate<R>(&self, publish: impl FnOnce() -> Result<R>) -> Result<(Active, R)> {
-        self.startup.activate(&self.identity, false, publish)
-    }
-
-    /// Activate a worker whose input contract, rather than its initial mode, limits scenes.
-    pub(crate) fn activate_negotiated<R>(
-        &self,
-        publish: impl FnOnce() -> Result<R>,
-    ) -> Result<(Active, R)> {
-        self.startup.activate(&self.identity, true, publish)
+        self.startup.activate(&self.identity, publish)
     }
 
     /// Stop old renderer admission only after a gated HOST publication succeeds.
@@ -301,7 +286,7 @@ impl Active {
     /// Check that this renderer remains the active device-wide incarnation.
     pub(crate) fn check(&self) -> Result {
         match &*self.startup.state.lock() {
-            State::Active(current, _) if Arc::ptr_eq(current, &self.identity) => Ok(()),
+            State::Active(current) if Arc::ptr_eq(current, &self.identity) => Ok(()),
             State::Replacing { active, .. } if Arc::ptr_eq(active, &self.identity) => Ok(()),
             State::Closed => Err(ENODEV),
             _ => Err(EIO),
@@ -314,7 +299,7 @@ impl Active {
     /// work, acquire outer locks or release final DRM references.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
         match &*self.startup.state.lock() {
-            State::Active(current, _) if Arc::ptr_eq(current, &self.identity) => f(),
+            State::Active(current) if Arc::ptr_eq(current, &self.identity) => f(),
             State::Replacing { active, .. } if Arc::ptr_eq(active, &self.identity) => f(),
             State::Closed => Err(ENODEV),
             _ => Err(EIO),

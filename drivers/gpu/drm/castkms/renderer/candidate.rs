@@ -354,7 +354,7 @@ impl Candidate {
                         )?;
                         Ok(source)
                     };
-                    self.resources.activate_negotiated(publish)
+                    self.resources.activate(publish)
                 })?;
         Ok((active, source, description))
     }
