@@ -16,6 +16,7 @@ struct list_fixture {
 	struct drm_constraints_entry *initial;
 	struct drm_constraints_list *list;
 	unsigned int released;
+	bool inspect_release;
 };
 
 static void release_backend(void *data)
@@ -23,6 +24,8 @@ static void release_backend(void *data)
 	struct list_fixture *fixture = data;
 
 	fixture->released++;
+	if (fixture->inspect_release)
+		drm_constraints_entry_put(drm_constraints_list_selected(fixture->list));
 }
 
 static const struct drm_constraints_entry_ops ops = {
@@ -466,7 +469,87 @@ static void identity_lookup_observes_selected_withdrawal_and_closure(struct kuni
 			   ERR_PTR(-ESTALE));
 }
 
+static void retiring_offers_preserves_snapshots_and_default(struct kunit *test)
+{
+	struct list_fixture *fixture = new_fixture(test, 3);
+	struct drm_constraints_entry *first = new_entry(test, fixture, 19);
+	struct drm_constraints_entry *second = new_entry(test, fixture, 19);
+	struct drm_constraints_snapshot *before, *after;
+	const struct drm_constraints_snapshot_info *info;
+	u64 generation, id = drm_constraints_entry_id(first);
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_add(fixture->list, first), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_add(fixture->list, second), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_suggest(fixture->list, id), 0);
+	before = snapshot(test, fixture->list, 0);
+	generation = drm_constraints_snapshot_info(before)->generation;
+	kunit_release_action(test, put_entry, first);
+	kunit_release_action(test, put_entry, second);
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_list_retain_default(fixture->list, fixture->initial), 0);
+	after = snapshot(test, fixture->list, 0);
+	info = drm_constraints_snapshot_info(after);
+	KUNIT_EXPECT_EQ(test, info->count, 1);
+	KUNIT_EXPECT_EQ(test, info->selected_id, drm_constraints_entry_id(fixture->initial));
+	KUNIT_EXPECT_EQ(test, info->suggested_id, 0);
+	KUNIT_EXPECT_EQ(test, info->generation, generation + 1);
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_info(before)->count, 3);
+	KUNIT_EXPECT_EQ(test, fixture->released, 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_list_lookup(fixture->list, id),
+			   ERR_PTR(-ESTALE));
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_list_retain_default(fixture->list, fixture->initial), 0);
+	snapshot(test, fixture->list, info->generation);
+	kunit_release_action(test, put_snapshot, before);
+	KUNIT_EXPECT_EQ(test, fixture->released, 2);
+}
+
+static void retiring_offers_releases_resources_outside_list_lock(struct kunit *test)
+{
+	struct list_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_add(fixture->list, target), 0);
+	kunit_release_action(test, put_entry, target);
+	fixture->inspect_release = true;
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_list_retain_default(fixture->list, fixture->initial), 0);
+	fixture->inspect_release = false;
+	KUNIT_EXPECT_EQ(test, fixture->released, 1);
+}
+
+static void retiring_offers_requires_an_available_selected_default(struct kunit *test)
+{
+	struct list_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct install_context context = {};
+	const struct drm_constraints_snapshot_info *info;
+	u64 generation;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_add(fixture->list, target), 0);
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_list_accept(fixture->list, target, validate, &context), 0);
+	info = drm_constraints_snapshot_info(snapshot(test, fixture->list, 0));
+	generation = info->generation;
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_list_retain_default(fixture->list, fixture->initial), -EBUSY);
+	snapshot(test, fixture->list, generation);
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_list_accept(fixture->list, fixture->initial,
+					    validate, &context), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_withdraw(fixture->list,
+						 drm_constraints_entry_id(fixture->initial)), 0);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_list_retain_default(fixture->list, fixture->initial), -ESTALE);
+	drm_constraints_list_close(fixture->list);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_list_retain_default(fixture->list, target), -ESTALE);
+}
+
 static struct kunit_case drm_constraints_list_tests[] = {
+	KUNIT_CASE(retiring_offers_preserves_snapshots_and_default),
+	KUNIT_CASE(retiring_offers_releases_resources_outside_list_lock),
+	KUNIT_CASE(retiring_offers_requires_an_available_selected_default),
 	KUNIT_CASE(snapshots_retain_immutable_entries),
 	KUNIT_CASE(changes_invalidate_expected_generations),
 	KUNIT_CASE(suggestions_do_not_select_entries),
