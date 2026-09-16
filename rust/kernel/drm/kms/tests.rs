@@ -47,7 +47,7 @@ use crate::{
     faux,
     sync::Arc,
 };
-use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 #[derive(Default)]
 struct Counts {
@@ -74,6 +74,9 @@ struct Counts {
     constraints_id: AtomicU64,
     checked_constraints_id: AtomicU64,
     committed_constraints_id: AtomicU64,
+    constraints_render: AtomicU32,
+    constraints_work: constraints::Published,
+    constraints_work_error: AtomicI32,
     // Borrowed only by synchronous preparation callbacks while their source is retained.
     preparation_source: AtomicPtr<bindings::drm_prepare_source>,
     preparation_capacity: AtomicU32,
@@ -160,6 +163,7 @@ struct PlanePayload {
 struct CrtcPayload {
     counts: Arc<Counts>,
     value: KBox<u64>,
+    work: Option<Arc<constraints::Prepared>>,
 }
 struct ConnectorPayload {
     counts: Arc<Counts>,
@@ -222,6 +226,7 @@ impl CrtcPayload {
         Ok(Self {
             counts: counts.clone(),
             value,
+            work: None,
         })
     }
 }
@@ -426,6 +431,12 @@ impl crtc::DriverCrtc for TestCrtc {
         commit.crtc().life.0.enables.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
+        let (transaction, mut new) = check.take_state_new_state();
+        new.work = constraints::prepare(transaction, &new)?;
+        Ok(())
+    }
+
     fn atomic_disable(commit: crtc::CrtcAtomicCommit<'_, Self>) {
         commit
             .crtc()
@@ -442,6 +453,8 @@ impl crtc::DriverCrtc for TestCrtc {
         commit.crtc().life.0.committed_constraints_id.store(
             new.constraints_entry().map_or(0, |entry| entry.id()), Ordering::Relaxed,
         );
+        let error = constraints::publish(&commit).err().map_or(0, Error::to_errno);
+        commit.crtc().life.0.constraints_work_error.store(error, Ordering::Relaxed);
         commit
             .crtc()
             .life
@@ -597,6 +610,7 @@ impl KmsDriver for TestDriver {
             return Err(EINVAL);
         }
         counts.checked_constraints_id.store(entry.id(), Ordering::Relaxed);
+        constraints::verify(crtc::CrtcState::<CrtcPayload>::from_opaque(crtc), entry)?;
         if counts.fail_constraints.load(Ordering::Relaxed) != 0 {
             return Err(EIO);
         }
