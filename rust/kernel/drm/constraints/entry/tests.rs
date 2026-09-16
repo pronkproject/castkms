@@ -39,6 +39,43 @@ mod cases {
     use super::*;
 
     #[test]
+    fn opaque_reference_retains_typed_backend() -> Result {
+        let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
+        let domain = Domain::new(1)?;
+        let description = description()?;
+        let entry = Entry::new(&domain, 9, &description, backend(&drops)?)?;
+        let retained = ARef::<OpaqueEntry>::from(&**entry);
+        assert_eq!(retained.id(), entry.id());
+        drop(entry);
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+        assert!(matches!(
+            OpaqueEntry::new_stateless(&domain, 9, &description),
+            Err(ENOSPC)
+        ));
+        assert!(retained.in_domain(&domain));
+        assert_eq!(retained.description().output().minimum(), (128, 64));
+        drop(retained);
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn stateless_reference_retains_description_and_domain() -> Result {
+        let domain = Domain::new(1)?;
+        let description = description()?;
+        let entry = OpaqueEntry::new_stateless(&domain, 9, &description)?;
+        assert_ne!(entry.id(), 0);
+        assert_eq!(entry.crtc_id(), 9);
+        assert!(entry.in_domain(&domain));
+        drop(domain);
+        drop(description);
+        let retained = entry.clone();
+        drop(entry);
+        assert_eq!(retained.description().output().maximum(), (128, 64));
+        Ok(())
+    }
+
+    #[test]
     fn entry_retains_domain_description_and_backend() -> Result {
         let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
         let domain = Domain::new(2)?;
