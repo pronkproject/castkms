@@ -27,7 +27,8 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 		found = false;
 		drm_for_each_plane(plane, crtc->dev) {
 			if (plane->base.id == formats[i].plane_id &&
-			    (plane->possible_crtcs & drm_crtc_mask(crtc))) {
+			    (plane->possible_crtcs & drm_crtc_mask(crtc)) &&
+			    drm_plane_has_format(plane, formats[i].format, formats[i].modifier)) {
 				found = true;
 				break;
 			}
