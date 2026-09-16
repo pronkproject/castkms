@@ -137,7 +137,7 @@ mod cases {
             )?;
         }
         // Same device and same master do not make output identities interchangeable.
-        let wrong_output = outputs[1].destination.request(1, None)?;
+        let wrong_output = outputs[1].destination.request(None)?;
         check(
             wrong_output
                 .try_claim(
@@ -158,7 +158,7 @@ mod cases {
                 == Some(EEXIST),
         )?;
 
-        let pending = outputs[0].destination.request(2, None)?;
+        let pending = outputs[0].destination.request(None)?;
         let claim = pending
             .try_claim(
                 &outputs[0].renderer,
@@ -170,7 +170,7 @@ mod cases {
         claim.release(Completion::Submitted(native.fence()));
         drop(outputs[0].grantor.take());
         for output in &outputs[1..] {
-            let request = output.destination.request(2, None)?;
+            let request = output.destination.request(None)?;
             let claim = request
                 .try_claim(&output.renderer, &output.active, &output.rendered)?
                 .ok_or(EINVAL)?;
@@ -197,7 +197,7 @@ mod cases {
         native.complete(Ok(()))?;
         wait(&pending, Status::Complete(Err(EKEYREVOKED)))?;
         for output in &outputs[1..] {
-            let request = output.destination.request(3, None)?;
+            let request = output.destination.request(None)?;
             let claim = request
                 .try_claim(&output.renderer, &output.active, &output.rendered)?
                 .ok_or(EINVAL)?;

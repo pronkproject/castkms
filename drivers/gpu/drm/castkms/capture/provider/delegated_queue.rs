@@ -132,7 +132,6 @@ impl Queue {
             Ok(Pending {
                 use_id,
                 request: destination.request_accounted(
-                    use_id,
                     reuse,
                     Some(self.charge.clone()),
                     Some(self.changed.clone()),

@@ -33,7 +33,7 @@ mod cases {
             pool.insert(1, || Ok(fixture.private.clone()))?;
             check(pool.publish(1, fixture.rendered.clone())?.is_none())?;
             drop(fixture.rendered);
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let rendered = pool.completed(1)?;
             let claim = request
                 .try_claim(&fixture.renderer, &fixture.active, &rendered)?

@@ -122,14 +122,14 @@ mod cases {
     fn queued_worker_loss_reconciles_without_claiming_private_content() -> Result {
         with_output(|fixture| {
             let observation = fixture.active.observation();
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             drop(fixture.rendered);
             drop(fixture.active);
             check(
                 request.status_for(&fixture.renderer, &observation) == Status::Complete(Err(EIO)),
             )?;
             check(request.native_completion().is_none())?;
-            drop(fixture.destination.reserve(2, None)?);
+            drop(fixture.destination.reserve(None)?);
             private_available(&fixture.private, 2)
         })
     }
@@ -138,7 +138,7 @@ mod cases {
     fn observed_claim_does_not_keep_the_worker_active() -> Result {
         with_output(|fixture| {
             let observation = fixture.active.observation();
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let claim = request
                 .try_claim_observed(&fixture.renderer, &observation, &fixture.rendered)?
                 .ok_or(EINVAL)?;
@@ -150,13 +150,12 @@ mod cases {
     }
 
     #[test]
-    fn rejected_request_admission_does_not_consume_a_destination_use() -> Result {
+    fn rejected_request_admission_preserves_destination_exclusion() -> Result {
         with_output(|fixture| {
-            check(fixture.destination.request(0, None).err() == Some(EINVAL))?;
-            let first = fixture.destination.request(1, None)?;
-            check(fixture.destination.request(2, None).err() == Some(EBUSY))?;
+            let first = fixture.destination.request(None)?;
+            check(fixture.destination.request(None).err() == Some(EBUSY))?;
             first.cancel();
-            let second = fixture.destination.request(2, None)?;
+            let second = fixture.destination.request(None)?;
             second.cancel();
             check(second.status() == Status::Complete(Err(ECANCELED)))
         })
@@ -183,7 +182,7 @@ mod cases {
                     2560,
                     0,
                 )?;
-            let request = destination.request(1, None)?;
+            let request = destination.request(None)?;
             let framebuffer = Framebuffer::from_objects(
                 device,
                 &FramebufferLayout {
@@ -220,7 +219,7 @@ mod cases {
             check(request.native_completion().is_none())?;
             // A rejected claim creates no output access and returns destination capacity.
             device.atomic_update(|transaction| transaction.set_crtc_config(crtc, Some(scanout)))?;
-            drop(destination.reserve(2, None)?);
+            drop(destination.reserve(None)?);
             Ok(())
         })
     }
@@ -229,7 +228,7 @@ mod cases {
     fn closing_master_preserves_native_cleanup_but_not_frame_authority() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let fixture = output_fixture(device, crtc, connector, &file)?;
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let mut native = ManualFence::new()?;
             request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
@@ -251,7 +250,7 @@ mod cases {
         let display = CastKms::new(c"castkms-delegated-shutdown")?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let fixture = output_fixture(device, crtc, connector, &file)?;
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let mut native = ManualFence::new()?;
             request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
@@ -264,7 +263,7 @@ mod cases {
             native.complete(Ok(()))?;
             wait(&request, Status::Complete(Err(ENODEV)))?;
             check(request.content_serial().is_none())?;
-            check(fixture.destination.reserve(2, None).err() == Some(ENODEV))?;
+            check(fixture.destination.reserve(None).err() == Some(ENODEV))?;
             private_available(&fixture.private, 2)
         })
     }
@@ -306,8 +305,8 @@ mod cases {
                     GFP_KERNEL,
                 )?;
             }
-            let first_request = destinations[0].request(1, None)?;
-            let second_request = destinations[1].request(1, None)?;
+            let first_request = destinations[0].request(None)?;
+            let second_request = destinations[1].request(None)?;
             let mut first_native = ManualFence::new()?;
             let mut second_native = ManualFence::new()?;
             first_request
@@ -325,19 +324,19 @@ mod cases {
             check(first_request.content_serial().is_none())?;
             check(second_request.status() == Status::Pending)?;
             check(private.prepare(2).err() == Some(EBUSY))?;
-            check(destinations[1].reserve(2, None).err() == Some(EBUSY))?;
+            check(destinations[1].reserve(None).err() == Some(EBUSY))?;
 
             second_native.complete(Ok(()))?;
             wait(&second_request, Status::Complete(Ok(())))?;
             check(second_request.content_serial() == serial)?;
             private_available(&private, 2)?;
-            let next = destinations[1].request(2, None)?;
+            let next = destinations[1].request(None)?;
             // Old terminal handles must not release the next use's exclusion.
             drop(first_request);
             drop(second_request);
-            check(destinations[1].reserve(3, None).err() == Some(EBUSY))?;
+            check(destinations[1].reserve(None).err() == Some(EBUSY))?;
             next.cancel();
-            drop(destinations[1].reserve(3, None)?);
+            drop(destinations[1].reserve(None)?);
             Ok(())
         })
     }
@@ -346,7 +345,7 @@ mod cases {
     fn pending_destination_does_not_retain_private_storage() -> Result {
         with_output(|fixture| {
             let mut reuse = ManualFence::new()?;
-            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            let request = fixture.destination.request(Some(reuse.fence()))?;
             check(
                 request
                     .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
@@ -365,7 +364,7 @@ mod cases {
     fn native_output_keeps_private_storage_until_access_ends() -> Result {
         for result in [Ok(()), Err(EIO), Err(EAGAIN)] {
             with_output(|fixture| {
-                let request = fixture.destination.request(1, None)?;
+                let request = fixture.destination.request(None)?;
                 let serial = fixture.rendered.content().content_serial();
                 let mut native = ManualFence::new()?;
                 let claim = request
@@ -378,12 +377,12 @@ mod cases {
                 drop(fixture.rendered);
                 check(request.status() == Status::Pending)?;
                 check(fixture.private.prepare(2).err() == Some(EBUSY))?;
-                check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+                check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
                 native.complete(result)?;
                 wait(&request, Status::Complete(result))?;
                 private_available(&fixture.private, 2)?;
                 check(request.content_serial() == if result.is_ok() { serial } else { None })?;
-                drop(fixture.destination.reserve(2, None)?);
+                drop(fixture.destination.reserve(None)?);
                 Ok(())
             })?;
         }
@@ -393,7 +392,7 @@ mod cases {
     #[test]
     fn cancellation_after_claim_waits_for_native_access() -> Result {
         with_output(|fixture| {
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let claim = request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
                 .ok_or(EINVAL)?;
@@ -412,7 +411,7 @@ mod cases {
     #[test]
     fn revoked_claim_may_retire_but_cannot_publish_a_new_frame() -> Result {
         with_output(|fixture| {
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             check(request.native_completion().is_none())?;
             let claim = request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
@@ -436,7 +435,7 @@ mod cases {
     #[test]
     fn dropping_request_handle_does_not_release_native_ownership() -> Result {
         with_output(|fixture| {
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let claim = request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
                 .ok_or(EINVAL)?;
@@ -445,10 +444,10 @@ mod cases {
             drop(request);
             drop(fixture.rendered);
             check(fixture.private.prepare(2).err() == Some(EBUSY))?;
-            check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+            check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
             native.complete(Ok(()))?;
             private_available(&fixture.private, 2)?;
-            drop(fixture.destination.reserve(2, None)?);
+            drop(fixture.destination.reserve(None)?);
             Ok(())
         })
     }
@@ -456,7 +455,7 @@ mod cases {
     #[test]
     fn losing_active_ownership_does_not_invalidate_native_cleanup() -> Result {
         with_output(|fixture| {
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let claim = request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
                 .ok_or(EINVAL)?;
@@ -475,7 +474,7 @@ mod cases {
     fn revoked_renderer_is_rejected_even_while_destination_reuse_waits() -> Result {
         with_output(|fixture| {
             let reuse = ManualFence::new()?;
-            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            let request = fixture.destination.request(Some(reuse.fence()))?;
             fixture.owner.revoke();
             check(
                 request
@@ -491,7 +490,7 @@ mod cases {
     fn queued_revocation_reconciles_without_waiting_for_destination() -> Result {
         with_output(|fixture| {
             let reuse = ManualFence::new()?;
-            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            let request = fixture.destination.request(Some(reuse.fence()))?;
             drop(fixture.grantor);
             check(request.status() == Status::Complete(Err(EKEYREVOKED)))
         })
@@ -501,7 +500,7 @@ mod cases {
     fn reuse_error_is_terminal_instead_of_retried_as_pending() -> Result {
         with_output(|fixture| {
             let mut reuse = ManualFence::new()?;
-            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            let request = fixture.destination.request(Some(reuse.fence()))?;
             reuse.complete(Err(EAGAIN))?;
             check(
                 request
@@ -510,7 +509,7 @@ mod cases {
                     == Some(EAGAIN),
             )?;
             check(request.status() == Status::Complete(Err(EAGAIN)))?;
-            drop(fixture.destination.reserve(2, None)?);
+            drop(fixture.destination.reserve(None)?);
             Ok(())
         })
     }
@@ -519,7 +518,7 @@ mod cases {
     fn cpu_and_no_access_reports_release_both_stages_synchronously() -> Result {
         for access in [true, false] {
             with_output(|fixture| {
-                let request = fixture.destination.request(1, None)?;
+                let request = fixture.destination.request(None)?;
                 let claim = request
                     .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
                     .ok_or(EINVAL)?;
@@ -535,7 +534,7 @@ mod cases {
                         == Status::Complete(if access { Ok(()) } else { Err(ECANCELED) }),
                 )?;
                 private_available(&fixture.private, 2)?;
-                drop(fixture.destination.reserve(2, None)?);
+                drop(fixture.destination.reserve(None)?);
                 Ok(())
             })?;
         }
@@ -545,7 +544,7 @@ mod cases {
     #[test]
     fn request_has_only_one_claim_and_one_terminal_result() -> Result {
         with_output(|fixture| {
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             let claim = request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
                 .ok_or(EINVAL)?;
@@ -584,7 +583,7 @@ mod cases {
                     .ok_or(EINVAL)?,
                 GFP_KERNEL,
             )?;
-            let request = fixture.destination.request(1, None)?;
+            let request = fixture.destination.request(None)?;
             check(
                 request
                     .try_claim(&fixture.renderer, &fixture.active, &rendered)?
@@ -637,7 +636,7 @@ mod cases {
                     2560,
                     0,
                 )?;
-            let request = destination.request(1, None)?;
+            let request = destination.request(None)?;
             let claim = request
                 .try_claim(&renderer, &active, &rendered)?
                 .ok_or(EINVAL)?;

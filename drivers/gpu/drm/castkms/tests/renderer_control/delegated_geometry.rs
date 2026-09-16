@@ -89,7 +89,7 @@ mod cases {
                     .ok_or(EINVAL)?,
                 GFP_KERNEL,
             )?;
-            let request = destination.request(1, None)?;
+            let request = destination.request(None)?;
             let claim = request
                 .try_claim(&renderer, &active, &rendered)?
                 .ok_or(EINVAL)?;
@@ -128,7 +128,7 @@ mod cases {
                     .ok_or(EINVAL)?,
                 GFP_KERNEL,
             )?;
-            let request = destination.request(1, None)?;
+            let request = destination.request(None)?;
             let claim = request
                 .try_claim(&renderer, &active, &rendered)?
                 .ok_or(EINVAL)?;
@@ -140,7 +140,7 @@ mod cases {
             native.complete(Ok(()))?;
             wait(&request, Status::Complete(Err(ESTALE)))?;
             check(request.content_serial().is_none())?;
-            check(destination.reserve(2, None).err() == Some(ESTALE))
+            check(destination.reserve(None).err() == Some(ESTALE))
         })
     }
 }

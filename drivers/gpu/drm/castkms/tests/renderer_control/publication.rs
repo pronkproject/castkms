@@ -1007,7 +1007,7 @@ mod cases {
             check(scope.create_routed_queue(1).err() == Some(ENODEV))?;
             check(queue.advance() == 0)?;
             check(!queue.has_results())?;
-            check(destination.reserve(2, None).err() == Some(EBUSY))?;
+            check(destination.reserve(None).err() == Some(EBUSY))?;
             native.complete(Ok(()))?;
             let start = kernel::time::Instant::<kernel::time::Monotonic>::now();
             while !queue.has_results() {

@@ -63,7 +63,7 @@ mod cases {
                 .capture()
                 .describe_delegated()?
                 .register_destination(&backing, fourcc::XRGB8888, 0, 2560, 0)?;
-            let usage = image.reserve(1, None)?;
+            let usage = image.reserve(None)?;
             drop(image);
             drop(grantor);
             check(
@@ -97,9 +97,9 @@ mod cases {
                     0,
                 )?;
             let mut reuse = ManualFence::new()?;
-            let usage = image.reserve(1, Some(reuse.fence()))?;
+            let usage = image.reserve(Some(reuse.fence()))?;
             check(usage.ready() == Ok(false))?;
-            check(image.reserve(2, None).err() == Some(EBUSY))?;
+            check(image.reserve(None).err() == Some(EBUSY))?;
             let source = device
                 .output
                 .with_accepted(|a| a.map(|a| ARef::from(a.source)))
@@ -109,8 +109,7 @@ mod cases {
             reuse.complete(Err(EAGAIN))?;
             check(usage.ready() == Err(EAGAIN))?;
             drop(usage);
-            check(image.reserve(1, None).err() == Some(ESTALE))?;
-            drop(image.reserve(2, None)?);
+            drop(image.reserve(None)?);
             Ok(())
         })
     }
@@ -133,7 +132,7 @@ mod cases {
                     0,
                 )?;
             drop(grantor);
-            check(image.reserve(1, None).err() == Some(EKEYREVOKED))
+            check(image.reserve(None).err() == Some(EKEYREVOKED))
         })
     }
 
@@ -182,7 +181,7 @@ mod cases {
     }
 
     #[test]
-    fn destination_use_ids_do_not_wrap() -> Result {
+    fn retired_use_metadata_cannot_release_a_new_reservation() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
@@ -198,9 +197,14 @@ mod cases {
                     2560,
                     0,
                 )?;
-            check(image.reserve(0, None).err() == Some(EINVAL))?;
-            drop(image.reserve(u64::MAX, None)?);
-            check(image.reserve(u64::MAX, None).err() == Some(EOVERFLOW))
+            let first = image.request(None)?;
+            first.cancel();
+            let second = image.reserve(None)?;
+            drop(first);
+            check(image.reserve(None).err() == Some(EBUSY))?;
+            drop(second);
+            drop(image.reserve(None)?);
+            Ok(())
         })
     }
 
@@ -228,7 +232,7 @@ mod cases {
                     .capture()
                     .describe_delegated()?
                     .register_destination(&backing, fourcc::XRGB8888, 0, 2560, 0)?;
-                let usage = image.reserve(1, None)?;
+                let usage = image.reserve(None)?;
                 check(usage.ready() == Ok(false))?;
                 reuse.complete(Err(EAGAIN))?;
                 check(
@@ -259,7 +263,7 @@ mod cases {
                     .capture()
                     .describe_delegated()?
                     .register_destination(&backing, fourcc::XRGB8888, 0, 2560, 0)?;
-                let usage = image.reserve(1, None)?;
+                let usage = image.reserve(None)?;
                 check(usage.ready() == Ok(true))?;
                 let mut reuse = ManualFence::new()?;
                 exporter.drm.add_framebuffer_fence(
