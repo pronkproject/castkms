@@ -782,6 +782,13 @@ the tests against an active desktop. Without a node argument the modeset test
 skips instead of selecting a device automatically. It checks the driver name
 and development version before attempting a modeset.
 
+Use ``max_outputs=1`` for these single-output fixtures, or
+``castkms.max_outputs=1`` on the kernel command line when the driver is built
+in. Cursor, overlay and plane-pipeline support can retain their enabled
+defaults. Tests select the primary plane by type and CRTC routing, not by the
+total plane count. The separately documented ``audio-multi`` fixture requires
+eight outputs.
+
 The execution test compares the immutable ``CASTKMS_EXECUTION`` description
 through a master file and a separate read-only, non-master file. Both must
 report the same HOST profile and generation. It also checks that the master
@@ -796,11 +803,15 @@ attachment and explicit disconnection. The capability remains effective after
 DRM master handoff. Its final close must restore the standalone monitor, and a
 new current master must then be able to issue the next capability.
 
-The capture-grant test exercises public issuance without displaying or reading
-an image. It checks master-file authority, distinct close-on-exec endpoints,
-creator and control close, duplicate control ownership, read-only request
-memory, partial output faults and descriptor exhaustion. Repeated output
-faults must not leak descriptors or consume the creator's grant quota.
+The capture-grant test exercises public issuance and output descriptions
+without reading captured pixels. It checks master-file authority, distinct
+close-on-exec endpoints, creator and control close, duplicate control ownership,
+read-only request memory, partial output faults and descriptor exhaustion.
+Repeated output faults must not leak descriptors or consume the creator's
+grant quota.
+Its description checks enable an output, change horizontal timing without
+changing visible geometry, and disable it again. A distinct accepted mode
+interval must produce a new description identity.
 
 The modeset test allocates and maps two local buffers, verifies that a test-only
 commit leaves the display inactive, enables the output, and submits 48 flips
@@ -808,7 +819,8 @@ including same-framebuffer updates. Each submitted flip must produce exactly
 one event. It then selects a mode with the same dimensions and half the pixel
 clock and submits two more flips. Counter and timestamp checks compare the
 display clock with the selected mode before and after that change and across
-disable and re-enable. A scaling request must be rejected. Finally the test
+disable and re-enable. A test-only scaling request succeeds, while a source
+rectangle extending beyond the framebuffer is rejected. Finally the test
 disables the output and releases its buffers and mode descriptions.
 
 To exercise imported storage, also enable ``CONFIG_DMABUF_HEAPS`` and
