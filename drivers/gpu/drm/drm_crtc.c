@@ -43,6 +43,7 @@
 #include <drm/drm_managed.h>
 #include <drm/drm_modeset_lock.h>
 #include <drm/drm_atomic.h>
+#include <drm/drm_constraints_output.h>
 #include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_atomic_prepare_owner.h>
 #include <drm/drm_auth.h>
@@ -529,6 +530,7 @@ void drm_crtc_cleanup(struct drm_crtc *crtc)
 	dev->mode_config.num_crtc--;
 
 	WARN_ON(crtc->state && !crtc->funcs->atomic_destroy_state);
+	drm_constraints_crtc_fini(crtc);
 	if (crtc->state && crtc->funcs->atomic_destroy_state)
 		crtc->funcs->atomic_destroy_state(crtc, crtc->state);
 
