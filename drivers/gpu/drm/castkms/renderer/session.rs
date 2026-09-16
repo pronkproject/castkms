@@ -2,6 +2,9 @@
 
 //! One renderer endpoint's candidate and active ownership, independent of file transport.
 
+mod output;
+use output::Slot as OutputSlot;
+
 use super::{
     candidate::Candidate,
     job::Completion,
@@ -51,6 +54,9 @@ enum Slot {
         last_content_serial: Option<u64>,
         last_released_source: Option<u64>,
         source: SourceSlot,
+        output: OutputSlot,
+        next_output_id: u64,
+        last_released_output: Option<u64>,
     },
 }
 
@@ -427,6 +433,9 @@ impl Session {
                     last_content_serial: None,
                     last_released_source: None,
                     source: SourceSlot::Ready,
+                    output: OutputSlot::Ready,
+                    next_output_id: 1,
+                    last_released_output: None,
                 };
                 drop(state);
                 registered.hotplug_event();
@@ -642,50 +651,25 @@ impl Session {
     }
 
     pub(super) fn close(&self) {
-        let (candidate, active, source, route, proposal, images) = {
+        let (slot, proposal, images) = {
             let mut state = self.state.lock();
             state.closed = true;
-            let (candidate, active, source, route) = match core::mem::replace(&mut state.slot, Slot::Idle)
-            {
-                Slot::Active { candidate, .. } | Slot::Activating { candidate, .. } => {
-                    (Some(candidate), None, None, None)
-                }
-                Slot::Renderer {
-                    candidate,
-                    active,
-                    source,
-                    route,
-                    ..
-                } => (
-                    Some(candidate),
-                    Some(active),
-                    match source {
-                        SourceSlot::Claimed { job, .. } => Some(job),
-                        SourceSlot::Ready
-                        | SourceSlot::Publishing { .. }
-                        | SourceSlot::Releasing { .. } => None,
-                    },
-                    Some(route),
-                ),
-                _ => (None, None, None, None),
-            };
             (
-                candidate,
-                active,
-                source,
-                route,
+                core::mem::replace(&mut state.slot, Slot::Idle),
                 state.proposal.take(),
                 state.images.take(),
             )
         };
-        if let Some(candidate) = candidate {
-            candidate.cancel();
-            drop(candidate);
+        match &slot {
+            Slot::Active { candidate, .. }
+            | Slot::Activating { candidate, .. }
+            | Slot::Renderer { candidate, .. } => candidate.cancel(),
+            _ => (),
         }
-        drop(source);
+        // Both job families and routing release outside endpoint exclusion. Unreported
+        // published access remains quarantined; pending publishers retain their own claims.
+        drop(slot);
         drop(images);
-        drop(route);
-        drop(active);
         let changed = proposal.is_some();
         drop(proposal);
         if changed {

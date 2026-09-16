@@ -9,6 +9,7 @@ mod delegated_destinations;
 mod delegated_requests;
 mod delegated_outputs;
 mod delegated_geometry;
+mod session_outputs;
 
 use super::*;
 use crate::renderer::{

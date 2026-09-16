@@ -19,11 +19,7 @@ use kernel::{
     time::{delay::fsleep, Delta, Instant, Monotonic},
 };
 
-pub(super) fn activate(
-    candidate: &Arc<Candidate>,
-    device: &Device<Driver, Registered>,
-    crtc: &Crtc<display::Crtc>,
-) -> Result<(Active, Description)> {
+pub(super) fn profile() -> Result<Profile> {
     let reference = crate::tests::renderer_proposals::profile()?;
     let mut formats = KVec::new();
     formats.push(
@@ -39,9 +35,16 @@ pub(super) fn activate(
         },
         GFP_KERNEL,
     )?;
-    let profile = Profile::new(*reference.limits(), formats)?;
+    Profile::new(*reference.limits(), formats)
+}
+
+pub(super) fn activate(
+    candidate: &Arc<Candidate>,
+    device: &Device<Driver, Registered>,
+    crtc: &Crtc<display::Crtc>,
+) -> Result<(Active, Description)> {
     candidate.submit_private_probe(None)?;
-    let proposal = candidate.propose_profile(profile)?;
+    let proposal = candidate.propose_profile(profile()?)?;
     device.atomic_update(|transaction| {
         transaction
             .add_crtc_state(crtc)?
