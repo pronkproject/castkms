@@ -771,6 +771,24 @@ mod cases {
         assert!(counts.constraints_work.take().is_none());
         assert_eq!(output.selected().id(), old.binding.id());
         assert_eq!(old.render()?, 0x112233);
+        let generation = output.snapshot(0)?.info().generation;
+        let installations = counts.install_successes.load(Ordering::Relaxed);
+        counts
+            .fail_constraints_at_install
+            .store(1, Ordering::Relaxed);
+        assert_eq!(dev.update(select), Err(EIO));
+        assert_eq!(
+            counts.install_successes.load(Ordering::Relaxed),
+            installations
+        );
+        assert_eq!(output.selected().id(), old.binding.id());
+        assert_eq!(output.snapshot(0)?.info().generation, generation);
+        assert!(counts.constraints_work.take().is_none());
+        assert_eq!(old.render()?, 0x112233);
+        counts
+            .fail_constraints_at_install
+            .store(0, Ordering::Relaxed);
+        counts.fail_constraints.store(0, Ordering::Relaxed);
         dev.update(select)?;
         assert_eq!(counts.constraints_work_error.load(Ordering::Relaxed), 0);
         let new = counts.constraints_work.take().ok_or(EINVAL)?;
