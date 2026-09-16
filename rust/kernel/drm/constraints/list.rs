@@ -3,9 +3,8 @@
 //! Bounded native lists and independently owned immutable snapshots.
 
 use super::{
-    Backend,
     Domain,
-    Entry, //
+    OpaqueEntry, //
 };
 use crate::{
     error::{
@@ -20,7 +19,6 @@ use crate::{
     types::Opaque, //
 };
 use core::{
-    marker::PhantomData,
     ptr::NonNull,
     slice, //
 };
@@ -32,20 +30,19 @@ use core::{
 ///
 /// # Invariants
 ///
-/// Every reference retains a native list whose entries were all created with backend type `B`.
+/// Every reference retains an initialized native list and its independently owned entries.
 #[repr(transparent)]
-pub struct List<B: Backend> {
+pub struct List {
     raw: Opaque<bindings::drm_constraints_list>,
-    _backend: PhantomData<B>,
 }
 
-// SAFETY: Native reference counting and list operations are synchronized; B is Send.
-unsafe impl<B: Backend> Send for List<B> {}
-// SAFETY: Shared operations use native synchronization and all retained backends are Sync.
-unsafe impl<B: Backend> Sync for List<B> {}
+// SAFETY: Native reference counting and list operations are synchronized.
+unsafe impl Send for List {}
+// SAFETY: Shared operations synchronize metadata and expose no private backend contexts.
+unsafe impl Sync for List {}
 
 // SAFETY: Native get/put maintain the initialized list and all its retained entries.
-unsafe impl<B: Backend> AlwaysRefCounted for List<B> {
+unsafe impl AlwaysRefCounted for List {
     fn inc_ref(&self) {
         // SAFETY: The shared reference retains a live list.
         unsafe { bindings::drm_constraints_list_get(self.raw.get()) };
@@ -57,15 +54,15 @@ unsafe impl<B: Backend> AlwaysRefCounted for List<B> {
     }
 }
 
-impl<B: Backend> List<B> {
+impl List {
     /// Create bounded metadata for one output with an initial selected entry.
     ///
     /// This neither attaches a list to a CRTC nor validates backend readiness or modesetting
     /// authority. The provider separately establishes those conditions before use.
-    pub fn new(domain: &Domain, initial: &Entry<B>, limit: u32) -> Result<ARef<Self>> {
-        // SAFETY: Both inputs remain live; native creation retains correctly typed entries.
+    pub fn new(domain: &Domain, initial: &OpaqueEntry, limit: u32) -> Result<ARef<Self>> {
+        // SAFETY: Both inputs remain live; native creation retains the initialized entry.
         let raw = from_err_ptr(unsafe {
-            bindings::drm_constraints_list_create(domain.0.get(), initial.raw.get(), limit)
+            bindings::drm_constraints_list_create(domain.0.get(), initial.as_raw(), limit)
         })?;
         // SAFETY: Successful construction transfers a non-null initialized list reference.
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
@@ -73,9 +70,9 @@ impl<B: Backend> List<B> {
 
     /// Offer an entry without changing accepted selection. Object scope and readiness are
     /// provider responsibilities; native code enforces domain and CRTC identity membership.
-    pub fn add(&self, entry: &Entry<B>) -> Result {
-        // SAFETY: Both references remain live, and entry has the list's backend type.
-        to_result(unsafe { bindings::drm_constraints_list_add(self.raw.get(), entry.raw.get()) })
+    pub fn add(&self, entry: &OpaqueEntry) -> Result {
+        // SAFETY: Both references remain live; native code retains the entry on success.
+        to_result(unsafe { bindings::drm_constraints_list_add(self.raw.get(), entry.as_raw()) })
     }
 
     /// Withdraw an offer without changing its immutable meaning or undoing accepted work.
@@ -106,10 +103,10 @@ impl<B: Backend> List<B> {
     }
 
     /// Retain accepted selection, including after closure. This grants no readiness or authority.
-    pub fn selected(&self) -> ARef<Entry<B>> {
-        // SAFETY: A live list always retains a selected entry of B and returns an owned ref.
+    pub fn selected(&self) -> ARef<OpaqueEntry> {
+        // SAFETY: A live list always retains a selected entry and returns an owned reference.
         let raw = unsafe { bindings::drm_constraints_list_selected(self.raw.get()) };
-        // SAFETY: The returned reference is non-null, initialized and has the list's type.
+        // SAFETY: The returned reference is non-null and initialized; the view is transparent.
         unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) }
     }
 
@@ -118,18 +115,18 @@ impl<B: Backend> List<B> {
     /// Zero returns EINVAL. Unknown, withdrawn unselected and closed entries return ESTALE.
     /// A withdrawn selected entry may be retained for repeated selection while the list
     /// remains open. Successful lookup grants neither readiness nor modesetting authority.
-    pub fn lookup(&self, id: u64) -> Result<ARef<Entry<B>>> {
+    pub fn lookup(&self, id: u64) -> Result<ARef<OpaqueEntry>> {
         // SAFETY: Native lookup synchronizes availability and returns an owned reference to
-        // an entry of B retained by this live list, or an error without transferring ownership.
+        // an entry retained by this live list, or an error without transferring ownership.
         let raw =
             from_err_ptr(unsafe { bindings::drm_constraints_list_lookup(self.raw.get(), id) })?;
-        // SAFETY: Successful lookup transfers a non-null initialized entry with backend type B.
+        // SAFETY: Successful lookup transfers a non-null initialized entry with transparent layout.
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })
     }
 
     /// Copy a coherent bounded snapshot. Nonzero expected generation must match or returns ESTALE.
     /// A successful snapshot reserves neither availability nor later acceptance.
-    pub fn snapshot(&self, generation: u64) -> Result<Snapshot<B>> {
+    pub fn snapshot(&self, generation: u64) -> Result<Snapshot> {
         // SAFETY: The live list synchronizes copying and retains each entry for the snapshot.
         let raw = from_err_ptr(unsafe {
             bindings::drm_constraints_list_snapshot(self.raw.get(), generation)
@@ -137,7 +134,6 @@ impl<B: Backend> List<B> {
         Ok(Snapshot {
             // SAFETY: Successful construction transfers unique ownership of a non-null snapshot.
             raw: unsafe { NonNull::new_unchecked(raw) },
-            _backend: PhantomData,
         })
     }
 }
@@ -156,34 +152,33 @@ pub struct SnapshotInfo {
 }
 
 /// Borrowed listing whose backend and description remain alive through the snapshot.
-pub struct Offer<'a, B: Backend> {
+pub struct Offer<'a> {
     /// Retained immutable entry.
-    pub entry: &'a Entry<B>,
+    pub entry: &'a OpaqueEntry,
     /// Availability at snapshot creation; not a promise about subsequent acceptance.
     pub selectable: bool,
 }
 
-/// Independently owned immutable list with bounded, correctly typed retained entries.
+/// Independently owned immutable snapshot with bounded retained entries of any backend type.
 ///
 /// Dropping the snapshot may release provider resources and requires sleepable context.
-pub struct Snapshot<B: Backend> {
+pub struct Snapshot {
     raw: NonNull<bindings::drm_constraints_snapshot>,
-    _backend: PhantomData<B>,
 }
 
-// SAFETY: The uniquely owned snapshot is immutable and retains Send backends.
-unsafe impl<B: Backend> Send for Snapshot<B> {}
-// SAFETY: Shared access only observes immutable metadata and retained Sync entries.
-unsafe impl<B: Backend> Sync for Snapshot<B> {}
+// SAFETY: The uniquely owned snapshot is immutable and retains thread-safe native entry references.
+unsafe impl Send for Snapshot {}
+// SAFETY: Shared access observes immutable metadata, never provider-private data.
+unsafe impl Sync for Snapshot {}
 
-impl<B: Backend> Drop for Snapshot<B> {
+impl Drop for Snapshot {
     fn drop(&mut self) {
         // SAFETY: This wrapper uniquely owns the initialized snapshot and releases it once.
         unsafe { bindings::drm_constraints_snapshot_put(self.raw.as_ptr()) };
     }
 }
 
-impl<B: Backend> Snapshot<B> {
+impl Snapshot {
     /// Encode the retained snapshot into independently owned kernel bytes.
     ///
     /// The bounded, versioned prototype uses native DRM meanings and contains no pointers or
@@ -231,7 +226,7 @@ impl<B: Backend> Snapshot<B> {
     }
 
     /// Iterate immutable listings without retaining or locking the originating list.
-    pub fn entries(&self) -> impl ExactSizeIterator<Item = Offer<'_, B>> {
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = Offer<'_>> {
         // SAFETY: Native creation owns an initialized bounded array of count listings. The
         // snapshot is immutable and the returned borrow cannot outlive it.
         let entries = unsafe {
@@ -241,8 +236,8 @@ impl<B: Backend> Snapshot<B> {
             )
         };
         entries.iter().map(|listing| Offer {
-            // SAFETY: Each listing owns a non-null initialized entry of the originating list's
-            // backend type. The snapshot outlives every entry borrow returned by this iterator.
+            // SAFETY: Each listing owns a non-null initialized native entry. The transparent
+            // opaque view borrows that reference no longer than the snapshot's lifetime.
             entry: unsafe { &*listing.entry.cast() },
             selectable: listing.selectable,
         })
