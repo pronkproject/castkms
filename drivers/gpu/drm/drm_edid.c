@@ -5800,6 +5800,7 @@ static void drm_edid_to_eld(struct drm_connector *connector,
 int drm_edid_build_eld(const struct drm_edid *drm_edid, u8 *eld,
 		       size_t size, bool displayport)
 {
+	static const u8 basic_audio_sad[] = { 0x09, 0x07, 0x01 };
 	struct drm_edid_iter iter;
 	const u8 *ext;
 	u8 cea_rev = 0;
@@ -5824,7 +5825,7 @@ int drm_edid_build_eld(const struct drm_edid *drm_edid, u8 *eld,
 			return 0;
 		}
 		memcpy(&eld[DRM_ELD_CEA_SAD(drm_eld_mnl(eld), 0)],
-		       (const u8[]) { 0x09, 0x07, 0x01 }, 3);
+		       basic_audio_sad, sizeof(basic_audio_sad));
 		eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= 1 << DRM_ELD_SAD_COUNT_SHIFT;
 		eld[DRM_ELD_BASELINE_ELD_LEN] =
 			DIV_ROUND_UP(drm_eld_calc_baseline_block_size(eld), 4);
