@@ -3,6 +3,7 @@
 //! Renderer control on registered displays, with real master and atomic callbacks.
 
 mod publication;
+mod private_images;
 
 use super::*;
 use crate::renderer::{
