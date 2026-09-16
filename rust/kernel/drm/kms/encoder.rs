@@ -68,7 +68,7 @@ pub trait DriverEncoder: Send + Sync + Sized {
     /// The type to pass to the `args` field of [`UnregisteredEncoder::new`].
     ///
     /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
-    /// don't need this can simply pass [`()`] here.
+    /// don't need this can simply pass `()` here.
     type Args;
 
     /// The constructor for creating a [`Encoder`] using this [`DriverEncoder`] implementation.

@@ -144,7 +144,7 @@ pub trait DriverCrtc: Send + Sync + Sized {
     /// The type to pass to the `args` field of [`UnregisteredCrtc::new`].
     ///
     /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
-    /// don't need this can simply pass [`()`] here.
+    /// don't need this can simply pass `()` here.
     type Args;
 
     /// The parent [`KmsDriver`] implementation.
@@ -604,8 +604,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
     /// entries that userspace can program (no degamma LUT, no CTM). The set LUT is then readable
     /// from the CRTC state via [`RawCrtcState::gamma_lut`].
     ///
-    /// Call this during [`KmsDriver::probe`](crate::drm::kms::KmsDriver::probe), before the device
-    /// is registered.
+    /// Call this during [`KmsDriver::create_objects`], before the device is registered.
     pub fn enable_gamma(&self, gamma_size: u32) {
         self.enable_color_mgmt(0, false, gamma_size)
     }
@@ -629,8 +628,7 @@ impl<T: DriverCrtc> UnregisteredCrtc<T> {
     /// by rewriting the framebuffer) otherwise have nowhere to put the correction on such an
     /// output.
     ///
-    /// Call this during [`KmsDriver::probe`](crate::drm::kms::KmsDriver::probe), before the device
-    /// is registered.
+    /// Call this during [`KmsDriver::create_objects`], before the device is registered.
     pub fn enable_color_mgmt(&self, degamma_size: u32, has_ctm: bool, gamma_size: u32) {
         // SAFETY: `as_raw()` is a valid, not-yet-registered CRTC.
         unsafe {
@@ -848,8 +846,8 @@ impl<T: DriverCrtcState> Sealed for CrtcState<T> {}
 /// - Any C FFI callbacks generated using this trait are guaranteed that passed-in
 ///   [`struct drm_crtc_state`] pointers are contained within a [`CrtcState<Self>`].
 ///
-/// [`struct drm_crtc`]: srctree/include/drm_crtc.h
-/// [`struct drm_crtc_state`]: srctree/include/drm_crtc.h
+/// [`struct drm_crtc`]: srctree/include/drm/drm_crtc.h
+/// [`struct drm_crtc_state`]: srctree/include/drm/drm_crtc.h
 pub trait DriverCrtcState: Sized + Unpin + Send + Sync {
     /// The parent CRTC driver for this CRTC state
     type Crtc: DriverCrtc<State = Self>;
