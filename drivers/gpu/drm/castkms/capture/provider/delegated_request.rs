@@ -212,6 +212,7 @@ impl Request {
             })?;
         Ok(Some(Claim {
             request: self.clone(),
+            image: image.clone(),
             report,
             retirement: Some(retirement),
         }))
@@ -284,12 +285,25 @@ unsafe impl Retire for Hold {
 #[must_use = "output claims must report native completion or confirm no access"]
 pub(crate) struct Claim {
     request: Arc<Request>,
+    image: Arc<Rendered>,
     report: Arc<Report>,
     retirement: Option<Retirement<Hold>>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Claim {
+    /// Private input admitted for this output stage, not a new compositor source read.
+    /// Borrowed storage remains covered by the claim's native completion obligation.
+    pub(crate) fn source(&self) -> &Rendered {
+        &self.image
+    }
+
+    /// Exact recipient storage and checked layout admitted for this output stage.
+    /// Retaining a DMA-BUF reference grants no write beyond the claimed stage.
+    pub(crate) fn destination(&self) -> &Image {
+        &self.request.destination
+    }
+
     /// Report only materialized native work covering E reads and D writes. CPU completion
     /// includes cache maintenance. No-access promises that neither allocation was accessed.
     pub(crate) fn release(mut self, completion: Completion) {
