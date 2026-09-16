@@ -266,26 +266,6 @@ impl Candidate {
         self.probe.result()
     }
 
-    /// Publish GPU execution after this candidate's native probe succeeds.
-    ///
-    /// Metadata allocation occurs before display control. Publication and per-output
-    /// active ownership transfer share the startup exclusion interval. A pending or failed
-    /// probe changes neither execution nor candidate state.
-    pub(crate) fn activate(
-        &self,
-        registered: &Device<Driver, Registered>,
-    ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
-        self.activate_inner(registered, None)
-    }
-
-    pub(super) fn activate_proposal(
-        &self,
-        registered: &Device<Driver, Registered>,
-        proposal: &crate::execution::proposal::Registration,
-    ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
-        self.activate_inner(registered, Some(proposal))
-    }
-
     pub(super) fn handback(
         &self,
         registered: &Device<Driver, Registered>,
@@ -330,17 +310,18 @@ impl Candidate {
         Ok(description)
     }
 
-    fn activate_inner(
+    /// Publish GPU execution after the probe succeeds and a tagged update installs the gate.
+    /// Metadata allocation occurs before display control. Failed publication leaves
+    /// execution and candidate ownership unchanged.
+    pub(super) fn activate_proposal(
         &self,
         registered: &Device<Driver, Registered>,
-        proposal: Option<&crate::execution::proposal::Registration>,
+        proposal: &crate::execution::proposal::Registration,
     ) -> Result<(renderer_startup::Active, ProbeSource, Description)> {
-        if proposal.is_some_and(|proposal| {
-            matches!(
-                proposal.description().profile,
-                crate::execution::validation::Contract::Host
-            )
-        }) {
+        if matches!(
+            proposal.description().profile,
+            crate::execution::validation::Contract::Host
+        ) {
             return Err(EOPNOTSUPP);
         }
         let device = self.access.device();
@@ -360,33 +341,20 @@ impl Candidate {
                     if self.access.display().execution.describe() != self.execution {
                         return Err(ESTALE);
                     }
-                    // Legacy startup remains bound to its original enabled configuration.
-                    // A negotiated proposal is instead bound to the installed target by its gate.
-                    if proposal.is_none() && current.configuration() != Some(&self.configuration) {
-                        return Err(ESTALE);
-                    }
                     let publish = || {
                         let source = self.probe.completed_source()?;
                         let execution = &self.access.display().execution;
-                        if let Some(proposal) = proposal {
-                            proposal.check()?;
-                            execution.publish_proposal(
-                                locked,
-                                &mut prepared,
-                                proposal.description().generation,
-                                current.configuration(),
-                                |contract| current.check_contract(contract),
-                            )?;
-                        } else {
-                            execution.publish(locked, &mut prepared)?;
-                        }
+                        proposal.check()?;
+                        execution.publish_proposal(
+                            locked,
+                            &mut prepared,
+                            proposal.description().generation,
+                            current.configuration(),
+                            |contract| current.check_contract(contract),
+                        )?;
                         Ok(source)
                     };
-                    if proposal.is_some() {
-                        self.resources.activate_negotiated(publish)
-                    } else {
-                        self.resources.activate(publish)
-                    }
+                    self.resources.activate_negotiated(publish)
                 })?;
         Ok((active, source, description))
     }
