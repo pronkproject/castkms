@@ -155,6 +155,7 @@ int drm_constraints_crtc_init(struct drm_crtc *crtc, struct drm_constraints_entr
 		return ret;
 	}
 	output->ops = ops;
+	output->default_entry = drm_constraints_entry_get(initial);
 	crtc->constraints_output = output;
 	if (crtc->state)
 		crtc->state->constraints = drm_constraints_entry_get(initial);
@@ -171,8 +172,15 @@ void drm_constraints_crtc_fini(struct drm_crtc *crtc)
 	crtc->constraints_output = NULL;
 	drm_constraints_list_close(output->list);
 	drm_constraints_list_put(output->list);
+	drm_constraints_entry_put(output->default_entry);
 	kfree(output);
 }
+
+struct drm_constraints_entry *drm_constraints_crtc_default(struct drm_crtc *crtc)
+{
+	return crtc->constraints_output ? crtc->constraints_output->default_entry : NULL;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_crtc_default);
 
 struct drm_constraints_list *drm_constraints_crtc_list(struct drm_crtc *crtc)
 {

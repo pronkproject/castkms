@@ -7,6 +7,7 @@ struct drm_constraints_entry;
 
 struct drm_constraints_output {
 	struct drm_constraints_list *list;
+	struct drm_constraints_entry *default_entry;
 	const struct drm_constraints_output_ops *ops;
 };
 

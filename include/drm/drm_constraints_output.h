@@ -38,6 +38,15 @@ void drm_constraints_crtc_fini(struct drm_crtc *crtc);
 /* Borrowed list, or NULL; valid throughout the CRTC lifetime. */
 struct drm_constraints_list *drm_constraints_crtc_list(struct drm_crtc *crtc);
 
+/*
+ * Borrow the fixed default retained at attachment, or NULL for an unattached
+ * output. It survives offer withdrawal and selection changes. The caller
+ * retains the CRTC lifetime; the reference grants no readiness or authority.
+ * State reset still preserves accepted selection rather than restoring this
+ * default. Restoration requires a separate checked atomic transaction.
+ */
+struct drm_constraints_entry *drm_constraints_crtc_default(struct drm_crtc *crtc);
+
 /* Publish a ready entry after validating device, CRTC and existing plane scope. */
 int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry *entry);
 
