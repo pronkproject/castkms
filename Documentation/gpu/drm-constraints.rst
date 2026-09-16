@@ -89,6 +89,31 @@ Listing positions are not identities. Neither obtaining a snapshot nor
 checking one of its entries reserves later acceptance. Callers must tolerate
 withdrawal and readiness loss before the final decision.
 
+Kernel snapshot encoding
+========================
+
+``drm_constraints_snapshot_encode()`` serializes one retained snapshot into
+a kernel buffer. The native-endian prototype layout uses fixed-width fields,
+explicit padding and aligned 64-bit values. List and description headers are
+versioned; entries have a stride, and descriptions contain length-delimited
+output-dimension, per-plane format/modifier and scalar-property records.
+Every offset is relative to the start of the complete snapshot. Per-plane
+format records are alternatives; scalar rules apply together. Unknown
+required records make an entry unusable, not unrestricted.
+
+The encoding is bounded to one MiB, including a maximum-size native catalog.
+All padding and reserved output fields are zero. A null buffer with zero
+capacity discovers the required size. An undersized buffer returns
+``-ENOSPC`` and the required size without modifying any payload. Other errors
+leave the size output unchanged. Success writes exactly the required bytes,
+including when the kernel buffer is unaligned.
+
+The snapshot retains its original generation, identities and availability
+even after the catalog changes or closes. The serialized bytes themselves
+retain no resources and grant no authority. These are kernel-only layout
+definitions, not an installed UAPI. The encoder does not implement a userspace
+ioctl, request validation, failure-copyout semantics or event delivery.
+
 Native atomic integration
 =========================
 
@@ -188,7 +213,7 @@ installation cross that module boundary. The standalone
 ``tools/testing/selftests/drm_constraints/constraints-model.py`` explores
 publication orderings; it is not GPU or ioctl qualification.
 
-Remaining integration includes a bounded versioned listing/copyout contract,
+Remaining integration includes userspace listing validation and error copyout,
 coalesced DRM-event notifications, client opt-in and normal atomic property
 decoding, owner-interval/default restoration, and a real provider/compositor
 consumer. No native test establishes those userspace or physical-GPU results.

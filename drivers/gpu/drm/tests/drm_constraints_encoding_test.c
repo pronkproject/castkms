@@ -1,0 +1,306 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
+
+#include <linux/module.h>
+#include <linux/slab.h>
+#include <drm/drm_constraints.h>
+#include <drm/drm_constraints_catalog.h>
+#include <drm/drm_constraints_encoding.h>
+#include <drm/drm_constraints_entry.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_mode.h>
+#include <kunit/test.h>
+
+struct encoding_fixture {
+	struct drm_constraints_domain *domain;
+	struct drm_constraints_description *description;
+	struct drm_constraints_entry *initial;
+	struct drm_constraints_catalog *catalog;
+};
+
+static void release_backend(void *data) {}
+static const struct drm_constraints_entry_ops ops = {
+	.owner = THIS_MODULE, .release = release_backend,
+};
+static void put_domain(void *data) { drm_constraints_domain_put(data); }
+static void put_description(void *data) { drm_constraints_description_put(data); }
+static void put_entry(void *data) { drm_constraints_entry_put(data); }
+static void put_catalog(void *data) { drm_constraints_catalog_put(data); }
+static void put_snapshot(void *data) { drm_constraints_snapshot_put(data); }
+static void free_buffer(void *data) { kvfree(data); }
+
+static struct encoding_fixture *new_fixture(struct kunit *test)
+{
+	const struct drm_constraints_size output = { 640, 360, 1920, 1080 };
+	const struct drm_constraints_format format = {
+		.plane_id = 7, .format = DRM_FORMAT_XRGB8888, .modifier = I915_FORMAT_MOD_X_TILED,
+		.size = { 64, 32, 3840, 2160 },
+	};
+	struct drm_constraints_property property;
+	struct encoding_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	/* Native record padding must never leak into the encoded representation. */
+	memset(&property, 0xa5, sizeof(property));
+	property.object_id = 7;
+	property.property_id = 11;
+	property.type = DRM_MODE_PROP_SIGNED_RANGE;
+	property.minimum = (u64)-10;
+	property.maximum = 20;
+	property.mask = 0;
+	f->domain = drm_constraints_domain_create(DRM_CONSTRAINTS_MAX_ENTRIES);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->domain);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_domain, f->domain), 0);
+	f->description = drm_constraints_description_create(&output, &format, 1, &property, 1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, f->description), 0);
+	f->initial = drm_constraints_entry_create(f->domain, 19, f->description, &ops, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->initial);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, f->initial), 0);
+	f->catalog = drm_constraints_catalog_create(f->domain, f->initial, DRM_CONSTRAINTS_MAX_ENTRIES);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->catalog);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_catalog, f->catalog), 0);
+	return f;
+}
+
+static struct drm_constraints_snapshot *snapshot(struct kunit *test,
+						 struct drm_constraints_catalog *catalog)
+{
+	struct drm_constraints_snapshot *snapshot = drm_constraints_catalog_snapshot(catalog, 0);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, snapshot);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_snapshot, snapshot), 0);
+	return snapshot;
+}
+
+static void encoding_preserves_native_metadata_without_padding(struct kunit *test)
+{
+	struct encoding_fixture *f = new_fixture(test);
+	struct drm_constraints_snapshot *view = snapshot(test, f->catalog);
+	struct drm_constraints_encoded_list *list;
+	struct drm_constraints_encoded_entry *entry;
+	struct drm_constraints_encoded_description *description;
+	struct drm_constraints_encoded_output *output;
+	struct drm_constraints_encoded_format *format;
+	struct drm_constraints_encoded_property *property;
+	size_t required = 0;
+	u8 *buffer;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
+	KUNIT_ASSERT_EQ(test, required, 256);
+	buffer = kunit_kmalloc(test, required, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, buffer);
+	memset(buffer, 0xa5, required);
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, buffer, required, &required), 0);
+	list = (void *)buffer;
+	KUNIT_EXPECT_EQ(test, list->version, DRM_CONSTRAINTS_ENCODING_VERSION);
+	KUNIT_EXPECT_EQ(test, list->length, required);
+	KUNIT_EXPECT_EQ(test, list->generation, 1);
+	KUNIT_EXPECT_EQ(test, list->selected_id, drm_constraints_entry_id(f->initial));
+	KUNIT_EXPECT_EQ(test, list->suggested_id, 0);
+	KUNIT_EXPECT_EQ(test, list->count_entries, 1);
+	KUNIT_EXPECT_EQ(test, list->entries_offset, sizeof(*list));
+	KUNIT_EXPECT_EQ(test, list->entry_size, sizeof(*entry));
+	KUNIT_EXPECT_EQ(test, list->pad | list->reserved[0] | list->reserved[1], 0);
+	entry = (void *)(buffer + sizeof(*list));
+	KUNIT_EXPECT_EQ(test, entry->id, list->selected_id);
+	KUNIT_EXPECT_EQ(test, entry->flags, DRM_CONSTRAINTS_ENCODED_SELECTABLE);
+	KUNIT_EXPECT_EQ(test, entry->description_offset, sizeof(*list) + sizeof(*entry));
+	KUNIT_EXPECT_EQ(test, entry->description_offset + entry->description_length, required);
+	KUNIT_EXPECT_EQ(test, entry->pad | entry->reserved[0] | entry->reserved[1], 0);
+	description = (void *)((u8 *)entry + sizeof(*entry));
+	KUNIT_EXPECT_EQ(test, description->version, DRM_CONSTRAINTS_ENCODING_VERSION);
+	KUNIT_EXPECT_EQ(test, description->length, entry->description_length);
+	KUNIT_EXPECT_EQ(test, description->record_count, 3);
+	KUNIT_EXPECT_EQ(test, description->records_offset,
+			entry->description_offset + sizeof(*description));
+	output = (void *)((u8 *)description + sizeof(*description));
+	KUNIT_EXPECT_EQ(test, output->header.type, DRM_CONSTRAINTS_RECORD_OUTPUT);
+	KUNIT_EXPECT_EQ(test, output->header.length, sizeof(*output));
+	KUNIT_EXPECT_EQ(test, output->header.flags, DRM_CONSTRAINTS_RECORD_REQUIRED);
+	KUNIT_EXPECT_EQ(test, output->min_width, 640);
+	KUNIT_EXPECT_EQ(test, output->min_height, 360);
+	KUNIT_EXPECT_EQ(test, output->max_width, 1920);
+	KUNIT_EXPECT_EQ(test, output->max_height, 1080);
+	format = (void *)((u8 *)output + sizeof(*output));
+	KUNIT_EXPECT_EQ(test, format->header.type, DRM_CONSTRAINTS_RECORD_FORMAT);
+	KUNIT_EXPECT_EQ(test, format->header.length, sizeof(*format));
+	KUNIT_EXPECT_EQ(test, format->header.flags, DRM_CONSTRAINTS_RECORD_REQUIRED);
+	KUNIT_EXPECT_EQ(test, format->plane_id, 7);
+	KUNIT_EXPECT_EQ(test, format->format, DRM_FORMAT_XRGB8888);
+	KUNIT_EXPECT_EQ(test, format->modifier, I915_FORMAT_MOD_X_TILED);
+	KUNIT_EXPECT_EQ(test, format->min_width, 64);
+	KUNIT_EXPECT_EQ(test, format->min_height, 32);
+	KUNIT_EXPECT_EQ(test, format->max_width, 3840);
+	KUNIT_EXPECT_EQ(test, format->max_height, 2160);
+	property = (void *)((u8 *)format + sizeof(*format));
+	KUNIT_EXPECT_EQ(test, property->header.type, DRM_CONSTRAINTS_RECORD_PROPERTY);
+	KUNIT_EXPECT_EQ(test, property->header.length, sizeof(*property));
+	KUNIT_EXPECT_EQ(test, property->header.flags, DRM_CONSTRAINTS_RECORD_REQUIRED);
+	KUNIT_EXPECT_EQ(test, property->object_id, 7);
+	KUNIT_EXPECT_EQ(test, property->property_id, 11);
+	KUNIT_EXPECT_EQ(test, property->type, DRM_MODE_PROP_SIGNED_RANGE);
+	KUNIT_EXPECT_EQ(test, property->minimum, (u64)-10);
+	KUNIT_EXPECT_EQ(test, property->maximum, 20);
+	KUNIT_EXPECT_EQ(test, property->mask, 0);
+	KUNIT_EXPECT_EQ(test, property->pad | property->header.pad |
+			format->header.pad | output->header.pad, 0);
+}
+
+static void size_discovery_and_short_buffers_write_no_partial_payload(struct kunit *test)
+{
+	struct encoding_fixture *f = new_fixture(test);
+	struct drm_constraints_snapshot *view = snapshot(test, f->catalog);
+	u8 buffer[257], before[257];
+	size_t required = 123;
+
+	memset(buffer, 0xa5, sizeof(buffer));
+	memcpy(before, buffer, sizeof(buffer));
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(NULL, buffer, 256, &required), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 1, &required), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, 256, NULL), -EINVAL);
+	KUNIT_EXPECT_EQ(test, required, 123);
+	KUNIT_EXPECT_MEMEQ(test, buffer, before, sizeof(buffer));
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, 255, &required), -ENOSPC);
+	KUNIT_EXPECT_EQ(test, required, 256);
+	KUNIT_EXPECT_MEMEQ(test, buffer, before, sizeof(buffer));
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, buffer, 256, &required), 0);
+	KUNIT_EXPECT_EQ(test, buffer[256], 0xa5);
+	/* Byte copies also support a deliberately unaligned kernel output buffer. */
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, before + 1, 256, &required), 0);
+	KUNIT_EXPECT_EQ(test, before[0], 0xa5);
+	KUNIT_EXPECT_MEMEQ(test, before + 1, buffer, 256);
+}
+
+static void encoded_snapshot_remains_coherent_after_catalog_closure(struct kunit *test)
+{
+	struct encoding_fixture *f = new_fixture(test);
+	struct drm_constraints_entry *target;
+	struct drm_constraints_snapshot *view;
+	struct drm_constraints_encoded_list *list;
+	struct drm_constraints_encoded_entry *entries;
+	size_t required;
+	u8 *before, *after;
+
+	target = drm_constraints_entry_create(f->domain, 19, f->description, &ops, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, target);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, target), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(f->catalog, target), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_suggest(f->catalog, drm_constraints_entry_id(target)), 0);
+	view = snapshot(test, f->catalog);
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
+	before = kunit_kmalloc(test, required, GFP_KERNEL);
+	after = kunit_kmalloc(test, required, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, before);
+	KUNIT_ASSERT_NOT_NULL(test, after);
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, before, required, &required), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_withdraw(f->catalog, drm_constraints_entry_id(target)), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_forget(f->catalog, drm_constraints_entry_id(target)), 0);
+	drm_constraints_catalog_close(f->catalog);
+	kunit_release_action(test, put_catalog, f->catalog);
+	kunit_release_action(test, put_entry, target);
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, after, required, &required), 0);
+	KUNIT_EXPECT_MEMEQ(test, before, after, required);
+	list = (void *)after;
+	entries = (void *)(after + sizeof(*list));
+	KUNIT_EXPECT_EQ(test, list->entries_offset, sizeof(*list));
+	KUNIT_EXPECT_EQ(test, list->count_entries, 2);
+	KUNIT_EXPECT_EQ(test, list->generation, 3);
+	KUNIT_EXPECT_EQ(test, list->suggested_id, entries[1].id);
+	KUNIT_EXPECT_NE(test, entries[0].id, entries[1].id);
+	KUNIT_EXPECT_EQ(test, entries[0].flags, DRM_CONSTRAINTS_ENCODED_SELECTABLE);
+	KUNIT_EXPECT_EQ(test, entries[1].flags, DRM_CONSTRAINTS_ENCODED_SELECTABLE);
+	KUNIT_EXPECT_EQ(test, entries[0].description_offset + entries[0].description_length,
+			entries[1].description_offset);
+	KUNIT_EXPECT_EQ(test, entries[1].description_offset + entries[1].description_length, required);
+}
+
+static void maximum_native_catalog_fits_bounded_encoding(struct kunit *test)
+{
+	const struct drm_constraints_size size = { 1, 1, 4096, 4096 };
+	struct drm_constraints_domain *domain;
+	struct drm_constraints_description *description;
+	struct drm_constraints_catalog *catalog = NULL;
+	struct drm_constraints_snapshot *view;
+	struct drm_constraints_format *formats;
+	struct drm_constraints_property *properties;
+	struct drm_constraints_encoded_list *list;
+	struct drm_constraints_encoded_entry *entries;
+	size_t required, expected;
+	unsigned int i;
+	u8 *buffer;
+
+	formats = kunit_kcalloc(test, DRM_CONSTRAINTS_MAX_FORMATS, sizeof(*formats), GFP_KERNEL);
+	properties = kunit_kcalloc(test, DRM_CONSTRAINTS_MAX_PROPERTIES, sizeof(*properties), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, formats);
+	KUNIT_ASSERT_NOT_NULL(test, properties);
+	for (i = 0; i < DRM_CONSTRAINTS_MAX_FORMATS; i++)
+		formats[i] = (struct drm_constraints_format) {
+			.plane_id = i + 1, .format = DRM_FORMAT_XRGB8888,
+			.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
+		};
+	for (i = 0; i < DRM_CONSTRAINTS_MAX_PROPERTIES; i++)
+		properties[i] = (struct drm_constraints_property) {
+			.object_id = 1, .property_id = i + 1,
+			.type = DRM_MODE_PROP_RANGE, .maximum = 4096,
+		};
+	description = drm_constraints_description_create(&size, formats, DRM_CONSTRAINTS_MAX_FORMATS,
+							 properties, DRM_CONSTRAINTS_MAX_PROPERTIES);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
+	domain = drm_constraints_domain_create(DRM_CONSTRAINTS_MAX_ENTRIES);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, domain);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_domain, domain), 0);
+	for (i = 0; i < DRM_CONSTRAINTS_MAX_ENTRIES; i++) {
+		struct drm_constraints_entry *entry =
+			drm_constraints_entry_create(domain, 19, description, &ops, NULL);
+
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+		KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+		if (!catalog) {
+			catalog = drm_constraints_catalog_create(domain, entry, DRM_CONSTRAINTS_MAX_ENTRIES);
+			KUNIT_ASSERT_NOT_ERR_OR_NULL(test, catalog);
+			KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_catalog, catalog), 0);
+		} else {
+			KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(catalog, entry), 0);
+		}
+	}
+	view = snapshot(test, catalog);
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
+	expected = sizeof(*list) + DRM_CONSTRAINTS_MAX_ENTRIES *
+		(sizeof(*entries) + sizeof(struct drm_constraints_encoded_description) +
+		 sizeof(struct drm_constraints_encoded_output) +
+		 DRM_CONSTRAINTS_MAX_FORMATS * sizeof(struct drm_constraints_encoded_format) +
+		 DRM_CONSTRAINTS_MAX_PROPERTIES * sizeof(struct drm_constraints_encoded_property));
+	KUNIT_EXPECT_EQ(test, required, expected);
+	KUNIT_ASSERT_LE(test, required, DRM_CONSTRAINTS_ENCODING_MAX_SIZE);
+	buffer = kvzalloc(required + 1, GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, buffer);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, free_buffer, buffer), 0);
+	buffer[required] = 0xa5;
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, buffer, required, &required), 0);
+	KUNIT_EXPECT_EQ(test, buffer[required], 0xa5);
+	list = (void *)buffer;
+	entries = (void *)(buffer + sizeof(*list));
+	KUNIT_EXPECT_EQ(test, list->entries_offset, sizeof(*list));
+	KUNIT_EXPECT_EQ(test, list->count_entries, DRM_CONSTRAINTS_MAX_ENTRIES);
+	KUNIT_EXPECT_EQ(test, entries[DRM_CONSTRAINTS_MAX_ENTRIES - 1].description_offset +
+			entries[DRM_CONSTRAINTS_MAX_ENTRIES - 1].description_length, required);
+}
+
+static struct kunit_case drm_constraints_encoding_tests[] = {
+	KUNIT_CASE(encoding_preserves_native_metadata_without_padding),
+	KUNIT_CASE(size_discovery_and_short_buffers_write_no_partial_payload),
+	KUNIT_CASE(encoded_snapshot_remains_coherent_after_catalog_closure),
+	KUNIT_CASE(maximum_native_catalog_fits_bounded_encoding),
+	{}
+};
+
+static struct kunit_suite drm_constraints_encoding_test_suite = {
+	.name = "drm_constraints_encoding",
+	.test_cases = drm_constraints_encoding_tests,
+};
+
+kunit_test_suite(drm_constraints_encoding_test_suite);
+
+MODULE_DESCRIPTION("DRM constraints snapshot encoding tests");
+MODULE_LICENSE("Dual MIT/GPL");
