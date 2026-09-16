@@ -231,6 +231,15 @@ atomic state and opaque entry metadata during validation and final acceptance;
 it must not reenter list operations or acquire modeset locks. These interfaces
 use common native state lifetime and installation without publishing UAPI.
 
+``Device::constraints_output()`` borrows provider control under a registration
+guard. It exposes scoped publication, snapshots, identity lookup, suggestion,
+withdrawal and terminal closure, without exposing a list insertion path which
+skips CRTC/plane/property membership checks. Private KMS test devices expose
+the same control while their owner excludes teardown. Entry and snapshot
+references can outlive that borrow without retaining the DRM device. Providers
+still establish readiness and authority before publishing an entry. Closure
+is permanent, not a reversible owner-interval reset or default restoration.
+
 ``OpaqueEntry::new_stateless()`` uses common DRM destruction for backends
 without private per-entry resources. It avoids a permanent default retaining
 its provider module solely for a metadata release callback. Device and accepted
