@@ -24,7 +24,7 @@ pub(crate) struct Gate {
 
 impl Gate {
     /// Create a gate with driver-selected initial availability.
-    pub fn new(enabled: bool) -> Result<Arc<Self>> {
+    pub(crate) fn new(enabled: bool) -> Result<Arc<Self>> {
         Arc::pin_init(
             pin_init!(Self {
                 state <- kernel::new_spinlock_irq!(GateState { enabled, generation: 0 }),
@@ -34,7 +34,7 @@ impl Gate {
     }
 
     /// Publish an availability transition without sleeping or invoking ALSA callbacks.
-    pub fn set_enabled(&self, enabled: bool) {
+    pub(crate) fn set_enabled(&self, enabled: bool) {
         let mut state = self.state.lock();
         if state.enabled != enabled {
             match state.generation.checked_add(1) {
