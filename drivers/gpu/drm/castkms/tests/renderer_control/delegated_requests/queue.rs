@@ -31,6 +31,30 @@ mod cases {
     use kernel::sync::poll::testing::Observer;
 
     #[test]
+    fn lost_native_access_is_not_published_as_completed_output() -> Result {
+        with_output(|fixture| {
+            let mut queue = queue(&fixture, 1)?;
+            queue.queue_to(1, &fixture.destination, None)?;
+            let job = queue.try_claim(&fixture.rendered).ok_or(EINVAL)?;
+            // Exercise the actual unreported-access path. Its bounded E/D retention is
+            // intentionally quarantined, not freed by the fixture or an invented fence.
+            drop(job);
+            check(queue.advance() == 1)?;
+            let mut publications = 0;
+            for _ in 0..2 {
+                check(queue.dequeue(|_| { publications += 1; Ok(()) }) == Err(EIO))?;
+                check(queue.has_results())?;
+            }
+            check(publications == 0)?;
+            check(queue.try_close() == Err(EIO))?;
+            drop(queue);
+            check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+            drop(fixture.rendered);
+            check(fixture.private.prepare(2).err() == Some(EBUSY))
+        })
+    }
+
+    #[test]
     fn observed_queue_admission_does_not_extend_worker_ownership() -> Result {
         with_output(|fixture| {
             let scope = fixture.grantor.capture().describe_delegated()?;
