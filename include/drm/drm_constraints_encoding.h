@@ -8,7 +8,7 @@ struct drm_constraints_snapshot;
 
 /* Kernel prototype encoding, not an installed UAPI or allocated ioctl. */
 #define DRM_CONSTRAINTS_ENCODING_VERSION 1
-#define DRM_CONSTRAINTS_ENCODING_MAX_SIZE (1024U * 1024U)
+#define DRM_CONSTRAINTS_ENCODING_MAX_SIZE (16U * 1024U * 1024U)
 #define DRM_CONSTRAINTS_ENCODED_SELECTABLE (1U << 0)
 #define DRM_CONSTRAINTS_RECORD_REQUIRED (1U << 0)
 #define DRM_CONSTRAINTS_RECORD_OUTPUT 1

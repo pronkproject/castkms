@@ -64,6 +64,33 @@ static void drm_constraints_references_retain_description(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_constraints_description_output(description)->min_width, 1920);
 }
 
+static void drm_constraints_preserves_large_plane_modifier_matrix(struct kunit *test)
+{
+	const unsigned int plane_count = 10, alternatives = 256;
+	const unsigned int total = plane_count * alternatives;
+	struct drm_constraints_description *description;
+	struct drm_constraints_format *formats;
+	const struct drm_constraints_format *view;
+	unsigned int i, count;
+
+	formats = kunit_kcalloc(test, total, sizeof(*formats), GFP_KERNEL);
+	KUNIT_ASSERT_NOT_NULL(test, formats);
+	for (i = 0; i < total; i++) {
+		formats[i] = linear;
+		formats[i].plane_id = i / alternatives + 1;
+		/* Opaque test IDs exercise metadata capacity, not modifier execution. */
+		formats[i].modifier = fourcc_mod_code(NVIDIA, i % alternatives);
+	}
+	description = create_description(test, &output_size, formats, total);
+	view = drm_constraints_description_formats(description, &count);
+	KUNIT_ASSERT_EQ(test, count, total);
+	KUNIT_EXPECT_MEMEQ(test, view, formats, sizeof(*formats) * total);
+	formats[total - 1] = formats[0];
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, formats, total, NULL, 0),
+		ERR_PTR(-EEXIST));
+}
+
 static void drm_constraints_rejects_invalid_dimensions(struct kunit *test)
 {
 	const struct drm_constraints_size invalid[] = {
@@ -211,6 +238,7 @@ static void drm_constraints_rejects_malformed_property_rules(struct kunit *test)
 }
 
 static struct kunit_case drm_constraints_tests[] = {
+	KUNIT_CASE(drm_constraints_preserves_large_plane_modifier_matrix),
 	KUNIT_CASE(drm_constraints_copies_all_allocation_information),
 	KUNIT_CASE(drm_constraints_references_retain_description),
 	KUNIT_CASE(drm_constraints_rejects_invalid_dimensions),
