@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod capture;
+pub mod constraints;
 pub mod device;
 pub mod display;
 pub mod driver;
