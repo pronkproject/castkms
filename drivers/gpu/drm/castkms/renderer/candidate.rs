@@ -4,6 +4,7 @@
 
 use super::{
     permission::Access,
+    private_image::Image,
     probe::{Probe, Source as ProbeSource},
 };
 use crate::{
@@ -18,6 +19,7 @@ use crate::{
     Driver, //
 };
 use kernel::{
+    dma_buf::DmaBuf,
     dma_fence::Fence,
     drm::{
         device::Registered,
@@ -376,6 +378,45 @@ impl Candidate {
                 SourceJob::claim(&current, previous_content_serial, execution)
             })
         })
+    }
+
+    /// Register renderer-private backing, never storage shared with final-image recipients.
+    /// Native format/modifier interpretation belongs to the trusted renderer. Registration
+    /// neither maps the buffers nor proves that their native mappings exclude downstream waits.
+    pub(crate) fn register_private_image(
+        &self,
+        active: &renderer_startup::Active,
+        dimensions: [u32; 2],
+        buffers: &[ARef<DmaBuf>],
+    ) -> Result<Arc<Image>> {
+        let check = || {
+            self.access.with_current(|current| {
+                active.with_candidate(&self.resources, || {
+                    current.check_scene_owner()?;
+                    if self.access.display().execution.describe().profile != Profile::GpuV1 {
+                        return Err(ESTALE);
+                    }
+                    if current.configuration().dimensions() != dimensions {
+                        return Err(EINVAL);
+                    }
+                    for buffer in buffers {
+                        if current.uses_reservation(buffer.reservation())? {
+                            return Err(EINVAL);
+                        }
+                    }
+                    Ok(())
+                })
+            })
+        };
+        check()?;
+        let image = Image::new(
+            &self.access.device().private_images,
+            &self.proposal_owner,
+            dimensions,
+            buffers,
+        )?;
+        check()?;
+        Ok(image)
     }
 
     /// Check released source-stage evidence under live renderer authority.
