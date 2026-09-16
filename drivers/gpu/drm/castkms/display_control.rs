@@ -200,6 +200,7 @@ impl Target {
                 return Err(EACCES);
             }
             f(Current {
+                guard,
                 configuration,
                 output: output.identity(),
                 master: &self.master,
@@ -244,6 +245,7 @@ impl TransitionCurrent<'_> {
 
 /// Callback-local control of an enabled output, without access to scene storage.
 pub(crate) struct Current<'a> {
+    guard: &'a CurrentMasterGuard<'a, Driver>,
     configuration: &'a Configuration,
     output: &'a Identity,
     master: &'a MasterRef<Driver>,
@@ -254,6 +256,20 @@ pub(crate) struct Current<'a> {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Current<'_> {
+    /// Check another capability's exact target using the already held native locks.
+    /// This establishes matching control, not that capability's revocation policy.
+    pub(crate) fn check_target(&self, target: &Target) -> Result {
+        if self.master != &target.master
+            || self.output != target.display().output.identity()
+            || !self.guard.holds_object(target.crtc.crtc())
+            || !self.guard.holds_object(&*target.connector)
+            || self.configuration.connector_mask() & target.connector.mask() == 0
+        {
+            return Err(EACCES);
+        }
+        Ok(())
+    }
+
     /// Inspect current backing identity without returning scene storage or a source claim.
     pub(crate) fn uses_reservation(&self, reservation: &Reservation) -> Result<bool> {
         self.scene
