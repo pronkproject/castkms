@@ -115,7 +115,7 @@ new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
 
-	description = drm_constraints_description_create(&size, &allocation, 1);
+	description = drm_constraints_description_create(&size, &allocation, 1, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	entry = drm_constraints_entry_create(drm_constraints_device_domain(f->dev), f->crtc->base.id,

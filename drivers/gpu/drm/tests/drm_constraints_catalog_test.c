@@ -63,7 +63,7 @@ static struct catalog_fixture *new_fixture(struct kunit *test, unsigned int limi
 	fixture->domain = drm_constraints_domain_create(DRM_CONSTRAINTS_MAX_ENTRIES);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->domain);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_domain, fixture->domain), 0);
-	fixture->description = drm_constraints_description_create(&size, &format, 1);
+	fixture->description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->description);
 	KUNIT_ASSERT_EQ(test,
 		kunit_add_action_or_reset(test, put_description, fixture->description), 0);

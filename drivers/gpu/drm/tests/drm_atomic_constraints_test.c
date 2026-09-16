@@ -50,7 +50,7 @@ static void duplicate_retains_the_exact_backend(struct kunit *test)
 	domain = drm_constraints_domain_create(1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, domain);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_domain, domain), 0);
-	description = drm_constraints_description_create(&size, &format, 1);
+	description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	entry = drm_constraints_entry_create(domain, 19, description, &entry_ops, released);
