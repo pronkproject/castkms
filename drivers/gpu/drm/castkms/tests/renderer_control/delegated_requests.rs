@@ -318,11 +318,14 @@ mod cases {
             with_output(|fixture| {
                 let request = fixture.destination.request(1, None)?;
                 let serial = fixture.rendered.content().content_serial();
+                let mut native = ManualFence::new()?;
                 let claim = request
                     .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
                     .ok_or(EINVAL)?;
-                let mut native = ManualFence::new()?;
+                let exact_resources = core::ptr::eq(claim.source(), &*fixture.rendered)
+                    && core::ptr::eq(claim.destination(), &*fixture.destination);
                 claim.release(Completion::Submitted(native.fence()));
+                check(exact_resources)?;
                 drop(fixture.rendered);
                 check(request.status() == Status::Pending)?;
                 check(fixture.private.prepare(2).err() == Some(EBUSY))?;

@@ -269,9 +269,11 @@ source-unbound and does not acquire private storage from an attempted claim.
 Output admission requires successful private-image production and destination
 reuse, plus live renderer and capture authority under one stabilized display
 scope. Cleanup storage is allocated before admitting the bounded private-to-
-recipient stage. Its native completion covers private reads and recipient
-writes, never compositor source retirement. CPU completion includes cache
-maintenance; a no-access report promises that neither allocation was touched.
+recipient stage. The admitted claim exposes borrowed views of its exact private
+input and checked destination, without exposing request internals to the worker.
+Its native completion covers private reads and recipient writes, never compositor
+source retirement. CPU completion includes cache maintenance; a no-access report
+promises that neither allocation was touched.
 
 Closing handles or canceling a submitted request does not release either
 allocation before native completion. Revocation rejects new claims. An already
