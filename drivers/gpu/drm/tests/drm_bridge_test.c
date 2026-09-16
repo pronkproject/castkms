@@ -806,7 +806,7 @@ static void drm_test_drm_bridge_helper_hdmi_output_bus_fmts(struct kunit *test)
 	struct drm_display_mode *mode;
 	unsigned int num_output_fmts;
 	struct drm_bridge *bridge;
-	u32 *out_bus_fmts;
+	u32 *out_bus_fmts = NULL;
 	int ret;
 
 	priv = drm_test_bridge_hdmi_init(test, &drm_test_bridge_bus_fmts_funcs,
@@ -817,59 +817,75 @@ static void drm_test_drm_bridge_helper_hdmi_output_bus_fmts(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, priv);
 
 	bridge = &priv->test_bridge->bridge;
+	mode = drm_kunit_display_mode_from_cea_vic(test, &priv->drm, 16);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, mode);
 
 	drm_modeset_acquire_init(&ctx, 0);
 
 	state = drm_kunit_helper_atomic_state_alloc(test, &priv->drm, &ctx);
+	if (IS_ERR_OR_NULL(state))
+		drm_modeset_acquire_fini(&ctx);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
 
 retry_commit:
 	conn_state = drm_atomic_get_connector_state(state, priv->connector);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, conn_state);
+	if (IS_ERR(conn_state)) {
+		ret = PTR_ERR(conn_state);
+		goto out;
+	}
 
 	conn_state->hdmi.output_bpc = 8;
 
-	mode = drm_kunit_display_mode_from_cea_vic(test, &priv->drm, 16);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, mode);
-
 	ret = drm_atomic_set_crtc_for_connector(conn_state, priv->crtc);
-	if (ret == -EDEADLK) {
-		drm_atomic_commit_clear(state);
-		drm_modeset_backoff(&ctx);
-		goto retry_commit;
-	}
-	KUNIT_ASSERT_EQ(test, ret, 0);
+	if (ret)
+		goto out;
 
 	crtc_state = drm_atomic_get_crtc_state(state, priv->crtc);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, crtc_state);
+	if (IS_ERR(crtc_state)) {
+		ret = PTR_ERR(crtc_state);
+		goto out;
+	}
 
 	ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
-	if (ret == -EDEADLK) {
-		drm_atomic_commit_clear(state);
-		drm_modeset_backoff(&ctx);
-		goto retry_commit;
-	}
-	KUNIT_ASSERT_EQ(test, ret, 0);
+	if (ret)
+		goto out;
 
 	crtc_state->enable = true;
 	crtc_state->active = true;
 
 	bridge_state = drm_atomic_get_bridge_state(state, bridge);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, bridge_state);
+	if (IS_ERR(bridge_state)) {
+		ret = PTR_ERR(bridge_state);
+		goto out;
+	}
 
 	out_bus_fmts = bridge->funcs->atomic_get_output_bus_fmts(
 		bridge, bridge_state, crtc_state, conn_state, &num_output_fmts);
-	KUNIT_EXPECT_NOT_NULL(test, out_bus_fmts);
+	if (!out_bus_fmts) {
+		ret = -ENOMEM;
+		goto out;
+	}
 	KUNIT_EXPECT_EQ(test, num_output_fmts, 3);
+	if (num_output_fmts != 3)
+		goto out;
 
 	KUNIT_EXPECT_EQ(test, out_bus_fmts[0], MEDIA_BUS_FMT_RGB888_1X24);
 	KUNIT_EXPECT_EQ(test, out_bus_fmts[1], MEDIA_BUS_FMT_YUV8_1X24);
 	KUNIT_EXPECT_EQ(test, out_bus_fmts[2], MEDIA_BUS_FMT_UYYVYY8_0_5X24);
 
+out:
+	if (ret == -EDEADLK && ctx.contended) {
+		drm_atomic_commit_clear(state);
+		ret = drm_modeset_backoff(&ctx);
+		if (!ret)
+			goto retry_commit;
+	}
+	state->acquire_ctx = NULL;
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 
 	kfree(out_bus_fmts);
+	KUNIT_EXPECT_EQ(test, ret, 0);
 }
 
 static struct kunit_case drm_bridge_helper_reset_crtc_tests[] = {
