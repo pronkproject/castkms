@@ -34,40 +34,40 @@ pub const ABGR8888: u32 = fourcc_code(b'A', b'B', b'2', b'4');
 /// Two-plane YUV 4:2:0 with an interleaved CbCr chroma plane.
 pub const NV12: u32 = fourcc_code(b'N', b'V', b'1', b'2');
 
-/// 30 bpp 10:10:10 RGB with unused alpha.
+/// 32 bpp RGB with 10 bits per color component and two unused bits.
 pub const XRGB2101010: u32 = fourcc_code(b'X', b'R', b'3', b'0');
 
-/// 30 bpp 10:10:10 RGB with alpha.
+/// 32 bpp RGB with 10 bits per color component and two alpha bits.
 pub const ARGB2101010: u32 = fourcc_code(b'A', b'R', b'3', b'0');
 
-/// 30 bpp 10:10:10 BGR with unused alpha.
+/// 32 bpp BGR with 10 bits per color component and two unused bits.
 pub const XBGR2101010: u32 = fourcc_code(b'X', b'B', b'3', b'0');
 
-/// 30 bpp 10:10:10 BGR with alpha.
+/// 32 bpp BGR with 10 bits per color component and two alpha bits.
 pub const ABGR2101010: u32 = fourcc_code(b'A', b'B', b'3', b'0');
 
-/// [31:0] B:G:R:A 8:8:8:8 little endian.
+/// `[31:0]` B:G:R:A 8:8:8:8 little endian.
 pub const BGRA8888: u32 = fourcc_code(b'B', b'A', b'2', b'4');
 
-/// [31:0] R:G:B:A 8:8:8:8 little endian.
+/// `[31:0]` R:G:B:A 8:8:8:8 little endian.
 pub const RGBA8888: u32 = fourcc_code(b'R', b'A', b'2', b'4');
 
-/// [23:0] R:G:B little endian.
+/// `[23:0]` R:G:B little endian.
 pub const RGB888: u32 = fourcc_code(b'R', b'G', b'2', b'4');
 
-/// [23:0] B:G:R little endian.
+/// `[23:0]` B:G:R little endian.
 pub const BGR888: u32 = fourcc_code(b'B', b'G', b'2', b'4');
 
-/// [63:0] x:R:G:B 16:16:16:16 little endian.
+/// `[63:0]` x:R:G:B 16:16:16:16 little endian.
 pub const XRGB16161616: u32 = fourcc_code(b'X', b'R', b'4', b'8');
 
-/// [63:0] x:B:G:R 16:16:16:16 little endian.
+/// `[63:0]` x:B:G:R 16:16:16:16 little endian.
 pub const XBGR16161616: u32 = fourcc_code(b'X', b'B', b'4', b'8');
 
-/// [63:0] A:R:G:B 16:16:16:16 little endian.
+/// `[63:0]` A:R:G:B 16:16:16:16 little endian.
 pub const ARGB16161616: u32 = fourcc_code(b'A', b'R', b'4', b'8');
 
-/// [63:0] A:B:G:R 16:16:16:16 little endian.
+/// `[63:0]` A:B:G:R 16:16:16:16 little endian.
 pub const ABGR16161616: u32 = fourcc_code(b'A', b'B', b'4', b'8');
 
 /// 64 bpp RGB with binary16 components and unused alpha.
@@ -79,10 +79,10 @@ pub const ARGB16161616F: u32 = fourcc_code(b'A', b'R', b'4', b'H');
 /// 64 bpp BGRA with binary16 components.
 pub const ABGR16161616F: u32 = fourcc_code(b'A', b'B', b'4', b'H');
 
-/// [15:0] R:G:B 5:6:5 little endian.
+/// `[15:0]` R:G:B 5:6:5 little endian.
 pub const RGB565: u32 = fourcc_code(b'R', b'G', b'1', b'6');
 
-/// [15:0] B:G:R 5:6:5 little endian.
+/// `[15:0]` B:G:R 5:6:5 little endian.
 pub const BGR565: u32 = fourcc_code(b'B', b'G', b'1', b'6');
 
 /// 2x1 subsampled Cr:Cb plane.
@@ -127,14 +127,14 @@ pub const P012: u32 = fourcc_code(b'P', b'0', b'1', b'2');
 /// 2x2 subsampled Cr:Cb plane 16 bits per channel.
 pub const P016: u32 = fourcc_code(b'P', b'0', b'1', b'6');
 
-/// [7:0] R0:R1:R2:R3:R4:R5:R6:R7 1:1:1:1:1:1:1:1 eight pixels/byte.
+/// `[7:0]` R0:R1:R2:R3:R4:R5:R6:R7 1:1:1:1:1:1:1:1 eight pixels/byte.
 pub const R1: u32 = fourcc_code(b'R', b'1', b' ', b' ');
 
-/// [7:0] R0:R1:R2:R3 2:2:2:2 four pixels/byte.
+/// `[7:0]` R0:R1:R2:R3 2:2:2:2 four pixels/byte.
 pub const R2: u32 = fourcc_code(b'R', b'2', b' ', b' ');
 
-/// [7:0] R0:R1 4:4 two pixels/byte.
+/// `[7:0]` R0:R1 4:4 two pixels/byte.
 pub const R4: u32 = fourcc_code(b'R', b'4', b' ', b' ');
 
-/// [7:0] R.
+/// `[7:0]` R.
 pub const R8: u32 = fourcc_code(b'R', b'8', b' ', b' ');
