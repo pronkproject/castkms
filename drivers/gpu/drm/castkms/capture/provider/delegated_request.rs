@@ -15,6 +15,7 @@ use kernel::{
     },
     prelude::*,
     sync::{aref::ARef, poll::PollCondVar, Arc, Mutex},
+    time::{Instant, Monotonic},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +39,7 @@ struct State {
     phase: Phase,
     cancelled: bool,
     content: Option<ContentSerial>,
+    completed_at: Option<Instant<Monotonic>>,
     usage: Option<Arc<Use>>,
     completion: Option<ARef<Fence>>,
 }
@@ -74,7 +76,7 @@ impl Image {
                 destination: self.clone(),
                 changed,
                 _charge: charge,
-                state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: None, completion: None }),
+                state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, completed_at: None, usage: None, completion: None }),
             }),
             GFP_KERNEL,
         )?;
@@ -179,6 +181,15 @@ impl Request {
         }
     }
 
+    pub(crate) fn completed_at(&self) -> Option<Instant<Monotonic>> {
+        let state = self.state.lock();
+        if matches!(state.phase, Phase::Complete(Ok(()))) {
+            state.completed_at
+        } else {
+            None
+        }
+    }
+
     /// Retain concrete submitted output completion, including after cancellation or revocation.
     /// This is cleanup evidence, not capture authorization or successful frame publication.
     /// Native fence success does not override the request's separately reconciled result.
@@ -243,6 +254,7 @@ impl Request {
         if !source_ready || !destination_ready {
             return Ok(None);
         }
+        let completed_at = image.content().completed_at()?;
         let report = Arc::pin_init(
             pin_init!(Report { completion <- kernel::new_mutex!(None) }),
             GFP_KERNEL,
@@ -265,6 +277,7 @@ impl Request {
                     return Err(ECANCELED);
                 }
                 state.content = image.content().content_serial();
+                state.completed_at = Some(completed_at);
                 state.phase = Phase::Claimed;
                 Ok(())
             })?;

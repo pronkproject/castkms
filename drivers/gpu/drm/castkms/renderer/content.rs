@@ -14,6 +14,7 @@ use kernel::{
     drm::{auth::MasterRef, kms::framebuffer::dependencies::Dependencies},
     prelude::*,
     sync::{aref::ARef, Arc},
+    time::{Delta, Instant, Monotonic},
 };
 
 /// Evidence captured with an authorized source claim, not a capture grant or private image.
@@ -48,6 +49,7 @@ impl Evidence {
     pub(super) fn release(self, completion: Option<ARef<Fence>>) -> Released {
         Released {
             evidence: self,
+            cpu_completed_at: completion.is_none().then(Instant::<Monotonic>::now),
             completion,
         }
     }
@@ -62,20 +64,26 @@ impl Evidence {
 pub(crate) struct Released {
     evidence: Evidence,
     completion: Option<ARef<Fence>>,
+    cpu_completed_at: Option<Instant<Monotonic>>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Released {
+    fn fences(&self) -> impl Iterator<Item = &Fence> {
+        Iterator::chain(
+            self.evidence
+                .producers
+                .iter()
+                .flatten()
+                .flat_map(|producer| producer.iter()),
+            self.completion.iter().map(|fence| &**fence),
+        )
+    }
+
     /// Pixel validity only. An error is not proof that every native access has stopped.
     pub(crate) fn status(&self) -> Status {
         let mut pending = false;
-        let producers = self
-            .evidence
-            .producers
-            .iter()
-            .flatten()
-            .flat_map(|p| p.iter());
-        for fence in Iterator::chain(producers, self.completion.iter().map(|f| &**f)) {
+        for fence in self.fences() {
             match fence.status() {
                 Status::Pending => pending = true,
                 Status::Complete(Err(error)) => return Status::Complete(Err(error)),
@@ -87,6 +95,24 @@ impl Released {
         } else {
             Status::Complete(Ok(()))
         }
+    }
+
+    /// Original production time, never the time of a recipient copy or dequeue.
+    /// CPU reports are timestamped at release; native work uses its concrete fence times.
+    /// All original producer records must have succeeded before metadata is available.
+    pub(crate) fn completed_at(&self) -> Result<Instant<Monotonic>> {
+        match self.status() {
+            Status::Pending => return Err(EAGAIN),
+            Status::Complete(result) => result?,
+        }
+        let mut completed = self.cpu_completed_at;
+        for fence in self.fences() {
+            let signaled = fence.signal_time()?.ok_or(EAGAIN)?;
+            if completed.is_none_or(|previous| signaled - previous > Delta::from_nanos(0)) {
+                completed = Some(signaled);
+            }
+        }
+        completed.ok_or(EIO)
     }
 
     pub(crate) fn content_serial(&self) -> Option<ContentSerial> {

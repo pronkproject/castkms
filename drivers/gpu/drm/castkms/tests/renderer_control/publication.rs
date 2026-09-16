@@ -113,7 +113,16 @@ mod cases {
                     }) == Err(EAGAIN),
                 )?;
                 check(calls == 0)?;
+                check(content.completed_at().err() == Some(EAGAIN))?;
                 native.complete(result)?;
+                if result.is_ok() {
+                    check(
+                        content.completed_at()? - native.fence().signal_time()?.ok_or(EINVAL)?
+                            == kernel::time::Delta::from_nanos(0),
+                    )?;
+                } else {
+                    check(content.completed_at().err() == Some(EIO))?;
+                }
                 check(candidate.with_content(&active, &content, || Ok(())) == result)
             })?;
         }
