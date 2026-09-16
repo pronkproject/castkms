@@ -155,7 +155,7 @@ mod cases {
                 fixture.session.release_source(id, Completion::Cpu)?;
                 source.seal();
                 check(source.prepared()?.ok_or(EINVAL)?.completion()?.is_none())?;
-                check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+                check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
                 fixture
                     .registration
                     .with_queue(|queue| check(queue.advance() == 0 && !queue.has_results()))?;
@@ -246,7 +246,7 @@ mod cases {
                     core::slice::from_ref(&fixture.private),
                 ) == Err(EEXIST),
             )?;
-            check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+            check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
             native.complete(Ok(()))?;
             wait_result(&fixture.registration, Ok(()))?;
             let start = Instant::<Monotonic>::now();

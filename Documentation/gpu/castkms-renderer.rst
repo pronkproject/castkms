@@ -278,8 +278,12 @@ or all exporter-specific aliases. The output worker must initialize exposed
 padding, unused channel bits and allocation regions; registration alone does
 not sanitize pixels.
 
-Each request reserves a monotonically named destination use without retaining
-a source claim or private frame. Explicit reuse fences and initially acquired
+Each queue assigns strictly increasing request names within its own stream
+incarnation. Destination storage has independent exclusive-use ownership:
+once native access retires, another stream may reuse that destination even
+if its request name is smaller or a terminal result remains unacknowledged.
+Queued demand retains neither a source claim nor a private frame.
+Explicit reuse fences and initially acquired
 implicit dependencies retain their individual status. Pending dependencies
 are distinct from completed errors, including EAGAIN. External users must
 stop submitting new destination work before reservation; observing fences

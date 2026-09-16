@@ -237,7 +237,7 @@ mod cases {
                 check(queue.try_close() == Err(EBUSY))?;
                 check(queue.advance() == 0)
             })?;
-            check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+            check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
             native.complete(Ok(()))?;
             let start = Instant::<Monotonic>::now();
             loop {

@@ -54,7 +54,7 @@ mod cases {
                 check(queue.advance() == 0 && !queue.has_results())?;
                 check(queue.try_close() == Err(EBUSY))
             })?;
-            check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+            check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
             native.complete(Ok(()))?;
             let start = Instant::<Monotonic>::now();
             while !registration.with_queue(|queue| {

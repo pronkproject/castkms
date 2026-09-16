@@ -56,17 +56,12 @@ pub(crate) struct Request {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Image {
-    pub(crate) fn request(
-        self: &Arc<Self>,
-        use_id: u64,
-        reuse: Option<ARef<Fence>>,
-    ) -> Result<Arc<Request>> {
-        self.request_accounted(use_id, reuse, None, None)
+    pub(crate) fn request(self: &Arc<Self>, reuse: Option<ARef<Fence>>) -> Result<Arc<Request>> {
+        self.request_accounted(reuse, None, None)
     }
 
     pub(super) fn request_accounted(
         self: &Arc<Self>,
-        use_id: u64,
         reuse: Option<ARef<Fence>>,
         charge: Option<Arc<crate::capture::request_budget::Charge>>,
         changed: Option<Arc<PollCondVar>>,
@@ -80,7 +75,7 @@ impl Image {
             }),
             GFP_KERNEL,
         )?;
-        let usage = self.reserve_notified(use_id, reuse, request.changed.clone())?;
+        let usage = self.reserve_notified(reuse, request.changed.clone())?;
         request.state.lock().usage = Some(usage);
         Ok(request)
     }

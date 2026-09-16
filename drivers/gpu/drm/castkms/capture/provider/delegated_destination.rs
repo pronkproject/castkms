@@ -29,7 +29,6 @@ pub(crate) struct Layout {
 
 struct State {
     busy: bool,
-    last_use: u64,
 }
 
 /// Immutable recipient provenance, retained through pending native writes.
@@ -95,7 +94,7 @@ impl Delegated {
                 scope: self.clone(),
                 storage,
                 layout: Layout { dimensions, pitch, offset },
-                state <- kernel::new_mutex!(State { busy: false, last_use: 0 }),
+                state <- kernel::new_mutex!(State { busy: false }),
             }),
             GFP_KERNEL,
         )?;
@@ -118,27 +117,21 @@ impl Image {
         &self.storage.buffers()[0]
     }
 
-    /// Reserve a unique destination use. Demand stays unbound to compositor sources.
+    /// Reserve exclusive destination use. Request names belong to individual queues;
+    /// the retained use object identifies storage ownership across queue incarnations.
+    /// Demand stays unbound to compositor sources.
     /// Explicit reuse covers all prior external users; a reservation snapshot alone cannot
     /// exclude racing native submissions or recover previously discarded error records.
     /// External users must stop submitting new work before reserving the destination.
-    pub(crate) fn reserve(
-        self: &Arc<Self>,
-        use_id: u64,
-        reuse: Option<ARef<Fence>>,
-    ) -> Result<Arc<Use>> {
-        self.reserve_notified(use_id, reuse, None)
+    pub(crate) fn reserve(self: &Arc<Self>, reuse: Option<ARef<Fence>>) -> Result<Arc<Use>> {
+        self.reserve_notified(reuse, None)
     }
 
     pub(super) fn reserve_notified(
         self: &Arc<Self>,
-        use_id: u64,
         reuse: Option<ARef<Fence>>,
         changed: Option<Arc<PollCondVar>>,
     ) -> Result<Arc<Use>> {
-        if use_id == 0 {
-            return Err(EINVAL);
-        }
         let dependencies = Dependencies::new(
             reuse.as_deref(),
             &self.buffer().reservation().snapshot(Usage::Read)?,
@@ -157,17 +150,10 @@ impl Image {
                 return Err(EINVAL);
             }
             let mut state = self.state.lock();
-            if state.last_use == u64::MAX {
-                return Err(EOVERFLOW);
-            }
-            if use_id <= state.last_use {
-                return Err(ESTALE);
-            }
             if state.busy {
                 return Err(EBUSY);
             }
             state.busy = true;
-            state.last_use = use_id;
             usage.active.store(true, Ordering::Relaxed);
             Ok(())
         })?;

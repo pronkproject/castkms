@@ -75,7 +75,7 @@ mod cases {
             check(publications == 0)?;
             check(queue.try_close() == Err(EIO))?;
             drop(queue);
-            check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+            check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
             drop(fixture.rendered);
             check(fixture.private.prepare(2).err() == Some(EBUSY))
         })
@@ -485,12 +485,28 @@ mod cases {
     #[test]
     fn acknowledged_maximum_id_requires_a_new_queue_incarnation() -> Result {
         with_output(|fixture| {
-            let mut queue = queue(&fixture, 1)?;
-            queue.queue_to(u64::MAX, &fixture.destination, None)?;
-            queue.cancel(u64::MAX)?;
-            check(queue.advance() == 1)?;
-            queue.dequeue(|result| check(result.result == Err(ECANCELED)))?;
-            check(queue.queue_to(1, &fixture.destination, None) == Err(EOVERFLOW))
+            let mut first = queue(&fixture, 1)?;
+            let mut second = queue(&fixture, 1)?;
+            check(first.queue_to(0, &fixture.destination, None) == Err(EINVAL))?;
+            first.queue_to(u64::MAX, &fixture.destination, None)?;
+            check(second.queue_to(1, &fixture.destination, None) == Err(EBUSY))?;
+            first.cancel(u64::MAX)?;
+            check(first.advance() == 1)?;
+            // A result awaiting acknowledgement owns metadata, not destination exclusion.
+            second.queue_to(1, &fixture.destination, None)?;
+            first.dequeue(|result| check(result.result == Err(ECANCELED)))?;
+            check(first.queue_to(1, &fixture.destination, None) == Err(EOVERFLOW))?;
+            drop(first);
+            let mut third = queue(&fixture, 1)?;
+            check(third.queue_to(1, &fixture.destination, None) == Err(EBUSY))?;
+            let job = second.try_claim(&fixture.rendered).ok_or(EINVAL)?;
+            job.claim.release(Completion::Cpu);
+            check(second.advance() == 1)?;
+            third.queue_to(1, &fixture.destination, None)?;
+            second.dequeue(|result| check(result.result == Ok(())))?;
+            third.cancel(1)?;
+            check(third.advance() == 1)?;
+            third.dequeue(|result| check(result.result == Err(ECANCELED)))
         })
     }
 }
