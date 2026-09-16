@@ -73,6 +73,8 @@
 #include <drm/drm_constraints_list.h>
 #include <drm/drm_constraints_encoding.h>
 #include <drm/drm_constraints_entry.h>
+#include <drm/drm_constraints_device.h>
+#include <drm/drm_constraints_output.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_device.h>
