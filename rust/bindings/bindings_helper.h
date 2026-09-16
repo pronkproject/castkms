@@ -39,6 +39,7 @@
 
 #include <linux/acpi.h>
 #include <linux/anon_inodes.h>
+#include <linux/dma-fence-retire.h>
 #include <linux/gpu_buddy.h>
 #include <drm/display/drm_hdcp.h>
 #include <drm/drm_atomic.h>

@@ -22,6 +22,8 @@ use core::ptr::NonNull;
 #[cfg(CONFIG_SYNC_FILE)]
 mod sync_file;
 
+pub mod retirement;
+
 /// A completion observation, keeping pending work distinct from unsuccessful completion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
