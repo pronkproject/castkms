@@ -16,6 +16,7 @@ pub(crate) mod private_image;
 pub(crate) mod private_registry;
 mod probe;
 pub(crate) mod proposal;
+pub(crate) mod render_job;
 mod revoker_file;
 mod scene_file;
 pub(crate) mod session;
