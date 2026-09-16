@@ -15,6 +15,7 @@
 
 #include "../../../../include/uapi/drm/castkms_drm.h"
 #include "../../../../include/uapi/drm/drm_capture.h"
+#include "../../../../include/uapi/drm/drm_prepare.h"
 
 _Static_assert(sizeof(struct drm_castkms_renderer_files) == 8,
 	       "renderer file ABI");
@@ -777,6 +778,25 @@ int main(int argc, char **argv)
 		      source.planes[i].offset == 0 &&
 		      source.planes[i].reserved == 0);
 	CHECK(fcntl(source.planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	/* A pending source reader must return through libdrm, not spin in drmIoctl. */
+	CHECK(drmSetClientCap(peer, DRM_CLIENT_CAP_ATOMIC_PREPARATION, 1) == 0);
+	struct drm_mode_prepare_replace prepare = {
+		.crtc_ids = (uintptr_t)&request.crtc_id, .count_crtcs = 1,
+	};
+	int ticket = ioctl(peer, DRM_IOCTL_MODE_PREPARE_REPLACE, &prepare);
+	struct drm_prepare_query ticket_state = {};
+	drmModeAtomicReq *prepared_update = drmModeAtomicAlloc();
+	CHECK(ticket >= 0 && prepared_update);
+	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &ticket_state) == 0);
+	CHECK(ticket_state.status == DRM_PREPARE_PENDING);
+	property(peer, prepared_update, request.crtc_id, DRM_MODE_OBJECT_CRTC,
+		 "PREPARE_FD", ticket);
+	alarm(5);
+	CHECK(drmModeAtomicCommit(peer, prepared_update, DRM_MODE_ATOMIC_NONBLOCK, NULL) < 0);
+	CHECK(errno == EBUSY);
+	alarm(0);
+	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &ticket_state) == 0);
+	CHECK(ticket_state.status == DRM_PREPARE_PENDING);
 	expect_ioctl_error(next_files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
 			   &dequeue_source, EBUSY);
@@ -802,6 +822,14 @@ int main(int argc, char **argv)
 			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
 			   &dequeue_source, ENODATA);
 	CHECK(close(source.planes[0].dma_buf_fd) == 0);
+	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &ticket_state) == 0);
+	CHECK(ticket_state.status == DRM_PREPARE_READY);
+	CHECK(drmModeAtomicCommit(peer, prepared_update, 0, NULL) == 0);
+	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &ticket_state) == 0);
+	CHECK(ticket_state.status == DRM_PREPARE_CONSUMED);
+	drmModeAtomicFree(prepared_update);
+	CHECK(close(ticket) == 0);
+	CHECK(drmSetClientCap(peer, DRM_CLIENT_CAP_ATOMIC_PREPARATION, 0) == 0);
 	connector = drmModeGetConnector(peer, connector_id);
 	CHECK(connector && connector->count_modes > 0);
 	CHECK(drmModeSetCrtc(peer, request.crtc_id, gpu_buffer.fb, 0, 0,

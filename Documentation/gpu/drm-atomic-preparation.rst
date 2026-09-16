@@ -333,7 +333,11 @@ Acceptance checks the issuing authority and the complete CRTC generation set
 after driver validation has expanded the atomic update. An incomplete or stale
 set returns ``ESTALE`` without installing new state. The client must discard
 the old ticket and prepare the intended output set again. Pending preparation
-returns ``EAGAIN``; a competing ordinary update may still produce ``EBUSY``.
+returns ``EBUSY`` without consuming the ticket. Query/poll the ticket before
+retrying. A competing ordinary update may also produce ``EBUSY``; the error
+alone does not promise a flip event. Pending preparation does not return
+``EAGAIN``, which libdrm's ``drmIoctl()`` retries without returning to the
+event loop. ``drmModeAtomicCommit()`` remains usable with preparation enabled.
 A required but absent ticket returns ``EINVAL`` rather than a readiness error.
 None of those errors means that display state was accepted. Closing or revoking a
 ticket cancels an unaccepted request, while an accepted transaction retains

@@ -78,13 +78,16 @@ static int observe_submission(struct drm_atomic_commit *state,
 int drm_atomic_prepare_submission_attach(struct drm_atomic_commit *state)
 {
 	struct drm_atomic_prepare_submission *submission = state->prepare_submission;
+	int ret;
 
 	if (!submission)
 		return 0;
 	if (!submission->ticket)
 		return -EINVAL;
-	return drm_atomic_commit_prepare_owned(state, submission->ticket, submission->owner,
-					      observe_submission);
+	ret = drm_atomic_commit_prepare_owned(state, submission->ticket, submission->owner,
+					     observe_submission);
+	/* drmIoctl retries EAGAIN indefinitely; readiness needs an external event. */
+	return ret == -EAGAIN ? -EBUSY : ret;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_prepare_submission_attach);
 
