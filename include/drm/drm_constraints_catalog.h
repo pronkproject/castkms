@@ -51,6 +51,31 @@ int drm_constraints_catalog_forget(struct drm_constraints_catalog *catalog, u64 
 int drm_constraints_catalog_suggest(struct drm_constraints_catalog *catalog, u64 id);
 
 /*
+ * Validate or accept an exact retained entry under the catalog lock. The caller
+ * first stabilizes modesetting authority and all affected object state. Callback
+ * lock order is caller locks -> catalog lock -> provider locks; callbacks must
+ * not reenter catalog operations or acquire the caller locks again.
+ *
+ * Check has no reservation effect; its callback must have no external effects.
+ * Accept repeats availability validation and calls install before changing the
+ * selected ID. Install must perform all remaining fallible checks before any
+ * state changes, return a negative errno without changing state on failure, or
+ * return zero after irrevocable acceptance. No later activation acknowledgment
+ * is required.
+ * Accepted state must retain entry itself for delayed publication and reads.
+ *
+ * Repeating the selected entry preserves the generation, including when its
+ * offer has been withdrawn. Provider readiness/authority checks still apply.
+ * Neither operation grants source access or substitutes for full-scene checks.
+ */
+int drm_constraints_catalog_check(struct drm_constraints_catalog *catalog,
+				  struct drm_constraints_entry *entry,
+				  int (*check)(struct drm_constraints_entry *, void *), void *data);
+int drm_constraints_catalog_accept(struct drm_constraints_catalog *catalog,
+				   struct drm_constraints_entry *entry,
+				   int (*install)(struct drm_constraints_entry *, void *), void *data);
+
+/*
  * Returns one immutable snapshot, or ESTALE for a nonzero mismatching expected
  * generation. A snapshot owns all its entry references and reserves no future
  * selection. Views remain valid until snapshot_put(). No wire layout is implied.

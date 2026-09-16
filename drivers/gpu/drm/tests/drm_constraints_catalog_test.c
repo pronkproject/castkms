@@ -194,6 +194,110 @@ static void construction_requires_bounded_matching_scope(struct kunit *test)
 		ERR_PTR(-EINVAL));
 }
 
+struct install_context {
+	struct drm_constraints_entry *accepted;
+	unsigned int calls;
+	int result;
+};
+
+static int validate(struct drm_constraints_entry *entry, void *data)
+{
+	struct install_context *context = data;
+
+	context->calls++;
+	return context->result;
+}
+
+static int install(struct drm_constraints_entry *entry, void *data)
+{
+	struct install_context *context = data;
+
+	context->calls++;
+	if (context->result)
+		return context->result;
+	context->accepted = drm_constraints_entry_get(entry);
+	return 0;
+}
+
+static void test_only_does_not_reserve_selection(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct install_context context = {};
+	u64 id = drm_constraints_entry_id(target);
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(fixture->catalog, target), 0);
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_catalog_check(fixture->catalog, target, validate, &context), 0);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_snapshot_info(snapshot(test, fixture->catalog, 0))->selected_id,
+		drm_constraints_entry_id(fixture->initial));
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_withdraw(fixture->catalog, id), 0);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, target, install, &context), -ESTALE);
+	KUNIT_EXPECT_EQ(test, context.calls, 1);
+	KUNIT_EXPECT_PTR_EQ(test, context.accepted, NULL);
+}
+
+static void accepted_selection_survives_withdrawal(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct install_context context = {};
+	const struct drm_constraints_snapshot_info *info;
+	u64 id = drm_constraints_entry_id(target), generation;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(fixture->catalog, target), 0);
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, target, install, &context), 0);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, context.accepted), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_withdraw(fixture->catalog, id), 0);
+	info = drm_constraints_snapshot_info(snapshot(test, fixture->catalog, 0));
+	KUNIT_EXPECT_EQ(test, info->selected_id, id);
+	generation = info->generation;
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, target, validate, &context), 0);
+	snapshot(test, fixture->catalog, generation);
+	kunit_release_action(test, put_catalog, fixture->catalog);
+	KUNIT_EXPECT_EQ(test, drm_constraints_entry_id(context.accepted), id);
+}
+
+static void failed_installation_preserves_selection(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct install_context context = { .result = -ENOMEM };
+	const struct drm_constraints_snapshot_info *info;
+	u64 generation;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(fixture->catalog, target), 0);
+	info = drm_constraints_snapshot_info(snapshot(test, fixture->catalog, 0));
+	generation = info->generation;
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, target, install, &context), -ENOMEM);
+	info = drm_constraints_snapshot_info(snapshot(test, fixture->catalog, generation));
+	KUNIT_EXPECT_EQ(test, info->selected_id, drm_constraints_entry_id(fixture->initial));
+	KUNIT_EXPECT_PTR_EQ(test, context.accepted, NULL);
+	context.result = 1;
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, target, install, &context), -EINVAL);
+	snapshot(test, fixture->catalog, generation);
+}
+
+static void equal_ids_do_not_authorize_foreign_entries(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 1);
+	struct catalog_fixture *other = new_fixture(test, 1);
+	struct install_context context = {};
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_entry_id(fixture->initial),
+			drm_constraints_entry_id(other->initial));
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, other->initial, install, &context),
+		-ESTALE);
+	KUNIT_EXPECT_EQ(test, context.calls, 0);
+}
+
 static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(snapshots_retain_immutable_entries),
 	KUNIT_CASE(changes_invalidate_expected_generations),
@@ -201,6 +305,10 @@ static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(removing_an_entry_preserves_other_identities),
 	KUNIT_CASE(catalogs_reject_foreign_scope_and_overflow),
 	KUNIT_CASE(construction_requires_bounded_matching_scope),
+	KUNIT_CASE(test_only_does_not_reserve_selection),
+	KUNIT_CASE(accepted_selection_survives_withdrawal),
+	KUNIT_CASE(failed_installation_preserves_selection),
+	KUNIT_CASE(equal_ids_do_not_authorize_foreign_entries),
 	{}
 };
 
