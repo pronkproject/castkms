@@ -240,6 +240,15 @@ references can outlive that borrow without retaining the DRM device. Providers
 still establish readiness and authority before publishing an entry. Closure
 is permanent, not a reversible owner-interval reset or default restoration.
 
+``CrtcStateMutator::set_constraints()`` places a retained entry in an unchecked
+candidate; it does not reserve acceptance. Omission preserves the duplicated
+binding. ``RawCrtcState::constraints_entry()`` borrows the exact proposed or
+accepted entry, including in commit callbacks. Delayed work must retain that
+binding rather than consult a later output selection. Rust tests construct
+NV12 shmem framebuffers while an enabled XRGB-only entry remains selected,
+then atomically switch the entry and scene and observe the target in the
+commit tail. Repeated or omitted selection preserves the list generation.
+
 ``OpaqueEntry::new_stateless()`` uses common DRM destruction for backends
 without private per-entry resources. It avoids a permanent default retaining
 its provider module solely for a metadata release callback. Device and accepted

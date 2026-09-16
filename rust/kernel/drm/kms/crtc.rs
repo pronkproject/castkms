@@ -965,6 +965,16 @@ pub(super) use private::AsRawCrtcState as AsRawCrtcStatePrivate;
 /// This is implemented internally by DRM, and provides many of the basic methods for working with
 /// the atomic state of [`Crtc`]s.
 pub trait RawCrtcState: AsRawCrtcState {
+    /// Borrow the exact constraints entry retained by this proposed or accepted state.
+    ///
+    /// `None` denotes an output without constraints. The reference grants neither readiness
+    /// nor source access. Commit callbacks must use this binding, not a changing selected entry.
+    fn constraints_entry(&self) -> Option<&crate::drm::constraints::OpaqueEntry> {
+        // SAFETY: The state view stabilizes its retained entry pointer. The transparent view
+        // borrows that entry no longer than the owning state and cannot access private context.
+        unsafe { NonNull::new((*self.as_raw()).constraints).map(|entry| entry.cast().as_ref()) }
+    }
+
     /// Whether output color properties changed in this atomic candidate.
     fn color_mgmt_changed(&self) -> bool {
         // SAFETY: The state is live and immutable for this borrow.
@@ -1234,6 +1244,20 @@ impl<'a, T: FromRawCrtcState> CrtcStateMutator<'a, T> {
         // SAFETY: `as_raw()` is a valid `drm_crtc_state`, and holding this mutator is proof that
         // no other reference to it exists.
         unsafe { (*self.as_raw()).set_mode_changed(changed) };
+    }
+
+    /// Retain a candidate constraints binding in an unchecked proposed CRTC state.
+    ///
+    /// Omission preserves the duplicated binding. Selection is accepted only with the complete
+    /// scene at native installation; neither this call nor TEST_ONLY reserves availability.
+    /// Native code rejects unattached outputs, unavailable entries and checked transactions.
+    pub fn set_constraints(&mut self, entry: &crate::drm::constraints::OpaqueEntry) -> Result {
+        // SAFETY: The mutator exclusively owns the proposed state under its modeset lock.
+        // Native code validates transaction ownership and availability before replacing its
+        // retained reference. The borrowed entry remains initialized throughout the call.
+        crate::error::to_result(unsafe {
+            bindings::drm_atomic_set_constraints_for_crtc(self.as_raw(), entry.as_raw())
+        })
     }
 
     /// Replace the output gamma table in an unpublished atomic candidate.
