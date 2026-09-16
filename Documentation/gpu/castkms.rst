@@ -149,11 +149,11 @@ driver's labels and should not be used as device identifiers.
 Virtual monitor control
 -----------------------
 
-The current DRM master can issue one monitor-control capability for the
+The current DRM master can issue one monitor-control capability per selected
 virtual connector with ``DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL``. Issuance
 requires the master to hold the connector and replaces the standalone monitor
 with a disconnected managed monitor. A second capability is rejected while
-the first remains open.
+the first remains open for that connector.
 
 The anonymous close-on-exec control file supports only query, attach and detach
 operations. Attach accepts either a complete validated EDID or no EDID, in
