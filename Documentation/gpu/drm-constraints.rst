@@ -135,7 +135,9 @@ currently selected constraints.
 Under the CRTC modeset lock, a kernel caller sets a proposed binding with
 ``drm_atomic_set_constraints_for_crtc()``. The setter retains the entry, not
 availability or authority. A null entry is invalid. Duplicated state retains
-the accepted binding, so omission preserves selection. Repeating selection
+the accepted binding, so omission preserves selection. Only unchecked,
+transaction-owned proposed state is mutable; live, detached and retiring
+states cannot be rebound through the setter. Repeating selection
 does not request another transition. A changed binding requires modeset
 permission and marks the transaction as needing a modeset.
 
@@ -144,7 +146,9 @@ active planes, then checks allocation and scalar rules after driver checking.
 Scalar values come from proposed atomic state, never current-state readback.
 The provider's full-scene callback is required both during validation and
 immediately before acceptance. All resources required by that callback must
-already be ready; it must not wait for userspace or submit work.
+already be ready. The callback must not mutate the transaction or its proposed
+object states, wait for userspace or submit work. Derived-state calculation
+belongs in the driver's earlier atomic checks, not in final readiness checking.
 
 The common swap path calls constraints acceptance after predecessor waits and
 driver/preparation serialization, before installing any object state. Under
@@ -192,8 +196,8 @@ Rust access and tests
 =====================
 
 ``kernel::drm::constraints`` wraps descriptions, property records, domains,
-typed backend entries, lists and snapshots. Native C code owns validation,
-identity allocation and serialization. Rust views borrow their owning
+typed backend entries, lists, snapshots and encoded bytes. Native C code owns
+validation, identity allocation and serialization. Rust views borrow their owning
 description or snapshot; entries retain typed provider resources and their
 callback module. Construction and final release require sleepable context.
 These metadata wrappers do not provide Rust KMS attachment or installation.
@@ -201,6 +205,10 @@ These metadata wrappers do not provide Rust KMS attachment or installation.
 The ``drm_constraints*`` and ``drm_atomic_constraints`` KUnit suites cover
 bounded metadata, scopes, snapshots, withdrawal, closure, native state
 ownership, disjoint linear/tiled framebuffer metadata and actual state swaps.
+Complete-scene cases include overlay/cursor allocation, cropping, scaling,
+alpha and stacking, while independent outputs repeatedly update without
+sharing selection or retirement. Encoding tests cover maximum lists, zero
+padding, short buffers and unaligned storage on both x86-32 and x86-64.
 Threaded tests hold a native read fence through target acceptance or shutdown
 and verify that cleanup cannot release the predecessor backend early. The
 ``drm_atomic_property`` suite checks proposed-value decoding; Rust suites are
