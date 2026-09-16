@@ -12,6 +12,8 @@
 #include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
+#include <drm/drm_blend.h>
+#include <drm/drm_color_mgmt.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_constraints_catalog.h>
 #include <drm/drm_constraints_device.h>
@@ -103,7 +105,9 @@ static void put_entry(void *data) { drm_constraints_entry_put(data); }
 static void put_fb(void *data) { drm_framebuffer_put(data); }
 
 static struct drm_constraints_entry *
-new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier, unsigned int backend)
+new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier,
+	  unsigned int backend, const struct drm_constraints_property *rules,
+	  unsigned int rule_count)
 {
 	const struct drm_constraints_size size = { 128, 64, 128, 64 };
 	const struct drm_constraints_format allocation = {
@@ -115,7 +119,7 @@ new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
 
-	description = drm_constraints_description_create(&size, &allocation, 1, NULL, 0);
+	description = drm_constraints_description_create(&size, &allocation, 1, rules, rule_count);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	entry = drm_constraints_entry_create(drm_constraints_device_domain(f->dev), f->crtc->base.id,
@@ -162,11 +166,20 @@ static struct atomic_fixture *new_fixture(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(f->dev, 8), 0);
 	f->plane = drm_kunit_helper_create_primary_plane(test, f->dev, NULL, NULL,
 							 formats, ARRAY_SIZE(formats), modifiers);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->plane);
+	KUNIT_ASSERT_EQ(test, drm_plane_create_alpha_property(f->plane), 0);
+	KUNIT_ASSERT_EQ(test, drm_plane_create_zpos_property(f->plane, 0, 0, 3), 0);
+	KUNIT_ASSERT_EQ(test, drm_plane_create_rotation_property(f->plane,
+			DRM_MODE_ROTATE_0, DRM_MODE_ROTATE_0 | DRM_MODE_ROTATE_90), 0);
+	KUNIT_ASSERT_EQ(test, drm_plane_create_color_properties(f->plane,
+			BIT(DRM_COLOR_YCBCR_BT601) | BIT(DRM_COLOR_YCBCR_BT709),
+			BIT(DRM_COLOR_YCBCR_LIMITED_RANGE) | BIT(DRM_COLOR_YCBCR_FULL_RANGE),
+			DRM_COLOR_YCBCR_BT601, DRM_COLOR_YCBCR_LIMITED_RANGE), 0);
 	f->crtc = drm_kunit_helper_create_crtc(test, f->dev, f->plane, NULL, NULL, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->crtc);
 	drm_mode_config_reset(f->dev);
-	f->initial = new_entry(test, f, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, 0);
-	f->target = new_entry(test, f, DRM_FORMAT_ARGB8888, I915_FORMAT_MOD_X_TILED, 1);
+	f->initial = new_entry(test, f, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, 0, NULL, 0);
+	f->target = new_entry(test, f, DRM_FORMAT_ARGB8888, I915_FORMAT_MOD_X_TILED, 1, NULL, 0);
 	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(f->crtc, f->initial, 4, &output_ops), 0);
 	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, f->target), 0);
 	f->linear = new_fb(test, f, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, 128);
@@ -785,6 +798,88 @@ static void closed_output_shutdown_waits_for_native_read(struct kunit *test)
 	check_retained_native_read(test, false, true);
 }
 
+static void proposed_scene_obeys_scalar_property_rules(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	const struct drm_constraints_property rules[] = {
+		{ .object_id = f->plane->base.id, .property_id = f->plane->alpha_property->base.id,
+		  .type = DRM_MODE_PROP_RANGE, .minimum = 32768, .maximum = 65535 },
+		{ .object_id = f->plane->base.id,
+		  .property_id = f->plane->rotation_property->base.id,
+		  .type = DRM_MODE_PROP_BITMASK, .mask = DRM_MODE_ROTATE_0 },
+		{ .object_id = f->plane->base.id, .property_id = f->plane->zpos_property->base.id,
+		  .type = DRM_MODE_PROP_RANGE, .minimum = 1, .maximum = 2 },
+		{ .object_id = f->plane->base.id,
+		  .property_id = f->plane->color_encoding_property->base.id,
+		  .type = DRM_MODE_PROP_ENUM, .mask = BIT_ULL(DRM_COLOR_YCBCR_BT709) },
+		{ .object_id = f->crtc->base.id,
+		  .property_id = f->dev->mode_config.prop_vrr_enabled->base.id,
+		  .type = DRM_MODE_PROP_RANGE, .minimum = 0, .maximum = 0 },
+		{ .object_id = f->plane->base.id,
+		  .property_id = f->dev->mode_config.prop_crtc_x->base.id,
+		  .type = DRM_MODE_PROP_SIGNED_RANGE, .minimum = (u64)-4, .maximum = 4 },
+	};
+	struct drm_constraints_entry *target = new_entry(test, f, DRM_FORMAT_ARGB8888,
+					I915_FORMAT_MOD_X_TILED, 1, rules, ARRAY_SIZE(rules));
+	struct drm_atomic_commit *state;
+	struct drm_crtc_state *crtc;
+	struct drm_plane_state *plane;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, target), 0);
+	state = new_update(test, f, target, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	plane = drm_atomic_get_new_plane_state(state, f->plane);
+	crtc = drm_atomic_get_new_crtc_state(state, f->crtc);
+	plane->zpos = 1;
+	plane->color_encoding = DRM_COLOR_YCBCR_BT709;
+	plane->alpha = 32767;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->alpha = 32768;
+	plane->rotation = DRM_MODE_ROTATE_90;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->rotation = DRM_MODE_ROTATE_0;
+	plane->zpos = 3;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->zpos = 2;
+	plane->color_encoding = DRM_COLOR_YCBCR_BT601;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->color_encoding = DRM_COLOR_YCBCR_BT709;
+	crtc->vrr_enabled = true;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	crtc->vrr_enabled = false;
+	plane->crtc_x = -5;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->crtc_x = -4;
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, target);
+	KUNIT_EXPECT_EQ(test, f->plane->state->alpha, 32768);
+	KUNIT_EXPECT_EQ(test, f->plane->state->crtc_x, -4);
+}
+
+static void installation_rechecks_proposed_property_values(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	const struct drm_constraints_property rule = {
+		.object_id = f->plane->base.id, .property_id = f->plane->alpha_property->base.id,
+		.type = DRM_MODE_PROP_RANGE, .minimum = 32768, .maximum = 65535,
+	};
+	struct drm_constraints_entry *target = new_entry(test, f, DRM_FORMAT_ARGB8888,
+							I915_FORMAT_MOD_X_TILED, 1, &rule, 1);
+	struct drm_atomic_commit *state;
+	struct drm_crtc_state *before = f->crtc->state;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, target), 0);
+	state = new_update(test, f, target, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	/* Inject a post-check driver mutation; installation must fail before swap. */
+	drm_atomic_get_new_plane_state(state, f->plane)->alpha = 0;
+	KUNIT_EXPECT_EQ(test, run_update(state, swap_update), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+}
+
 static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(target_creation_precedes_atomic_selection),
 	KUNIT_CASE(readiness_loss_after_check_prevents_installation),
@@ -806,6 +901,8 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(predecessor_backend_survives_native_read),
 	KUNIT_CASE(failed_read_retires_without_rolling_back_target),
 	KUNIT_CASE(closed_output_shutdown_waits_for_native_read),
+	KUNIT_CASE(proposed_scene_obeys_scalar_property_rules),
+	KUNIT_CASE(installation_rechecks_proposed_property_values),
 	{}
 };
 
