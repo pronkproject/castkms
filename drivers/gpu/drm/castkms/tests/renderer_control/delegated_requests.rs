@@ -114,6 +114,37 @@ mod cases {
     use super::*;
 
     #[test]
+    fn queued_worker_loss_reconciles_without_claiming_private_content() -> Result {
+        with_output(|fixture| {
+            let observation = fixture.active.observation();
+            let request = fixture.destination.request(1, None)?;
+            drop(fixture.rendered);
+            drop(fixture.active);
+            check(
+                request.status_for(&fixture.renderer, &observation) == Status::Complete(Err(EIO)),
+            )?;
+            check(request.native_completion().is_none())?;
+            drop(fixture.destination.reserve(2, None)?);
+            private_available(&fixture.private, 2)
+        })
+    }
+
+    #[test]
+    fn observed_claim_does_not_keep_the_worker_active() -> Result {
+        with_output(|fixture| {
+            let observation = fixture.active.observation();
+            let request = fixture.destination.request(1, None)?;
+            let claim = request
+                .try_claim_observed(&fixture.renderer, &observation, &fixture.rendered)?
+                .ok_or(EINVAL)?;
+            drop(fixture.active);
+            check(request.status_for(&fixture.renderer, &observation) == Status::Pending)?;
+            claim.release(Completion::WithoutAccess);
+            check(request.status_for(&fixture.renderer, &observation) == Status::Complete(Err(EIO)))
+        })
+    }
+
+    #[test]
     fn rejected_request_admission_does_not_consume_a_destination_use() -> Result {
         with_output(|fixture| {
             check(fixture.destination.request(0, None).err() == Some(EINVAL))?;

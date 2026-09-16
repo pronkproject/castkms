@@ -124,6 +124,16 @@ impl Request {
         }
     }
 
+    /// Reconcile worker loss without retaining its active ownership or claiming an image.
+    pub(crate) fn status_for(&self, renderer: &Candidate, active: &Observation) -> Status {
+        if matches!(self.state.lock().phase, Phase::Queued) {
+            if let Err(error) = renderer.with_observed_control(active, |_| Ok(())) {
+                self.fail_queued(error);
+            }
+        }
+        self.status()
+    }
+
     pub(crate) fn content_serial(&self) -> Option<ContentSerial> {
         let state = self.state.lock();
         if matches!(state.phase, Phase::Complete(Ok(()))) {
@@ -150,6 +160,16 @@ impl Request {
         active: &Active,
         image: &Arc<Rendered>,
     ) -> Result<Option<Claim>> {
+        self.try_claim_observed(renderer, &active.observation(), image)
+    }
+
+    /// Claim against an observed incarnation without extending active worker ownership.
+    pub(crate) fn try_claim_observed(
+        self: &Arc<Self>,
+        renderer: &Arc<Candidate>,
+        active: &Observation,
+        image: &Arc<Rendered>,
+    ) -> Result<Option<Claim>> {
         let result = self.prepare_claim(renderer, active, image);
         if let Err(error) = result.as_ref() {
             self.fail_queued(*error);
@@ -160,7 +180,7 @@ impl Request {
     fn prepare_claim(
         self: &Arc<Self>,
         renderer: &Arc<Candidate>,
-        active: &Active,
+        active: &Observation,
         image: &Arc<Rendered>,
     ) -> Result<Option<Claim>> {
         let usage = {
@@ -174,7 +194,7 @@ impl Request {
         };
         // Authority loss is terminal even while a downstream reuse fence is pending.
         self.destination.scope().with_current(|_| Ok(()))?;
-        let observation = active.observation();
+        let observation = active.clone();
         renderer.with_observed_control(&observation, |_| Ok(()))?;
         let source_ready = match image.content().status() {
             FenceStatus::Pending => false,
