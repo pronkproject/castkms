@@ -29,7 +29,7 @@ struct drm_constraints_snapshot {
 
 struct drm_constraints_list *
 drm_constraints_list_create(struct drm_constraints_domain *domain,
-			       struct drm_constraints_entry *initial, unsigned int limit)
+			    struct drm_constraints_entry *initial, unsigned int limit)
 {
 	struct drm_constraints_list *list;
 
@@ -113,9 +113,9 @@ drm_constraints_list_selected(struct drm_constraints_list *list)
 EXPORT_SYMBOL_GPL(drm_constraints_list_selected);
 
 int drm_constraints_list_quiesce(struct drm_constraints_list *list,
-				    struct drm_constraints_entry *entry,
-				    int (*quiesce)(struct drm_constraints_entry *, void *),
-				    void *data)
+				 struct drm_constraints_entry *entry,
+				 int (*quiesce)(struct drm_constraints_entry *, void *),
+				 void *data)
 {
 	int index, ret;
 
@@ -130,7 +130,7 @@ int drm_constraints_list_quiesce(struct drm_constraints_list *list,
 }
 
 int drm_constraints_list_add(struct drm_constraints_list *list,
-				struct drm_constraints_entry *entry)
+			     struct drm_constraints_entry *entry)
 {
 	int ret = 0;
 
@@ -275,8 +275,8 @@ drm_constraints_list_lookup(struct drm_constraints_list *list, u64 id)
 EXPORT_SYMBOL_GPL(drm_constraints_list_lookup);
 
 int drm_constraints_list_check(struct drm_constraints_list *list,
-				  struct drm_constraints_entry *entry,
-				  int (*check)(struct drm_constraints_entry *, void *), void *data)
+			       struct drm_constraints_entry *entry,
+			       int (*check)(struct drm_constraints_entry *, void *), void *data)
 {
 	int ret;
 
@@ -292,8 +292,8 @@ int drm_constraints_list_check(struct drm_constraints_list *list,
 EXPORT_SYMBOL_GPL(drm_constraints_list_check);
 
 int drm_constraints_list_accept(struct drm_constraints_list *list,
-				   struct drm_constraints_entry *entry,
-				   int (*install)(struct drm_constraints_entry *, void *), void *data)
+				struct drm_constraints_entry *entry,
+				int (*install)(struct drm_constraints_entry *, void *), void *data)
 {
 	int ret;
 	bool changed;
