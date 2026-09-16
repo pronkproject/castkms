@@ -29,22 +29,19 @@ static int open_client(const char *path)
 static struct display discover(int fd)
 {
 	drmModeRes *resources = drmModeGetResources(fd);
-	drmModePlaneRes *planes = drmModeGetPlaneResources(fd);
 	drmModeConnector *connector;
 	struct display d;
 
 	CHECK(resources && resources->count_crtcs == 1 && resources->count_connectors == 1);
-	CHECK(planes && planes->count_planes == 1);
 	d.crtc = resources->crtcs[0];
 	d.connector = resources->connectors[0];
-	d.plane = planes->planes[0];
+	d.plane = primary_plane(fd, 0);
 	connector = drmModeGetConnector(fd, d.connector);
 	CHECK(connector && connector->connection == DRM_MODE_CONNECTED);
 	CHECK(connector->count_modes > 0);
 	d.mode = connector->modes[0];
 	CHECK(drmModeCreatePropertyBlob(fd, &d.mode, sizeof(d.mode), &d.mode_blob) == 0);
 	drmModeFreeConnector(connector);
-	drmModeFreePlaneResources(planes);
 	drmModeFreeResources(resources);
 	return d;
 }
