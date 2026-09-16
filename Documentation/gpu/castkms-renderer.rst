@@ -324,7 +324,30 @@ independently of result dequeue or the recipient's later use. Unreported
 claimed access is explicitly lost and quarantined, not normal completion
 or permission to reuse storage.
 
-Bounded output queues and advisory wakeups are implemented in the provider.
+The provider supports at most sixteen live queues per device and eight
+requests per queue, including unacknowledged terminal results. Native work
+retains its accounting after queue removal. Per-output route ownership
+publishes a bounded recipient directory with round-robin selection; observing
+the route or a queue does not keep the renderer's active ownership alive.
+Selection skips recipients with pending reuse or busy metadata publication.
+Closing discovery does not wait behind a recipient's userspace copyout:
+the current queue operation reconciles cancellation after unlocking.
+
+Renderer sessions have independent source and output publication slots.
+An output claim reserves only its admitted private image and destination;
+source animation can continue while an earlier output write remains pending.
+Failed output publication releases with no access. Published access retains
+both allocations until the worker reports how access ended and any submitted
+native work has retired.
+Lost native access returns ``EIO`` without publishing or acknowledging a
+completed result; it never implies that the destination can be reused.
+
+Advisory wakeups cover scene changes, authority loss, reuse completion,
+private-image production and output retirement. Recipient operations notify
+again after unlocking so a worker that skipped a busy queue can retry.
+Observers register before checking authoritative state. Detaching a fence
+observation does not complete native work or release its storage ownership.
+
 Public output-job transport, delegated capture-file integration, negotiated
 destination layouts and real GPU rendering remain unimplemented. The public
 capture endpoint still uses HOST delivery; renderer scene jobs bind registered
