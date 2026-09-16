@@ -208,7 +208,8 @@ blocking atomic request only after the output is disabled and plane-free.
 It does not reuse an enabled scene. A changed selection must pass the default's
 availability and provider checks. Failure leaves the selected binding alone;
 list closure is permanent and is not undone by restoration. A repeated request
-for the already selected default installs no further state.
+for the already selected default in an open list installs no further state.
+A closed list returns ``ESTALE`` even if its default is already selected.
 
 The caller must prevent competing modesets and replacement owners throughout
 restoration and revoke the departing owner's source access beforehand. It must
@@ -241,6 +242,13 @@ the same control while their owner excludes teardown. Entry and snapshot
 references can outlive that borrow without retaining the DRM device. Providers
 still establish readiness and authority before publishing an entry. Closure
 is permanent, not a reversible owner-interval reset or default restoration.
+
+``Output::restore_default()`` exposes the disabled-output request described
+above. It does not revoke access, establish an authority gate or disable an
+active output. Its caller must provide those owner-lifetime boundaries. The
+Rust CPU-provider test retains an NV12 job while disabling scanout, exercises
+failed and successful default restoration, and verifies that restoration does
+not reinterpret the retained job or reopen a closed list.
 
 ``CrtcStateMutator::set_constraints()`` places a retained entry in an unchecked
 candidate; it does not reserve acceptance. Omission preserves the duplicated

@@ -407,6 +407,70 @@ mod cases {
     }
 
     #[test]
+    fn disabled_default_restoration_preserves_retained_job_identity() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        counts.constraints_capacity.store(4, Ordering::Relaxed);
+        counts.preparation_capacity.store(8, Ordering::Relaxed);
+        counts.constraints_render.store(1, Ordering::Relaxed);
+        let parent = faux::Registration::new(c"rust-constraints-default-restore", None)?;
+        let dev = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let output = dev.constraints_output(0)?;
+        let initial = output.default_entry().id();
+        let target = format_entry(
+            output.domain(),
+            dev.crtc()?.object_id(),
+            dev.plane()?.object_id(),
+            fourcc::NV12,
+        )?;
+        output.add(&target)?;
+        let image = nv12(&dev, &counts)?;
+        let mode = mode()?;
+        let scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &image,
+            connectors: &[dev.connector()?],
+            position: (0, 0),
+        };
+        dev.update(|mut state| {
+            state
+                .as_mut()
+                .set_crtc_config(dev.crtc()?, Some(&scanout))?;
+            state.add_crtc_state(dev.crtc()?)?.set_constraints(&target)
+        })?;
+        let retained = counts.constraints_work.take().ok_or(EINVAL)?;
+        assert_eq!(retained.render(), Ok(0xffffff));
+        assert_eq!(output.restore_default(), Err(EBUSY));
+        assert_eq!(output.selected().id(), target.id());
+
+        // The private owner admits no concurrent requests or external source consumers.
+        // Disable and retire its old scanout before requesting the fixed default.
+        dev.update(|state| state.set_crtc_config(dev.crtc()?, None))?;
+        assert!(counts.constraints_work.take().is_none());
+        assert_eq!(output.selected().id(), target.id());
+        counts.fail_constraints.store(1, Ordering::Relaxed);
+        assert_eq!(output.restore_default(), Err(EIO));
+        assert_eq!(output.selected().id(), target.id());
+        counts.fail_constraints.store(0, Ordering::Relaxed);
+        assert_eq!(output.restore_default(), Ok(()));
+        assert_eq!(output.selected().id(), initial);
+        assert_eq!(retained.binding.id(), target.id());
+        assert!(counts.constraints_work.take().is_none());
+        let generation = output.snapshot(0)?.info().generation;
+        assert_eq!(output.restore_default(), Ok(()));
+        assert_eq!(output.snapshot(0)?.info().generation, generation);
+        output.close();
+        assert_eq!(output.restore_default(), Err(ESTALE));
+        assert_eq!(output.add(&target), Err(ESTALE));
+        drop(retained);
+        drop(image);
+        drop(output);
+        drop(dev);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
+    #[test]
     fn cpu_jobs_use_the_backend_retained_by_the_accepted_scene() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         counts.constraints_capacity.store(4, Ordering::Relaxed);

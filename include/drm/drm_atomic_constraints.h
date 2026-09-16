@@ -20,7 +20,8 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
  * Restore a disabled, plane-free output to its retained fixed default through
  * an ordinary blocking atomic request. An enabled output returns EBUSY. A new
  * default selection must be available and pass provider validation. Already
- * selected defaults are no-ops, not a readiness promise for future rendering.
+ * selected defaults in open lists are no-ops, not a readiness promise for future
+ * rendering. Closed lists return ESTALE even when the default is selected.
  *
  * The caller keeps the device/CRTC alive, excludes competing modesets and new
  * owners, and has revoked the departing owner's source access. Do not hold
