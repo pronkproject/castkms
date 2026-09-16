@@ -23,6 +23,7 @@ use core::ptr::NonNull;
 mod sync_file;
 
 pub mod retirement;
+pub mod wakeup;
 
 /// A completion observation, keeping pending work distinct from unsuccessful completion.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
