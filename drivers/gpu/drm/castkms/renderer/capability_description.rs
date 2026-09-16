@@ -139,6 +139,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
     Profile::new(
         Limits {
             geometry: GeometryLimits {
+                min_output: [1; 2],
+                min_source: [1; 2],
                 output: header.max_output,
                 source: header.max_source,
                 crop: has(uapi::DRM_CASTKMS_CAPABILITY_CROP),
@@ -261,6 +263,8 @@ mod tests {
         Profile::new(
             Limits {
                 geometry: GeometryLimits {
+                    min_output: [1; 2],
+                    min_source: [1; 2],
                     output: [16384; 2],
                     source: [16384; 2],
                     crop: true,
