@@ -14,7 +14,6 @@ pub(crate) struct Change<'a> {
     retired: RefCell<Option<(Active, worker::RetiredResults)>>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Configuration {
     /// Exclude replacement and shutdown before entering bounded display control.
     ///

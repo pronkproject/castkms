@@ -51,7 +51,6 @@ pub(crate) struct Reservation {
     token: u64,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Reservation {
     pub(crate) fn token(&self) -> u64 {
         self.token
@@ -161,7 +160,6 @@ impl Coordinator {
 
     /// Called only inside authorized renderer control. Registration does not restrict
     /// animation; the final tagged native installation will establish that restriction.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn reserve(
         self: &Arc<Self>,
         output: usize,
@@ -196,7 +194,6 @@ impl Coordinator {
 
     /// Retire reservations issued by one permission owner. Call while excluding
     /// that owner's authorization callbacks, before reporting revocation complete.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn revoke_owner(&self, owner: &Arc<()>) {
         self.invalidate_where(|pending| Arc::ptr_eq(&pending.owner, owner));
     }

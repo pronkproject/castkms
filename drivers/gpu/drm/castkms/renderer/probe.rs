@@ -52,7 +52,6 @@ pub(super) struct Probe {
     state: Mutex<State>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Probe {
     pub(super) fn new() -> impl PinInit<Self> {
         pin_init!(Self {

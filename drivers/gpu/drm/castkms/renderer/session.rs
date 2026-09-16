@@ -164,6 +164,7 @@ impl Session {
     }
 
     /// A current pending observation for reconciliation, not permission to activate it.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn pending_profile(
         &self,
     ) -> Result<Option<crate::execution::proposal::DescriptionSnapshot>> {

@@ -39,7 +39,6 @@ pub(crate) struct Permission {
     interval: Interval,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Permission {
     pub(crate) fn new(
         guard: &CurrentMasterGuard<'_, Driver>,
@@ -69,7 +68,6 @@ pub(crate) struct Owner {
     access: Access,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
     /// Allocate the owner outside native master, object-ID and modeset locks.
     pub(crate) fn new(permission: Permission) -> Result<Self> {

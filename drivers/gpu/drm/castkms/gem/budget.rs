@@ -18,7 +18,6 @@ pub(crate) struct Budget {
     used: Mutex<usize>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Budget {
     pub(crate) fn new(limit: usize) -> Result<Arc<Self>> {
         if limit == 0 {
