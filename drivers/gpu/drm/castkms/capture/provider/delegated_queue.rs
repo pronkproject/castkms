@@ -203,6 +203,8 @@ impl Queue {
 
     /// Copy/publish before acknowledging. Failure preserves the exact request record.
     /// Successful native completion is rechecked against current publication authority.
+    /// Lost native access returns EIO without publishing or acknowledging a completion;
+    /// neither that error nor queue destruction permits reuse of quarantined storage.
     pub(crate) fn dequeue<R>(
         &mut self,
         publish: impl FnOnce(Completion) -> Result<R>,
@@ -215,7 +217,7 @@ impl Queue {
                         .with_renderer(&self.renderer, &self.active, |_| Ok(()))
                 }
                 Status::Complete(Err(error)) => Err(error),
-                Status::Lost => Err(EIO),
+                Status::Lost => return Err(EIO),
                 Status::Pending => return Err(EIO),
             };
             publish(Completion {
