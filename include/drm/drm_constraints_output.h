@@ -37,6 +37,9 @@ void drm_constraints_crtc_fini(struct drm_crtc *crtc);
 /* Borrowed catalog, or NULL; valid throughout the CRTC lifetime. */
 struct drm_constraints_catalog *drm_constraints_crtc_catalog(struct drm_crtc *crtc);
 
+/* Publish a ready entry after validating device, CRTC and existing plane scope. */
+int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry *entry);
+
 /* Atomic state helper: initialize the owned binding without allocating. */
 void drm_constraints_crtc_state_init(struct drm_crtc_state *state);
 
