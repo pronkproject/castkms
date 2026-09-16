@@ -100,6 +100,15 @@ struct constraints_update {
 	void (*install)(struct drm_atomic_commit *state);
 };
 
+static bool quiescing_output(const struct constraints_update *update)
+{
+	const struct drm_crtc_state *crtc = update->crtc;
+
+	return !crtc->enable && !crtc->active && !crtc->plane_mask &&
+		crtc->constraints == drm_atomic_get_old_crtc_state(update->state,
+								 crtc->crtc)->constraints;
+}
+
 static int check_scene(struct drm_constraints_entry *entry, void *data)
 {
 	struct constraints_update *update = data;
@@ -141,18 +150,26 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 	}
 	if (mask != update->crtc->plane_mask)
 		return -EINVAL;
+	/* Stopping scanout requires no new work from an unavailable backend. */
+	if (quiescing_output(update))
+		return 0;
 	return output->ops->check(update->state, update->crtc, drm_constraints_entry_data(entry));
 }
 
 int drm_atomic_constraints_check(struct drm_atomic_commit *state)
 {
 	struct constraints_update update = { .state = state };
+	struct drm_constraints_catalog *catalog;
 	int ret = find_output(state, &update.crtc);
 
 	if (ret || !update.crtc)
 		return ret;
-	return drm_constraints_catalog_check(drm_constraints_crtc_catalog(update.crtc->crtc),
-					     update.crtc->constraints, check_scene, &update);
+	catalog = drm_constraints_crtc_catalog(update.crtc->crtc);
+	if (quiescing_output(&update))
+		return drm_constraints_catalog_quiesce(catalog, update.crtc->constraints,
+						       check_scene, &update);
+	return drm_constraints_catalog_check(catalog, update.crtc->constraints,
+					     check_scene, &update);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_constraints_check);
 
@@ -171,6 +188,7 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 				    void (*install)(struct drm_atomic_commit *state))
 {
 	struct constraints_update update = { .state = state, .install = install };
+	struct drm_constraints_catalog *catalog;
 	int ret;
 
 	if (!install)
@@ -182,7 +200,11 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 		install(state);
 		return 0;
 	}
-	return drm_constraints_catalog_accept(drm_constraints_crtc_catalog(update.crtc->crtc),
-					      update.crtc->constraints, install_scene, &update);
+	catalog = drm_constraints_crtc_catalog(update.crtc->crtc);
+	if (quiescing_output(&update))
+		return drm_constraints_catalog_quiesce(catalog, update.crtc->constraints,
+						       install_scene, &update);
+	return drm_constraints_catalog_accept(catalog, update.crtc->constraints,
+					      install_scene, &update);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_constraints_install);
