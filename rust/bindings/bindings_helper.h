@@ -52,6 +52,7 @@
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_prepare_commit.h>
 #include <drm/drm_atomic_prepare_file.h>
+#include <drm/drm_atomic_prepare_request.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_blend.h>
