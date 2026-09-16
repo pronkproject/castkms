@@ -3,7 +3,10 @@
 //! Recipient-owned storage bound to one delegated capture scope.
 
 use super::delegated::Delegated;
-use crate::{display_control::Current, image_storage::Registration};
+use crate::{
+    display_control::Current,
+    image_storage::{Pool, Registration},
+};
 use core::sync::atomic::{AtomicBool, Ordering};
 use kernel::{
     dma_buf::DmaBuf,
@@ -80,9 +83,11 @@ impl Delegated {
             }
         };
         self.with_current(check)?;
-        let storage = self
-            .storage_registry()
-            .register(dimensions, core::slice::from_ref(buffer))?;
+        let storage = self.storage_registry().register(
+            Pool::Recipient,
+            dimensions,
+            core::slice::from_ref(buffer),
+        )?;
         let image = Arc::pin_init(
             pin_init!(Image {
                 scope: self.clone(),
