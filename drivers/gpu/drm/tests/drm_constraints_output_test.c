@@ -77,7 +77,7 @@ new_entry(struct kunit *test, struct output_fixture *fixture, u32 crtc_id, u32 p
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
 
-	description = drm_constraints_description_create(&size, &format, 1);
+	description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	entry = drm_constraints_entry_create(drm_constraints_device_domain(&fixture->drm),
@@ -183,7 +183,7 @@ static void offers_require_advertised_plane_allocations(struct kunit *test)
 
 	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, initial, 4, &output_ops), 0);
 	for (i = 0; i < 2; i++) {
-		description = drm_constraints_description_create(&size, &format, 1);
+		description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 		KUNIT_ASSERT_EQ(test,
 				kunit_add_action_or_reset(test, put_description, description), 0);

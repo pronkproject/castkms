@@ -130,7 +130,13 @@ impl Description {
         // SAFETY: Transparent wrappers have native layout, both inputs remain readable for the
         // call, and native construction copies all input without retaining borrowed pointers.
         let raw = from_err_ptr(unsafe {
-            bindings::drm_constraints_description_create(&output.0, formats.as_ptr().cast(), count)
+            bindings::drm_constraints_description_create(
+                &output.0,
+                formats.as_ptr().cast(),
+                count,
+                core::ptr::null(),
+                0,
+            )
         })?;
         // SAFETY: Successful construction transfers one non-null initialized native reference.
         Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(raw.cast())) })

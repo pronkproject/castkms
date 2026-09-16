@@ -4,6 +4,7 @@
 #include <linux/module.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_mode.h>
 #include <kunit/test.h>
 
 static const struct drm_constraints_size output_size = { 1920, 1080, 1920, 1080 };
@@ -25,7 +26,7 @@ create_description(struct kunit *test, const struct drm_constraints_size *output
 {
 	struct drm_constraints_description *description;
 
-	description = drm_constraints_description_create(output, formats, count);
+	description = drm_constraints_description_create(output, formats, count, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put, description), 0);
 	return description;
@@ -74,11 +75,11 @@ static void drm_constraints_rejects_invalid_dimensions(struct kunit *test)
 
 	for (i = 0; i < ARRAY_SIZE(invalid); i++) {
 		KUNIT_EXPECT_PTR_EQ(test,
-			drm_constraints_description_create(&invalid[i], &linear, 1),
+			drm_constraints_description_create(&invalid[i], &linear, 1, NULL, 0),
 			ERR_PTR(-EINVAL));
 		format.size = invalid[i];
 		KUNIT_EXPECT_PTR_EQ(test,
-			drm_constraints_description_create(&output_size, &format, 1),
+			drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
 			ERR_PTR(-EINVAL));
 	}
 }
@@ -88,18 +89,22 @@ static void drm_constraints_rejects_invalid_formats(struct kunit *test)
 	struct drm_constraints_format formats[] = { linear, linear };
 
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 2), ERR_PTR(-EEXIST));
+		drm_constraints_description_create(&output_size, formats, 2, NULL, 0),
+		ERR_PTR(-EEXIST));
 	formats[0].plane_id = 0;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 1), ERR_PTR(-EINVAL));
+		drm_constraints_description_create(&output_size, formats, 1, NULL, 0),
+		ERR_PTR(-EINVAL));
 	formats[0] = linear;
 	formats[0].format = 0;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 1), ERR_PTR(-EINVAL));
+		drm_constraints_description_create(&output_size, formats, 1, NULL, 0),
+		ERR_PTR(-EINVAL));
 	formats[0] = linear;
 	formats[0].modifier = DRM_FORMAT_MOD_INVALID;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 1), ERR_PTR(-EINVAL));
+		drm_constraints_description_create(&output_size, formats, 1, NULL, 0),
+		ERR_PTR(-EINVAL));
 	formats[0] = linear;
 	formats[1].plane_id++;
 	create_description(test, &output_size, formats, 2);
@@ -108,14 +113,100 @@ static void drm_constraints_rejects_invalid_formats(struct kunit *test)
 static void drm_constraints_bounds_input_before_access(struct kunit *test)
 {
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(NULL, &linear, 1), ERR_PTR(-EINVAL));
+		drm_constraints_description_create(NULL, &linear, 1, NULL, 0), ERR_PTR(-EINVAL));
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, NULL, 1), ERR_PTR(-EINVAL));
+		drm_constraints_description_create(&output_size, NULL, 1, NULL, 0),
+		ERR_PTR(-EINVAL));
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, &linear, 0), ERR_PTR(-EINVAL));
+		drm_constraints_description_create(&output_size, &linear, 0, NULL, 0),
+		ERR_PTR(-EINVAL));
 	KUNIT_EXPECT_PTR_EQ(test,
 		drm_constraints_description_create(&output_size, &linear,
-						   DRM_CONSTRAINTS_MAX_FORMATS + 1),
+						   DRM_CONSTRAINTS_MAX_FORMATS + 1, NULL, 0),
+		ERR_PTR(-EINVAL));
+}
+
+static void drm_constraints_copies_bounded_property_rules(struct kunit *test)
+{
+	struct drm_constraints_property rules[] = {
+		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_RANGE,
+		  .minimum = 3, .maximum = 9 },
+		{ .object_id = 17, .property_id = 24, .type = DRM_MODE_PROP_SIGNED_RANGE,
+		  .minimum = (u64)-10, .maximum = 10 },
+		{ .object_id = 17, .property_id = 25, .type = DRM_MODE_PROP_ENUM,
+		  .mask = BIT_ULL(2) | BIT_ULL(63) },
+		{ .object_id = 17, .property_id = 26, .type = DRM_MODE_PROP_BITMASK,
+		  .mask = DRM_MODE_ROTATE_0 | DRM_MODE_ROTATE_90 },
+	};
+	struct drm_constraints_description *description;
+	const struct drm_constraints_property *view;
+	unsigned int count;
+
+	description = drm_constraints_description_create(&output_size, &linear, 1,
+							rules, ARRAY_SIZE(rules));
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put, description), 0);
+	memset(rules, 0, sizeof(rules));
+	view = drm_constraints_description_properties(description, &count);
+	KUNIT_ASSERT_EQ(test, count, 4);
+	KUNIT_EXPECT_EQ(test, view[0].object_id, 17);
+	KUNIT_EXPECT_EQ(test, view[0].property_id, 23);
+	KUNIT_EXPECT_TRUE(test, drm_constraints_property_matches(&view[0], 3));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_property_matches(&view[0], 9));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&view[0], 10));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_property_matches(&view[1], (u64)-10));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_property_matches(&view[1], 10));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&view[1], (u64)-11));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&view[1], 11));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_property_matches(&view[2], 2));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_property_matches(&view[2], 63));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&view[2], 64));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&view[2], 1));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_property_matches(&view[3], DRM_MODE_ROTATE_90));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&view[3], DRM_MODE_REFLECT_X));
+}
+
+static void drm_constraints_rejects_malformed_property_rules(struct kunit *test)
+{
+	struct drm_constraints_property rule = {
+		.object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_RANGE,
+		.minimum = 1, .maximum = 2,
+	};
+	struct drm_constraints_property invalid[] = {
+		{ .property_id = 23, .type = DRM_MODE_PROP_RANGE },
+		{ .object_id = 17, .type = DRM_MODE_PROP_RANGE },
+		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_RANGE,
+		  .minimum = 2, .maximum = 1 },
+		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_SIGNED_RANGE,
+		  .minimum = 0, .maximum = (u64)-1 },
+		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_ENUM },
+		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_BITMASK,
+		  .minimum = 1 },
+		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_RANGE,
+		  .mask = 1 },
+	};
+	struct drm_constraints_property duplicate[] = { rule, rule };
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(invalid); i++)
+		KUNIT_EXPECT_PTR_EQ(test,
+			drm_constraints_description_create(&output_size, &linear, 1,
+							   &invalid[i], 1),
+			ERR_PTR(-EINVAL));
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, &linear, 1, duplicate, 2),
+		ERR_PTR(-EEXIST));
+	rule.type = DRM_MODE_PROP_BLOB;
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, &linear, 1, &rule, 1),
+		ERR_PTR(-EOPNOTSUPP));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&rule, 0));
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, &linear, 1, NULL, 1),
+		ERR_PTR(-EINVAL));
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, &linear, 1, &rule,
+						   DRM_CONSTRAINTS_MAX_PROPERTIES + 1),
 		ERR_PTR(-EINVAL));
 }
 
@@ -125,6 +216,8 @@ static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_rejects_invalid_dimensions),
 	KUNIT_CASE(drm_constraints_rejects_invalid_formats),
 	KUNIT_CASE(drm_constraints_bounds_input_before_access),
+	KUNIT_CASE(drm_constraints_copies_bounded_property_rules),
+	KUNIT_CASE(drm_constraints_rejects_malformed_property_rules),
 	{}
 };
 

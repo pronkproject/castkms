@@ -8,6 +8,7 @@ struct drm_constraints_description;
 
 /* Kernel prototype limits, not an allocated userspace ABI. */
 #define DRM_CONSTRAINTS_MAX_FORMATS 256
+#define DRM_CONSTRAINTS_MAX_PROPERTIES 64
 
 /**
  * struct drm_constraints_size - inclusive integer pixel dimensions
@@ -40,6 +41,31 @@ struct drm_constraints_format {
 	struct drm_constraints_size size;
 };
 
+/**
+ * struct drm_constraints_property - scalar rules using DRM property semantics
+ * @object_id: existing CRTC or plane object ID
+ * @property_id: property attached to that object
+ * @type: DRM_MODE_PROP_RANGE, SIGNED_RANGE, ENUM or BITMASK
+ * @minimum: inclusive range minimum; zero for enum/bitmask
+ * @maximum: inclusive range maximum; zero for enum/bitmask
+ * @mask: permitted enum values (bits 0..63) or permitted bitmask bits
+ *
+ * Signed ranges use the standard DRM two's-complement u64 representation.
+ * Range rules require a zero mask. Enum rules require a nonempty mask and
+ * describe values 0..63; bitmask rules may permit only zero. Blob contents,
+ * object references and interactions between properties remain provider checks.
+ * Rules apply to the enabled CRTC and planes used by the scene, not unused
+ * objects. Their declared type must match the attached property's native type.
+ */
+struct drm_constraints_property {
+	u32 object_id;
+	u32 property_id;
+	u32 type;
+	u64 minimum;
+	u64 maximum;
+	u64 mask;
+};
+
 /*
  * Immutable, independently referenced allocation information. Creation copies
  * all input before returning; the caller retains ownership of its input.
@@ -53,7 +79,9 @@ struct drm_constraints_format {
 struct drm_constraints_description *
 drm_constraints_description_create(const struct drm_constraints_size *output,
 				   const struct drm_constraints_format *formats,
-				   unsigned int count);
+				   unsigned int count,
+				   const struct drm_constraints_property *properties,
+				   unsigned int property_count);
 struct drm_constraints_description *
 drm_constraints_description_get(struct drm_constraints_description *description);
 void drm_constraints_description_put(struct drm_constraints_description *description);
@@ -64,5 +92,11 @@ drm_constraints_description_output(const struct drm_constraints_description *des
 const struct drm_constraints_format *
 drm_constraints_description_formats(const struct drm_constraints_description *description,
 				    unsigned int *count);
+const struct drm_constraints_property *
+drm_constraints_description_properties(const struct drm_constraints_description *description,
+				       unsigned int *count);
+
+/* Test one scalar using the rule's declared native DRM property semantics. */
+bool drm_constraints_property_matches(const struct drm_constraints_property *property, u64 value);
 
 #endif
