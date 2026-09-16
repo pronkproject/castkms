@@ -16,6 +16,7 @@ mod gem;
 mod host_compositor;
 mod host_snapshot;
 mod image_access;
+mod image_storage;
 mod monitor;
 mod monitor_file;
 mod output;

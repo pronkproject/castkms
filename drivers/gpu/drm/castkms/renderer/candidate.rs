@@ -411,7 +411,7 @@ impl Candidate {
         };
         check()?;
         let image = Image::new(
-            &self.access.device().private_images,
+            &self.access.device().image_storage,
             &self.proposal_owner,
             dimensions,
             buffers,
