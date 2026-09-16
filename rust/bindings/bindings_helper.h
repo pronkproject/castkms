@@ -70,6 +70,7 @@
 #include <drm/drm_colorop.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_constraints.h>
+#include <drm/drm_constraints_catalog.h>
 #include <drm/drm_constraints_entry.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_damage_helper.h>
