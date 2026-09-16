@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
+
+#include <linux/module.h>
+#include <drm/drm_atomic_state_helper.h>
+#include <drm/drm_constraints.h>
+#include <drm/drm_constraints_catalog.h>
+#include <drm/drm_constraints_device.h>
+#include <drm/drm_constraints_entry.h>
+#include <drm/drm_constraints_output.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_fourcc.h>
+#include <drm/drm_kunit_helpers.h>
+#include <kunit/device.h>
+#include <kunit/test.h>
+
+struct output_fixture {
+	struct drm_device drm;
+	struct drm_plane *plane;
+	struct drm_crtc *crtc;
+	unsigned int released;
+};
+
+static void release_backend(void *data)
+{
+	struct output_fixture *fixture = data;
+
+	fixture->released++;
+}
+
+static const struct drm_constraints_entry_ops entry_ops = {
+	.owner = THIS_MODULE,
+	.release = release_backend,
+};
+
+static int check(struct drm_atomic_commit *state, const struct drm_crtc_state *crtc, void *backend)
+{
+	return 0;
+}
+
+static const struct drm_constraints_output_ops output_ops = { .check = check };
+
+static void put_description(void *data) { drm_constraints_description_put(data); }
+static void put_entry(void *data) { drm_constraints_entry_put(data); }
+static void put_state(void *data) { drm_atomic_helper_crtc_destroy_state(NULL, data); }
+
+static struct output_fixture *new_fixture(struct kunit *test, const char *name)
+{
+	struct output_fixture *fixture;
+	struct device *dev;
+
+	dev = kunit_device_register(test, name);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	fixture = drm_kunit_helper_alloc_drm_device(test, dev, struct output_fixture, drm,
+						   DRIVER_MODESET | DRIVER_ATOMIC);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture);
+	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(&fixture->drm, 8), 0);
+	fixture->plane = drm_kunit_helper_create_primary_plane(test, &fixture->drm,
+							     NULL, NULL, NULL, 0, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->plane);
+	fixture->crtc = drm_kunit_helper_create_crtc(test, &fixture->drm, fixture->plane,
+						    NULL, NULL, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->crtc);
+	drm_mode_config_reset(&fixture->drm);
+	return fixture;
+}
+
+static struct drm_constraints_entry *
+new_entry(struct kunit *test, struct output_fixture *fixture, u32 crtc_id, u32 plane_id)
+{
+	const struct drm_constraints_size size = { 64, 32, 64, 32 };
+	const struct drm_constraints_format format = {
+		.plane_id = plane_id,
+		.format = DRM_FORMAT_XRGB8888,
+		.modifier = DRM_FORMAT_MOD_LINEAR,
+		.size = size,
+	};
+	struct drm_constraints_description *description;
+	struct drm_constraints_entry *entry;
+
+	description = drm_constraints_description_create(&size, &format, 1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
+	entry = drm_constraints_entry_create(drm_constraints_device_domain(&fixture->drm),
+					     crtc_id, description, &entry_ops, fixture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+	return entry;
+}
+
+static void reset_and_pristine_state_retain_accepted_binding(struct kunit *test)
+{
+	struct output_fixture *fixture = new_fixture(test, "constraints-output");
+	struct drm_constraints_entry *entry = new_entry(test, fixture, fixture->crtc->base.id,
+							fixture->plane->base.id);
+	struct drm_crtc_state *pristine;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, entry, 4, &output_ops), 0);
+	KUNIT_EXPECT_PTR_EQ(test, fixture->crtc->state->constraints, entry);
+	pristine = drm_atomic_helper_crtc_create_state(fixture->crtc);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pristine);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_state, pristine), 0);
+	KUNIT_EXPECT_PTR_EQ(test, pristine->constraints, entry);
+	drm_constraints_catalog_close(drm_constraints_crtc_catalog(fixture->crtc));
+	drm_mode_config_reset(&fixture->drm);
+	KUNIT_EXPECT_PTR_EQ(test, fixture->crtc->state->constraints, entry);
+	KUNIT_EXPECT_EQ(test, fixture->released, 0);
+}
+
+static void attaching_rejects_foreign_device_and_objects(struct kunit *test)
+{
+	struct output_fixture *fixture = new_fixture(test, "constraints-output");
+	struct output_fixture *other = new_fixture(test, "constraints-foreign");
+	struct drm_constraints_entry *foreign = new_entry(test, other, fixture->crtc->base.id,
+							  fixture->plane->base.id);
+	struct drm_constraints_entry *wrong_crtc = new_entry(test, fixture, fixture->crtc->base.id + 1,
+							     fixture->plane->base.id);
+	struct drm_constraints_entry *wrong_plane = new_entry(test, fixture, fixture->crtc->base.id,
+							      U32_MAX);
+
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, foreign, 4, &output_ops), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, wrong_crtc, 4, &output_ops), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, wrong_plane, 4, &output_ops), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_crtc_catalog(fixture->crtc), NULL);
+	KUNIT_EXPECT_PTR_EQ(test, fixture->crtc->state->constraints, NULL);
+}
+
+static void attaching_requires_disabled_unregistered_output(struct kunit *test)
+{
+	struct output_fixture *fixture = new_fixture(test, "constraints-output");
+	struct drm_constraints_entry *entry = new_entry(test, fixture, fixture->crtc->base.id,
+							fixture->plane->base.id);
+
+	fixture->drm.registered = true;
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, entry, 4, &output_ops), -EBUSY);
+	fixture->drm.registered = false;
+	fixture->crtc->state->enable = true;
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, entry, 4, &output_ops), -EBUSY);
+	fixture->crtc->state->enable = false;
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, entry, 4, &output_ops), 0);
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, entry, 4, &output_ops), -EBUSY);
+	KUNIT_EXPECT_EQ(test, drm_constraints_device_init(&fixture->drm, 8), -EBUSY);
+}
+
+static struct kunit_case drm_constraints_output_tests[] = {
+	KUNIT_CASE(reset_and_pristine_state_retain_accepted_binding),
+	KUNIT_CASE(attaching_rejects_foreign_device_and_objects),
+	KUNIT_CASE(attaching_requires_disabled_unregistered_output),
+	{}
+};
+
+static struct kunit_suite drm_constraints_output_test_suite = {
+	.name = "drm_constraints_output",
+	.test_cases = drm_constraints_output_tests,
+};
+
+kunit_test_suite(drm_constraints_output_test_suite);
+
+MODULE_LICENSE("Dual MIT/GPL");

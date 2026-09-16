@@ -37,6 +37,7 @@
 
 struct drm_connector;
 struct drm_constraints_entry;
+struct drm_constraints_output;
 struct drm_device;
 struct drm_framebuffer;
 struct drm_mode_set;
@@ -1234,6 +1235,8 @@ struct drm_crtc {
 	 * &struct drm_crtc_commit.
 	 */
 	struct drm_crtc_state *state;
+	/** @constraints_output: Optional constraints provider, fixed before registration. */
+	struct drm_constraints_output *constraints_output;
 
 	/**
 	 * @commit_list:

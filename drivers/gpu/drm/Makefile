@@ -93,6 +93,7 @@ drm-y := \
 	drm_constraints_entry.o \
 	drm_constraints_catalog.o \
 	drm_constraints_device.o \
+	drm_constraints_output.o \
 	drm_crtc.o \
 	drm_displayid.o \
 	drm_drv.o \

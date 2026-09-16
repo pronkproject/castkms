@@ -31,6 +31,7 @@
 #include <drm/drm_bridge.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_constraints_entry.h>
+#include <drm/drm_constraints_output.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_framebuffer.h>
@@ -77,6 +78,7 @@ __drm_atomic_helper_crtc_state_init(struct drm_crtc_state *crtc_state,
 				    struct drm_crtc *crtc)
 {
 	crtc_state->crtc = crtc;
+	drm_constraints_crtc_state_init(crtc_state);
 	crtc_state->background_color = DRM_ARGB64_PREP(0xffff, 0, 0, 0);
 }
 EXPORT_SYMBOL(__drm_atomic_helper_crtc_state_init);
