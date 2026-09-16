@@ -17,6 +17,10 @@ struct drm_constraints_entry;
  * proposed object states, change external state, acquire modeset locks, reenter
  * list operations or wait for userspace. All resources required to accept the
  * entry must be ready before offering it. Return zero or a negative errno.
+ * At acceptance, the driver's outer installation locks and the preparation
+ * owner/ticket locks may also be held. Check must not reacquire those locks or
+ * call preparation operations which require them. Any additional provider lock
+ * must be ordered inside the list lock in both validation and acceptance.
  * The entry exposes its immutable identity, description and retained provider
  * context. The table must remain valid throughout the CRTC lifetime.
  */
