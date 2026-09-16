@@ -244,7 +244,8 @@ static void tag_transition(int fd, uint32_t crtc, uint64_t token, bool test_only
 	drmModeAtomicFree(update);
 }
 
-static uint64_t register_linear_profile(int fd, uint64_t candidate)
+static uint64_t register_linear_profile(int fd, uint64_t candidate,
+                                       uint32_t width, uint32_t height)
 {
 	struct {
 		struct drm_castkms_capability_profile header;
@@ -257,7 +258,8 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate)
 				 DRM_CASTKMS_CAPABILITY_POSITION | DRM_CASTKMS_CAPABILITY_SCALE |
 				 DRM_CASTKMS_CAPABILITY_SRGB | DRM_CASTKMS_CAPABILITY_PLANE_MATRIX |
 				 DRM_CASTKMS_CAPABILITY_OUTPUT_MATRIX,
-			.format_count = 2, .max_output = { 16384, 16384 },
+			.format_count = 2, .max_output = { width, height },
+			.min_output = { width, height }, .min_source = { 1, 1 },
 			.max_source = { 16384, 16384 }, .min_scale = 1 << 12,
 			.max_scale = 1 << 20, .max_layers = 24, .max_roles = { 1, 22, 1 },
 			.max_color_operations = 16, .max_lut_entries = 256,
@@ -282,6 +284,11 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate)
 	profile.header.reserved[0] = 1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
 	profile.header.reserved[0] = 0;
+	profile.header.min_output[0] = 0;
+	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
+	profile.header.min_output[0] = width + 1;
+	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
+	profile.header.min_output[0] = width;
 	CHECK(!(query_capabilities(fd).flags & DRM_CASTKMS_CAPABILITY_PENDING));
 	/* Registration visibility survives an undeliverable reply. */
 	request.result = 1;
@@ -703,7 +710,8 @@ int main(int argc, char **argv)
 	submit_probe(next_files.renderer_fd, candidate.candidate_id,
 		     DRM_CASTKMS_RENDERER_PROBE_PRIVATE);
 	uint64_t transition = register_linear_profile(next_files.renderer_fd,
-						      candidate.candidate_id);
+						      candidate.candidate_id,
+						      gpu_buffer.dumb.width, gpu_buffer.dumb.height);
 	struct drm_castkms_renderer_capabilities pending_caps =
 		query_capabilities(next_files.renderer_fd);
 	tag_transition(peer, request.crtc_id, transition, true);

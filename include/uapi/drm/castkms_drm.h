@@ -21,7 +21,7 @@
 #define DRM_CASTKMS_TRANSITION_PROPERTY "CASTKMS_TRANSITION"
 #define DRM_CASTKMS_EXECUTION_PROPERTY "CASTKMS_EXECUTION"
 
-#define DRM_CASTKMS_CAPABILITY_VERSION 1
+#define DRM_CASTKMS_CAPABILITY_VERSION 2
 #define DRM_CASTKMS_CAPABILITY_HOST 1
 #define DRM_CASTKMS_CAPABILITY_RENDERER 2
 #define DRM_CASTKMS_CAPABILITY_MAX_FORMATS 256
@@ -51,6 +51,13 @@
  * overlay and cursor. YUV masks use bit positions from the scene encoding.
  * Sampling is nearest-neighbor, blending is premultiplied source-over and
  * stacking follows the scene description. A profile grants no buffer access.
+ * Version 2 adds inclusive min_output/min_source bounds (width, height).
+ * RENDERER bounds must be positive with min <= max on each axis. Equal bounds
+ * express exact geometry, e.g. min_output == max_output for a fixed-size pool.
+ * Source bounds describe full framebuffers, not cropped extents; output bounds
+ * describe the composed image, not an individual layer's destination rectangle.
+ * Version 1 is not accepted by this encoding. Header and 32-byte format-record
+ * layouts are fixed within a version; new record fields require a new version.
  */
 struct drm_castkms_capability_profile {
 	__u32 version;
@@ -67,7 +74,9 @@ struct drm_castkms_capability_profile {
 	__u32 max_lut_entries;
 	__u32 yuv_encodings;
 	__u32 yuv_ranges;
-	__u32 reserved[14];
+	__u32 min_output[2];
+	__u32 min_source[2];
+	__u32 reserved[10];
 };
 
 /*

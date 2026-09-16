@@ -7,7 +7,7 @@ Integration boundary
 
 The Rust CastKMS renderer protocol in ``include/uapi/drm/castkms_drm.h`` is
 ready for coordinated Pronk/compositor integration at renderer version 7,
-capability encoding version 1 and complete-scene encoding version 1. These
+capability encoding version 2 and complete-scene encoding version 1. These
 are experimental driver interfaces, not a claim of upstream ABI acceptance.
 Use the header from the same revision; reject unsupported versions instead
 of guessing layouts. The executable example is
@@ -21,6 +21,14 @@ coordinate the transition token with that client.
 
 Profiles and queries
 ====================
+
+Source and output dimensions have independent inclusive minimum and maximum
+bounds. All renderer bounds must be positive and ordered on both axes. Pronk's
+fixed-size private pool should set ``min_output == max_output == {width, height}``;
+it need not restrict source framebuffers to that size. Source bounds describe
+whole framebuffers, not cropped regions. Set their minima to ``{1, 1}`` if
+smaller source buffers are supported. Replacing the pool with a different size
+requires a new negotiated profile, not silently changing the active contract.
 
 ``QUERY_CAPABILITIES`` returns one coherent snapshot of execution, active
 contract, optional pending contract, transition token and validation epoch.
