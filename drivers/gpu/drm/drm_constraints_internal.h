@@ -16,8 +16,8 @@ struct drm_constraints_output {
  * and acceptance, but permit quiescence after closure. Never selects an entry.
  */
 int drm_constraints_list_quiesce(struct drm_constraints_list *list,
-				    struct drm_constraints_entry *entry,
-				    int (*quiesce)(struct drm_constraints_entry *, void *),
-				    void *data);
+				 struct drm_constraints_entry *entry,
+				 int (*quiesce)(struct drm_constraints_entry *, void *),
+				 void *data);
 
 #endif

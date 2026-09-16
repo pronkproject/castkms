@@ -32,7 +32,7 @@ struct drm_constraints_snapshot_info {
  */
 struct drm_constraints_list *
 drm_constraints_list_create(struct drm_constraints_domain *domain,
-			       struct drm_constraints_entry *initial, unsigned int limit);
+			    struct drm_constraints_entry *initial, unsigned int limit);
 struct drm_constraints_list *
 drm_constraints_list_get(struct drm_constraints_list *list);
 void drm_constraints_list_put(struct drm_constraints_list *list);
@@ -73,7 +73,7 @@ drm_constraints_list_lookup(struct drm_constraints_list *list, u64 id);
  * zero clears the suggestion. No-op operations preserve the list generation.
  */
 int drm_constraints_list_add(struct drm_constraints_list *list,
-				struct drm_constraints_entry *entry);
+			     struct drm_constraints_entry *entry);
 int drm_constraints_list_withdraw(struct drm_constraints_list *list, u64 id);
 int drm_constraints_list_forget(struct drm_constraints_list *list, u64 id);
 int drm_constraints_list_suggest(struct drm_constraints_list *list, u64 id);
@@ -97,11 +97,11 @@ int drm_constraints_list_suggest(struct drm_constraints_list *list, u64 id);
  * Neither operation grants source access or substitutes for full-scene checks.
  */
 int drm_constraints_list_check(struct drm_constraints_list *list,
-				  struct drm_constraints_entry *entry,
-				  int (*check)(struct drm_constraints_entry *, void *), void *data);
+			       struct drm_constraints_entry *entry,
+			       int (*check)(struct drm_constraints_entry *, void *), void *data);
 int drm_constraints_list_accept(struct drm_constraints_list *list,
-				   struct drm_constraints_entry *entry,
-				   int (*install)(struct drm_constraints_entry *, void *), void *data);
+				struct drm_constraints_entry *entry,
+				int (*install)(struct drm_constraints_entry *, void *), void *data);
 
 /*
  * Returns one immutable snapshot, or ESTALE for a nonzero mismatching expected
