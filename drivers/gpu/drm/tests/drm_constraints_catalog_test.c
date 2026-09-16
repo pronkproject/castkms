@@ -417,6 +417,55 @@ static void selection_readback_retains_closed_catalog_binding(struct kunit *test
 	KUNIT_EXPECT_EQ(test, fixture->released, 1);
 }
 
+static void identity_lookup_retains_without_reserving_selection(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct drm_constraints_entry *retained;
+	struct install_context context = {};
+	u64 id = drm_constraints_entry_id(target);
+
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_catalog_lookup(fixture->catalog, 0),
+			   ERR_PTR(-EINVAL));
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_catalog_lookup(fixture->catalog, id),
+			   ERR_PTR(-ESTALE));
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_catalog_lookup(fixture->catalog, U64_MAX),
+			   ERR_PTR(-ESTALE));
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(fixture->catalog, target), 0);
+	retained = drm_constraints_catalog_lookup(fixture->catalog, id);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, retained);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, retained), 0);
+	KUNIT_EXPECT_PTR_EQ(test, retained, target);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_withdraw(fixture->catalog, id), 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_catalog_lookup(fixture->catalog, id),
+			   ERR_PTR(-ESTALE));
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, retained, validate, &context),
+		-ESTALE);
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_forget(fixture->catalog, id), 0);
+	kunit_release_action(test, put_entry, target);
+	KUNIT_EXPECT_EQ(test, fixture->released, 0);
+	KUNIT_EXPECT_EQ(test, drm_constraints_entry_id(retained), id);
+	kunit_release_action(test, put_entry, retained);
+	KUNIT_EXPECT_EQ(test, fixture->released, 1);
+}
+
+static void identity_lookup_observes_selected_withdrawal_and_closure(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 1);
+	struct drm_constraints_entry *selected;
+	u64 id = drm_constraints_entry_id(fixture->initial);
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_withdraw(fixture->catalog, id), 0);
+	selected = drm_constraints_catalog_lookup(fixture->catalog, id);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, selected);
+	KUNIT_EXPECT_PTR_EQ(test, selected, fixture->initial);
+	drm_constraints_entry_put(selected);
+	drm_constraints_catalog_close(fixture->catalog);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_catalog_lookup(fixture->catalog, id),
+			   ERR_PTR(-ESTALE));
+}
+
 static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(snapshots_retain_immutable_entries),
 	KUNIT_CASE(changes_invalidate_expected_generations),
@@ -431,6 +480,8 @@ static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(closing_rejects_checked_but_unaccepted_selection),
 	KUNIT_CASE(closing_waits_for_irrevocable_acceptance),
 	KUNIT_CASE(selection_readback_retains_closed_catalog_binding),
+	KUNIT_CASE(identity_lookup_retains_without_reserving_selection),
+	KUNIT_CASE(identity_lookup_observes_selected_withdrawal_and_closure),
 	{}
 };
 

@@ -252,6 +252,28 @@ static int validate_entry(struct drm_constraints_catalog *catalog,
 	return 0;
 }
 
+struct drm_constraints_entry *
+drm_constraints_catalog_lookup(struct drm_constraints_catalog *catalog, u64 id)
+{
+	struct drm_constraints_entry *entry;
+	int index, ret;
+
+	if (!id)
+		return ERR_PTR(-EINVAL);
+	mutex_lock(&catalog->lock);
+	index = find_entry(catalog, id);
+	if (index < 0) {
+		entry = ERR_PTR(-ESTALE);
+	} else {
+		entry = catalog->entries[index].entry;
+		ret = validate_entry(catalog, entry);
+		entry = ret ? ERR_PTR(ret) : drm_constraints_entry_get(entry);
+	}
+	mutex_unlock(&catalog->lock);
+	return entry;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_catalog_lookup);
+
 int drm_constraints_catalog_check(struct drm_constraints_catalog *catalog,
 				  struct drm_constraints_entry *entry,
 				  int (*check)(struct drm_constraints_entry *, void *), void *data)
