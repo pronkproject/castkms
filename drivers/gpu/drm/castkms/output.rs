@@ -9,6 +9,7 @@ use kernel::{
     prelude::*,
     sync::{
         aref::ARef,
+        poll::PollCondVar,
         Arc,
         Mutex, //
     }, //
@@ -67,14 +68,24 @@ pub(super) struct Accepted<'a, S, C> {
 #[pin_data]
 pub(super) struct Output<S, C = ()> {
     identity: Identity,
+    changed: Arc<PollCondVar>,
     #[pin]
     state: Mutex<Publication<S, C>>,
 }
 
 impl<S: Unpin, C: Unpin> Output<S, C> {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn new() -> impl PinInit<Self, Error> {
+        Self::new_notified(None)
+    }
+
+    pub(super) fn new_notified(changed: Option<Arc<PollCondVar>>) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
             identity: Identity(Arc::new((), GFP_KERNEL)?),
+            changed: match changed {
+                Some(changed) => changed,
+                None => Arc::pin_init(kernel::new_poll_condvar!(), GFP_KERNEL)?,
+            },
             state <- kernel::new_mutex!(Publication::Open(None)),
         })
     }
@@ -115,6 +126,7 @@ impl<S: Unpin, C: Unpin> Output<S, C> {
         };
         // Resource destruction may enter DRM; keep it outside the publication lock.
         drop(retired);
+        self.changed.notify_all();
     }
 
     pub(super) fn close(&self) {
@@ -123,6 +135,7 @@ impl<S: Unpin, C: Unpin> Output<S, C> {
             core::mem::replace(&mut *state, Publication::Closed)
         };
         drop(retired);
+        self.changed.notify_all();
     }
 
     /// Observe scene presence without retaining resources or granting pixel access.

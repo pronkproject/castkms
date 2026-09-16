@@ -31,6 +31,7 @@ use kernel::{
     prelude::*,
     sync::{
         aref::ARef,
+        poll::PollCondVar,
         Arc, //
     }, //
 };
@@ -62,6 +63,7 @@ pub(crate) struct Queue {
     scope: Delegated,
     renderer: Arc<Candidate>,
     active: Observation,
+    changed: Arc<PollCondVar>,
     records: requests::Queue<Pending, Arc<Request>>,
     charge: Arc<Charge>,
     closing: bool,
@@ -85,6 +87,7 @@ impl Delegated {
             scope: self.clone(),
             renderer: renderer.clone(),
             active,
+            changed: self.changed(),
             records,
             charge,
             closing: false,
@@ -95,6 +98,12 @@ impl Delegated {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Queue {
+    /// Register poll waiters before reconciling authority, dependencies and terminal results.
+    /// Shared wakeups may belong to another queue or output and convey no pixel authority.
+    pub(crate) fn changed(&self) -> &Arc<PollCondVar> {
+        &self.changed
+    }
+
     /// Accept demand only for storage registered under this exact recipient interval.
     /// No source claim, private image, or permission to access pixels is acquired here.
     pub(crate) fn queue_to(
@@ -112,9 +121,16 @@ impl Queue {
         self.records.queue(use_id, || {
             Ok(Pending {
                 use_id,
-                request: destination.request_accounted(use_id, reuse, Some(self.charge.clone()))?,
+                request: destination.request_accounted(
+                    use_id,
+                    reuse,
+                    Some(self.charge.clone()),
+                    Some(self.changed.clone()),
+                )?,
             })
-        })
+        })?;
+        self.changed.notify_all();
+        Ok(())
     }
 
     /// Select one ready destination without waiting on earlier requests or native work.
@@ -206,6 +222,7 @@ impl Queue {
     /// EIO means a lost claim remains quarantined. Neither result permits storage reuse.
     pub(crate) fn try_close(&mut self) -> Result {
         self.closing = true;
+        self.changed.notify_all();
         self.records
             .for_each_pending(|pending| pending.request.cancel());
         self.advance();

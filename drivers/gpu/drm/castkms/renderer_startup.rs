@@ -15,6 +15,7 @@ use kernel::{
     drm::Device,
     prelude::*,
     sync::{
+        poll::PollCondVar,
         Arc,
         Mutex, //
     }, //
@@ -36,6 +37,7 @@ enum State {
 #[pin_data]
 pub(crate) struct Startup {
     output: Identity,
+    changed: Arc<PollCondVar>,
     budget: Budget,
     #[pin]
     state: Mutex<State>,
@@ -101,6 +103,7 @@ impl Startup {
         }
         let result = publish()?;
         *state = State::Active(identity.clone());
+        self.changed.notify_all();
         Ok((
             Active {
                 startup: self.clone(),
@@ -125,6 +128,7 @@ impl Startup {
             }
         };
         drop(retired);
+        self.changed.notify_all();
     }
 
     fn handback<R>(&self, identity: &Arc<()>, publish: impl FnOnce() -> Result<R>) -> Result<R> {
@@ -137,6 +141,7 @@ impl Startup {
         }
         let result = publish()?;
         *state = State::Idle;
+        self.changed.notify_all();
         Ok(result)
     }
 
@@ -166,6 +171,7 @@ impl Startup {
             }
         };
         drop(retired);
+        self.changed.notify_all();
     }
 
     fn lose(&self, identity: &Arc<()>) {
@@ -182,11 +188,13 @@ impl Startup {
             }
         };
         drop(retired);
+        self.changed.notify_all();
     }
 
     fn close(&self) {
         let retired = core::mem::replace(&mut *self.state.lock(), State::Closed);
         drop(retired);
+        self.changed.notify_all();
     }
 }
 
@@ -366,10 +374,16 @@ impl Drop for Active {
 pub(crate) struct Owner(Arc<Startup>);
 
 impl Owner {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn new(output: &Identity) -> Result<Self> {
+        Self::new_notified(output, Arc::pin_init(kernel::new_poll_condvar!(), GFP_KERNEL)?)
+    }
+
+    pub(crate) fn new_notified(output: &Identity, changed: Arc<PollCondVar>) -> Result<Self> {
         Ok(Self(Arc::pin_init(
             try_pin_init!(Startup {
                 output: output.clone(),
+                changed,
                 budget: Budget::new()?,
                 state <- kernel::new_mutex!(State::Idle),
             }),

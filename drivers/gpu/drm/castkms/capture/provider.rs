@@ -67,6 +67,7 @@ unsafe impl NativePolicy for Policy {
     fn revoke(&self) {
         // Native revocation ends registered delivery. Private jobs and results retain their
         // own storage; the provider has no asynchronous source access to cancel or wait for.
+        self.permission.device().changed.notify_all();
     }
 
     fn authorize_capture(&self, _: &NativeStream) -> Result {

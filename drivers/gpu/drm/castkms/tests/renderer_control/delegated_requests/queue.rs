@@ -28,6 +28,131 @@ fn wait_ready(queue: &mut Queue) -> Result {
 #[kunit_tests(rust_castkms_delegated_queue)]
 mod cases {
     use super::*;
+    use kernel::sync::poll::testing::Observer;
+
+    fn wait_notification(observer: &Observer, before: usize) -> Result {
+        let start = Instant::<Monotonic>::now();
+        while observer.notifications() == before {
+            if start.elapsed() > Delta::from_secs(2) {
+                return Err(ETIMEDOUT);
+            }
+            fsleep(Delta::from_millis(1));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn destination_reuse_and_output_retirement_wake_waiters() -> Result {
+        with_output(|fixture| {
+            let mut queue = queue(&fixture, 1)?;
+            let observer = Observer::new(queue.changed().clone())?;
+            let mut reuse = ManualFence::new()?;
+            queue.queue_to(1, &fixture.destination, Some(reuse.fence()))?;
+            check(observer.notifications() > 0)?;
+            check(queue.try_claim(&fixture.rendered).is_none())?;
+            let before = observer.notifications();
+            reuse.complete(Ok(()))?;
+            check(observer.notifications() > before)?;
+            let job = queue.try_claim(&fixture.rendered).ok_or(EINVAL)?;
+            let mut completion = ManualFence::new()?;
+            job.claim.release(Completion::Submitted(completion.fence()));
+            let before = observer.notifications();
+            completion.complete(Ok(()))?;
+            wait_ready(&mut queue)?;
+            wait_notification(&observer, before)?;
+            queue.dequeue(|result| check(result.result == Ok(())))
+        })
+    }
+
+    #[test]
+    fn queued_cancellation_detaches_reuse_notification() -> Result {
+        with_output(|fixture| {
+            let mut queue = queue(&fixture, 1)?;
+            let observer = Observer::new(queue.changed().clone())?;
+            let mut reuse = ManualFence::new()?;
+            queue.queue_to(1, &fixture.destination, Some(reuse.fence()))?;
+            let before = observer.notifications();
+            queue.cancel(1)?;
+            check(observer.notifications() > before)?;
+            let before = observer.notifications();
+            reuse.complete(Ok(()))?;
+            check(observer.notifications() == before)?;
+            queue.advance();
+            queue.dequeue(|result| check(result.result == Err(ECANCELED)))
+        })
+    }
+
+    #[test]
+    fn authority_and_worker_loss_wake_unclaimed_demand() -> Result {
+        for reason in 0..3 {
+            with_output(|fixture| {
+                let mut queue = queue(&fixture, 1)?;
+                queue.queue_to(1, &fixture.destination, None)?;
+                let observer = Observer::new(queue.changed().clone())?;
+                let expected = match reason {
+                    0 => {
+                        drop(fixture.active);
+                        EIO
+                    }
+                    1 => {
+                        drop(fixture.grantor);
+                        EKEYREVOKED
+                    }
+                    _ => {
+                        fixture.owner.revoke();
+                        EKEYREVOKED
+                    }
+                };
+                check(observer.notifications() > 0)?;
+                check(queue.advance() == 1)?;
+                queue.dequeue(|result| check(result.result == Err(expected)))
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn disabled_output_wakes_and_terminates_queued_demand() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let fixture = output_fixture(device, crtc, connector, &file)?;
+            let mut queue = queue(&fixture, 1)?;
+            queue.queue_to(1, &fixture.destination, None)?;
+            let observer = Observer::new(queue.changed().clone())?;
+            device.atomic_update(|transaction| transaction.set_crtc_config(crtc, None))?;
+            check(observer.notifications() > 0)?;
+            check(queue.advance() == 1)?;
+            queue.dequeue(|result| check(result.result == Err(ENODEV)))
+        })
+    }
+
+    #[test]
+    fn master_close_wakes_queued_demand() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let fixture = output_fixture(device, crtc, connector, &file)?;
+            let mut queue = queue(&fixture, 1)?;
+            queue.queue_to(1, &fixture.destination, None)?;
+            let observer = Observer::new(queue.changed().clone())?;
+            drop(file);
+            check(observer.notifications() > 0)?;
+            check(queue.advance() == 1)?;
+            queue.dequeue(|result| check(result.result == Err(EACCES)))
+        })
+    }
+
+    #[test]
+    fn failed_reuse_wakes_a_terminal_result_without_a_private_image() -> Result {
+        with_output(|fixture| {
+            let mut queue = queue(&fixture, 1)?;
+            let mut reuse = ManualFence::new()?;
+            queue.queue_to(1, &fixture.destination, Some(reuse.fence()))?;
+            drop(fixture.rendered);
+            let observer = Observer::new(queue.changed().clone())?;
+            reuse.complete(Err(EAGAIN))?;
+            check(observer.notifications() > 0)?;
+            check(queue.advance() == 1)?;
+            queue.dequeue(|result| check(result.result == Err(EAGAIN)))
+        })
+    }
 
     #[test]
     fn failed_publication_preserves_terminal_credit_and_identity() -> Result {
