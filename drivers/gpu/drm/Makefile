@@ -90,6 +90,7 @@ drm-y := \
 	drm_colorop.o \
 	drm_connector.o \
 	drm_constraints.o \
+	drm_constraints_entry.o \
 	drm_crtc.o \
 	drm_displayid.o \
 	drm_drv.o \
