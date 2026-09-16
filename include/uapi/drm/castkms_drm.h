@@ -57,6 +57,9 @@
  * Native-endian immutable whole-scene contract. Exactly format_count records
  * follow this 128-byte header. Unknown flags and reserved fields must be zero.
  * HOST selects the fixed HOST-v1 policy: all fields after kind must be zero.
+ * That kind denotes the fixed CPU contract for this encoding version, not
+ * an extensible all-zero feature set. A different HOST policy needs a new
+ * capability kind or encoding version; reserved words are not an extension.
  * RENDERER limits apply to every role; advertise the intersection if roles have
  * different restrictions. Dimensions and scale limits are positive; scales are
  * inclusive unsigned 16.16 source/destination ratios. Roles are primary,
@@ -757,8 +760,8 @@ enum {
  * Successful PRIME import alone does not establish HOST usability. Public
  * capture destinations have separate format and allocation limits.
  *
- * This experimental profile name has survived implementation expansion; the
- * blob is not a whole-scene capability table. Use renderer QUERY_CAPABILITIES
+ * HOST_V1 and GPU_V1 are coarse execution identities, not admission policies.
+ * The blob is not a whole-scene capability table. Use renderer QUERY_CAPABILITIES
  * for active/pending contracts; plane properties are only a static baseline.
  * Do not assume the original single-plane limits or infer negotiated modifier
  * support from this execution blob.
