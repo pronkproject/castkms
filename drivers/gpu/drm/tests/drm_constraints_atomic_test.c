@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
+#include <linux/completion.h>
+#include <linux/dma-fence.h>
+#include <linux/kthread.h>
 #include <linux/module.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_constraints.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_prepare.h>
+#include <drm/drm_atomic_prepare_commit.h>
+#include <drm/drm_atomic_prepare_outputs.h>
+#include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_constraints_catalog.h>
@@ -22,6 +29,8 @@
 struct test_backend {
 	bool failed;
 	unsigned int checks;
+	unsigned int released;
+	struct drm_prepare_source *source;
 };
 
 struct atomic_fixture {
@@ -67,7 +76,12 @@ create_fb(struct drm_device *dev, struct drm_file *file,
 
 static const struct drm_mode_config_funcs mode_ops = { .fb_create = create_fb };
 
-static void release_backend(void *data) { }
+static void release_backend(void *data)
+{
+	struct test_backend *backend = data;
+
+	WRITE_ONCE(backend->released, backend->released + 1);
+}
 static const struct drm_constraints_entry_ops entry_ops = {
 	.owner = THIS_MODULE,
 	.release = release_backend,
@@ -616,6 +630,161 @@ static void shutdown_cannot_select_through_closed_catalog(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
 }
 
+static const char *read_fence_name(struct dma_fence *fence)
+{
+	return "constraints-native-read";
+}
+
+static const struct dma_fence_ops read_fence_ops = {
+	.get_driver_name = read_fence_name,
+	.get_timeline_name = read_fence_name,
+};
+
+static void finish_read(void *data)
+{
+	struct dma_fence *fence = data;
+
+	dma_fence_signal(fence);
+	dma_fence_put(fence);
+}
+
+static void put_source(void *data) { drm_prepare_source_put(data); }
+static void put_ticket(void *data) { drm_prepare_ticket_put(data); }
+
+static int observe_retiring_source(struct drm_atomic_commit *state,
+				    struct drm_prepare_output_generation *entries,
+				    unsigned int capacity)
+{
+	struct atomic_fixture *f = state->dev->dev_private;
+	struct drm_crtc_state *old = drm_atomic_get_old_crtc_state(state, f->crtc);
+	struct test_backend *backend = drm_constraints_entry_data(old->constraints);
+
+	if (!capacity)
+		return -ENOSPC;
+	entries[0] = (struct drm_prepare_output_generation) {
+		.crtc_id = f->crtc->base.id, .source = backend->source,
+	};
+	return 1;
+}
+
+struct retirement_worker {
+	struct drm_atomic_commit *state;
+	struct completion started;
+	struct completion finished;
+};
+
+static int clear_retired_state(void *data)
+{
+	struct retirement_worker *worker = data;
+
+	complete(&worker->started);
+	drm_atomic_commit_clear(worker->state);
+	complete(&worker->finished);
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	__set_current_state(TASK_RUNNING);
+	return 0;
+}
+
+static void check_retained_native_read(struct kunit *test, bool failed_read, bool disable)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_constraints_catalog *catalog = drm_constraints_crtc_catalog(f->crtc);
+	struct drm_constraints_entry *accepted = disable ? f->initial : f->target;
+	struct drm_atomic_commit *first = new_update(test, f, NULL, f->linear);
+	struct drm_prepare_output_generation output;
+	struct drm_prepare_read_claim *claim;
+	struct drm_prepare_ticket *ticket;
+	struct drm_atomic_commit *next;
+	struct dma_fence *fence;
+	struct task_struct *task;
+	struct retirement_worker worker;
+	u64 old_id = drm_constraints_entry_id(f->initial);
+	bool early;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, first);
+	KUNIT_ASSERT_EQ(test, run_update(first, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(first, swap_update), 0);
+	f->backends[0].source = drm_prepare_source_create(1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->backends[0].source);
+	KUNIT_ASSERT_EQ(test,
+			kunit_add_action_or_reset(test, put_source, f->backends[0].source), 0);
+	next = disable ? new_disable(test, f) : new_update(test, f, f->target, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, next);
+	KUNIT_ASSERT_EQ(test, run_update(next, drm_atomic_check_only), 0);
+	fence = kzalloc_obj(*fence);
+	KUNIT_ASSERT_NOT_NULL(test, fence);
+	dma_fence_init(fence, &read_fence_ops, NULL, dma_fence_context_alloc(1), 1);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, finish_read, fence), 0);
+	claim = drm_prepare_source_claim(f->backends[0].source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, claim);
+	drm_prepare_read_release(claim, fence);
+	output = (struct drm_prepare_output_generation) {
+		.crtc_id = f->crtc->base.id, .source = f->backends[0].source,
+	};
+	ticket = drm_prepare_ticket_create(&output, 1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_ticket, ticket), 0);
+	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(next, ticket, observe_retiring_source), 0);
+	if (disable) {
+		drm_constraints_catalog_close(catalog);
+		f->backends[0].failed = true;
+	}
+	KUNIT_ASSERT_EQ(test, run_update(next, swap_update), 0);
+	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(fence));
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, accepted);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, disable ? NULL : f->tiled);
+	drm_prepare_ticket_cancel(ticket);
+	if (!disable) {
+		KUNIT_ASSERT_EQ(test, drm_constraints_catalog_withdraw(catalog, old_id), 0);
+		KUNIT_ASSERT_EQ(test, drm_constraints_catalog_forget(catalog, old_id), 0);
+	}
+	drm_atomic_commit_clear(first);
+	kunit_release_action(test, put_entry, f->initial);
+	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[0].released), 0);
+	worker.state = next;
+	init_completion(&worker.started);
+	init_completion(&worker.finished);
+	task = kthread_run(clear_retired_state, &worker, "constraints-retire");
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, task);
+	wait_for_completion(&worker.started);
+	early = wait_for_completion_timeout(&worker.finished, msecs_to_jiffies(20));
+	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[0].released), 0);
+	claim = drm_prepare_source_claim(f->backends[0].source);
+	KUNIT_EXPECT_TRUE(test, IS_ERR(claim) && PTR_ERR(claim) == -EBUSY);
+	if (!IS_ERR(claim))
+		drm_prepare_read_release(claim, NULL);
+	if (failed_read)
+		dma_fence_set_error(fence, -EIO);
+	dma_fence_signal(fence);
+	wait_for_completion(&worker.finished);
+	kthread_stop(task);
+	KUNIT_EXPECT_FALSE(test, early);
+	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[0].released), disable ? 0 : 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, accepted);
+	claim = drm_prepare_source_claim(f->backends[0].source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, claim);
+	drm_prepare_read_release(claim, NULL);
+}
+
+static void predecessor_backend_survives_native_read(struct kunit *test)
+{
+	check_retained_native_read(test, false, false);
+}
+
+static void failed_read_retires_without_rolling_back_target(struct kunit *test)
+{
+	check_retained_native_read(test, true, false);
+}
+
+static void closed_output_shutdown_waits_for_native_read(struct kunit *test)
+{
+	check_retained_native_read(test, false, true);
+}
+
 static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(target_creation_precedes_atomic_selection),
 	KUNIT_CASE(readiness_loss_after_check_prevents_installation),
@@ -634,6 +803,9 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(closure_after_check_still_permits_disable),
 	KUNIT_CASE(closure_rejects_checked_activation),
 	KUNIT_CASE(shutdown_cannot_select_through_closed_catalog),
+	KUNIT_CASE(predecessor_backend_survives_native_read),
+	KUNIT_CASE(failed_read_retires_without_rolling_back_target),
+	KUNIT_CASE(closed_output_shutdown_waits_for_native_read),
 	{}
 };
 
