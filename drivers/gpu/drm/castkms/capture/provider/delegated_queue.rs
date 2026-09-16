@@ -78,15 +78,24 @@ impl Delegated {
         active: &Active,
         capacity: u32,
     ) -> Result<Queue> {
-        let active = active.observation();
-        self.with_renderer(renderer, &active, |_| Ok(()))?;
+        self.create_queue_observed(renderer, &active.observation(), capacity)
+    }
+
+    /// Retain worker identity without borrowing or extending endpoint ownership.
+    pub(crate) fn create_queue_observed(
+        &self,
+        renderer: &Arc<Candidate>,
+        active: &Observation,
+        capacity: u32,
+    ) -> Result<Queue> {
+        self.with_renderer(renderer, active, |_| Ok(()))?;
         let charge = self.request_budget().reserve(capacity)?;
         let records = requests::Queue::new(charge.capacity())?;
-        self.with_renderer(renderer, &active, |_| Ok(()))?;
+        self.with_renderer(renderer, active, |_| Ok(()))?;
         Ok(Queue {
             scope: self.clone(),
             renderer: renderer.clone(),
-            active,
+            active: active.clone(),
             changed: self.changed(),
             records,
             charge,

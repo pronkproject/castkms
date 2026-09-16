@@ -30,6 +30,23 @@ mod cases {
     use super::*;
     use kernel::sync::poll::testing::Observer;
 
+    #[test]
+    fn observed_queue_admission_does_not_extend_worker_ownership() -> Result {
+        with_output(|fixture| {
+            let scope = fixture.grantor.capture().describe_delegated()?;
+            let observation = fixture.active.observation();
+            let mut queue = scope.create_queue_observed(&fixture.renderer, &observation, 1)?;
+            queue.queue_to(1, &fixture.destination, None)?;
+            drop(fixture.active);
+            check(
+                scope.create_queue_observed(&fixture.renderer, &observation, 1).err()
+                    == Some(EIO),
+            )?;
+            check(queue.advance() == 1)?;
+            queue.dequeue(|result| check(result.result == Err(EIO)))
+        })
+    }
+
     fn wait_notification(observer: &Observer, before: usize) -> Result {
         let start = Instant::<Monotonic>::now();
         while observer.notifications() == before {
