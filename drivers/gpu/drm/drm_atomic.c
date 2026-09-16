@@ -30,6 +30,7 @@
 #include <linux/sync_file.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_constraints.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare_commit.h>
 #include <drm/drm_atomic_prepare_display.h>
@@ -1792,6 +1793,9 @@ int drm_atomic_check_only(struct drm_atomic_commit *state)
 		}
 		state->plane_inputs_captured = true;
 	}
+	ret = drm_atomic_constraints_prepare(state);
+	if (ret)
+		return ret;
 
 	for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {
 		if (new_crtc_state->enable)
@@ -1834,6 +1838,10 @@ int drm_atomic_check_only(struct drm_atomic_commit *state)
 			return ret;
 		}
 	}
+
+	ret = drm_atomic_constraints_check(state);
+	if (ret)
+		return ret;
 
 	if (!state->allow_modeset) {
 		for_each_new_crtc_in_state(state, crtc, new_crtc_state, i) {

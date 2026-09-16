@@ -398,6 +398,23 @@ static void validation_includes_unchanged_active_planes(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
 }
 
+static void core_validation_observes_selected_constraints(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, NULL, f->tiled);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	KUNIT_EXPECT_FALSE(test, state->checked);
+	drm_atomic_commit_clear(state);
+	state = new_update(test, f, f->target, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	KUNIT_EXPECT_TRUE(test, state->checked);
+	KUNIT_EXPECT_TRUE(test, drm_atomic_get_new_crtc_state(state, f->crtc)->mode_changed);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+}
+
 static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(target_creation_precedes_atomic_selection),
 	KUNIT_CASE(readiness_loss_after_check_prevents_installation),
@@ -407,6 +424,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(asynchronous_updates_are_not_admitted),
 	KUNIT_CASE(multi_output_transactions_are_not_admitted),
 	KUNIT_CASE(validation_includes_unchanged_active_planes),
+	KUNIT_CASE(core_validation_observes_selected_constraints),
 	{}
 };
 
