@@ -15,6 +15,7 @@ mod description;
 mod delegated;
 pub(crate) mod delegated_destination;
 pub(crate) mod delegated_request;
+pub(crate) mod delegated_queue;
 mod frame;
 mod request;
 mod storage;

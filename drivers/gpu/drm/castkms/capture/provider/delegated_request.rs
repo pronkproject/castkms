@@ -46,6 +46,7 @@ struct State {
 #[pin_data]
 pub(crate) struct Request {
     destination: Arc<Image>,
+    _charge: Option<Arc<crate::capture::request_budget::Charge>>,
     #[pin]
     state: Mutex<State>,
 }
@@ -57,9 +58,19 @@ impl Image {
         use_id: u64,
         reuse: Option<ARef<Fence>>,
     ) -> Result<Arc<Request>> {
+        self.request_accounted(use_id, reuse, None)
+    }
+
+    pub(super) fn request_accounted(
+        self: &Arc<Self>,
+        use_id: u64,
+        reuse: Option<ARef<Fence>>,
+        charge: Option<Arc<crate::capture::request_budget::Charge>>,
+    ) -> Result<Arc<Request>> {
         let request = Arc::pin_init(
             pin_init!(Request {
                 destination: self.clone(),
+                _charge: charge,
                 state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: None, completion: None }),
             }),
             GFP_KERNEL,

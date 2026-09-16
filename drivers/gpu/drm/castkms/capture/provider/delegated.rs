@@ -42,6 +42,41 @@ impl Capture {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Delegated {
+    pub(super) fn request_budget(
+        &self,
+    ) -> &kernel::sync::Arc<crate::capture::request_budget::Budget> {
+        &self
+            .capture
+            .policy
+            .permission
+            .device()
+            .capture_request_budget
+    }
+
+    pub(super) fn check_same(&self, other: &Self) -> Result {
+        if !core::ptr::eq(&*self.capture.authority, &*other.capture.authority) {
+            return Err(EACCES);
+        }
+        if self.configuration != other.configuration || self.execution != other.execution {
+            return Err(ESTALE);
+        }
+        Ok(())
+    }
+
+    /// Validate the worker and recipient under one display guard without selecting pixels.
+    pub(super) fn with_renderer<R>(
+        &self,
+        renderer: &Candidate,
+        active: &Observation,
+        f: impl FnOnce(&Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        renderer.with_observed_control(active, |current| {
+            self.check(current)?;
+            let _admission = self.capture.authority.begin()?;
+            f(current)
+        })
+    }
+
     pub(super) fn storage_registry(&self) -> &kernel::sync::Arc<crate::image_storage::Registry> {
         &self.capture.policy.permission.device().image_storage
     }
