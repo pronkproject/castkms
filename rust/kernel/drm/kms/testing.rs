@@ -99,6 +99,11 @@ impl<T: KmsDriver> TestDevice<T> {
         &self.0
     }
 
+    /// Borrow provider control for a constraints-enabled CRTC in the private topology.
+    pub fn constraints_output(&self, index: usize) -> Result<super::constraints::Output<'_, T>> {
+        super::constraints::Output::new(self.crtc_at(index)?)
+    }
+
     /// Borrow crtc number `index` in the immutable fixture topology.
     pub fn crtc_at(&self, index: usize) -> Result<&Crtc<T::Crtc>> {
         // SAFETY: The private fixture retains completed setup and excludes topology
