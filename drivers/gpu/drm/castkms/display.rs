@@ -630,6 +630,7 @@ impl KmsDriver for Driver {
                 scene::Kind::Primary,
             )?;
             plane.create_zpos_immutable_property(0)?;
+            plane.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
             plane.create_yuv_color_properties()?;
             plane.create_nearest_scaling_filter_property()?;
             if dev.enable_plane_pipeline {
