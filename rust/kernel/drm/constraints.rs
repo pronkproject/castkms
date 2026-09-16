@@ -6,9 +6,9 @@
 //! access. Native DRM validates descriptions and owns their reference-counted storage. Provider
 //! atomic checks remain responsible for complete scenes and resource combinations.
 
-mod catalog;
 mod description;
 mod entry;
+mod list;
 mod property;
 
 pub use property::Property;
@@ -25,8 +25,8 @@ pub use entry::{
     Entry, //
 };
 
-pub use catalog::{
-    Catalog,
+pub use list::{
+    List,
     Offer,
     Snapshot,
     SnapshotInfo, //

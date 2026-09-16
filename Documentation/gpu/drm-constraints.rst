@@ -64,23 +64,23 @@ domain's quota includes entries retained by snapshots, accepted state and
 retiring work, not just currently offered entries.
 
 The current native bounds are 256 format records and 64 scalar property
-records per description, and at most 64 entries per output catalog. Providers
-choose their retained-entry quota and may choose a smaller catalog limit.
+records per description, and at most 64 entries per output list. Providers
+choose their retained-entry quota and may choose a smaller list limit.
 These are kernel prototype bounds, not allocated wire-ABI constants.
 
-Catalogs and snapshots
+Lists and snapshots
 ======================
 
-A catalog begins with a nonzero accepted selection. Adding an entry does not
+A list begins with a nonzero accepted selection. Adding an entry does not
 select it or change current buffer validity. A suggestion is advisory; zero
 clears it. Withdrawing an offer excludes new selection but cannot undo an
 accepted scene. A withdrawn, unselected listing can be forgotten while
 independent references continue retaining the entry.
 
-``drm_constraints_catalog_snapshot()`` returns a bounded immutable list with
+``drm_constraints_list_snapshot()`` returns a bounded immutable list with
 generation, selected ID, suggested ID and availability metadata. A nonzero
 expected generation must match or the call returns ``-ESTALE``. Snapshots
-retain every listed entry independently of catalog changes or closure.
+retain every listed entry independently of list changes or closure.
 Generation changes concern entries, availability, selection and suggestions,
 not ordinary repeated frames. No-op metadata operations preserve it. Identity
 and generation exhaustion return ``-EOVERFLOW`` instead of wrapping.
@@ -101,7 +101,7 @@ Every offset is relative to the start of the complete snapshot. Per-plane
 format records are alternatives; scalar rules apply together. Unknown
 required records make an entry unusable, not unrestricted.
 
-The encoding is bounded to one MiB, including a maximum-size native catalog.
+The encoding is bounded to one MiB, including a maximum-size native list.
 All padding and reserved output fields are zero. A null buffer with zero
 capacity discovers the required size. An undersized buffer returns
 ``-ENOSPC`` and the required size without modifying any payload. Other errors
@@ -109,7 +109,7 @@ leave the size output unchanged. Success writes exactly the required bytes,
 including when the kernel buffer is unaligned.
 
 The snapshot retains its original generation, identities and availability
-even after the catalog changes or closes. The serialized bytes themselves
+even after the list changes or closes. The serialized bytes themselves
 retain no resources and grant no authority. These are kernel-only layout
 definitions, not an installed UAPI. The encoder does not implement a userspace
 ioctl, request validation, failure-copyout semantics or event delivery.
@@ -148,15 +148,15 @@ already be ready; it must not wait for userspace or submit work.
 
 The common swap path calls constraints acceptance after predecessor waits and
 driver/preparation serialization, before installing any object state. Under
-the catalog lock it repeats availability, scene and provider checks, then
+the list lock it repeats availability, scene and provider checks, then
 runs the infallible state-installation continuation. Failure installs nothing.
 Success accepts the scene and exact backend binding together; selected-ID
 readback describes accepted state, not completed presentation.
 
 The caller stabilizes modesetting authority and affected object state. Lock
-ordering is caller authority/modeset locks, then catalog serialization, then
-provider locks needed by the callback. Callbacks must not reenter catalog
-operations or acquire caller locks again. Native catalog construction alone
+ordering is caller authority/modeset locks, then list serialization, then
+provider locks needed by the callback. Callbacks must not reenter list
+operations or acquire caller locks again. Native list construction alone
 does not establish DRM-file, master or lease authority.
 
 Retirement and shutdown
@@ -172,10 +172,10 @@ the scene using another backend.
 Constraints ownership does not replace source-read preparation. A released
 claim can still have submitted native work in flight. Preparation guards keep
 admission and native completion through atomic object cleanup; cancellation,
-withdrawal and catalog closure do not signal that completion. Native failure
+withdrawal and list closure do not signal that completion. Native failure
 ends access when its fence signals but does not certify valid pixels.
 
-Catalog closure permanently excludes ordinary checking, acceptance and
+List closure permanently excludes ordinary checking, acceptance and
 listing, synchronizing with acceptance already in progress. Retained snapshots
 and accepted-selection references remain valid. A fully disabled, plane-free
 update may still retain the same accepted binding after closure or backend
@@ -186,13 +186,13 @@ default-contract restoration or the start of a new owner interval. Full
 owner-loss integration must separately close source admission, quiesce output
 and restore a safe default before exposing it to a replacement client that
 has not opted in. That lifecycle and client opt-in are not implemented by the
-native catalog helpers alone.
+native list helpers alone.
 
 Rust access and tests
 =====================
 
 ``kernel::drm::constraints`` wraps descriptions, property records, domains,
-typed backend entries, catalogs and snapshots. Native C code owns validation,
+typed backend entries, lists and snapshots. Native C code owns validation,
 identity allocation and serialization. Rust views borrow their owning
 description or snapshot; entries retain typed provider resources and their
 callback module. Construction and final release require sleepable context.

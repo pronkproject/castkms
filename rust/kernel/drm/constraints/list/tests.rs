@@ -40,28 +40,28 @@ fn entry(domain: &Domain, drops: &Arc<AtomicU32>) -> Result<ARef<Entry<TestBacke
     )
 }
 
-#[kunit_tests(rust_drm_constraints_catalog)]
+#[kunit_tests(rust_drm_constraints_list)]
 mod cases {
     use super::*;
 
     #[test]
-    fn snapshot_retains_entries_after_catalog_closes_and_drops() -> Result {
+    fn snapshot_retains_entries_after_list_closes_and_drops() -> Result {
         let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
         let domain = Domain::new(2)?;
         let initial = entry(&domain, &drops)?;
         let target = entry(&domain, &drops)?;
-        let catalog = Catalog::new(&domain, &initial, 2)?;
-        catalog.add(&target)?;
-        catalog.suggest(target.id())?;
-        let snapshot = catalog.snapshot(0)?;
+        let list = List::new(&domain, &initial, 2)?;
+        list.add(&target)?;
+        list.suggest(target.id())?;
+        let snapshot = list.snapshot(0)?;
         let info = snapshot.info();
         assert_eq!(info.count, 2);
         assert_eq!(info.selected_id, initial.id());
         assert_eq!(info.suggested_id, target.id());
-        catalog.close();
-        assert!(matches!(catalog.snapshot(0), Err(ESTALE)));
-        assert_eq!(catalog.selected().id(), initial.id());
-        drop(catalog);
+        list.close();
+        assert!(matches!(list.snapshot(0), Err(ESTALE)));
+        assert_eq!(list.selected().id(), initial.id());
+        drop(list);
         drop(initial);
         drop(target);
         drop(domain);
@@ -83,20 +83,17 @@ mod cases {
         let domain = Domain::new(2)?;
         let initial = entry(&domain, &drops)?;
         let target = entry(&domain, &drops)?;
-        let catalog = Catalog::new(&domain, &initial, 2)?;
-        catalog.add(&target)?;
-        let old = catalog.snapshot(0)?;
-        catalog.withdraw(target.id())?;
-        assert!(matches!(
-            catalog.snapshot(old.info().generation),
-            Err(ESTALE)
-        ));
-        let current = catalog.snapshot(0)?;
+        let list = List::new(&domain, &initial, 2)?;
+        list.add(&target)?;
+        let old = list.snapshot(0)?;
+        list.withdraw(target.id())?;
+        assert!(matches!(list.snapshot(old.info().generation), Err(ESTALE)));
+        let current = list.snapshot(0)?;
         assert!(old.entries().all(|offer| offer.selectable));
         assert!(!current.entries().nth(1).unwrap().selectable);
-        catalog.forget(target.id())?;
+        list.forget(target.id())?;
         drop(target);
-        assert_eq!(catalog.snapshot(0)?.info().count, 1);
+        assert_eq!(list.snapshot(0)?.info().count, 1);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
         drop(old);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
@@ -106,20 +103,20 @@ mod cases {
     }
 
     #[test]
-    fn native_catalog_enforces_bound_and_domain() -> Result {
+    fn native_list_enforces_bound_and_domain() -> Result {
         let drops = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
         let domain = Domain::new(2)?;
         let other = Domain::new(1)?;
         let initial = entry(&domain, &drops)?;
         let target = entry(&domain, &drops)?;
         let foreign = entry(&other, &drops)?;
-        let catalog = Catalog::new(&domain, &initial, 1)?;
-        assert_eq!(catalog.add(&target), Err(ENOSPC));
-        assert_eq!(catalog.add(&foreign), Err(EINVAL));
-        assert_eq!(catalog.forget(initial.id()), Err(EBUSY));
-        let before = catalog.snapshot(0)?.info();
-        catalog.suggest(0)?;
-        assert_eq!(catalog.snapshot(before.generation)?.info(), before);
+        let list = List::new(&domain, &initial, 1)?;
+        assert_eq!(list.add(&target), Err(ENOSPC));
+        assert_eq!(list.add(&foreign), Err(EINVAL));
+        assert_eq!(list.forget(initial.id()), Err(EBUSY));
+        let before = list.snapshot(0)?.info();
+        list.suggest(0)?;
+        assert_eq!(list.snapshot(before.generation)?.info(), before);
         Ok(())
     }
 
@@ -129,25 +126,25 @@ mod cases {
         let domain = Domain::new(2)?;
         let initial = entry(&domain, &drops)?;
         let target = entry(&domain, &drops)?;
-        let catalog = Catalog::new(&domain, &initial, 2)?;
-        assert!(matches!(catalog.lookup(0), Err(EINVAL)));
-        assert!(matches!(catalog.lookup(target.id()), Err(ESTALE)));
-        catalog.add(&target)?;
-        let retained = catalog.lookup(target.id())?;
+        let list = List::new(&domain, &initial, 2)?;
+        assert!(matches!(list.lookup(0), Err(EINVAL)));
+        assert!(matches!(list.lookup(target.id()), Err(ESTALE)));
+        list.add(&target)?;
+        let retained = list.lookup(target.id())?;
         assert_eq!(retained.id(), target.id());
         assert!(retained.in_domain(&domain));
-        catalog.withdraw(target.id())?;
-        assert!(matches!(catalog.lookup(target.id()), Err(ESTALE)));
-        catalog.forget(target.id())?;
+        list.withdraw(target.id())?;
+        assert!(matches!(list.lookup(target.id()), Err(ESTALE)));
+        list.forget(target.id())?;
         drop(target);
         assert_eq!(drops.load(Ordering::Relaxed), 0);
         assert_eq!(retained.backend().0.load(Ordering::Relaxed), 0);
         drop(retained);
         assert_eq!(drops.load(Ordering::Relaxed), 1);
-        catalog.withdraw(initial.id())?;
-        assert_eq!(catalog.lookup(initial.id())?.id(), initial.id());
-        catalog.close();
-        assert!(matches!(catalog.lookup(initial.id()), Err(ESTALE)));
+        list.withdraw(initial.id())?;
+        assert_eq!(list.lookup(initial.id())?.id(), initial.id());
+        list.close();
+        assert!(matches!(list.lookup(initial.id()), Err(ESTALE)));
         Ok(())
     }
 
@@ -157,10 +154,10 @@ mod cases {
         let domain = Domain::new(2)?;
         let initial = entry(&domain, &drops)?;
         let target = entry(&domain, &drops)?;
-        let catalog = Catalog::new(&domain, &initial, 2)?;
-        catalog.add(&target)?;
-        catalog.suggest(target.id())?;
-        let snapshot = catalog.snapshot(0)?;
+        let list = List::new(&domain, &initial, 2)?;
+        list.add(&target)?;
+        list.suggest(target.id())?;
+        let snapshot = list.snapshot(0)?;
         let info = snapshot.info();
         let bytes = snapshot.encode()?;
         assert!(bytes.len() <= bindings::DRM_CONSTRAINTS_ENCODING_MAX_SIZE as usize);
@@ -180,10 +177,10 @@ mod cases {
             u64::from_ne_bytes(bytes[suggested..suggested + 8].try_into().unwrap()),
             info.suggested_id
         );
-        catalog.close();
+        list.close();
         assert_eq!(snapshot.encode()?.as_slice(), bytes.as_slice());
         drop(snapshot);
-        drop(catalog);
+        drop(list);
         drop(initial);
         drop(target);
         drop(domain);
