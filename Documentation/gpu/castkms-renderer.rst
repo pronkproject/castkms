@@ -174,14 +174,19 @@ Register renderer-private storage with ``REGISTER_IMAGE``, then supply its
 includes primary, overlays and cursor in back-to-front order, source crop,
 destination geometry, memory-plane descriptors and ordered plane/output
 color records. The producer sync_file covers all layers and must complete
-successfully before any source read. There is at most one outstanding job
-per endpoint; ``EBUSY`` also covers a private image still retained by native
-work or output reads. ``ENODATA`` means there is no new source-bearing scene.
+successfully before any source read. There is at most one outstanding source
+job per endpoint; ``EBUSY`` also covers a private image still retained by native
+work or output reads. ``ENODATA`` means there is no unconsumed source-bearing
+scene.
 Failed descriptor publication installs no descriptors, admits no userspace
 access, and permits retry with the same image name.
 
 ``RELEASE_SOURCE`` resolves the whole source-to-private job. ``NO_ACCESS``
-promises neither source nor private-image access occurred; ``CPU_DONE`` promises CPU access and coherency operations
+promises neither source nor private-image access occurred and produces no
+private image. The same scene remains eligible for retry under a new job ID,
+without requiring another KMS update. Retry still checks current authority
+and source-read admission: it cannot bypass a preparation hold or permanent
+seal. ``CPU_DONE`` promises CPU access and coherency operations
 ended; ``SUBMITTED`` supplies a native sync_file covering every submitted
 source read and private-image write and promises no later submission under
 that job. Keeping an

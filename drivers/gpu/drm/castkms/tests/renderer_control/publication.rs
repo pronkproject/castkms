@@ -921,6 +921,8 @@ mod cases {
                     },
                 )?;
                 let image = session.completed_image(1)?;
+                // A repeated report cannot undo the accepted private-image result.
+                session.release_source(id, Completion::WithoutAccess)?;
                 check(session.begin_source(1).err() == Some(ENODATA))?;
                 check(Arc::ptr_eq(&image, &session.completed_image(1)?))?;
                 source.seal();
@@ -1086,11 +1088,21 @@ mod cases {
             check(session.release_source(job_id + 1, Completion::WithoutAccess) == Err(ENOENT))?;
             check(session.begin_source(1).err() == Some(EBUSY))?;
 
+            let mut job_id = job_id;
+            for _ in 0..3 {
+                session.release_source(job_id, Completion::WithoutAccess)?;
+                session.release_source(job_id, Completion::WithoutAccess)?;
+                check(session.completed_image(1).err() == Some(ENODATA))?;
+                let retry = session.begin_source(1)?;
+                check(retry.id() > job_id)?;
+                job_id = retry.id();
+                retry.publish(|| {})?;
+            }
             source.seal();
             session.release_source(job_id, Completion::WithoutAccess)?;
             check(source.prepared()?.is_some())?;
             session.release_source(job_id, Completion::WithoutAccess)?;
-            check(session.begin_source(1).err() == Some(ENODATA))
+            check(session.begin_source(1).err() == Some(EBUSY))
         })
     }
 

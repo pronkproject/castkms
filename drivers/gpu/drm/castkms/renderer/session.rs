@@ -73,6 +73,7 @@ enum SourceSlot {
     Claimed {
         id: u64,
         image: u64,
+        content_serial: u64,
         job: RenderJob,
         completed: UniqueArc<MaybeUninit<Rendered>>,
     },
@@ -581,7 +582,7 @@ impl Session {
 
     /// Resolve one published source job, accepting a repeated terminal record.
     pub(crate) fn release_source(&self, id: u64, completion: Completion) -> Result {
-        let (job, completed, image) = {
+        let (job, completed, image, content_serial) = {
             let mut state = self.state.lock();
             if state.closed {
                 return Err(EKEYREVOKED);
@@ -601,12 +602,13 @@ impl Session {
                 SourceSlot::Claimed {
                     id: current,
                     image,
+                    content_serial,
                     job,
                     completed,
                 } if current == id => {
                     *last_released_source = Some(id);
                     *source = SourceSlot::Releasing { id, image };
-                    (job, completed, image)
+                    (job, completed, image, content_serial)
                 }
                 other => {
                     *source = other;
@@ -620,11 +622,17 @@ impl Session {
         let mut state = self.state.lock();
         let State { slot, images, .. } = &mut *state;
         let publication = match slot {
-            Slot::Renderer { source, .. } if matches!(&*source, SourceSlot::Releasing { id: current, .. } if *current == id) =>
+            Slot::Renderer { source, last_content_serial, .. } if matches!(&*source, SourceSlot::Releasing { id: current, .. } if *current == id) =>
             {
                 let result = match rendered {
                     Some(rendered) => match images.as_mut() {
-                        Some(images) => images.publish(image, rendered),
+                        Some(images) => {
+                            let result = images.publish(image, rendered);
+                            if result.is_ok() {
+                                *last_content_serial = Some(content_serial);
+                            }
+                            result
+                        }
                         None => Err(ESHUTDOWN),
                     },
                     None => Ok(None),
@@ -716,12 +724,7 @@ impl PendingSource<'_> {
             job.release(Completion::WithoutAccess);
             return Err(EKEYREVOKED);
         }
-        let Slot::Renderer {
-            source,
-            last_content_serial,
-            ..
-        } = &mut state.slot
-        else {
+        let Slot::Renderer { source, .. } = &mut state.slot else {
             drop(state);
             job.release(Completion::WithoutAccess);
             return Err(ECANCELED);
@@ -733,10 +736,10 @@ impl PendingSource<'_> {
             return Err(ECANCELED);
         }
         publish();
-        *last_content_serial = Some(self.content_serial);
         *source = SourceSlot::Claimed {
             id: self.id,
             image: self.image,
+            content_serial: self.content_serial,
             job,
             completed,
         };
