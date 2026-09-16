@@ -4,7 +4,7 @@
 #include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_constraints.h>
-#include <drm/drm_constraints_catalog.h>
+#include <drm/drm_constraints_list.h>
 #include <drm/drm_constraints_device.h>
 #include <drm/drm_constraints_entry.h>
 #include <drm/drm_constraints_output.h>
@@ -102,7 +102,7 @@ static void reset_and_pristine_state_retain_accepted_binding(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, pristine);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_state, pristine), 0);
 	KUNIT_EXPECT_PTR_EQ(test, pristine->constraints, entry);
-	drm_constraints_catalog_close(drm_constraints_crtc_catalog(fixture->crtc));
+	drm_constraints_list_close(drm_constraints_crtc_list(fixture->crtc));
 	drm_mode_config_reset(&fixture->drm);
 	KUNIT_EXPECT_PTR_EQ(test, fixture->crtc->state->constraints, entry);
 	KUNIT_EXPECT_EQ(test, fixture->released, 0);
@@ -122,7 +122,7 @@ static void attaching_rejects_foreign_device_and_objects(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, foreign, 4, &output_ops), -EINVAL);
 	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, wrong_crtc, 4, &output_ops), -EINVAL);
 	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(fixture->crtc, wrong_plane, 4, &output_ops), -EINVAL);
-	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_crtc_catalog(fixture->crtc), NULL);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_crtc_list(fixture->crtc), NULL);
 	KUNIT_EXPECT_PTR_EQ(test, fixture->crtc->state->constraints, NULL);
 }
 
@@ -162,7 +162,7 @@ static void publishing_revalidates_complete_object_scope(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, foreign), -EINVAL);
 	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, wrong_plane), -EINVAL);
 	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(fixture->crtc, target), 0);
-	selected = drm_constraints_catalog_selected(drm_constraints_crtc_catalog(fixture->crtc));
+	selected = drm_constraints_list_selected(drm_constraints_crtc_list(fixture->crtc));
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, selected), 0);
 	KUNIT_EXPECT_PTR_EQ(test, selected, initial);
 }

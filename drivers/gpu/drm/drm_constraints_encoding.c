@@ -6,7 +6,7 @@
 #include <linux/overflow.h>
 #include <linux/string.h>
 #include <drm/drm_constraints.h>
-#include <drm/drm_constraints_catalog.h>
+#include <drm/drm_constraints_list.h>
 #include <drm/drm_constraints_encoding.h>
 #include <drm/drm_constraints_entry.h>
 

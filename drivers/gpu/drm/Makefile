@@ -92,7 +92,7 @@ drm-y := \
 	drm_connector.o \
 	drm_constraints.o \
 	drm_constraints_entry.o \
-	drm_constraints_catalog.o \
+	drm_constraints_list.o \
 	drm_constraints_encoding.o \
 	drm_constraints_device.o \
 	drm_constraints_output.o \

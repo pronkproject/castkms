@@ -5,7 +5,7 @@
 #include <drm/drm_atomic_constraints.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_constraints.h>
-#include <drm/drm_constraints_catalog.h>
+#include <drm/drm_constraints_list.h>
 #include <drm/drm_constraints_entry.h>
 #include <drm/drm_constraints_output.h>
 #include <drm/drm_crtc.h>
@@ -24,7 +24,7 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 				       struct drm_constraints_entry *entry)
 {
 	struct drm_constraints_entry *old;
-	struct drm_constraints_catalog *catalog;
+	struct drm_constraints_list *list;
 	int ret;
 
 	if (!entry || !state || !state->crtc)
@@ -35,10 +35,10 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 		return -EINVAL;
 	if (state->state->checked)
 		return -EBUSY;
-	catalog = drm_constraints_crtc_catalog(state->crtc);
-	if (!catalog)
+	list = drm_constraints_crtc_list(state->crtc);
+	if (!list)
 		return -EOPNOTSUPP;
-	ret = drm_constraints_catalog_check(catalog, entry, candidate_available, NULL);
+	ret = drm_constraints_list_check(list, entry, candidate_available, NULL);
 	if (ret)
 		return ret;
 	old = state->constraints;
@@ -207,16 +207,16 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 int drm_atomic_constraints_check(struct drm_atomic_commit *state)
 {
 	struct constraints_update update = { .state = state };
-	struct drm_constraints_catalog *catalog;
+	struct drm_constraints_list *list;
 	int ret = find_output(state, &update.crtc);
 
 	if (ret || !update.crtc)
 		return ret;
-	catalog = drm_constraints_crtc_catalog(update.crtc->crtc);
+	list = drm_constraints_crtc_list(update.crtc->crtc);
 	if (quiescing_output(&update))
-		return drm_constraints_catalog_quiesce(catalog, update.crtc->constraints,
+		return drm_constraints_list_quiesce(list, update.crtc->constraints,
 						       check_scene, &update);
-	return drm_constraints_catalog_check(catalog, update.crtc->constraints,
+	return drm_constraints_list_check(list, update.crtc->constraints,
 					     check_scene, &update);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_constraints_check);
@@ -236,7 +236,7 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 				    void (*install)(struct drm_atomic_commit *state))
 {
 	struct constraints_update update = { .state = state, .install = install };
-	struct drm_constraints_catalog *catalog;
+	struct drm_constraints_list *list;
 	int ret;
 
 	if (!install)
@@ -248,11 +248,11 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 		install(state);
 		return 0;
 	}
-	catalog = drm_constraints_crtc_catalog(update.crtc->crtc);
+	list = drm_constraints_crtc_list(update.crtc->crtc);
 	if (quiescing_output(&update))
-		return drm_constraints_catalog_quiesce(catalog, update.crtc->constraints,
+		return drm_constraints_list_quiesce(list, update.crtc->constraints,
 						       install_scene, &update);
-	return drm_constraints_catalog_accept(catalog, update.crtc->constraints,
+	return drm_constraints_list_accept(list, update.crtc->constraints,
 					      install_scene, &update);
 }
 EXPORT_SYMBOL_GPL(drm_atomic_constraints_install);

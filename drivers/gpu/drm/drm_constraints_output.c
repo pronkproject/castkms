@@ -3,7 +3,7 @@
 #include <linux/err.h>
 #include <linux/slab.h>
 #include <drm/drm_constraints.h>
-#include <drm/drm_constraints_catalog.h>
+#include <drm/drm_constraints_list.h>
 #include <drm/drm_constraints_entry.h>
 #include <drm/drm_constraints_output.h>
 #include <drm/drm_crtc.h>
@@ -147,10 +147,10 @@ int drm_constraints_crtc_init(struct drm_crtc *crtc, struct drm_constraints_entr
 	output = kzalloc_obj(*output);
 	if (!output)
 		return -ENOMEM;
-	output->catalog = drm_constraints_catalog_create(crtc->dev->mode_config.constraints_domain,
+	output->list = drm_constraints_list_create(crtc->dev->mode_config.constraints_domain,
 							 initial, limit);
-	if (IS_ERR(output->catalog)) {
-		ret = PTR_ERR(output->catalog);
+	if (IS_ERR(output->list)) {
+		ret = PTR_ERR(output->list);
 		kfree(output);
 		return ret;
 	}
@@ -169,16 +169,16 @@ void drm_constraints_crtc_fini(struct drm_crtc *crtc)
 	if (!output)
 		return;
 	crtc->constraints_output = NULL;
-	drm_constraints_catalog_close(output->catalog);
-	drm_constraints_catalog_put(output->catalog);
+	drm_constraints_list_close(output->list);
+	drm_constraints_list_put(output->list);
 	kfree(output);
 }
 
-struct drm_constraints_catalog *drm_constraints_crtc_catalog(struct drm_crtc *crtc)
+struct drm_constraints_list *drm_constraints_crtc_list(struct drm_crtc *crtc)
 {
-	return crtc->constraints_output ? crtc->constraints_output->catalog : NULL;
+	return crtc->constraints_output ? crtc->constraints_output->list : NULL;
 }
-EXPORT_SYMBOL_GPL(drm_constraints_crtc_catalog);
+EXPORT_SYMBOL_GPL(drm_constraints_crtc_list);
 
 int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry *entry)
 {
@@ -189,13 +189,13 @@ int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry
 	ret = validate_scope(crtc, entry);
 	if (ret)
 		return ret;
-	return drm_constraints_catalog_add(crtc->constraints_output->catalog, entry);
+	return drm_constraints_list_add(crtc->constraints_output->list, entry);
 }
 EXPORT_SYMBOL_GPL(drm_constraints_crtc_add);
 
 void drm_constraints_crtc_state_init(struct drm_crtc_state *state)
 {
 	if (state->crtc->constraints_output)
-		state->constraints = drm_constraints_catalog_selected(state->crtc->constraints_output->catalog);
+		state->constraints = drm_constraints_list_selected(state->crtc->constraints_output->list);
 }
 EXPORT_SYMBOL_GPL(drm_constraints_crtc_state_init);

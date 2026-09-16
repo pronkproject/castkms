@@ -23,14 +23,14 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
  * The prototype admits only one independent output per transaction and no
  * asynchronous plane update when constraints are involved.
  * Fully disabling the CRTC with every plane detached retains its binding and
- * remains possible after catalog closure or backend failure. Such quiescence
+ * remains possible after list closure or backend failure. Such quiescence
  * selects no new entry and does not complete outstanding native source reads.
  */
 int drm_atomic_constraints_prepare(struct drm_atomic_commit *state);
 int drm_atomic_constraints_check(struct drm_atomic_commit *state);
 
 /*
- * Final post-wait installation under the catalog lock. The caller holds modeset
+ * Final post-wait installation under the list lock. The caller holds modeset
  * and provider authority locks, and has completed all resource preparation.
  * The continuation must install state without failure; returning from it is
  * the acceptance boundary. The transaction already owns its backend binding.

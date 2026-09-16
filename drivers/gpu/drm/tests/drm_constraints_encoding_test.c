@@ -3,7 +3,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <drm/drm_constraints.h>
-#include <drm/drm_constraints_catalog.h>
+#include <drm/drm_constraints_list.h>
 #include <drm/drm_constraints_encoding.h>
 #include <drm/drm_constraints_entry.h>
 #include <drm/drm_fourcc.h>
@@ -14,7 +14,7 @@ struct encoding_fixture {
 	struct drm_constraints_domain *domain;
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *initial;
-	struct drm_constraints_catalog *catalog;
+	struct drm_constraints_list *list;
 };
 
 static void release_backend(void *data) {}
@@ -24,7 +24,7 @@ static const struct drm_constraints_entry_ops ops = {
 static void put_domain(void *data) { drm_constraints_domain_put(data); }
 static void put_description(void *data) { drm_constraints_description_put(data); }
 static void put_entry(void *data) { drm_constraints_entry_put(data); }
-static void put_catalog(void *data) { drm_constraints_catalog_put(data); }
+static void put_list(void *data) { drm_constraints_list_put(data); }
 static void put_snapshot(void *data) { drm_constraints_snapshot_put(data); }
 static void free_buffer(void *data) { kvfree(data); }
 
@@ -56,16 +56,16 @@ static struct encoding_fixture *new_fixture(struct kunit *test)
 	f->initial = drm_constraints_entry_create(f->domain, 19, f->description, &ops, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->initial);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, f->initial), 0);
-	f->catalog = drm_constraints_catalog_create(f->domain, f->initial, DRM_CONSTRAINTS_MAX_ENTRIES);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->catalog);
-	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_catalog, f->catalog), 0);
+	f->list = drm_constraints_list_create(f->domain, f->initial, DRM_CONSTRAINTS_MAX_ENTRIES);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->list);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_list, f->list), 0);
 	return f;
 }
 
 static struct drm_constraints_snapshot *snapshot(struct kunit *test,
-						 struct drm_constraints_catalog *catalog)
+						 struct drm_constraints_list *list)
 {
-	struct drm_constraints_snapshot *snapshot = drm_constraints_catalog_snapshot(catalog, 0);
+	struct drm_constraints_snapshot *snapshot = drm_constraints_list_snapshot(list, 0);
 
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, snapshot);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_snapshot, snapshot), 0);
@@ -75,8 +75,8 @@ static struct drm_constraints_snapshot *snapshot(struct kunit *test,
 static void encoding_preserves_native_metadata_without_padding(struct kunit *test)
 {
 	struct encoding_fixture *f = new_fixture(test);
-	struct drm_constraints_snapshot *view = snapshot(test, f->catalog);
-	struct drm_constraints_encoded_list *list;
+	struct drm_constraints_snapshot *view = snapshot(test, f->list);
+	struct drm_constraints_encoded_list *header;
 	struct drm_constraints_encoded_entry *entry;
 	struct drm_constraints_encoded_description *description;
 	struct drm_constraints_encoded_output *output;
@@ -91,20 +91,20 @@ static void encoding_preserves_native_metadata_without_padding(struct kunit *tes
 	KUNIT_ASSERT_NOT_NULL(test, buffer);
 	memset(buffer, 0xa5, required);
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, buffer, required, &required), 0);
-	list = (void *)buffer;
-	KUNIT_EXPECT_EQ(test, list->version, DRM_CONSTRAINTS_ENCODING_VERSION);
-	KUNIT_EXPECT_EQ(test, list->length, required);
-	KUNIT_EXPECT_EQ(test, list->generation, 1);
-	KUNIT_EXPECT_EQ(test, list->selected_id, drm_constraints_entry_id(f->initial));
-	KUNIT_EXPECT_EQ(test, list->suggested_id, 0);
-	KUNIT_EXPECT_EQ(test, list->count_entries, 1);
-	KUNIT_EXPECT_EQ(test, list->entries_offset, sizeof(*list));
-	KUNIT_EXPECT_EQ(test, list->entry_size, sizeof(*entry));
-	KUNIT_EXPECT_EQ(test, list->pad | list->reserved[0] | list->reserved[1], 0);
-	entry = (void *)(buffer + sizeof(*list));
-	KUNIT_EXPECT_EQ(test, entry->id, list->selected_id);
+	header = (void *)buffer;
+	KUNIT_EXPECT_EQ(test, header->version, DRM_CONSTRAINTS_ENCODING_VERSION);
+	KUNIT_EXPECT_EQ(test, header->length, required);
+	KUNIT_EXPECT_EQ(test, header->generation, 1);
+	KUNIT_EXPECT_EQ(test, header->selected_id, drm_constraints_entry_id(f->initial));
+	KUNIT_EXPECT_EQ(test, header->suggested_id, 0);
+	KUNIT_EXPECT_EQ(test, header->count_entries, 1);
+	KUNIT_EXPECT_EQ(test, header->entries_offset, sizeof(*header));
+	KUNIT_EXPECT_EQ(test, header->entry_size, sizeof(*entry));
+	KUNIT_EXPECT_EQ(test, header->pad | header->reserved[0] | header->reserved[1], 0);
+	entry = (void *)(buffer + sizeof(*header));
+	KUNIT_EXPECT_EQ(test, entry->id, header->selected_id);
 	KUNIT_EXPECT_EQ(test, entry->flags, DRM_CONSTRAINTS_ENCODED_SELECTABLE);
-	KUNIT_EXPECT_EQ(test, entry->description_offset, sizeof(*list) + sizeof(*entry));
+	KUNIT_EXPECT_EQ(test, entry->description_offset, sizeof(*header) + sizeof(*entry));
 	KUNIT_EXPECT_EQ(test, entry->description_offset + entry->description_length, required);
 	KUNIT_EXPECT_EQ(test, entry->pad | entry->reserved[0] | entry->reserved[1], 0);
 	description = (void *)((u8 *)entry + sizeof(*entry));
@@ -149,7 +149,7 @@ static void encoding_preserves_native_metadata_without_padding(struct kunit *tes
 static void size_discovery_and_short_buffers_write_no_partial_payload(struct kunit *test)
 {
 	struct encoding_fixture *f = new_fixture(test);
-	struct drm_constraints_snapshot *view = snapshot(test, f->catalog);
+	struct drm_constraints_snapshot *view = snapshot(test, f->list);
 	u8 buffer[257], before[257];
 	size_t required = 123;
 
@@ -171,12 +171,12 @@ static void size_discovery_and_short_buffers_write_no_partial_payload(struct kun
 	KUNIT_EXPECT_MEMEQ(test, before + 1, buffer, 256);
 }
 
-static void encoded_snapshot_remains_coherent_after_catalog_closure(struct kunit *test)
+static void encoded_snapshot_remains_coherent_after_list_closure(struct kunit *test)
 {
 	struct encoding_fixture *f = new_fixture(test);
 	struct drm_constraints_entry *target;
 	struct drm_constraints_snapshot *view;
-	struct drm_constraints_encoded_list *list;
+	struct drm_constraints_encoded_list *header;
 	struct drm_constraints_encoded_entry *entries;
 	size_t required;
 	u8 *before, *after;
@@ -184,28 +184,28 @@ static void encoded_snapshot_remains_coherent_after_catalog_closure(struct kunit
 	target = drm_constraints_entry_create(f->domain, 19, f->description, &ops, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, target);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, target), 0);
-	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(f->catalog, target), 0);
-	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_suggest(f->catalog, drm_constraints_entry_id(target)), 0);
-	view = snapshot(test, f->catalog);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_add(f->list, target), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_suggest(f->list, drm_constraints_entry_id(target)), 0);
+	view = snapshot(test, f->list);
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
 	before = kunit_kmalloc(test, required, GFP_KERNEL);
 	after = kunit_kmalloc(test, required, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, before);
 	KUNIT_ASSERT_NOT_NULL(test, after);
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, before, required, &required), 0);
-	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_withdraw(f->catalog, drm_constraints_entry_id(target)), 0);
-	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_forget(f->catalog, drm_constraints_entry_id(target)), 0);
-	drm_constraints_catalog_close(f->catalog);
-	kunit_release_action(test, put_catalog, f->catalog);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_withdraw(f->list, drm_constraints_entry_id(target)), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_forget(f->list, drm_constraints_entry_id(target)), 0);
+	drm_constraints_list_close(f->list);
+	kunit_release_action(test, put_list, f->list);
 	kunit_release_action(test, put_entry, target);
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, after, required, &required), 0);
 	KUNIT_EXPECT_MEMEQ(test, before, after, required);
-	list = (void *)after;
-	entries = (void *)(after + sizeof(*list));
-	KUNIT_EXPECT_EQ(test, list->entries_offset, sizeof(*list));
-	KUNIT_EXPECT_EQ(test, list->count_entries, 2);
-	KUNIT_EXPECT_EQ(test, list->generation, 3);
-	KUNIT_EXPECT_EQ(test, list->suggested_id, entries[1].id);
+	header = (void *)after;
+	entries = (void *)(after + sizeof(*header));
+	KUNIT_EXPECT_EQ(test, header->entries_offset, sizeof(*header));
+	KUNIT_EXPECT_EQ(test, header->count_entries, 2);
+	KUNIT_EXPECT_EQ(test, header->generation, 3);
+	KUNIT_EXPECT_EQ(test, header->suggested_id, entries[1].id);
 	KUNIT_EXPECT_NE(test, entries[0].id, entries[1].id);
 	KUNIT_EXPECT_EQ(test, entries[0].flags, DRM_CONSTRAINTS_ENCODED_SELECTABLE);
 	KUNIT_EXPECT_EQ(test, entries[1].flags, DRM_CONSTRAINTS_ENCODED_SELECTABLE);
@@ -214,16 +214,16 @@ static void encoded_snapshot_remains_coherent_after_catalog_closure(struct kunit
 	KUNIT_EXPECT_EQ(test, entries[1].description_offset + entries[1].description_length, required);
 }
 
-static void maximum_native_catalog_fits_bounded_encoding(struct kunit *test)
+static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 {
 	const struct drm_constraints_size size = { 1, 1, 4096, 4096 };
 	struct drm_constraints_domain *domain;
 	struct drm_constraints_description *description;
-	struct drm_constraints_catalog *catalog = NULL;
+	struct drm_constraints_list *list = NULL;
 	struct drm_constraints_snapshot *view;
 	struct drm_constraints_format *formats;
 	struct drm_constraints_property *properties;
-	struct drm_constraints_encoded_list *list;
+	struct drm_constraints_encoded_list *header;
 	struct drm_constraints_encoded_entry *entries;
 	size_t required, expected;
 	unsigned int i;
@@ -256,17 +256,17 @@ static void maximum_native_catalog_fits_bounded_encoding(struct kunit *test)
 
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
 		KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
-		if (!catalog) {
-			catalog = drm_constraints_catalog_create(domain, entry, DRM_CONSTRAINTS_MAX_ENTRIES);
-			KUNIT_ASSERT_NOT_ERR_OR_NULL(test, catalog);
-			KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_catalog, catalog), 0);
+		if (!list) {
+			list = drm_constraints_list_create(domain, entry, DRM_CONSTRAINTS_MAX_ENTRIES);
+			KUNIT_ASSERT_NOT_ERR_OR_NULL(test, list);
+			KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_list, list), 0);
 		} else {
-			KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(catalog, entry), 0);
+			KUNIT_ASSERT_EQ(test, drm_constraints_list_add(list, entry), 0);
 		}
 	}
-	view = snapshot(test, catalog);
+	view = snapshot(test, list);
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
-	expected = sizeof(*list) + DRM_CONSTRAINTS_MAX_ENTRIES *
+	expected = sizeof(*header) + DRM_CONSTRAINTS_MAX_ENTRIES *
 		(sizeof(*entries) + sizeof(struct drm_constraints_encoded_description) +
 		 sizeof(struct drm_constraints_encoded_output) +
 		 DRM_CONSTRAINTS_MAX_FORMATS * sizeof(struct drm_constraints_encoded_format) +
@@ -279,10 +279,10 @@ static void maximum_native_catalog_fits_bounded_encoding(struct kunit *test)
 	buffer[required] = 0xa5;
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, buffer, required, &required), 0);
 	KUNIT_EXPECT_EQ(test, buffer[required], 0xa5);
-	list = (void *)buffer;
-	entries = (void *)(buffer + sizeof(*list));
-	KUNIT_EXPECT_EQ(test, list->entries_offset, sizeof(*list));
-	KUNIT_EXPECT_EQ(test, list->count_entries, DRM_CONSTRAINTS_MAX_ENTRIES);
+	header = (void *)buffer;
+	entries = (void *)(buffer + sizeof(*header));
+	KUNIT_EXPECT_EQ(test, header->entries_offset, sizeof(*header));
+	KUNIT_EXPECT_EQ(test, header->count_entries, DRM_CONSTRAINTS_MAX_ENTRIES);
 	KUNIT_EXPECT_EQ(test, entries[DRM_CONSTRAINTS_MAX_ENTRIES - 1].description_offset +
 			entries[DRM_CONSTRAINTS_MAX_ENTRIES - 1].description_length, required);
 }
@@ -290,8 +290,8 @@ static void maximum_native_catalog_fits_bounded_encoding(struct kunit *test)
 static struct kunit_case drm_constraints_encoding_tests[] = {
 	KUNIT_CASE(encoding_preserves_native_metadata_without_padding),
 	KUNIT_CASE(size_discovery_and_short_buffers_write_no_partial_payload),
-	KUNIT_CASE(encoded_snapshot_remains_coherent_after_catalog_closure),
-	KUNIT_CASE(maximum_native_catalog_fits_bounded_encoding),
+	KUNIT_CASE(encoded_snapshot_remains_coherent_after_list_closure),
+	KUNIT_CASE(maximum_native_list_fits_bounded_encoding),
 	{}
 };
 

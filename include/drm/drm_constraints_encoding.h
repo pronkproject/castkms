@@ -92,7 +92,7 @@ struct drm_constraints_encoded_property {
  * required and the retained snapshot must not overlap the output buffer.
  * Success writes exactly required bytes, with no references or authority in
  * the encoding. Snapshot ownership and expected-generation checking belong to
- * the catalog; copyout, client authority and notification delivery are separate.
+ * the list; copyout, client authority and notification delivery are separate.
  * Readers must reject unsupported versions and entries with unknown required
  * records. Per-plane format records are alternatives; scalar rules all apply.
  */

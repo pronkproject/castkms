@@ -5,16 +5,16 @@
 struct drm_atomic_commit;
 struct drm_crtc;
 struct drm_crtc_state;
-struct drm_constraints_catalog;
+struct drm_constraints_list;
 struct drm_constraints_entry;
 
 /**
  * struct drm_constraints_output_ops - complete provider validation
  * @check: validate the complete proposed scene against the retained backend
  *
- * Check is called with modeset locks and the catalog lock held, both during
+ * Check is called with modeset locks and the list lock held, both during
  * validation and before acceptance. It must not change external state, acquire
- * modeset locks, reenter catalog operations or wait for userspace. All resources
+ * modeset locks, reenter list operations or wait for userspace. All resources
  * required to accept the entry must be ready before offering it. Return zero
  * or a negative errno. Backend is the entry's retained provider context.
  * The table must remain valid throughout the CRTC lifetime.
@@ -34,8 +34,8 @@ struct drm_constraints_output_ops {
 int drm_constraints_crtc_init(struct drm_crtc *crtc, struct drm_constraints_entry *initial,
 			      unsigned int limit, const struct drm_constraints_output_ops *ops);
 void drm_constraints_crtc_fini(struct drm_crtc *crtc);
-/* Borrowed catalog, or NULL; valid throughout the CRTC lifetime. */
-struct drm_constraints_catalog *drm_constraints_crtc_catalog(struct drm_crtc *crtc);
+/* Borrowed list, or NULL; valid throughout the CRTC lifetime. */
+struct drm_constraints_list *drm_constraints_crtc_list(struct drm_crtc *crtc);
 
 /* Publish a ready entry after validating device, CRTC and existing plane scope. */
 int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry *entry);
