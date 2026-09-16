@@ -294,7 +294,11 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate,
 			.max_source = { 16384, 16384 }, .min_scale = 1 << 12,
 			.max_scale = 1 << 20, .max_layers = 24, .max_roles = { 1, 22, 1 },
 			.max_color_operations = 16, .max_lut_entries = 256,
-			.yuv_encodings = 7, .yuv_ranges = 3,
+			.yuv_encodings = DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT601 |
+				DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT709 |
+				DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT2020,
+			.yuv_ranges = DRM_CASTKMS_CAPABILITY_YUV_RANGE_LIMITED |
+				DRM_CASTKMS_CAPABILITY_YUV_RANGE_FULL,
 		},
 	};
 	struct drm_castkms_renderer_profile_result result;

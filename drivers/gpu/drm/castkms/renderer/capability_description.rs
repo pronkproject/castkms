@@ -85,6 +85,11 @@ const FEATURES: u32 = uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP
 const STORAGE: u32 = uapi::DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE
     | uapi::DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED
     | uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER;
+const YUV_ENCODINGS: u32 = uapi::DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT601
+    | uapi::DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT709
+    | uapi::DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT2020;
+const YUV_RANGES: u32 = uapi::DRM_CASTKMS_CAPABILITY_YUV_RANGE_LIMITED
+    | uapi::DRM_CASTKMS_CAPABILITY_YUV_RANGE_FULL;
 
 /// None denotes the fixed HOST contract; renderer profiles remain owned values.
 pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
@@ -97,8 +102,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
     }
     if header.reserved != [0; 10]
         || header.flags & !FEATURES != 0
-        || header.yuv_encodings & !7 != 0
-        || header.yuv_ranges & !3 != 0
+        || header.yuv_encodings & !YUV_ENCODINGS != 0
+        || header.yuv_ranges & !YUV_RANGES != 0
         || header.format_count as usize > crate::execution::capabilities::MAX_FORMATS
         || formats.len() != header.format_count as usize * core::mem::size_of::<Storage>()
     {
