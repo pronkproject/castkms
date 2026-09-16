@@ -11,6 +11,7 @@ GPU Driver Developer's Guide
    drm-kms
    drm-kms-helpers
    drm-atomic-preparation
+   drm-constraints
    drm-capture
    castkms-renderer
    drm-ras
