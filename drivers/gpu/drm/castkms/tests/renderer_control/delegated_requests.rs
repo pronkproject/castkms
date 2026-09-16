@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+mod queue;
+
 use super::{
     delegated_authority::grant,
     private_images::{activate, buffer},

@@ -59,6 +59,7 @@ pub(super) struct State {
     pub(super) audio_grants: Arc<grants::Registry>,
     pub(super) capture_streams: Arc<streams::Registry>,
     pub(super) capture_budget: Arc<budget::Budget>,
+    pub(crate) capture_request_budget: Arc<crate::capture::request_budget::Budget>,
     pub(crate) image_storage: Arc<crate::image_storage::Registry>,
     pub(super) displays: KVec<Arc<Display>>,
 }
@@ -94,6 +95,7 @@ impl State {
             audio_grants: grants::Registry::new()?,
             capture_streams: streams::Registry::new()?,
             capture_budget: budget::Budget::new()?,
+            capture_request_budget: crate::capture::request_budget::Budget::new()?,
             image_storage: crate::image_storage::Registry::new()?,
             displays,
         })
