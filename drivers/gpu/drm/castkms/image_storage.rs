@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Private allocation accounting retained across renderer replacement and native cleanup.
+//! Allocation accounting shared by private rendering and recipient output storage.
 
 use kernel::{
     dma_buf::DmaBuf,
@@ -28,7 +28,8 @@ struct RegistryState {
 ///
 /// Alias tracking stays present until the last use releases its registration owner.
 /// Distinct reservations cannot prove distinct physical backing; the trusted importer
-/// must additionally reject exporter-specific aliases and sharing with recipients.
+/// must additionally reject exporter-specific aliases and incompatible recipient scopes.
+/// Registration accounts for storage; each importer checks its required access mode.
 #[pin_data]
 pub(crate) struct Registry {
     #[pin]
@@ -47,9 +48,9 @@ impl Registry {
         )
     }
 
-    /// Retain private allocations without mapping, waiting or granting pixel access.
+    /// Retain allocations without mapping, waiting or granting pixel access.
     /// Each distinct allocation appears once, even if a native image has several planes.
-    pub(super) fn register(
+    pub(crate) fn register(
         self: &Arc<Self>,
         dimensions: [u32; 2],
         buffers: &[ARef<DmaBuf>],
@@ -65,9 +66,6 @@ impl Registry {
         let mut bytes = 0usize;
         let mut retained = KVec::with_capacity(buffers.len(), GFP_KERNEL)?;
         for (index, buffer) in buffers.iter().enumerate() {
-            if !buffer.is_readable() || !buffer.is_writable() {
-                return Err(EACCES);
-            }
             if buffer.size() == 0
                 || buffers[..index]
                     .iter()
@@ -126,7 +124,7 @@ fn aliases(a: &DmaBuf, b: &DmaBuf) -> bool {
     core::ptr::eq(a, b) || core::ptr::eq(a.reservation(), b.reservation())
 }
 
-pub(super) struct Registration {
+pub(crate) struct Registration {
     registry: Arc<Registry>,
     storage: Arc<Storage>,
 }
@@ -150,10 +148,10 @@ impl Drop for Registration {
 }
 
 impl Registration {
-    pub(super) fn dimensions(&self) -> [u32; 2] {
+    pub(crate) fn dimensions(&self) -> [u32; 2] {
         self.storage.dimensions
     }
-    pub(super) fn buffers(&self) -> &[ARef<DmaBuf>] {
+    pub(crate) fn buffers(&self) -> &[ARef<DmaBuf>] {
         &self.storage.buffers
     }
 }
