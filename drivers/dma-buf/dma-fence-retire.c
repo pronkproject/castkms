@@ -42,7 +42,7 @@ static void retirement_signaled(struct dma_fence *fence, struct dma_fence_cb *ca
 	struct dma_fence_retirement *retirement =
 		container_of(callback, struct dma_fence_retirement, callback);
 
-	queue_work(system_unbound_wq, &retirement->work);
+	queue_work(system_dfl_wq, &retirement->work);
 }
 
 struct dma_fence_retirement *
@@ -72,6 +72,6 @@ void dma_fence_retirement_submit(struct dma_fence_retirement *retirement,
 	retirement->fence = dma_fence_get(fence);
 	/* On success the callback may consume the record before this call returns. */
 	if (dma_fence_add_callback(fence, &retirement->callback, retirement_signaled))
-		queue_work(system_unbound_wq, &retirement->work);
+		queue_work(system_dfl_wq, &retirement->work);
 }
 EXPORT_SYMBOL_GPL(dma_fence_retirement_submit);
