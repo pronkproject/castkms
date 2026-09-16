@@ -17,12 +17,13 @@ struct drm_constraints_entry;
  * proposed object states, change external state, acquire modeset locks, reenter
  * list operations or wait for userspace. All resources required to accept the
  * entry must be ready before offering it. Return zero or a negative errno.
- * Backend is the entry's retained provider context. The table must remain valid
- * throughout the CRTC lifetime.
+ * The entry exposes its immutable identity, description and retained provider
+ * context. The table must remain valid throughout the CRTC lifetime.
  */
 struct drm_constraints_output_ops {
 	int (*check)(const struct drm_atomic_commit *state,
-		     const struct drm_crtc_state *crtc_state, void *backend);
+		     const struct drm_crtc_state *crtc_state,
+		     const struct drm_constraints_entry *entry);
 };
 
 /*

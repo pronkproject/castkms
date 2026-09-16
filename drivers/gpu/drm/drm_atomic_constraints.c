@@ -255,7 +255,7 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 	ret = check_properties(update, description);
 	if (ret)
 		return ret;
-	return output->ops->check(update->state, update->crtc, drm_constraints_entry_data(entry));
+	return output->ops->check(update->state, update->crtc, entry);
 }
 
 static int check_quiescing_outputs(struct drm_atomic_commit *state)
