@@ -75,16 +75,16 @@ const _: () = {
     );
 };
 
-const FEATURES: u32 = uapi::DRM_CASTKMS_CAPABILITY_CROP
-    | uapi::DRM_CASTKMS_CAPABILITY_FRACTIONAL
-    | uapi::DRM_CASTKMS_CAPABILITY_POSITION
-    | uapi::DRM_CASTKMS_CAPABILITY_SCALE
-    | uapi::DRM_CASTKMS_CAPABILITY_SRGB
-    | uapi::DRM_CASTKMS_CAPABILITY_PLANE_MATRIX
-    | uapi::DRM_CASTKMS_CAPABILITY_OUTPUT_MATRIX;
-const STORAGE: u32 = uapi::DRM_CASTKMS_CAPABILITY_NATIVE
-    | uapi::DRM_CASTKMS_CAPABILITY_IMPORTED
-    | uapi::DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER;
+const FEATURES: u32 = uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP
+    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL
+    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_POSITION
+    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SCALE
+    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SRGB
+    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX
+    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX;
+const STORAGE: u32 = uapi::DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE
+    | uapi::DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED
+    | uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER;
 
 /// None denotes the fixed HOST contract; renderer profiles remain owned values.
 pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
@@ -104,20 +104,20 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
     {
         return Err(EINVAL);
     }
-    if header.kind == uapi::DRM_CASTKMS_CAPABILITY_HOST {
+    if header.kind == uapi::DRM_CASTKMS_CAPABILITY_KIND_HOST {
         if bytes[8..].iter().any(|byte| *byte != 0) {
             return Err(EINVAL);
         }
         return Ok(None);
     }
-    if header.kind != uapi::DRM_CASTKMS_CAPABILITY_RENDERER {
+    if header.kind != uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER {
         return Err(EINVAL);
     }
     let mut tuples = KVec::with_capacity(header.format_count as usize, GFP_KERNEL)?;
     for bytes in formats.chunks_exact(core::mem::size_of::<Storage>()) {
         let format = Storage::from_bytes_copy(bytes).ok_or(EINVAL)?;
         if format.flags & !STORAGE != 0
-            || (format.flags & uapi::DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER == 0
+            || (format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER == 0
                 && format.modifier != 0)
         {
             return Err(EINVAL);
@@ -125,11 +125,11 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
         tuples.push(
             Format {
                 fourcc: format.fourcc,
-                modifier: (format.flags & uapi::DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER != 0)
+                modifier: (format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER != 0)
                     .then_some(format.modifier),
                 planes: format.plane_count,
-                native: format.flags & uapi::DRM_CASTKMS_CAPABILITY_NATIVE != 0,
-                imported: format.flags & uapi::DRM_CASTKMS_CAPABILITY_IMPORTED != 0,
+                native: format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE != 0,
+                imported: format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED != 0,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
                 max_pitch: format.max_pitch,
@@ -145,18 +145,18 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
                 min_source: header.min_source,
                 output: header.max_output,
                 source: header.max_source,
-                crop: has(uapi::DRM_CASTKMS_CAPABILITY_CROP),
-                fractional: has(uapi::DRM_CASTKMS_CAPABILITY_FRACTIONAL),
-                position: has(uapi::DRM_CASTKMS_CAPABILITY_POSITION),
-                scale: has(uapi::DRM_CASTKMS_CAPABILITY_SCALE),
+                crop: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP),
+                fractional: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL),
+                position: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_POSITION),
+                scale: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SCALE),
                 min_scale: header.min_scale,
                 max_scale: header.max_scale,
             },
             color: ColorLimits {
                 operations: header.max_color_operations as usize,
-                srgb: has(uapi::DRM_CASTKMS_CAPABILITY_SRGB),
-                plane_matrix: has(uapi::DRM_CASTKMS_CAPABILITY_PLANE_MATRIX),
-                output_matrix: has(uapi::DRM_CASTKMS_CAPABILITY_OUTPUT_MATRIX),
+                srgb: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SRGB),
+                plane_matrix: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX),
+                output_matrix: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX),
                 lut_entries: header.max_lut_entries as usize,
                 yuv_encodings: core::array::from_fn(|bit| header.yuv_encodings & (1 << bit) != 0),
                 yuv_ranges: core::array::from_fn(|bit| header.yuv_ranges & (1 << bit) != 0),
@@ -172,7 +172,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
 pub(super) fn encode(contract: &Contract) -> Result<KVec<u8>> {
     let mut header = Header {
         version: uapi::DRM_CASTKMS_CAPABILITY_VERSION,
-        kind: uapi::DRM_CASTKMS_CAPABILITY_HOST,
+        kind: uapi::DRM_CASTKMS_CAPABILITY_KIND_HOST,
         ..Default::default()
     };
     let mut bytes = KVec::with_capacity(MAX_BYTES, GFP_KERNEL)?;
@@ -180,21 +180,21 @@ pub(super) fn encode(contract: &Contract) -> Result<KVec<u8>> {
         let limits = profile.limits();
         let geometry = limits.geometry;
         let color = limits.color;
-        header.kind = uapi::DRM_CASTKMS_CAPABILITY_RENDERER;
+        header.kind = uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER;
         header.format_count = profile.formats().len() as u32;
         for (enabled, flag) in [
-            (geometry.crop, uapi::DRM_CASTKMS_CAPABILITY_CROP),
-            (geometry.fractional, uapi::DRM_CASTKMS_CAPABILITY_FRACTIONAL),
-            (geometry.position, uapi::DRM_CASTKMS_CAPABILITY_POSITION),
-            (geometry.scale, uapi::DRM_CASTKMS_CAPABILITY_SCALE),
-            (color.srgb, uapi::DRM_CASTKMS_CAPABILITY_SRGB),
+            (geometry.crop, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP),
+            (geometry.fractional, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL),
+            (geometry.position, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_POSITION),
+            (geometry.scale, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SCALE),
+            (color.srgb, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SRGB),
             (
                 color.plane_matrix,
-                uapi::DRM_CASTKMS_CAPABILITY_PLANE_MATRIX,
+                uapi::DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX,
             ),
             (
                 color.output_matrix,
-                uapi::DRM_CASTKMS_CAPABILITY_OUTPUT_MATRIX,
+                uapi::DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX,
             ),
         ] {
             if enabled {
@@ -229,10 +229,10 @@ pub(super) fn encode(contract: &Contract) -> Result<KVec<u8>> {
                 fourcc: format.fourcc,
                 plane_count: format.planes,
                 modifier: format.modifier.unwrap_or(0),
-                flags: u32::from(format.native) * uapi::DRM_CASTKMS_CAPABILITY_NATIVE
-                    | u32::from(format.imported) * uapi::DRM_CASTKMS_CAPABILITY_IMPORTED
+                flags: u32::from(format.native) * uapi::DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE
+                    | u32::from(format.imported) * uapi::DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED
                     | u32::from(format.modifier.is_some())
-                        * uapi::DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER,
+                        * uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
                 max_pitch: format.max_pitch,
