@@ -15,6 +15,7 @@ struct drm_constraints_catalog {
 	struct drm_constraints_domain *domain;
 	u32 crtc_id;
 	unsigned int limit;
+	bool closed;
 	struct drm_constraints_snapshot_info info;
 	struct drm_constraints_listing entries[];
 };
@@ -76,6 +77,14 @@ void drm_constraints_catalog_put(struct drm_constraints_catalog *catalog)
 }
 EXPORT_SYMBOL_GPL(drm_constraints_catalog_put);
 
+void drm_constraints_catalog_close(struct drm_constraints_catalog *catalog)
+{
+	mutex_lock(&catalog->lock);
+	catalog->closed = true;
+	mutex_unlock(&catalog->lock);
+}
+EXPORT_SYMBOL_GPL(drm_constraints_catalog_close);
+
 static int find_entry(struct drm_constraints_catalog *catalog, u64 id)
 {
 	unsigned int i;
@@ -96,7 +105,9 @@ int drm_constraints_catalog_add(struct drm_constraints_catalog *catalog,
 	    drm_constraints_entry_crtc(entry) != catalog->crtc_id)
 		return -EINVAL;
 	mutex_lock(&catalog->lock);
-	if (find_entry(catalog, drm_constraints_entry_id(entry)) >= 0)
+	if (catalog->closed)
+		ret = -ESTALE;
+	else if (find_entry(catalog, drm_constraints_entry_id(entry)) >= 0)
 		ret = -EEXIST;
 	else if (catalog->info.count == catalog->limit)
 		ret = -ENOSPC;
@@ -171,7 +182,9 @@ int drm_constraints_catalog_suggest(struct drm_constraints_catalog *catalog, u64
 
 	mutex_lock(&catalog->lock);
 	index = find_entry(catalog, id);
-	if (id && (index < 0 || !catalog->entries[index].selectable))
+	if (catalog->closed)
+		ret = -ESTALE;
+	else if (id && (index < 0 || !catalog->entries[index].selectable))
 		ret = -ESTALE;
 	else if (catalog->info.suggested_id == id)
 		ret = 0;
@@ -193,6 +206,8 @@ static int validate_entry(struct drm_constraints_catalog *catalog,
 	u64 id;
 
 	lockdep_assert_held(&catalog->lock);
+	if (catalog->closed)
+		return -ESTALE;
 	if (!entry)
 		return -EINVAL;
 	id = drm_constraints_entry_id(entry);
@@ -260,7 +275,7 @@ drm_constraints_catalog_snapshot(struct drm_constraints_catalog *catalog, u64 ge
 	if (!snapshot)
 		return ERR_PTR(-ENOMEM);
 	mutex_lock(&catalog->lock);
-	if (generation && generation != catalog->info.generation) {
+	if (catalog->closed || (generation && generation != catalog->info.generation)) {
 		mutex_unlock(&catalog->lock);
 		kfree(snapshot);
 		return ERR_PTR(-ESTALE);
