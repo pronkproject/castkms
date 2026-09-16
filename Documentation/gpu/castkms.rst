@@ -240,6 +240,10 @@ renderer incarnation. The active session claims changed scenes and may retry a
 scene after releasing it without access, while source admission remains open.
 Each kernel job owns both retained scene metadata and its preparation read
 claim; the framebuffer reference alone does not delay source reuse.
+The renderer registers its independent private-image backing before dequeue.
+The selected image is reserved before the source read is admitted, and the
+release report covers both source reads and private-image writes. Released
+content remains in the registered pool without retaining a source read.
 
 The renderer dequeue ioctl prepares ordinary source DMA-BUFs and reserves every
 descriptor before copying bounded scene metadata. Only the final, infallible
@@ -255,7 +259,8 @@ Complete-scene renderer descriptions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``RENDERER_DEQUEUE_SCENE`` is the only scene dequeue operation and uses
-``RENDERER_RELEASE_SOURCE`` to end its read claim. A renderer should allocate
+``RENDERER_RELEASE_SOURCE`` to resolve the source-to-private job. Dequeue names
+an image retained by ``RENDERER_REGISTER_IMAGE``. A renderer should allocate
 the advertised maximum of 64 KiB for the result. Insufficient capacity returns
 ``ENOSPC``; failure does not consume the scene or install any descriptors, even
 if userspace memory was partially written. Blank scenes and content already
@@ -275,10 +280,12 @@ color operations and 256 entries per output lookup table. These transport
 bounds do not advertise additional KMS planes or enable new renderer profiles.
 All buffer descriptors and the combined producer fence remain tied to one
 source-read claim. The renderer must check producer success before reading,
-then release with no access, completed CPU access or a submitted native fence.
-This interface describes accepted scenes. The separate version-8 capability
-protocol negotiates supported scenes and transitions; neither interface
-delivers GPU capture destinations.
+then release with no access, completed CPU access or a submitted native fence
+covering source reads and private-image writes. Renderer protocol version 9
+uses capability encoding 2 to negotiate supported scenes and transitions;
+neither interface delivers GPU capture destinations. See
+:doc:`castkms-renderer` for private-image registration, internal recipient
+queues and the remaining output-transport boundary.
 
 The job also exports a sync-file wait for the exact producer dependencies
 captured when KMS accepted the scene. An already failed producer rejects
