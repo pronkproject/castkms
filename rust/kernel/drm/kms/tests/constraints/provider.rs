@@ -255,6 +255,120 @@ mod cases {
         }
     }
 
+    struct ReaderTask(Arc<Completion>);
+
+    impl Drop for ReaderTask {
+        fn drop(&mut self) {
+            self.0.wait_for_completion();
+        }
+    }
+
+    #[test]
+    fn waiting_request_rebuild_rejects_a_withdrawn_target() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        counts.constraints_capacity.store(4, Ordering::Relaxed);
+        counts.preparation_capacity.store(8, Ordering::Relaxed);
+        counts.constraints_render.store(1, Ordering::Relaxed);
+        let parent = faux::Registration::new(c"rust-constraints-withdraw-wait", None)?;
+        let dev = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let output = dev.constraints_output(0)?;
+        let target = format_entry(
+            output.domain(),
+            dev.crtc()?.object_id(),
+            dev.plane()?.object_id(),
+            fourcc::NV12,
+        )?;
+        output.add(&target)?;
+        let initial = output.selected().id();
+        let first = framebuffer(dev.device())?;
+        let second = nv12(&dev, &counts)?;
+        let mode = mode()?;
+        let mut scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &first,
+            connectors: &[dev.connector()?],
+            position: (0, 0),
+        };
+        dev.update(|state| state.set_crtc_config(dev.crtc()?, Some(&scanout)))?;
+        let old = counts.constraints_work.take().ok_or(EINVAL)?;
+        let source: ARef<Source> = old.source()?.into();
+        let done = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+        let worker_done = done.clone();
+        let error = Arc::new(AtomicI32::new(EINPROGRESS.to_errno()), GFP_KERNEL)?;
+        let worker_error = error.clone();
+        let worker_dev: ARef<Device<TestDriver>> = dev.device().into();
+        let target_id = target.id();
+        let read = source.claim()?;
+        workqueue::system_dfl().try_spawn(GFP_KERNEL, move || {
+            let result = (|| {
+                use crtc::AsRawCrtc;
+                let mut held = false;
+                for _ in 0..5000 {
+                    match source.claim() {
+                        Err(EBUSY) => {
+                            held = true;
+                            break;
+                        }
+                        Ok(extra) => extra.release_cpu(),
+                        Err(error) => return Err(error),
+                    }
+                    // SAFETY: No locks are held while awaiting the request's admission hold.
+                    unsafe { bindings::msleep(1) };
+                }
+                if !held {
+                    return Err(ETIMEDOUT);
+                }
+                // SAFETY: ReaderTask joins this worker before private topology or parent teardown.
+                let crtc = unsafe {
+                    crtc::Crtc::<TestCrtc>::from_raw(worker_dev.crtc.load(Ordering::Relaxed))
+                };
+                // SAFETY: The private initialized device is retained. The callback only compares
+                // accounting identity. Acquiring its modeset lock before releasing the read proves
+                // that preparation discarded the attempted state and dropped display locks.
+                unsafe {
+                    crate::drm::kms::preparation::with_current_source(crtc, |accepted| {
+                        if accepted.is_some_and(|accepted| ptr::eq(accepted, &*source)) {
+                            Ok(())
+                        } else {
+                            Err(EINVAL)
+                        }
+                    })??;
+                }
+                crate::drm::kms::constraints::Output::<TestDriver>::new(crtc)?.withdraw(target_id)
+            })();
+            read.release_cpu();
+            worker_error.store(result.err().map_or(0, Error::to_errno), Ordering::Release);
+            drop(worker_dev);
+            worker_done.complete_all();
+        })?;
+        let reader = ReaderTask(done);
+        scanout.framebuffer = &second;
+        let mut builds = 0;
+        let result = dev.update(|mut state| {
+            builds += 1;
+            state
+                .as_mut()
+                .set_crtc_config(dev.crtc()?, Some(&scanout))?;
+            state.add_crtc_state(dev.crtc()?)?.set_constraints(&target)
+        });
+        drop(reader);
+        assert_eq!(error.load(Ordering::Acquire), 0);
+        assert_eq!(result, Err(ESTALE));
+        assert_eq!(builds, 2);
+        assert_eq!(output.selected().id(), initial);
+        assert!(counts.constraints_work.take().is_none());
+        assert!(old.render().is_ok());
+        output.close();
+        drop(old);
+        drop(first);
+        drop(second);
+        drop(output);
+        drop(dev);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
+
     #[test]
     fn submitted_old_pixels_retire_after_target_acceptance() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
