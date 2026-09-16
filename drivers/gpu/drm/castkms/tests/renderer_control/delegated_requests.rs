@@ -169,16 +169,21 @@ mod cases {
     fn revoked_claim_may_retire_but_cannot_publish_a_new_frame() -> Result {
         with_output(|fixture| {
             let request = fixture.destination.request(1, None)?;
+            check(request.native_completion().is_none())?;
             let claim = request
                 .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
                 .ok_or(EINVAL)?;
             drop(fixture.grantor);
             let mut native = ManualFence::new()?;
             claim.release(Completion::Submitted(native.fence()));
+            let completion = request.native_completion().ok_or(EINVAL)?;
+            check(core::ptr::eq(&*completion, &*native.fence()))?;
+            check(completion.status() == kernel::dma_fence::Status::Pending)?;
             drop(fixture.rendered);
             check(request.status() == Status::Pending)?;
             native.complete(Ok(()))?;
             wait(&request, Status::Complete(Err(EKEYREVOKED)))?;
+            check(completion.status() == kernel::dma_fence::Status::Complete(Ok(())))?;
             check(request.content_serial().is_none())?;
             private_available(&fixture.private, 2)
         })
@@ -280,6 +285,7 @@ mod cases {
                     Completion::WithoutAccess
                 });
                 drop(fixture.rendered);
+                check(request.native_completion().is_none())?;
                 check(
                     request.status()
                         == Status::Complete(if access { Ok(()) } else { Err(ECANCELED) }),

@@ -277,7 +277,11 @@ Closing handles or canceling a submitted request does not release either
 allocation before native completion. Revocation rejects new claims. An already
 claimed stage may submit while cancellation is being resolved, but a revoked
 in-flight request produces an error after native retirement, not a successful
-new frame. Completion reconciliation can lag native fence signaling. Once
+new frame. Requests retain the concrete output fence once submission is
+reported, including after cancellation or revocation. It is cleanup evidence,
+not independent permission to publish a frame, and its success does not
+override a terminal request error. No future-work fence is manufactured.
+Completion reconciliation can lag native fence signaling. Once
 reconciled, a request has one terminal result; cleanup queries do not authorize
 new frame publication. The stage releases its hold on private storage
 independently of result dequeue or the recipient's later use. Unreported

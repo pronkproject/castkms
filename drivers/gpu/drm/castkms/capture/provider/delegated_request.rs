@@ -39,6 +39,7 @@ struct State {
     cancelled: bool,
     content: Option<ContentSerial>,
     usage: Option<Arc<Use>>,
+    completion: Option<ARef<Fence>>,
 }
 
 /// One destination use, initially without private pixels or compositor source access.
@@ -60,7 +61,7 @@ impl Image {
         Arc::pin_init(
             pin_init!(Request {
                 destination: self.clone(),
-                state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: Some(usage) }),
+                state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: Some(usage), completion: None }),
             }),
             GFP_KERNEL,
         )
@@ -128,6 +129,14 @@ impl Request {
         } else {
             None
         }
+    }
+
+    /// Retain concrete submitted output completion, including after cancellation or revocation.
+    /// This is cleanup evidence, not capture authorization or successful frame publication.
+    /// Native fence success does not override the request's separately reconciled result.
+    /// No fence exists for queued demand, an unresolved claim, or synchronous CPU completion.
+    pub(crate) fn native_completion(&self) -> Option<ARef<Fence>> {
+        self.state.lock().completion.clone()
     }
 
     /// Claim one bounded E-to-D stage only after source production and destination reuse
@@ -289,7 +298,11 @@ impl Claim {
             _ => None,
         };
         *self.report.completion.lock() = Some(completion);
-        self.request.state.lock().phase = Phase::Submitted;
+        {
+            let mut state = self.request.state.lock();
+            state.completion = fence.clone();
+            state.phase = Phase::Submitted;
+        }
         if let Some(retirement) = self.retirement.take() {
             match fence {
                 Some(fence) => retirement.submit(&fence),
