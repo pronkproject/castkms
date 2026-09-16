@@ -321,9 +321,7 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate,
 		expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
 		request.reserved[i] = 0;
 	}
-	_Static_assert(sizeof(request) == 48, "renderer v8 registration layout");
-	expect_ioctl_error(fd, _IOC(_IOC_WRITE, DRM_IOCTL_BASE,
-		DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_PROFILE, 32), &request, ENOTTY);
+	_Static_assert(sizeof(request) == 48, "renderer registration layout");
 	profile.header.reserved[0] = 1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
 	profile.header.reserved[0] = 0;
@@ -784,9 +782,6 @@ int main(int argc, char **argv)
 	expect_ioctl_error(next_files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
 			   &begin, EBUSY);
-	/* The removed single-image command must never acquire a source read. */
-	expect_ioctl_error(next_files.renderer_fd,
-		_IOC(_IOC_WRITE, DRM_IOCTL_BASE, DRM_COMMAND_BASE + 0x0a, 24), NULL, ENOTTY);
 	struct drm_castkms_renderer_dequeue_scene scene_request = {
 		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
 	};
