@@ -1,7 +1,7 @@
 .. SPDX-License-Identifier: GPL-2.0-only
 
 CastKMS virtual display
-======================
+=======================
 
 CastKMS is a virtual display that can compose images in the kernel or delegate
 complete scenes to an authorized userspace renderer. The Rust driver provides
@@ -248,7 +248,7 @@ and returns the queue slot. At most one source job is outstanding, and an
 unchanged content serial is not claimed again.
 
 Complete-scene renderer descriptions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``RENDERER_DEQUEUE_SCENE`` is the only scene dequeue operation and uses
 ``RENDERER_RELEASE_SOURCE`` to end its read claim. A renderer should allocate
@@ -586,7 +586,7 @@ accepts private CPU jobs, not arbitrary exported destinations; an eventual
 path for shared GPU images needs its own rules for writing and reuse.
 
 Capturing through the host worker
---------------------------------
+---------------------------------
 
 ``capture/host_stream.rs`` combines checked private delivery with the output's
 shared worker. A kernel caller first establishes a grant for a particular
@@ -630,7 +630,7 @@ client adapts queued host output; selecting a userspace GPU renderer remains an
 independent execution feature.
 
 Describing a stream before allocation
-------------------------------------
+-------------------------------------
 
 ``Capture::describe_stream()`` reports the authorized output's host-linear
 layout before creating a stream. A description supplies the XRGB8888 format,
@@ -656,7 +656,7 @@ GPU execution profile is exposed by these operations. The anonymous client
 separately assigns offer names for the public description interface.
 
 Grants across device shutdown
-----------------------------
+-----------------------------
 
 Every grant joins a device-wide collection, even if it never opens a stream.
 The collection retains only the shared authority's revocation interface; it
@@ -682,7 +682,7 @@ device when external grant owners close. Provider cleanup must not
 recursively close the same collection.
 
 Grants tied to a DRM file
-------------------------
+-------------------------
 
 ``file.rs`` adapts an open DRM file to the kernel provider. It verifies that
 the file itself is the current master, rather than merely sharing a master's
@@ -710,7 +710,7 @@ publishes the resulting capture and control descriptors. The file adapter
 itself does not install descriptors or perform image operations.
 
 Transferring revocation to a control file
----------------------------------------
+-----------------------------------------
 
 The provider's ``control_file.rs`` adapter transfers a complete grantor into
 an anonymous file. That file only reports revocation; it has no capture,
@@ -741,7 +741,7 @@ capture file separately supports image negotiation, registered destinations,
 queued output, cancellation and terminal dequeue through :doc:`drm-capture`.
 
 Delivering to registered destinations
-------------------------------------
+-------------------------------------
 
 The initial public path captures through private host storage and then copies
 into a caller-owned linear destination. It is not a GPU-to-GPU implementation.
@@ -765,7 +765,7 @@ Completed results retain their request slots until dequeue successfully copies
 the terminal metadata to the caller. No source or private image is exported.
 
 Testing in a disposable virtual machine
---------------------------------------
+---------------------------------------
 
 The userspace smoke tests require the libdrm development headers and library::
 
@@ -935,7 +935,7 @@ has its own handle-cleanup and invalid-dimension tests. Those VM cases do not
 qualify a physical GPU's buffers or a userspace compositor's submission path.
 
 Checking the renderer transition contract
-----------------------------------------
+-----------------------------------------
 
 The ``rust_castkms_renderer_publication`` KUnit suite exercises registered
 displays, profile registration, tagged atomic updates and renderer activation.
@@ -970,7 +970,7 @@ installation and publication. That bound isolates the ordering decisions; it
 is not the driver's queue depth, a concurrent-locking proof, or GPU validation.
 
 Building without another display driver
---------------------------------------
+---------------------------------------
 
 A distribution or test kernel may have another display driver built in. Its
 dependencies can hide a missing dependency in CastKMS. The build-only
