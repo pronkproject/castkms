@@ -396,6 +396,27 @@ static void closing_waits_for_irrevocable_acceptance(struct kunit *test)
 			   ERR_PTR(-ESTALE));
 }
 
+static void selection_readback_retains_closed_catalog_binding(struct kunit *test)
+{
+	struct catalog_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct drm_constraints_entry *selected;
+	struct install_context context = {};
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_catalog_add(fixture->catalog, target), 0);
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_catalog_accept(fixture->catalog, target, validate, &context), 0);
+	drm_constraints_catalog_close(fixture->catalog);
+	selected = drm_constraints_catalog_selected(fixture->catalog);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, selected), 0);
+	KUNIT_EXPECT_PTR_EQ(test, selected, target);
+	kunit_release_action(test, put_entry, target);
+	kunit_release_action(test, put_catalog, fixture->catalog);
+	KUNIT_EXPECT_EQ(test, fixture->released, 0);
+	kunit_release_action(test, put_entry, selected);
+	KUNIT_EXPECT_EQ(test, fixture->released, 1);
+}
+
 static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(snapshots_retain_immutable_entries),
 	KUNIT_CASE(changes_invalidate_expected_generations),
@@ -409,6 +430,7 @@ static struct kunit_case drm_constraints_catalog_tests[] = {
 	KUNIT_CASE(equal_ids_do_not_authorize_foreign_entries),
 	KUNIT_CASE(closing_rejects_checked_but_unaccepted_selection),
 	KUNIT_CASE(closing_waits_for_irrevocable_acceptance),
+	KUNIT_CASE(selection_readback_retains_closed_catalog_binding),
 	{}
 };
 

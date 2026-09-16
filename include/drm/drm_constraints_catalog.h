@@ -48,6 +48,14 @@ void drm_constraints_catalog_put(struct drm_constraints_catalog *catalog);
 void drm_constraints_catalog_close(struct drm_constraints_catalog *catalog);
 
 /*
+ * Return an owned reference to accepted selection, including after closure.
+ * Intended for state initialization/readback, not readiness or authorization.
+ * Does not allocate and cannot fail for a live catalog.
+ */
+struct drm_constraints_entry *
+drm_constraints_catalog_selected(struct drm_constraints_catalog *catalog);
+
+/*
  * Provider operations. Add requires complete, ready resources; publication is
  * not itself selection. Withdraw marks an entry unavailable for selection.
  * Forget removes a withdrawn, unselected entry without invalidating
