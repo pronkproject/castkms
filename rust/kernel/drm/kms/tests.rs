@@ -72,6 +72,8 @@ struct Counts {
     fail_constraints: AtomicU32,
     fail_constraints_at_install: AtomicU32,
     constraints_id: AtomicU64,
+    checked_constraints_id: AtomicU64,
+    committed_constraints_id: AtomicU64,
     // Borrowed only by synchronous preparation callbacks while their source is retained.
     preparation_source: AtomicPtr<bindings::drm_prepare_source>,
     preparation_capacity: AtomicU32,
@@ -434,6 +436,12 @@ impl crtc::DriverCrtc for TestCrtc {
     }
 
     fn atomic_flush(commit: crtc::CrtcAtomicCommit<'_, Self>) {
+        use crtc::RawCrtcState;
+
+        let (_, new) = commit.old_new_state();
+        commit.crtc().life.0.committed_constraints_id.store(
+            new.constraints_entry().map_or(0, |entry| entry.id()), Ordering::Relaxed,
+        );
         commit
             .crtc()
             .life
@@ -582,12 +590,13 @@ impl KmsDriver for TestDriver {
 
         let counts = &state.drm_dev().counts;
         counts.constraints_checks.fetch_add(1, Ordering::Relaxed);
-        if entry.id() != counts.constraints_id.load(Ordering::Relaxed)
+        if !crtc.constraints_entry().is_some_and(|candidate| core::ptr::eq(candidate, entry))
             || entry.crtc_id() != crtc.crtc().object_id()
             || state.get_new_crtc_state(crtc.crtc()).is_none()
         {
             return Err(EINVAL);
         }
+        counts.checked_constraints_id.store(entry.id(), Ordering::Relaxed);
         if counts.fail_constraints.load(Ordering::Relaxed) != 0 {
             return Err(EIO);
         }
