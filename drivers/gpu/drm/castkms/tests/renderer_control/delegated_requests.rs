@@ -16,7 +16,10 @@ use crate::{
 };
 use kernel::{
     dma_fence::testing::ManualFence,
-    drm::{fourcc, gem::ExportAccess},
+    drm::{
+        fourcc,
+        gem::{BaseObject, ExportAccess},
+    },
     time::{delay::fsleep, Delta, Instant, Monotonic},
 };
 
@@ -109,6 +112,69 @@ fn private_available(image: &Arc<Image>, use_id: u64) -> Result {
 #[kunit_tests(rust_castkms_delegated_requests)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn destination_becoming_a_source_is_rejected_at_output_claim() -> Result {
+        with_display(|device, crtc, connector, scanout, file| {
+            let fixture = output_fixture(device, crtc, connector, &file)?;
+            let object = shmem::Object::<gem::Object>::new(
+                device,
+                640 * 480 * 4,
+                Default::default(),
+                Default::default(),
+            )?;
+            let destination = fixture
+                .grantor
+                .capture()
+                .describe_delegated()?
+                .register_destination(
+                    &object.export_dma_buf(ExportAccess::ReadWrite)?,
+                    fourcc::XRGB8888,
+                    0,
+                    2560,
+                    0,
+                )?;
+            let request = destination.request(1, None)?;
+            let framebuffer = Framebuffer::from_objects(
+                device,
+                &FramebufferLayout {
+                    width: 640,
+                    height: 480,
+                    format: fourcc::XRGB8888,
+                    modifier: None,
+                    interlaced: false,
+                    planes: &[FramebufferPlane {
+                        object: &object,
+                        pitch: 2560,
+                        offset: 0,
+                    }],
+                },
+            )?;
+            device.atomic_update(|transaction| {
+                transaction.set_crtc_config(
+                    crtc,
+                    Some(&CrtcScanout {
+                        mode: scanout.mode,
+                        framebuffer: &framebuffer,
+                        connectors: scanout.connectors,
+                        position: scanout.position,
+                    }),
+                )
+            })?;
+            check(
+                request
+                    .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)
+                    .err()
+                    == Some(EINVAL),
+            )?;
+            check(request.status() == Status::Complete(Err(EINVAL)))?;
+            check(request.native_completion().is_none())?;
+            // A rejected claim creates no output access and returns destination capacity.
+            device.atomic_update(|transaction| transaction.set_crtc_config(crtc, Some(scanout)))?;
+            drop(destination.reserve(2, None)?);
+            Ok(())
+        })
+    }
 
     #[test]
     fn closing_master_preserves_native_cleanup_but_not_frame_authority() -> Result {
