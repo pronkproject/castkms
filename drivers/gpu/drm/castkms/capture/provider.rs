@@ -12,6 +12,7 @@ mod client_file;
 mod files;
 mod description;
 mod delegated;
+mod delegated_destination;
 mod frame;
 mod request;
 mod storage;

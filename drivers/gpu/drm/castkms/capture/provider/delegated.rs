@@ -42,6 +42,10 @@ impl Capture {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Delegated {
+    pub(super) fn storage_registry(&self) -> &kernel::sync::Arc<crate::image_storage::Registry> {
+        &self.capture.policy.permission.device().image_storage
+    }
+
     pub(crate) fn dimensions(&self) -> [u32; 2] {
         self.configuration.dimensions()
     }
