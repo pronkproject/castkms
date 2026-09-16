@@ -4,6 +4,7 @@
 
 mod publication;
 mod private_images;
+mod delegated_authority;
 
 use super::*;
 use crate::renderer::{

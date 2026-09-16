@@ -11,6 +11,7 @@ mod control_file;
 mod client_file;
 mod files;
 mod description;
+mod delegated;
 mod frame;
 mod request;
 mod storage;

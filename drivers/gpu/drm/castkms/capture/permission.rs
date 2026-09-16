@@ -62,4 +62,22 @@ impl Permission {
         self.target
             .with_current(|control| f(Current::new(control)?))
     }
+
+    /// Stabilize pixel ownership without selecting a HOST image layout.
+    /// The callback follows the same locking restrictions as `with_current`.
+    pub(super) fn with_control<R>(
+        &self,
+        f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        self.target.with_current(|current| {
+            current.check_scene_owner()?;
+            f(current)
+        })
+    }
+
+    /// Match a renderer's stabilized display scope without recursively taking DRM locks.
+    pub(super) fn check_control(&self, current: &display_control::Current<'_>) -> Result {
+        current.check_target(&self.target)?;
+        current.check_scene_owner()
+    }
 }

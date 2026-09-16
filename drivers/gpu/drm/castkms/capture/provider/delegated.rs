@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+//! Capture scope for delegated images, independent of the HOST compositor's layout.
+
+use super::Capture;
+use crate::{
+    display_control::Current,
+    execution::{Description, Profile},
+    renderer::{candidate::Candidate, render_job::Rendered},
+    renderer_startup::Observation,
+    scene::Configuration,
+};
+use kernel::prelude::*;
+
+/// Exact grant and display interval, without storage, source reads or renderer ownership.
+#[derive(Clone)]
+pub(crate) struct Delegated {
+    capture: Capture,
+    configuration: Configuration,
+    execution: Description,
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Capture {
+    /// Describe delegated output under capture authority, without granting raw source access.
+    pub(crate) fn describe_delegated(&self) -> Result<Delegated> {
+        let permission = &self.policy.permission;
+        permission.with_control(|current| {
+            let _admission = self.authority.begin()?;
+            let execution = permission.display().execution.describe();
+            if execution.profile != Profile::GpuV1 {
+                return Err(EOPNOTSUPP);
+            }
+            Ok(Delegated {
+                capture: self.clone(),
+                configuration: current.configuration().clone(),
+                execution,
+            })
+        })
+    }
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Delegated {
+    pub(crate) fn dimensions(&self) -> [u32; 2] {
+        self.configuration.dimensions()
+    }
+
+    fn check(&self, current: &Current<'_>) -> Result {
+        let permission = &self.capture.policy.permission;
+        permission.check_control(current)?;
+        if current.configuration() != &self.configuration
+            || permission.display().execution.describe() != self.execution
+        {
+            return Err(ESTALE);
+        }
+        Ok(())
+    }
+
+    /// Stabilize current capture admission without claiming storage or a compositor source.
+    pub(crate) fn with_current<R>(&self, f: impl FnOnce(&Current<'_>) -> Result<R>) -> Result<R> {
+        self.capture.policy.permission.with_control(|current| {
+            self.check(&current)?;
+            let _admission = self.capture.authority.begin()?;
+            f(&current)
+        })
+    }
+
+    /// Require both renderer and recipient authority at one bounded output-stage claim.
+    /// The callback holds display, renderer and capture-admission locks. It must not access
+    /// pixels, wait, recurse into capabilities or release retained DRM references.
+    pub(crate) fn with_image<R>(
+        &self,
+        renderer: &Candidate,
+        active: &Observation,
+        image: &Rendered,
+        f: impl FnOnce(&Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        renderer.with_observed_content(active, image.content(), |current| {
+            self.check(current)?;
+            let _admission = self.capture.authority.begin()?;
+            f(current)
+        })
+    }
+}

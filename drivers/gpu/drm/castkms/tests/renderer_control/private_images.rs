@@ -19,7 +19,7 @@ use kernel::{
     time::{delay::fsleep, Delta, Instant, Monotonic},
 };
 
-fn activate(
+pub(super) fn activate(
     candidate: &Arc<Candidate>,
     device: &Device<Driver, Registered>,
     crtc: &Crtc<display::Crtc>,
@@ -52,7 +52,7 @@ fn activate(
     Ok((active, execution))
 }
 
-fn buffer(device: &Device<Driver>, access: ExportAccess) -> Result<ARef<DmaBuf>> {
+pub(super) fn buffer(device: &Device<Driver>, access: ExportAccess) -> Result<ARef<DmaBuf>> {
     shmem::Object::<gem::Object>::new(
         device,
         640 * 480 * 4,
