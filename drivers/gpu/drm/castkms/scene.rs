@@ -107,6 +107,7 @@ impl Scene {
         Ok(false)
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn primary(&self) -> Option<&Primary> {
         self.layers().find(|layer| layer.kind == Kind::Primary)
     }
