@@ -373,7 +373,7 @@ impl Candidate {
                 {
                     return Err(ESTALE);
                 }
-                SourceJob::claim(&current, previous_content_serial)
+                SourceJob::claim(&current, previous_content_serial, execution)
             })
         })
     }

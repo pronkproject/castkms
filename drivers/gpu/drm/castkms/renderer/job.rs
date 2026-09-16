@@ -2,7 +2,8 @@
 
 //! Claimed scene reads, independent of renderer file transport and native submission.
 
-use crate::{display_control, scene::Scene};
+use super::content::{Evidence, Released};
+use crate::{display_control, execution::Description, scene::Scene};
 use kernel::{
     dma_buf::DmaBuf,
     dma_fence::Fence,
@@ -53,6 +54,7 @@ impl Plane<'_> {
 pub(crate) struct SourceJob {
     scene: Scene,
     claim: ReadClaim,
+    evidence: Evidence,
 }
 
 impl SourceJob {
@@ -60,9 +62,15 @@ impl SourceJob {
     pub(super) fn claim(
         current: &display_control::Current<'_>,
         previous_content_serial: Option<u64>,
+        execution: Description,
     ) -> Result<Self> {
         let (scene, claim) = current.claim_changed_scene(previous_content_serial)?;
-        Ok(Self { scene, claim })
+        let evidence = Evidence::new(current, &scene, execution);
+        Ok(Self {
+            scene,
+            claim,
+            evidence,
+        })
     }
 
     /// Borrow retained scene metadata without transferring its source-read claim.
@@ -86,20 +94,25 @@ impl SourceJob {
     }
 
     /// Promise that all synchronous CPU source access has ended.
-    pub(crate) fn release_cpu(self) {
+    pub(crate) fn release_cpu(self) -> Released {
         self.claim.release_cpu();
+        self.evidence.release(None)
     }
 
     /// Promise that no further work will be submitted and transfer native completion.
-    pub(crate) fn release_submitted(self, fence: &Fence) {
-        self.claim.release_submitted(fence);
+    pub(crate) fn release_submitted(self, fence: ARef<Fence>) -> Released {
+        self.claim.release_submitted(&fence);
+        self.evidence.release(Some(fence))
     }
 
-    pub(crate) fn release(self, completion: Completion) {
+    pub(crate) fn release(self, completion: Completion) -> Option<Released> {
         match completion {
-            Completion::WithoutAccess => self.release_without_access(),
-            Completion::Cpu => self.release_cpu(),
-            Completion::Submitted(fence) => self.release_submitted(&fence),
+            Completion::WithoutAccess => {
+                self.release_without_access();
+                None
+            }
+            Completion::Cpu => Some(self.release_cpu()),
+            Completion::Submitted(fence) => Some(self.release_submitted(fence)),
         }
     }
 }

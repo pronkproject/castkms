@@ -756,7 +756,7 @@ mod cases {
                 .ok_or(EINVAL)?;
             let job = candidate.claim_source(&active, description, None)?;
             source.seal();
-            job.release(Completion::Cpu);
+            drop(job.release(Completion::Cpu));
             let prepared = source.prepared()?.ok_or(EAGAIN)?;
             check(prepared.completion()?.is_none())
         })
@@ -778,7 +778,7 @@ mod cases {
             let mut completion = ManualFence::new()?;
             let fence = completion.fence();
             source.seal();
-            job.release(Completion::Submitted(fence));
+            drop(job.release(Completion::Submitted(fence)));
             let prepared = source.prepared()?.ok_or(EAGAIN)?;
             let retained = prepared.completion()?.ok_or(EINVAL)?;
             check(matches!(
