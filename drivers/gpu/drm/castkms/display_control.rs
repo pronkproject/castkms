@@ -317,13 +317,24 @@ impl Current<'_> {
         &self,
         previous_content_serial: Option<u64>,
     ) -> Result<(Scene, kernel::drm::preparation::ReadClaim)> {
-        self.check_scene_owner()?;
+        self.changed_content(previous_content_serial)?;
         let scene = self.scene.ok_or(EAGAIN)?;
-        let content_serial = scene.content_serial().ok_or(ENODATA)?.get();
-        if previous_content_serial == Some(content_serial) {
-            return Err(ENODATA);
-        }
         let claim = self.source.claim()?;
         Ok((scene.clone(), claim))
+    }
+
+    /// Observe a changed content identity without reserving storage or a source read.
+    /// Admission must repeat this check after any unlocked preparation interval.
+    pub(crate) fn changed_content(
+        &self,
+        previous_content_serial: Option<u64>,
+    ) -> Result<crate::scene::ContentSerial> {
+        self.check_scene_owner()?;
+        let scene = self.scene.ok_or(EAGAIN)?;
+        let content_serial = scene.content_serial().ok_or(ENODATA)?;
+        if previous_content_serial == Some(content_serial.get()) {
+            return Err(ENODATA);
+        }
+        Ok(content_serial)
     }
 }
