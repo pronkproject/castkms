@@ -363,7 +363,6 @@ pub trait BaseObject: IntoGEMObject {
 impl<T: IntoGEMObject> BaseObject for T {}
 
 /// Crate-private base operations shared by all GEM object classes.
-#[cfg_attr(not(CONFIG_RUST_DRM_GEM_SHMEM_HELPER), expect(unused))]
 pub(crate) trait BaseObjectPrivate: IntoGEMObject {
     /// Return a pointer to this object's dma_resv.
     fn raw_dma_resv(&self) -> *mut bindings::dma_resv {
