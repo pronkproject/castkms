@@ -39,10 +39,6 @@ _Static_assert(sizeof(struct drm_castkms_renderer_commit_takeover) == 16,
 	       "renderer takeover commit ABI");
 _Static_assert(sizeof(struct drm_castkms_renderer_source_plane) == 16,
 	       "renderer source plane ABI");
-_Static_assert(sizeof(struct drm_castkms_renderer_source) == 144,
-	       "renderer source ABI");
-_Static_assert(sizeof(struct drm_castkms_renderer_dequeue_source) == 24,
-	       "renderer source dequeue ABI");
 _Static_assert(sizeof(struct drm_castkms_renderer_release_source) == 32,
 	       "renderer source release ABI");
 
@@ -244,8 +240,43 @@ static void tag_transition(int fd, uint32_t crtc, uint64_t token, bool test_only
 	drmModeAtomicFree(update);
 }
 
+static uint32_t overlay_plane(int fd, uint32_t crtc)
+{
+	drmModeRes *resources = drmModeGetResources(fd);
+	drmModePlaneRes *planes = drmModeGetPlaneResources(fd);
+	uint32_t result = 0, mask = 0;
+
+	CHECK(resources && planes);
+	for (int i = 0; i < resources->count_crtcs; i++)
+		if (resources->crtcs[i] == crtc)
+			mask = 1U << i;
+	for (uint32_t i = 0; i < planes->count_planes && !result; i++) {
+		drmModePlane *plane = drmModeGetPlane(fd, planes->planes[i]);
+		CHECK(plane);
+		if (plane->possible_crtcs & mask) {
+			drmModeObjectProperties *props = drmModeObjectGetProperties(fd,
+				plane->plane_id, DRM_MODE_OBJECT_PLANE);
+			CHECK(props);
+			for (uint32_t p = 0; p < props->count_props; p++) {
+				drmModePropertyRes *prop = drmModeGetProperty(fd, props->props[p]);
+				CHECK(prop);
+				if (!strcmp(prop->name, "type") &&
+				    props->prop_values[p] == DRM_PLANE_TYPE_OVERLAY)
+					result = plane->plane_id;
+				drmModeFreeProperty(prop);
+			}
+			drmModeFreeObjectProperties(props);
+		}
+		drmModeFreePlane(plane);
+	}
+	drmModeFreePlaneResources(planes);
+	drmModeFreeResources(resources);
+	CHECK(result);
+	return result;
+}
+
 static uint64_t register_linear_profile(int fd, uint64_t candidate,
-                                       uint32_t width, uint32_t height)
+				       uint32_t width, uint32_t height)
 {
 	struct {
 		struct drm_castkms_capability_profile header;
@@ -423,8 +454,6 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_commit_takeover commit = {};
 	struct drm_castkms_renderer_snapshot snapshot;
 	struct drm_castkms_renderer_snapshot snapshot_duplicate;
-	struct drm_castkms_renderer_source source;
-	struct drm_castkms_renderer_dequeue_source dequeue_source = {};
 	struct drm_castkms_renderer_release_source release_source = {
 		.completion_fd = -1,
 	};
@@ -748,52 +777,44 @@ int main(int argc, char **argv)
 	expect_ioctl_error(next_files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER,
 			   &begin, EBUSY);
-	dequeue_source.result = 0;
+	/* The removed single-image command must never acquire a source read. */
 	expect_ioctl_error(next_files.renderer_fd,
-			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
-			   &dequeue_source, EINVAL);
-	dequeue_source.result = 1;
-	before = open_files();
-	for (unsigned int i = 0; i < 8; i++)
-		expect_ioctl_error(next_files.renderer_fd,
-				   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
-				   &dequeue_source, EFAULT);
-	CHECK(open_files() == before);
-	dequeue_source.result = (uintptr_t)&source;
-	/* Failed complete-scene publication must leave the shared source claim
-	 * available to the original single-image operation, with no leaked fds.
-	 */
+		_IOC(_IOC_WRITE, DRM_IOCTL_BASE, DRM_COMMAND_BASE + 0x0a, 24), NULL, ENOTTY);
 	struct drm_castkms_renderer_dequeue_scene scene_request = {
-		.result = 1,
 		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
 	};
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+			   &scene_request, EINVAL);
+	scene_request.result = 1;
 	before = open_files();
 	for (unsigned int i = 0; i < 8; i++)
-		expect_ioctl_error(next_files.renderer_fd,
-				   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+		expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
 				   &scene_request, EFAULT);
 	CHECK(open_files() == before);
 	scene_request.capacity = 0;
-	expect_ioctl_error(next_files.renderer_fd,
-			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
 			   &scene_request, ENOSPC);
-	memset(&source, 0xa5, sizeof(source));
-	CHECK(ioctl(next_files.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
-		    &dequeue_source) == 0);
-	CHECK(source.job_id && source.content_serial);
-	CHECK(source.format == DRM_FORMAT_XRGB8888);
-	CHECK(source.width == gpu_buffer.dumb.width &&
-	      source.height == gpu_buffer.dumb.height);
-	CHECK(source.plane_count == 1 && source.planes[0].dma_buf_fd >= 0);
-	CHECK(source.producer_fd == -1 && source.reserved == 0);
-	for (unsigned int i = source.plane_count;
-	     i < DRM_CASTKMS_RENDERER_MAX_PLANES; i++)
-		CHECK(source.planes[i].dma_buf_fd == -1 &&
-		      source.planes[i].pitch == 0 &&
-		      source.planes[i].offset == 0 &&
-		      source.planes[i].reserved == 0);
-	CHECK(fcntl(source.planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	void *scene_bytes = malloc(DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES);
+	CHECK(scene_bytes);
+	memset(scene_bytes, 0xa5, DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES);
+	scene_request.result = (uintptr_t)scene_bytes;
+	scene_request.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES;
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+		    &scene_request) == 0);
+	struct drm_castkms_renderer_scene *scene = scene_bytes;
+	struct drm_castkms_renderer_layer *layer = (void *)(scene + 1);
+	CHECK(scene->job_id && scene->content_serial);
+	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
+	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
+	CHECK(scene->layer_count == 1 && scene->producer_fd == -1 && !scene->reserved);
+	CHECK(layer->format == DRM_FORMAT_XRGB8888);
+	CHECK(layer->width == gpu_buffer.dumb.width && layer->height == gpu_buffer.dumb.height);
+	CHECK(layer->plane_count == 1 && layer->planes[0].dma_buf_fd >= 0);
+	for (unsigned int i = layer->plane_count; i < DRM_CASTKMS_RENDERER_MAX_PLANES; i++)
+		CHECK(layer->planes[i].dma_buf_fd == -1 && !layer->planes[i].pitch &&
+		      !layer->planes[i].offset && !layer->planes[i].reserved);
+	CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	uint64_t first_content_serial = scene->content_serial;
 	/* A pending source reader must return through libdrm, not spin in drmIoctl. */
 	CHECK(drmSetClientCap(peer, DRM_CLIENT_CAP_ATOMIC_PREPARATION, 1) == 0);
 	struct drm_mode_prepare_replace prepare = {
@@ -814,9 +835,9 @@ int main(int argc, char **argv)
 	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &ticket_state) == 0);
 	CHECK(ticket_state.status == DRM_PREPARE_PENDING);
 	expect_ioctl_error(next_files.renderer_fd,
-			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
-			   &dequeue_source, EBUSY);
-	release_source.job_id = source.job_id;
+			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+			   &scene_request, EBUSY);
+	release_source.job_id = scene->job_id;
 	release_source.kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS;
 	release_source.job_id++;
 	expect_ioctl_error(next_files.renderer_fd,
@@ -835,9 +856,9 @@ int main(int argc, char **argv)
 		    DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
 		    &release_source) == 0);
 	expect_ioctl_error(next_files.renderer_fd,
-			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE,
-			   &dequeue_source, ENODATA);
-	CHECK(close(source.planes[0].dma_buf_fd) == 0);
+			   DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+			   &scene_request, ENODATA);
+	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &ticket_state) == 0);
 	CHECK(ticket_state.status == DRM_PREPARE_READY);
 	CHECK(drmModeAtomicCommit(peer, prepared_update, 0, NULL) == 0);
@@ -851,19 +872,18 @@ int main(int argc, char **argv)
 	CHECK(drmModeSetCrtc(peer, request.crtc_id, gpu_buffer.fb, 0, 0,
 			     &connector_id, 1, &connector->modes[0]) == 0);
 	drmModeFreeConnector(connector);
-	void *scene_bytes = calloc(1, DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES);
-	CHECK(scene_bytes);
-	scene_request.result = (uintptr_t)scene_bytes;
-	scene_request.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES;
+	memset(scene_bytes, 0xa5, DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES);
+	uint32_t overlay = overlay_plane(peer, request.crtc_id);
+	CHECK(drmModeSetPlane(peer, overlay, request.crtc_id, gpu_buffer.fb, 0,
+		0, 0, gpu_buffer.dumb.width, gpu_buffer.dumb.height,
+		0, 0, gpu_buffer.dumb.width << 16, gpu_buffer.dumb.height << 16) == 0);
 	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
 		    &scene_request) == 0);
-	struct drm_castkms_renderer_scene *scene = scene_bytes;
-	struct drm_castkms_renderer_layer *layer = (void *)(scene + 1);
 	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
-	CHECK(scene->layer_count == 1 && scene->producer_fd == -1);
+	CHECK(scene->bytes == sizeof(*scene) + 2 * sizeof(*layer));
+	CHECK(scene->layer_count == 2 && scene->producer_fd == -1);
 	CHECK(scene->output_color_count == 0 && scene->reserved == 0);
-	CHECK(scene->content_serial != source.content_serial);
+	CHECK(scene->content_serial != first_content_serial);
 	CHECK(layer->bytes == sizeof(*layer) && layer->color_count == 0);
 	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
 	CHECK(layer->format == DRM_FORMAT_XRGB8888 && layer->plane_count == 1);
@@ -873,6 +893,8 @@ int main(int argc, char **argv)
 	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
 		    &release_source) == 0);
 	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
+	CHECK(layer[1].kind == DRM_CASTKMS_RENDERER_LAYER_OVERLAY);
+	CHECK(close(layer[1].planes[0].dma_buf_fd) == 0);
 	free(scene_bytes);
 	/* A fresh endpoint requests fixed HOST policy while the GPU endpoint remains alive. */
 	struct drm_castkms_renderer_files host_files = create_renderer(peer, &request);
