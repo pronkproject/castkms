@@ -100,7 +100,7 @@ static int commit_request(struct drm_device *dev, struct drm_prepare_owner *owne
 		if (callbacks->complete_signaling)
 			callbacks->complete_signaling(state, !ret, data);
 retry_lock:
-		if (ret != -EDEADLK)
+		if (ret != -EDEADLK || !ctx.contended)
 			break;
 		drm_atomic_commit_put(state);
 		state = NULL;
