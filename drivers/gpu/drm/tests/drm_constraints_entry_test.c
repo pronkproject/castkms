@@ -166,4 +166,5 @@ static struct kunit_suite drm_constraints_entry_test_suite = {
 
 kunit_test_suite(drm_constraints_entry_test_suite);
 
+MODULE_DESCRIPTION("DRM constraints identity and backend lifetime tests");
 MODULE_LICENSE("Dual MIT/GPL");

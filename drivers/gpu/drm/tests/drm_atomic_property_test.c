@@ -172,4 +172,5 @@ static struct kunit_suite drm_atomic_property_test_suite = {
 
 kunit_test_suite(drm_atomic_property_test_suite);
 
+MODULE_DESCRIPTION("DRM proposed atomic property decoding tests");
 MODULE_LICENSE("Dual MIT/GPL");
