@@ -413,6 +413,7 @@ impl Candidate {
         let image = Image::new(
             &self.access.device().image_storage,
             &self.proposal_owner,
+            self.access.device().changed.clone(),
             dimensions,
             buffers,
         )?;

@@ -15,7 +15,7 @@ use kernel::{
         Fence,
     },
     prelude::*,
-    sync::{aref::ARef, Arc, Mutex},
+    sync::{aref::ARef, poll::PollCondVar, Arc, Mutex},
 };
 
 struct ImageState {
@@ -29,6 +29,7 @@ struct ImageState {
 pub(crate) struct Image {
     registration: Registration,
     owner: Arc<()>,
+    changed: Arc<PollCondVar>,
     #[pin]
     state: Mutex<ImageState>,
 }
@@ -38,6 +39,7 @@ impl Image {
     pub(super) fn new(
         registry: &Arc<Registry>,
         owner: &Arc<()>,
+        changed: Arc<PollCondVar>,
         dimensions: [u32; 2],
         buffers: &[ARef<DmaBuf>],
     ) -> Result<Arc<Self>> {
@@ -52,6 +54,7 @@ impl Image {
             pin_init!(Self {
                 registration,
                 owner: owner.clone(),
+                changed,
                 state <- kernel::new_mutex!(ImageState { busy: false, quarantined: false, last_use: 0 }),
             }),
             GFP_KERNEL,
@@ -126,6 +129,7 @@ impl Drop for Use {
     fn drop(&mut self) {
         if self.active.load(Ordering::Relaxed) {
             self.image.state.lock().busy = false;
+            self.image.changed.notify_all();
         }
     }
 }
@@ -136,7 +140,11 @@ struct Hold(Arc<Use>);
 #[vtable]
 unsafe impl Retire for Hold {
     fn retire(self) {
+        // A retained completed image may remain busy, but its native writer has ended.
+        // Wake output-stage readiness independently of eventual private-slot recycling.
+        let changed = self.0.image.changed.clone();
         drop(self.0);
+        changed.notify_all();
     }
 }
 
@@ -189,6 +197,7 @@ impl Drop for Access {
     fn drop(&mut self) {
         if let Some(retirement) = self.retirement.take() {
             self.usage.image.state.lock().quarantined = true;
+            self.usage.image.changed.notify_all();
             core::mem::forget(retirement);
         }
     }
