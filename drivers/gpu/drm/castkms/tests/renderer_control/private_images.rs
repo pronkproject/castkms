@@ -67,6 +67,30 @@ mod cases {
     use super::*;
 
     #[test]
+    fn observed_source_admission_does_not_keep_the_worker_alive() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let (active, execution) = activate(&candidate, device, crtc)?;
+            let image = candidate.register_private_image(
+                &active,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            let observation = active.observation();
+            drop(active);
+            check(
+                candidate
+                    .claim_render_observed(&observation, execution, None, image.prepare(1)?)
+                    .err()
+                    == Some(EIO),
+            )?;
+            drop(image.prepare(2)?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn retained_content_excludes_overwrite_without_retaining_source_reads() -> Result {
         with_display(|device, crtc, connector, scanout, file| {
             let owner = owner(&file, crtc, connector)?;

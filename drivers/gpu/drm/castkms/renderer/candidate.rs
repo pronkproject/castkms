@@ -430,6 +430,19 @@ impl Candidate {
         previous_content_serial: Option<u64>,
         destination: Prepared,
     ) -> Result<RenderJob> {
+        self.claim_render_observed(
+            &active.observation(), execution, previous_content_serial, destination,
+        )
+    }
+
+    /// Admit through a retained identity without extending the active endpoint's ownership.
+    pub(crate) fn claim_render_observed(
+        &self,
+        active: &renderer_startup::Observation,
+        execution: Description,
+        previous_content_serial: Option<u64>,
+        destination: Prepared,
+    ) -> Result<RenderJob> {
         let source = self.access.with_current(|current| {
             active.with_candidate(&self.resources, || {
                 if self.access.display().execution.describe() != execution
