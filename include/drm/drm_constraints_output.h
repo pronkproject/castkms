@@ -26,10 +26,10 @@ struct drm_constraints_output_ops {
 
 /*
  * Attach a ready default before device registration, with no enabled state or
- * pending commits. Validate existing plane membership and advertised allocation
- * support without rewriting discovery. Allocation must admit target buffers before
- * selection. Only atomic drivers using common state and installation helpers
- * may opt in. Initialization owns references only on success.
+ * pending commits. Validate object/property membership and rules within existing
+ * allocation/property support without rewriting discovery. Allocation admits
+ * target buffers before selection. Only atomic drivers using common state and
+ * installation helpers may opt in. Initialization owns references only on success.
  */
 int drm_constraints_crtc_init(struct drm_crtc *crtc, struct drm_constraints_entry *initial,
 			      unsigned int limit, const struct drm_constraints_output_ops *ops);

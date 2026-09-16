@@ -2,6 +2,7 @@
 
 #include <linux/module.h>
 #include <drm/drm_atomic_state_helper.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_constraints_catalog.h>
 #include <drm/drm_constraints_device.h>
@@ -10,6 +11,7 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_kunit_helpers.h>
+#include <drm/drm_property.h>
 #include <kunit/device.h>
 #include <kunit/test.h>
 
@@ -197,12 +199,100 @@ static void offers_require_advertised_plane_allocations(struct kunit *test)
 	}
 }
 
+static struct drm_constraints_entry *
+new_property_entry(struct kunit *test, struct output_fixture *fixture,
+		   const struct drm_constraints_property *rule)
+{
+	const struct drm_constraints_size size = { 64, 32, 64, 32 };
+	const struct drm_constraints_format format = {
+		.plane_id = fixture->plane->base.id, .format = DRM_FORMAT_XRGB8888,
+		.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
+	};
+	struct drm_constraints_description *description;
+	struct drm_constraints_entry *entry;
+
+	description = drm_constraints_description_create(&size, &format, 1, rule, 1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
+	entry = drm_constraints_entry_create(drm_constraints_device_domain(&fixture->drm),
+					     fixture->crtc->base.id, description,
+					     &entry_ops, fixture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+	return entry;
+}
+
+static void property_rules_require_attached_supported_domains(struct kunit *test)
+{
+	struct output_fixture *fixture = new_fixture(test, "constraints-properties");
+	struct drm_constraints_property rule;
+	struct drm_constraints_entry *entry;
+	struct drm_property *immutable;
+	unsigned int i;
+
+	KUNIT_ASSERT_EQ(test, drm_plane_create_alpha_property(fixture->plane), 0);
+	KUNIT_ASSERT_EQ(test, drm_plane_create_rotation_property(fixture->plane,
+			DRM_MODE_ROTATE_0, DRM_MODE_ROTATE_0 | DRM_MODE_ROTATE_90), 0);
+	immutable = drm_property_create_range(&fixture->drm, DRM_MODE_PROP_IMMUTABLE,
+					      "fixed scalar", 0, 10);
+	KUNIT_ASSERT_NOT_NULL(test, immutable);
+	drm_object_attach_property(&fixture->plane->base, immutable, 0);
+	rule = (struct drm_constraints_property) {
+		.object_id = fixture->plane->base.id,
+		.property_id = fixture->plane->alpha_property->base.id,
+		.type = DRM_MODE_PROP_RANGE, .minimum = 1, .maximum = 32768,
+	};
+	entry = new_property_entry(test, fixture, &rule);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, entry, 4, &output_ops), 0);
+	for (i = 0; i < 7; i++) {
+		struct drm_constraints_property invalid = rule;
+		int expected = -EINVAL;
+
+		switch (i) {
+		case 0:
+			invalid.object_id = fixture->crtc->base.id;
+			break;
+		case 1:
+			invalid.property_id = U32_MAX;
+			break;
+		case 2:
+			invalid.type = DRM_MODE_PROP_ENUM;
+			invalid.minimum = invalid.maximum = 0;
+			invalid.mask = 1;
+			break;
+		case 3:
+			invalid.maximum = 65536;
+			break;
+		case 4:
+			invalid.property_id = immutable->base.id;
+			invalid.maximum = 10;
+			break;
+		case 5:
+			invalid.property_id = fixture->plane->rotation_property->base.id;
+			invalid.type = DRM_MODE_PROP_BITMASK;
+			invalid.minimum = invalid.maximum = 0;
+			invalid.mask = DRM_MODE_REFLECT_Y;
+			break;
+		case 6:
+			invalid.property_id = fixture->drm.mode_config.prop_in_fence_fd->base.id;
+			invalid.type = DRM_MODE_PROP_SIGNED_RANGE;
+			invalid.minimum = invalid.maximum = U64_MAX;
+			expected = -EOPNOTSUPP;
+			break;
+		}
+		entry = new_property_entry(test, fixture, &invalid);
+		KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, entry), expected);
+		kunit_release_action(test, put_entry, entry);
+	}
+}
+
 static struct kunit_case drm_constraints_output_tests[] = {
 	KUNIT_CASE(reset_and_pristine_state_retain_accepted_binding),
 	KUNIT_CASE(attaching_rejects_foreign_device_and_objects),
 	KUNIT_CASE(attaching_requires_disabled_unregistered_output),
 	KUNIT_CASE(publishing_revalidates_complete_object_scope),
 	KUNIT_CASE(offers_require_advertised_plane_allocations),
+	KUNIT_CASE(property_rules_require_attached_supported_domains),
 	{}
 };
 
