@@ -681,6 +681,9 @@ int main(int argc, char **argv)
 			   DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
 			   &commit, EINVAL);
 	commit.reserved = 0;
+	expect_ioctl_error(files.renderer_fd,
+			   DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
+			   &commit, EINVAL);
 	abort.candidate_id = candidate.candidate_id + 1;
 	expect_ioctl_error(files.renderer_fd,
 			   DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER,

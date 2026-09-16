@@ -323,11 +323,15 @@ impl Session {
                     id: current,
                     candidate,
                 } if current == id => {
+                    let Some(proposal) = state.proposal.clone() else {
+                        state.slot = Slot::Active { id, candidate };
+                        return Err(EINVAL);
+                    };
                     state.slot = Slot::Activating {
                         id,
                         candidate: candidate.clone(),
                     };
-                    (candidate, state.proposal.clone())
+                    (candidate, proposal)
                 }
                 other @ Slot::Publishing | other @ Slot::Activating { .. } => {
                     state.slot = other;
@@ -340,23 +344,17 @@ impl Session {
             }
         };
 
-        let activated = match proposal {
-            Some(proposal)
-                if matches!(
-                    proposal.describe().profile,
-                    crate::execution::validation::Contract::Host
-                ) =>
-            {
-                proposal
-                    .handback(&registered)
-                    .map(|description| (None, description))
-            }
-            Some(proposal) => proposal
+        let activated = if matches!(
+            proposal.describe().profile,
+            crate::execution::validation::Contract::Host
+        ) {
+            proposal
+                .handback(&registered)
+                .map(|description| (None, description))
+        } else {
+            proposal
                 .activate(&registered)
-                .map(|(active, source, description)| (Some((active, source)), description)),
-            None => candidate
-                .activate(&registered)
-                .map(|(active, source, description)| (Some((active, source)), description)),
+                .map(|(active, source, description)| (Some((active, source)), description))
         };
         let mut state = self.state.lock();
         if state.closed {
