@@ -82,6 +82,9 @@ static struct swap_fixture *new_fixture(struct kunit *test)
 	f->state.planes = &f->plane_slot;
 	f->state.colorops = &f->colorop_slot;
 	f->state.private_objs = &f->private_slot;
+	f->crtc.dev = &f->dev;
+	f->crtc_states[0].crtc = &f->crtc;
+	f->crtc_states[1].crtc = &f->crtc;
 	f->crtc.state = &f->crtc_states[0];
 	f->connector.state = &f->connector_states[0];
 	f->plane.state = &f->plane_states[0];
