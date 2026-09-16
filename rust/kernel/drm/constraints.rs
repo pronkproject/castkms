@@ -9,6 +9,9 @@
 mod catalog;
 mod description;
 mod entry;
+mod property;
+
+pub use property::Property;
 
 pub use description::{
     Description,
