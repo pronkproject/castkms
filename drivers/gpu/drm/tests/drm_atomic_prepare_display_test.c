@@ -316,7 +316,7 @@ static void pending_reader_wakes_ticket_before_acceptance(struct kunit *test)
 	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_submission_init(state, owner), 0);
 	KUNIT_ASSERT_EQ(test, drm_atomic_prepare_submission_set(state, f->crtc, ticket), 0);
 	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
-	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_prepare_submission_attach), -EAGAIN);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_prepare_submission_attach), -EBUSY);
 	KUNIT_EXPECT_PTR_EQ(test, display_source(f->crtc), source);
 	KUNIT_EXPECT_EQ(test, drm_prepare_ticket_status(ticket), DRM_PREPARE_TICKET_PENDING);
 	drm_prepare_read_release(f->read, NULL);

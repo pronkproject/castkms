@@ -31,7 +31,11 @@
  * on participating devices. Supplying PREPARE_FD, including -1, selects the
  * explicit protocol instead. Nonblocking requests from a negotiated client
  * require a ticket; an absent required ticket returns EINVAL. A supplied ticket
- * that remains pending returns EAGAIN without accepting display state.
+ * that remains pending returns EBUSY without accepting display state or
+ * consuming the ticket. Query/poll the ticket before retrying; EBUSY can also
+ * report an outstanding atomic commit, so it does not promise a flip event.
+ * EAGAIN is reserved for ioctl restart, as expected by libdrm's drmIoctl() and
+ * drmModeAtomicCommit(); it is not the pending-ticket indication.
  */
 struct drm_mode_prepare_replace {
 	__u64 crtc_ids;
