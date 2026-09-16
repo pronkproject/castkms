@@ -500,19 +500,26 @@ mod cases {
     }
 
     #[test]
-    fn pending_capabilities_cannot_use_probe_only_activation() -> Result {
+    fn activation_requires_a_registered_profile() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            candidate.submit_private_probe(None)?;
+            let session = Session::new(owner.access(), device.to_registered_ref())?;
+            let pending = session.begin(device.execution.describe().generation)?;
+            let id = pending.id();
+            pending.publish()?;
+            session.candidate(id)?.submit_private_probe(None)?;
             let before = device.execution.describe();
-            let proposal =
-                candidate.propose_profile(crate::tests::renderer_proposals::profile()?)?;
-            check(candidate.activate(device).err() == Some(EAGAIN))?;
+            check(session.activate(id) == Err(EINVAL))?;
             check(device.execution.describe() == before)?;
-            proposal.validate()?;
-            proposal.cancel();
-            let (_active, _, next) = candidate.activate(device)?;
+            let proposal = session.propose_profile(id, linear_profile()?)?;
+            check(session.activate(id) == Err(EAGAIN))?;
+            device.atomic_update(|transaction| {
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(proposal.transition);
+                Ok(())
+            })?;
+            let next = session.activate(id)?;
             check(next.generation == before.generation + 1)
         })
     }
@@ -621,6 +628,13 @@ mod cases {
             session
                 .candidate(candidate_id)?
                 .submit_private_probe(None)?;
+            let proposal = session.propose_profile(candidate_id, linear_profile()?)?;
+            device.atomic_update(|transaction| {
+                transaction
+                    .add_crtc_state(crtc)?
+                    .tag_transition(proposal.transition);
+                Ok(())
+            })?;
             let execution = session.activate(candidate_id)?;
             check(execution.profile == Profile::GpuV1)?;
 

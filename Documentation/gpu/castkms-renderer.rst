@@ -115,11 +115,12 @@ Transition workflow
    Compatible animation continues without retagging or pinning a content
    serial. A tagged modeset binds the transition to its target configuration;
    an unrelated configuration change cancels it on successful installation.
-5. ``COMMIT_TAKEOVER`` requires the gate and normal publication of the
+5. ``COMMIT_TAKEOVER`` requires a registered profile, the gate and publication of the
    installed scene (or a compatible successor), current authority and GPU
    readiness where applicable. It atomically publishes execution and the
    active contract, lifts the gate and closes new old-worker admission.
-   ``EAGAIN`` means readiness/publication is not complete; query and retry.
+   ``EINVAL`` means the candidate has no registered profile. ``EAGAIN`` means
+   readiness/publication is not complete; query and retry.
 6. Drain previously admitted reads on their original endpoint. Neither
    activation nor a notification releases them. New scenes now use the
    new contract, including GPU-only layouts where negotiated.

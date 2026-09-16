@@ -459,9 +459,10 @@ struct drm_castkms_renderer_submit_probe {
  * Success atomically transfers the candidate into active-renderer ownership,
  * publishes a new GPU execution generation, and closes new HOST source-read
  * admission. Work admitted before the transition retires normally.
- * With REGISTER_PROFILE, a published tagged update must first install the
- * two-contract gate. A HOST target needs no probe and publishes HOST execution
- * instead. Pending gate/publication readiness returns EAGAIN. Use a fresh
+ * REGISTER_PROFILE and a published tagged update must first install the
+ * two-contract gate. An unregistered candidate returns EINVAL.
+ * A HOST target needs no probe and publishes HOST execution instead.
+ * Pending gate/publication readiness returns EAGAIN. Use a fresh
  * endpoint for replacement or HOST handback; retain the old endpoint to drain.
  *
  * Repeating the operation for the same active candidate succeeds so a caller
