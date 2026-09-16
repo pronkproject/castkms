@@ -275,6 +275,12 @@ The ``rust_drm_constraints_provider`` suite prepares owned mappings before
 acceptance, retains the exact entry in each job, and attaches native source
 accounting at commit-tail publication. Its XRGB and NV12 CPU paths produce
 one-pixel results from private immutable test buffers after read admission.
+Its threaded handoff test submits an old XRGB read, accepts an NV12 target,
+closes the constraints list, then completes the old read under its retained
+entry before target programming and readback. Kernel Rust updates use the
+native prepared-request
+runner, closing old source admission and retaining retirement fences without
+waiting under modeset locks for unsubmitted readers.
 The provider has no userspace descriptors, physical GPU or external producer.
 
 Use ``kunit.filter_glob=*constraints*`` for the constraints suites and run the

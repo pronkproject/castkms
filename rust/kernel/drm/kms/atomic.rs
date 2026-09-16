@@ -19,6 +19,7 @@ use core::{cell::Cell, marker::*, mem::ManuallyDrop, ops::*, ptr::NonNull};
 
 mod input;
 mod install;
+mod request;
 pub use install::{Install, InstallResult};
 pub(super) use install::install_callback;
 pub use input::PlaneInput;
@@ -31,10 +32,13 @@ impl<T: KmsDriver> Device<T, Registered> {
     /// callbacks. The framework owns the acquire context, validation, commit and cleanup; no
     /// userspace file or ioctl is involved. The registered-device borrow excludes unplug.
     ///
-    /// Lock contention may discard an attempt and invoke `update` again with fresh state. The
-    /// callback must propagate errors and be replayable: defer external side effects until this
+    /// Lock contention or source preparation may discard an attempt and invoke `update` again
+    /// with fresh state. The callback must propagate errors and be replayable: defer external
+    /// side effects until this
     /// method succeeds. Do not enter with modeset locks held or recursively submit updates from
-    /// the callback. State guards and references cannot escape the callback.
+    /// the callback. Do not hold locks needed by source readers completing preparation.
+    /// State guards and references cannot escape the callback. Success includes blocking
+    /// commit completion; submitted reads may delay retirement of the preceding state.
     pub fn atomic_update(
         &self,
         update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
@@ -68,7 +72,7 @@ pub(super) unsafe fn run_update<T: KmsDriver>(
     update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
 ) -> Result {
     // SAFETY: The caller supplies the initialized-device and exclusion guarantees.
-    unsafe { run_transaction(dev, update, |raw| to_result(bindings::drm_atomic_commit(raw.as_ptr()))) }
+    unsafe { request::run(dev, update) }
 }
 
 /// Validate an update on an initialized device without publishing it.
@@ -80,11 +84,11 @@ pub(super) unsafe fn run_check<T: KmsDriver>(
     dev: &Device<T>,
     update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
 ) -> Result {
-    // SAFETY: The caller supplies the same guarantees as for a committing transaction.
-    unsafe { run_transaction(dev, update, |raw| to_result(bindings::drm_atomic_check_only(raw.as_ptr()))) }
+    // SAFETY: The caller supplies the initialized-device and exclusion guarantees.
+    unsafe { check(dev, update) }
 }
 
-/// Exercise policy changes after successful checking, before the native commit callback.
+/// Exercise policy changes after successful checking and preparation, before committing.
 ///
 /// # Safety
 ///
@@ -93,28 +97,16 @@ pub(super) unsafe fn run_check<T: KmsDriver>(
 pub(super) unsafe fn run_update_after_check<T: KmsDriver>(
     dev: &Device<T>,
     update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
-    mut after_check: impl FnMut() -> Result,
+    after_check: impl FnMut() -> Result,
 ) -> Result {
-    // SAFETY: The runner owns the transaction and its modeset locks. Validation precedes
-    // the hook, which cannot borrow candidate state. Invoke the same commit callback as
-    // drm_atomic_commit, without repeating the check after the injected policy change.
-    unsafe {
-        run_transaction(dev, update, |raw| {
-            to_result(bindings::drm_atomic_check_only(raw.as_ptr()))?;
-            after_check()?;
-            let commit = (*(*dev.as_raw()).mode_config.funcs).atomic_commit.ok_or(EOPNOTSUPP)?;
-            to_result(commit(dev.as_raw(), raw.as_ptr(), false))
-        })
-    }
+    // SAFETY: The caller excludes setup and teardown for the initialized device.
+    unsafe { request::run_after_check(dev, update, after_check) }
 }
 
-// All terminal operations share ownership and backoff boundaries. The caller must follow
-// run_update's safety contract, and finish must validate before committing the transaction.
-// Finish may borrow the raw transaction only for its invocation, never retain that pointer.
-unsafe fn run_transaction<T: KmsDriver>(
+// The caller must follow run_check's initialized-device and exclusion requirements.
+unsafe fn check<T: KmsDriver>(
     dev: &Device<T>,
     mut update: impl FnMut(Pin<&mut AtomicStateComposer<T>>) -> Result,
-    mut finish: impl FnMut(NonNull<bindings::drm_atomic_commit>) -> Result,
 ) -> Result {
     pin_init::stack_pin_init!(let ctx = ModesetAcquireContext::new(0));
     loop {
@@ -136,7 +128,10 @@ unsafe fn run_transaction<T: KmsDriver>(
             let result = if contended {
                 Err(EDEADLK)
             } else {
-                result.and_then(|()| finish(raw))
+                // SAFETY: The exclusively owned transaction has a live acquire context.
+                result.and_then(|()| unsafe {
+                    to_result(bindings::drm_atomic_check_only(raw.as_ptr()))
+                })
             };
             // The driver may discover contention during validation, after the callback returned.
             // SAFETY: Validation uses this task's initialized context synchronously.

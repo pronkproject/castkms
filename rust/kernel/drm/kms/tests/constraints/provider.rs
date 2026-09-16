@@ -236,6 +236,175 @@ fn nv12(
 #[kunit_tests(rust_drm_constraints_provider)]
 mod cases {
     use super::*;
+    use crate::{dma_fence::testing::ManualFence, sync::Completion, workqueue};
+
+    // Every exit starts and joins submitted work before the private device/parent can unwind.
+    struct InFlight {
+        start: Arc<Completion>,
+        read_done: Arc<Completion>,
+        update_done: Option<Arc<Completion>>,
+    }
+
+    impl Drop for InFlight {
+        fn drop(&mut self) {
+            self.start.complete_all();
+            self.read_done.wait_for_completion();
+            if let Some(done) = &self.update_done {
+                done.wait_for_completion();
+            }
+        }
+    }
+
+    #[test]
+    fn submitted_old_pixels_retire_after_target_acceptance() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        counts.constraints_capacity.store(4, Ordering::Relaxed);
+        counts.preparation_capacity.store(8, Ordering::Relaxed);
+        counts.constraints_render.store(1, Ordering::Relaxed);
+        let parent = faux::Registration::new(c"rust-constraints-pending-pixels", None)?;
+        let dev = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let output = dev.constraints_output(0)?;
+        let target = format_entry(
+            output.domain(),
+            dev.crtc()?.object_id(),
+            dev.plane()?.object_id(),
+            fourcc::NV12,
+        )?;
+        output.add(&target)?;
+        let first = framebuffer(dev.device())?;
+        (&first.object_at(0)?.vmap::<0>()?)
+            .try_write32(0x00112233u32.to_le(), first.offset(0)? as usize)?;
+        let second = nv12(&dev, &counts)?;
+        let initial_mode = mode()?;
+        let scanout = atomic::CrtcScanout {
+            mode: &initial_mode,
+            framebuffer: &first,
+            connectors: &[dev.connector()?],
+            position: (0, 0),
+        };
+        dev.update(|state| state.set_crtc_config(dev.crtc()?, Some(&scanout)))?;
+        let old = counts.constraints_work.take().ok_or(EINVAL)?;
+        let start = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+        let read_done = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+        let update_done = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+        let pixel = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
+        let read_error = Arc::new(AtomicI32::new(EINPROGRESS.to_errno()), GFP_KERNEL)?;
+        let update_error = Arc::new(AtomicI32::new(EINPROGRESS.to_errno()), GFP_KERNEL)?;
+        let mut signal = ManualFence::new()?;
+        let fence = signal.fence();
+        let read = old.source()?.claim()?;
+        let read_job = old.clone();
+        let read_start = start.clone();
+        let read_finished = read_done.clone();
+        let read_pixel = pixel.clone();
+        let read_result = read_error.clone();
+        if let Err(error) = workqueue::system_dfl().try_spawn(GFP_KERNEL, move || {
+            read_start.wait_for_completion();
+            // Work was queued before relinquishing the claim. The fence covers every read
+            // performed here, and no further work is submitted under that claim.
+            let result = read_job.sample();
+            if let Ok(value) = result {
+                read_pixel.store(value, Ordering::Relaxed);
+            }
+            read_result.store(result.err().map_or(0, Error::to_errno), Ordering::Release);
+            drop(read_job);
+            let _ = signal.complete(result.map(|_| ()));
+            read_finished.complete_all();
+        }) {
+            read.release_cpu();
+            return Err(error.into());
+        }
+        let mut flight = InFlight {
+            start,
+            read_done,
+            update_done: None,
+        };
+        read.release_submitted(&fence);
+        let worker_dev: ARef<Device<TestDriver>> = dev.device().into();
+        let worker_image = second.clone();
+        let worker_target = target.clone();
+        let worker_done = update_done.clone();
+        let worker_result = update_error.clone();
+        workqueue::system_dfl().try_spawn(GFP_KERNEL, move || {
+            let result = (|| {
+                use connector::AsRawConnector;
+                use crtc::AsRawCrtc;
+                let mode = mode()?;
+                // SAFETY: Setup recorded these objects on the retained private device. InFlight
+                // joins this task before fixture teardown or faux-parent deregistration.
+                let crtc = unsafe {
+                    crtc::Crtc::<TestCrtc>::from_raw(worker_dev.crtc.load(Ordering::Relaxed))
+                };
+                let connector = unsafe {
+                    connector::Connector::<TestConnector>::from_raw(
+                        worker_dev.connector.load(Ordering::Relaxed),
+                    )
+                };
+                let scanout = atomic::CrtcScanout {
+                    mode: &mode,
+                    framebuffer: &worker_image,
+                    connectors: &[connector],
+                    position: (0, 0),
+                };
+                // SAFETY: The initialized private topology is retained and no setup, registration
+                // or teardown can occur until the main task joins this worker through InFlight.
+                unsafe {
+                    atomic::run_update(&worker_dev, |mut state| {
+                        state.as_mut().set_crtc_config(crtc, Some(&scanout))?;
+                        state.add_crtc_state(crtc)?.set_constraints(&worker_target)
+                    })
+                }
+            })();
+            worker_result.store(result.err().map_or(0, Error::to_errno), Ordering::Release);
+            drop(worker_image);
+            drop(worker_dev);
+            worker_done.complete_all();
+        })?;
+        flight.update_done = Some(update_done);
+        for _ in 0..5000 {
+            if output.selected().id() == target.id()
+                || update_error.load(Ordering::Acquire) != EINPROGRESS.to_errno()
+            {
+                break;
+            }
+            // SAFETY: The test holds no locks; bounded polling only observes list selection.
+            unsafe { bindings::msleep(1) };
+        }
+        let accepted = output.selected().id() == target.id();
+        let old_admission_closed = match old.source()?.claim() {
+            Err(EBUSY) => true,
+            Ok(extra) => {
+                extra.release_cpu();
+                false
+            }
+            Err(_) => false,
+        };
+        let early_publication = counts.constraints_work.take();
+        let awaiting_retirement = update_error.load(Ordering::Acquire) == EINPROGRESS.to_errno();
+        let pending = fence.status() == crate::dma_fence::Status::Pending;
+        output.close();
+        drop(flight);
+        assert!(accepted);
+        assert!(old_admission_closed);
+        assert!(pending);
+        assert!(awaiting_retirement);
+        assert!(early_publication.is_none());
+        let published = counts.constraints_work.take().ok_or(EINVAL)?;
+        assert_eq!(published.render(), Ok(0xffffff));
+        assert_eq!(pixel.load(Ordering::Relaxed), 0x112233);
+        assert_eq!(read_error.load(Ordering::Acquire), 0);
+        assert_eq!(update_error.load(Ordering::Acquire), 0);
+        assert_ne!(old.binding.id(), published.binding.id());
+        drop(published);
+        drop(old);
+        drop(first);
+        drop(second);
+        drop(output);
+        drop(dev);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[test]
     fn cpu_jobs_use_the_backend_retained_by_the_accepted_scene() -> Result {
