@@ -11,6 +11,25 @@ mod cases {
     use super::*;
 
     #[test]
+    fn reservation_preserves_fallback_until_publication() -> Result {
+        let driver = CastKms::new(c"castkms-monitor-pending")?;
+        let device = driver._display.registration_guard().ok_or(ENODEV)?;
+        let pending = device.monitor.reserve(&device)?;
+        check(device.monitor.status() == Status::Connected)?;
+        check(matches!(device.monitor.reserve(&device), Err(EBUSY)))?;
+        drop(pending);
+        check(device.monitor.status() == Status::Connected)?;
+        let pending = device.monitor.reserve(&device)?;
+        let control = pending.publish()?;
+        check(device.monitor.status() == Status::Disconnected)?;
+        drop(control);
+        let pending = device.monitor.reserve(&device)?;
+        device.monitor.close();
+        check(matches!(pending.publish(), Err(ENODEV)))?;
+        check(device.monitor.status() == Status::Disconnected)
+    }
+
+    #[test]
     fn control_replaces_and_restores_the_fallback() -> Result {
         let driver = CastKms::new(c"castkms-monitor-control")?;
         let device = driver._display.registration_guard().ok_or(ENODEV)?;

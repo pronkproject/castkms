@@ -24,6 +24,7 @@ enum Description {
 
 enum State {
     Unmanaged,
+    Reserved { identity: Arc<()> },
     Managed {
         identity: Arc<()>,
         description: Description,
@@ -53,7 +54,7 @@ impl Monitor {
 
     pub(crate) fn status(&self) -> connector::Status {
         match &*self.state.lock() {
-            State::Unmanaged
+            State::Unmanaged | State::Reserved { .. }
             | State::Managed {
                 description: Description::Attached { .. },
                 ..
@@ -83,7 +84,7 @@ impl Monitor {
                 Ok(_) => Self::add_fallback_modes(connector),
                 Err(_) => 0,
             },
-            State::Unmanaged
+            State::Unmanaged | State::Reserved { .. }
             | State::Managed {
                 description: Description::Attached { edid: None, .. },
                 ..
@@ -116,6 +117,14 @@ impl Monitor {
         self: &Arc<Self>,
         device: &Device<Driver, Registered>,
     ) -> Result<Control> {
+        self.reserve(device)?.publish()
+    }
+
+    /// Reserve exclusive issuance without changing the visible fallback monitor.
+    pub(crate) fn reserve(
+        self: &Arc<Self>,
+        device: &Device<Driver, Registered>,
+    ) -> Result<PendingControl> {
         if !device
             .displays
             .iter()
@@ -128,12 +137,11 @@ impl Monitor {
             let mut state = self.state.lock();
             match &*state {
                 State::Unmanaged => {
-                    *state = State::Managed {
+                    *state = State::Reserved {
                         identity: identity.clone(),
-                        description: Description::Disconnected,
                     };
                 }
-                State::Managed { .. } => return Err(EBUSY),
+                State::Reserved { .. } | State::Managed { .. } => return Err(EBUSY),
                 State::Closed => return Err(ENODEV),
             }
         }
@@ -142,8 +150,7 @@ impl Monitor {
             device: device.to_registered_ref(),
             identity,
         };
-        control.notify();
-        Ok(control)
+        Ok(PendingControl { control })
     }
 
     fn publish(&self, identity: &Arc<()>, replacement: Description) -> Result {
@@ -159,7 +166,7 @@ impl Monitor {
                         description: replacement,
                     },
                 ),
-                State::Managed { .. } | State::Unmanaged => return Err(ECANCELED),
+                State::Managed { .. } | State::Reserved { .. } | State::Unmanaged => return Err(ECANCELED),
                 State::Closed => return Err(ENODEV),
             }
         };
@@ -171,6 +178,10 @@ impl Monitor {
         let retired = {
             let mut state = self.state.lock();
             match &*state {
+                State::Reserved { identity: current } if Arc::ptr_eq(current, identity) => {
+                    *state = State::Unmanaged;
+                    return false;
+                }
                 State::Managed {
                     identity: current, ..
                 } if Arc::ptr_eq(current, identity) => {
@@ -210,6 +221,32 @@ pub(crate) struct Control {
     monitor: Arc<Monitor>,
     device: RegisteredDeviceRef<Driver>,
     identity: Arc<()>,
+}
+
+/// Dropping an unpublished reservation preserves fallback state without notification.
+pub(crate) struct PendingControl {
+    control: Control,
+}
+
+impl PendingControl {
+    pub(crate) fn publish(self) -> Result<Control> {
+        let control = self.control;
+        {
+            let mut state = control.monitor.state.lock();
+            match &*state {
+                State::Reserved { identity } if Arc::ptr_eq(identity, &control.identity) => {
+                    *state = State::Managed {
+                        identity: control.identity.clone(),
+                        description: Description::Disconnected,
+                    };
+                }
+                State::Closed => return Err(ENODEV),
+                _ => return Err(ECANCELED),
+            }
+        }
+        control.notify();
+        Ok(control)
+    }
 }
 
 impl Control {
