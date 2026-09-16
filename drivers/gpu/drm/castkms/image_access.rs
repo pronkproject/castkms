@@ -28,7 +28,6 @@ pub(crate) struct Current<'a> {
     layout: Layout,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl<'a> Current<'a> {
     /// Require current pixel attribution in addition to control of the output.
     pub(crate) fn new(control: display_control::Current<'a>) -> Result<Self> {

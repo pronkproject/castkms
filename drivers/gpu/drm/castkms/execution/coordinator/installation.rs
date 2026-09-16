@@ -37,7 +37,6 @@ pub(crate) struct Prepared<'a> {
     changes: [Option<Change<'a>>; OUTPUTS],
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Guard<'_> {
     pub(crate) fn prepare<'g>(
         &'g mut self,
@@ -100,7 +99,6 @@ impl Guard<'_> {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Prepared<'_> {
     /// No allocation, failure or native object release remains after successful swap.
     pub(crate) fn commit(self) -> Retired {

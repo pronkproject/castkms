@@ -25,7 +25,6 @@ pub(super) struct Object {
 
 impl Object {
     /// Allocate private storage whose final native reference returns its budget.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn new_budgeted(
         device: &drm::Device<Driver>,
         budget: &Arc<budget::Budget>,

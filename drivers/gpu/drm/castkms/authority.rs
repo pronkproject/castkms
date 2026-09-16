@@ -68,7 +68,6 @@ impl<I: Unpin> Authority<I> {
     }
 
     /// Observe an interval while the caller separately stabilizes native master control.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn interval(&self) -> Result<Interval> {
         match &*self.state.lock() {
             State::Tracking {

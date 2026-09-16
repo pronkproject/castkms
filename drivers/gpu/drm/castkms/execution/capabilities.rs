@@ -72,7 +72,6 @@ pub(crate) struct Profile {
     formats: KVec<Format>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Profile {
     pub(crate) fn new(limits: Limits, formats: KVec<Format>) -> Result<Self> {
         let geometry = limits.geometry;

@@ -98,7 +98,6 @@ impl File {
     ///
     /// Construction runs outside native DRM locks. The second check prevents a file or
     /// display-object ownership change during allocation from authorizing the result.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn issue_renderer_control(
         file: &drm::file::File<Self>,
         crtc: &Crtc<display::Crtc>,

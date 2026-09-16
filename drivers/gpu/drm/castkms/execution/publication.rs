@@ -290,7 +290,6 @@ impl Publication {
     ///
     /// Preparation alone changes no capability. Publication rechecks origin, generation,
     /// device and shutdown state; the caller separately authorizes the renderer handoff.
-    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn prepare(
         &self,
         device: &Device<Driver, Registered>,

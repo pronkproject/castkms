@@ -20,7 +20,6 @@ pub(crate) enum Contract {
     Renderer(Arc<capabilities::Profile>),
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Contract {
     /// Check metadata only. Success grants neither source access nor GPU import support.
     pub(crate) fn check(&self, view: SceneView<'_>) -> Result {
@@ -91,7 +90,6 @@ pub(crate) struct Activation<'a> {
     epoch: Epoch,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Validation {
     pub(crate) fn new(active: Contract) -> Self {
         Self {
@@ -176,7 +174,6 @@ impl Validation {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Installation<'_> {
     /// Infallible once native installation succeeds; no allocation or resource release.
     pub(crate) fn commit(self) {
@@ -185,7 +182,6 @@ impl Installation<'_> {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Activation<'_> {
     /// Infallible after preparation. Return retired contracts for release outside locks.
     pub(crate) fn commit(self) -> (Contract, Option<Contract>) {
