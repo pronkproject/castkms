@@ -3,6 +3,7 @@
 #include <linux/err.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_constraints.h>
+#include <drm/drm_atomic_uapi.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_constraints_catalog.h>
 #include <drm/drm_constraints_entry.h>
@@ -12,6 +13,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "drm_constraints_internal.h"
+#include "drm_crtc_internal.h"
 
 static int candidate_available(struct drm_constraints_entry *entry, void *data)
 {
@@ -109,6 +111,46 @@ static bool quiescing_output(const struct constraints_update *update)
 								 crtc->crtc)->constraints;
 }
 
+static int check_properties(struct constraints_update *update,
+			    struct drm_constraints_description *description)
+{
+	const struct drm_constraints_property *rules;
+	struct drm_plane_state *plane_state;
+	struct drm_plane *plane;
+	unsigned int count, i;
+	int j, ret;
+
+	if (!update->crtc->enable)
+		return 0;
+	rules = drm_constraints_description_properties(description, &count);
+	for (i = 0; i < count; i++) {
+		struct drm_mode_object *object = NULL;
+		struct drm_property *property;
+		u64 value;
+
+		if (rules[i].object_id == update->crtc->crtc->base.id) {
+			object = &update->crtc->crtc->base;
+		} else {
+			for_each_new_plane_in_state(update->state, plane, plane_state, j) {
+				if (plane->base.id == rules[i].object_id &&
+				    plane_state->crtc == update->crtc->crtc) {
+					object = &plane->base;
+					break;
+				}
+			}
+		}
+		if (!object)
+			continue;
+		property = drm_mode_obj_find_prop_id(object, rules[i].property_id);
+		ret = drm_atomic_get_property_from_state(update->state, object, property, &value);
+		if (ret)
+			return ret;
+		if (!drm_constraints_property_matches(&rules[i], value))
+			return -EINVAL;
+	}
+	return 0;
+}
+
 static int check_scene(struct drm_constraints_entry *entry, void *data)
 {
 	struct constraints_update *update = data;
@@ -119,7 +161,7 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 	struct drm_plane *plane;
 	unsigned int count, j;
 	u32 mask = 0;
-	int i;
+	int i, ret;
 
 	if (!update->state->allow_modeset &&
 	    entry != drm_atomic_get_old_crtc_state(update->state, update->crtc->crtc)->constraints)
@@ -153,6 +195,9 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 	/* Stopping scanout requires no new work from an unavailable backend. */
 	if (quiescing_output(update))
 		return 0;
+	ret = check_properties(update, description);
+	if (ret)
+		return ret;
 	return output->ops->check(update->state, update->crtc, drm_constraints_entry_data(entry));
 }
 

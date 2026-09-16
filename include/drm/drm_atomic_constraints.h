@@ -17,7 +17,8 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 /*
  * Common atomic validation. Prepare adds the complete affected plane/color
  * state before driver checks and marks changed constraints as a modeset.
- * Check validates allocation limits and calls the provider's full-scene check.
+ * Check validates allocation limits and scalar property rules from proposed
+ * state, then calls the provider's full-scene check.
  * The prototype admits only one independent output per transaction and no
  * asynchronous plane update when constraints are involved.
  * Fully disabling the CRTC with every plane detached retains its binding and
