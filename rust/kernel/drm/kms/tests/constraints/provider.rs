@@ -184,12 +184,13 @@ pub(in crate::drm::kms::tests) fn publish(commit: &crtc::CrtcAtomicCommit<'_, Te
     if let Some(job) = &new.work {
         job.activate(commit.preparation_source().ok_or(EINVAL)?)?;
     }
-    commit
-        .crtc()
-        .life
-        .0
-        .constraints_work
-        .replace(new.work.clone());
+    let counts = &commit.crtc().life.0;
+    let publication = match commit.crtc().index() {
+        0 => &counts.constraints_work,
+        1 => &counts.constraints_work_secondary,
+        _ => return Err(EINVAL),
+    };
+    publication.replace(new.work.clone());
     Ok(())
 }
 
@@ -261,6 +262,144 @@ mod cases {
         fn drop(&mut self) {
             self.0.wait_for_completion();
         }
+    }
+
+    struct OtherOutputRead {
+        release: Arc<AtomicU32>,
+        done: Arc<Completion>,
+    }
+
+    impl Drop for OtherOutputRead {
+        fn drop(&mut self) {
+            self.release.store(1, Ordering::Release);
+            self.done.wait_for_completion();
+        }
+    }
+
+    #[test]
+    fn target_animation_does_not_wait_for_another_outputs_read() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        counts.constraints_capacity.store(8, Ordering::Relaxed);
+        counts.preparation_capacity.store(8, Ordering::Relaxed);
+        counts.constraints_render.store(1, Ordering::Relaxed);
+        counts.output_count.store(2, Ordering::Relaxed);
+        let parent = faux::Registration::new(c"rust-constraints-two-outputs", None)?;
+        let dev = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let first_crtc = dev.crtc_at(0)?;
+        let second_crtc = dev.crtc_at(1)?;
+        let first_output = dev.constraints_output(0)?;
+        let second_output = dev.constraints_output(1)?;
+        let first_default = first_output.default_entry().id();
+        let second_default = second_output.default_entry().id();
+        let target = format_entry(
+            first_output.domain(),
+            first_crtc.object_id(),
+            dev.plane_at(0)?.object_id(),
+            fourcc::NV12,
+        )?;
+        first_output.add(&target)?;
+        let image = nv12(&dev, &counts)?;
+        let gray = nv12(&dev, &counts)?;
+        (&gray.object_at(0)?.vmap::<0>()?).try_write8(81, 0)?;
+        let other_image = framebuffer(dev.device())?;
+        (&other_image.object_at(0)?.vmap::<0>()?).try_write32(0x00334455u32.to_le(), 0)?;
+        let mode = mode()?;
+        let mut scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &image,
+            connectors: &[dev.connector_at(0)?],
+            position: (0, 0),
+        };
+        let other_scanout = atomic::CrtcScanout {
+            mode: &mode,
+            framebuffer: &other_image,
+            connectors: &[dev.connector_at(1)?],
+            position: (0, 0),
+        };
+        dev.update(|state| state.set_crtc_config(second_crtc, Some(&other_scanout)))?;
+        let other_job = counts.constraints_work_secondary.take().ok_or(EINVAL)?;
+        assert_eq!(other_job.render(), Ok(0x334455));
+        let other_generation = second_output.snapshot(0)?.info().generation;
+        let release = Arc::new(AtomicU32::new(0), GFP_KERNEL)?;
+        let worker_release = release.clone();
+        let done = Arc::pin_init(Completion::new(), GFP_KERNEL)?;
+        let worker_done = done.clone();
+        let error = Arc::new(AtomicI32::new(EINPROGRESS.to_errno()), GFP_KERNEL)?;
+        let worker_error = error.clone();
+        let read = other_job.source()?.claim()?;
+        workqueue::system_dfl().try_spawn(GFP_KERNEL, move || {
+            for _ in 0..5000 {
+                if worker_release.load(Ordering::Acquire) != 0 {
+                    break;
+                }
+                // SAFETY: The test worker holds no locks and bounds a regression's read hold.
+                unsafe { bindings::msleep(1) };
+            }
+            let timed_out = worker_release.load(Ordering::Acquire) == 0;
+            read.release_cpu();
+            worker_error.store(
+                if timed_out { ETIMEDOUT.to_errno() } else { 0 },
+                Ordering::Release,
+            );
+            worker_done.complete_all();
+        })?;
+        let reader = OtherOutputRead { release, done };
+        let result = (|| {
+            dev.update(|mut state| {
+                state.as_mut().set_crtc_config(first_crtc, Some(&scanout))?;
+                state.add_crtc_state(first_crtc)?.set_constraints(&target)
+            })?;
+            let generation = first_output.snapshot(0)?.info().generation;
+            let mut expected = 0xffffff;
+            for frame in 0..8 {
+                let job = counts.constraints_work.take().ok_or(EINVAL)?;
+                if job.binding.id() != target.id() || job.render()? != expected {
+                    return Err(EIO);
+                }
+                scanout.framebuffer = if frame % 2 == 0 { &gray } else { &image };
+                expected = if frame % 2 == 0 { 0x4c4c4c } else { 0xffffff };
+                dev.update(|state| state.set_crtc_config(first_crtc, Some(&scanout)))?;
+                if first_output.snapshot(0)?.info().generation != generation
+                    || second_output.snapshot(0)?.info().generation != other_generation
+                    || second_output.selected().id() != second_default
+                    || counts.constraints_work_secondary.take().is_some()
+                    || other_job.render()? != 0x334455
+                {
+                    return Err(EINVAL);
+                }
+            }
+            if counts.constraints_work.take().ok_or(EINVAL)?.render()? != expected {
+                return Err(EIO);
+            }
+            Ok(())
+        })();
+        drop(reader);
+        assert_eq!(error.load(Ordering::Acquire), 0);
+        assert_eq!(result, Ok(()));
+        // Full multi-output shutdown retains each binding until default restoration.
+        dev.update(|mut state| {
+            state.as_mut().set_crtc_config(first_crtc, None)?;
+            state.set_crtc_config(second_crtc, None)
+        })?;
+        assert_eq!(first_output.selected().id(), target.id());
+        assert_eq!(second_output.selected().id(), second_default);
+        assert!(counts.constraints_work.take().is_none());
+        assert!(counts.constraints_work_secondary.take().is_none());
+        assert_eq!(first_output.restore_default(), Ok(()));
+        assert_eq!(second_output.restore_default(), Ok(()));
+        assert_eq!(first_output.selected().id(), first_default);
+        first_output.close();
+        second_output.close();
+        drop(other_job);
+        drop(image);
+        drop(gray);
+        drop(other_image);
+        drop(first_output);
+        drop(second_output);
+        drop(dev);
+        assert_eq!(counts.gem_objects.load(Ordering::Relaxed), 0);
+        assert_eq!(counts.objects.load(Ordering::Relaxed), 0);
+        Ok(())
     }
 
     #[test]

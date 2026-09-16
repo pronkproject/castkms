@@ -297,6 +297,11 @@ A pending-claim test acquires the old CRTC lock while the request waits,
 withdraws the checked target, then releases its read. The rebuilt request
 rejects the stale target, publishes no replacement job and reopens old read
 admission without changing selection.
+A two-output case cycles private NV12 pixel results on one output while the
+other holds an unresolved source claim. It checks independent publication,
+unchanged list generations during animation, native multi-output shutdown and
+disabled default restoration. A bounded reader worker releases on failure so
+an isolation regression cannot strand fixture teardown.
 The provider has no userspace descriptors, physical GPU or external producer.
 
 Use ``kunit.filter_glob=*constraints*`` for the constraints suites and run the
