@@ -12,7 +12,21 @@ const MAX_IMAGES: usize = 128;
 const MAX_BYTES: usize = 512 * 1024 * 1024;
 const MAX_BUFFERS: usize = 4;
 
+/// Independently bounded storage stages sharing one alias ledger.
+#[derive(Clone, Copy)]
+pub(crate) enum Pool {
+    Private,
+    Recipient,
+}
+
+#[derive(Clone, Copy)]
+struct Account {
+    images: usize,
+    bytes: usize,
+}
+
 struct Storage {
+    pool: Pool,
     buffers: KVec<ARef<DmaBuf>>,
     dimensions: [u32; 2],
     bytes: usize,
@@ -20,7 +34,7 @@ struct Storage {
 
 struct RegistryState {
     closed: bool,
-    bytes: usize,
+    accounts: [Account; 2],
     images: KVec<Arc<Storage>>,
 }
 
@@ -39,10 +53,14 @@ pub(crate) struct Registry {
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Registry {
     pub(crate) fn new() -> Result<Arc<Self>> {
-        let images = KVec::with_capacity(MAX_IMAGES, GFP_KERNEL)?;
+        let images = KVec::with_capacity(2 * MAX_IMAGES, GFP_KERNEL)?;
         Arc::pin_init(
             pin_init!(Self {
-                state <- kernel::new_mutex!(RegistryState { closed: false, bytes: 0, images }),
+                state <- kernel::new_mutex!(RegistryState {
+                    closed: false,
+                    accounts: [Account { images: 0, bytes: 0 }; 2],
+                    images,
+                }),
             }),
             GFP_KERNEL,
         )
@@ -52,6 +70,7 @@ impl Registry {
     /// Each distinct allocation appears once, even if a native image has several planes.
     pub(crate) fn register(
         self: &Arc<Self>,
+        pool: Pool,
         dimensions: [u32; 2],
         buffers: &[ARef<DmaBuf>],
     ) -> Result<Registration> {
@@ -81,6 +100,7 @@ impl Registry {
         }
         let storage = Arc::new(
             Storage {
+                pool,
                 buffers: retained,
                 dimensions,
                 bytes,
@@ -100,14 +120,17 @@ impl Registry {
             }) {
                 return Err(EEXIST);
             }
-            if state.images.len() == MAX_IMAGES || bytes > MAX_BYTES - state.bytes {
+            let account = &state.accounts[pool as usize];
+            if account.images == MAX_IMAGES || bytes > MAX_BYTES - account.bytes {
                 return Err(EBUSY);
             }
             state
                 .images
                 .push_within_capacity(storage.clone())
                 .map_err(|_| EIO)?;
-            state.bytes += bytes;
+            let account = &mut state.accounts[pool as usize];
+            account.images += 1;
+            account.bytes += bytes;
         }
         Ok(Registration {
             registry: self.clone(),
@@ -139,7 +162,9 @@ impl Drop for Registration {
                 .position(|image| Arc::ptr_eq(image, &self.storage));
             index.and_then(|index| {
                 let image = state.images.remove(index).ok()?;
-                state.bytes -= image.bytes;
+                let account = &mut state.accounts[image.pool as usize];
+                account.images -= 1;
+                account.bytes -= image.bytes;
                 Some(image)
             })
         };

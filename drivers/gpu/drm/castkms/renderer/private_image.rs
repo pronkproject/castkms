@@ -6,7 +6,7 @@
 //! retains its backing allocations, not a CPU format interpretation. The allocations
 //! must remain private to the rendering service, including every alias and import.
 
-use crate::image_storage::{Registration, Registry};
+use crate::image_storage::{Pool, Registration, Registry};
 use core::sync::atomic::{AtomicBool, Ordering};
 use kernel::{
     dma_buf::DmaBuf,
@@ -47,7 +47,7 @@ impl Image {
         {
             return Err(EACCES);
         }
-        let registration = registry.register(dimensions, buffers)?;
+        let registration = registry.register(Pool::Private, dimensions, buffers)?;
         Arc::pin_init(
             pin_init!(Self {
                 registration,

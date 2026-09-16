@@ -241,4 +241,87 @@ mod cases {
             })
         })
     }
+
+    #[test]
+    fn recipient_registration_capacity_does_not_consume_private_credits() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let (active, _) = activate(&renderer, device, crtc)?;
+            let grantor = grant(&file, crtc, connector)?;
+            let scope = grantor.capture().describe_delegated()?;
+            let mut images = KVec::new();
+            for _ in 0..128 {
+                images.push(
+                    scope.register_destination(
+                        &buffer(device, ExportAccess::ReadWrite)?,
+                        fourcc::XRGB8888,
+                        0,
+                        2560,
+                        0,
+                    )?,
+                    GFP_KERNEL,
+                )?;
+            }
+            let next = buffer(device, ExportAccess::ReadWrite)?;
+            check(
+                scope
+                    .register_destination(&next, fourcc::XRGB8888, 0, 2560, 0)
+                    .err()
+                    == Some(EBUSY),
+            )?;
+            let private = renderer.register_private_image(
+                &active,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            drop(private.prepare(1)?);
+            drop(images.pop());
+            drop(scope.register_destination(&next, fourcc::XRGB8888, 0, 2560, 0)?);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn recipient_byte_budget_does_not_consume_private_credits() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let (active, _) = activate(&renderer, device, crtc)?;
+            let grantor = grant(&file, crtc, connector)?;
+            let scope = grantor.capture().describe_delegated()?;
+            let allocate = |size| {
+                shmem::Object::<gem::Object>::new(
+                    device,
+                    size,
+                    Default::default(),
+                    Default::default(),
+                )?
+                .export_dma_buf(ExportAccess::ReadWrite)
+            };
+            let image = scope.register_destination(
+                &allocate(400 * 1024 * 1024)?,
+                fourcc::XRGB8888,
+                0,
+                2560,
+                0,
+            )?;
+            let next = allocate(200 * 1024 * 1024)?;
+            check(
+                scope
+                    .register_destination(&next, fourcc::XRGB8888, 0, 2560, 0)
+                    .err()
+                    == Some(EBUSY),
+            )?;
+            let private = renderer.register_private_image(
+                &active,
+                [640, 480],
+                &[allocate(400 * 1024 * 1024)?],
+            )?;
+            drop(private.prepare(1)?);
+            drop(image);
+            drop(scope.register_destination(&next, fourcc::XRGB8888, 0, 2560, 0)?);
+            Ok(())
+        })
+    }
 }
