@@ -26,8 +26,8 @@ struct drm_constraints_output_ops {
 
 /*
  * Attach a ready default before device registration, with no enabled state or
- * pending commits. Validate existing plane membership but do not rewrite plane
- * discovery. The provider's allocation path must admit target buffers before
+ * pending commits. Validate existing plane membership and advertised allocation
+ * support without rewriting discovery. Allocation must admit target buffers before
  * selection. Only atomic drivers using common state and installation helpers
  * may opt in. Initialization owns references only on success.
  */
