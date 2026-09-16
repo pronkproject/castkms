@@ -832,15 +832,15 @@ That variant also imports a private system-heap allocation and creates an
 explicitly linear framebuffer without mapping or reading its pixels. It
 closes both the DMA-BUF descriptor and the imported buffer handle before
 submitting updates, so the framebuffer must retain the storage through
-teardown. Import and framebuffer creation succeed, but the HOST profile
-rejects visible foreign storage. Non-atomic modesets, page flips and
-test-only, blocking and nonblocking atomic replacements must fail without
-replacing the active native framebuffer.
+teardown. The HOST profile accepts the CPU-mappable linear import through
+non-atomic modesets, page flips and atomic replacements. A test-only
+replacement preserves the active framebuffer; blocking and nonblocking
+acceptance select the imported framebuffer.
 
 The test then installs the imported framebuffer on an inactive plane and
-attempts to activate the output without resubmitting the plane. Activation
-must reject the stored framebuffer too. Restoring the native framebuffer
-allows the ordinary flip tests to proceed. These checks cover import
+activates the output without resubmitting the plane. Test-only, blocking and
+nonblocking activation must accept the retained import. Restoring the native
+framebuffer allows the ordinary flip tests to proceed. These checks cover import
 lifetime and HOST eligibility, not GPU execution, producer dependencies or
 capture of imported pixels. A missing or inaccessible explicitly selected
 heap fails the test.

@@ -94,22 +94,27 @@ int main(int argc, char **argv)
 		struct buffer foreign = import_buffer(fd, argv[2], mode->hdisplay, mode->vdisplay);
 		const uint32_t flags[] = { DRM_MODE_ATOMIC_TEST_ONLY, 0, DRM_MODE_ATOMIC_NONBLOCK };
 
-		CHECK(drmModeSetCrtc(fd, crtc_id, foreign.fb, 0, 0, &connector_id, 1, mode) < 0);
-		CHECK(errno == EOPNOTSUPP);
-		CHECK(drmModePageFlip(fd, crtc_id, foreign.fb, 0, NULL) < 0);
-		CHECK(errno == EOPNOTSUPP);
+		CHECK(drmModeSetCrtc(fd, crtc_id, foreign.fb, 0, 0, &connector_id, 1, mode) == 0);
 		crtc = drmModeGetCrtc(fd, crtc_id);
-		CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
+		CHECK(crtc && crtc->mode_valid && crtc->buffer_id == foreign.fb);
+		drmModeFreeCrtc(crtc);
+		CHECK(drmModeSetCrtc(fd, crtc_id, a.fb, 0, 0, &connector_id, 1, mode) == 0);
+		CHECK(drmModePageFlip(fd, crtc_id, foreign.fb, 0, NULL) == 0);
+		crtc = drmModeGetCrtc(fd, crtc_id);
+		CHECK(crtc && crtc->mode_valid && crtc->buffer_id == foreign.fb);
 		drmModeFreeCrtc(crtc);
 
 		req = drmModeAtomicAlloc();
 		CHECK(req);
 		property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", foreign.fb);
 		for (unsigned int i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
-			CHECK(drmModeAtomicCommit(fd, req, flags[i], NULL) < 0);
-			CHECK(errno == EOPNOTSUPP);
+			uint32_t expected = flags[i] & DRM_MODE_ATOMIC_TEST_ONLY ?
+					    a.fb : foreign.fb;
+
+			CHECK(drmModeSetCrtc(fd, crtc_id, a.fb, 0, 0, &connector_id, 1, mode) == 0);
+			CHECK(drmModeAtomicCommit(fd, req, flags[i], NULL) == 0);
 			crtc = drmModeGetCrtc(fd, crtc_id);
-			CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
+			CHECK(crtc && crtc->mode_valid && crtc->buffer_id == expected);
 			drmModeFreeCrtc(crtc);
 		}
 		drmModeAtomicFree(req);
@@ -124,8 +129,7 @@ int main(int argc, char **argv)
 		property(fd, req, crtc_id, DRM_MODE_OBJECT_CRTC, "ACTIVE", 1);
 		for (unsigned int i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
 			CHECK(drmModeAtomicCommit(fd, req, flags[i] | DRM_MODE_ATOMIC_ALLOW_MODESET,
-						 NULL) < 0);
-			CHECK(errno == EOPNOTSUPP);
+						 NULL) == 0);
 		}
 		property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", a.fb);
 		CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_ALLOW_MODESET, NULL) == 0);
@@ -200,6 +204,6 @@ int main(int argc, char **argv)
 	CHECK(close(fd) == 0);
 	puts("PASS: CastKMS allocation, modeset, timed vblank, 50 flips, rejection, disable");
 	if (argc == 3)
-		puts("PASS: HOST rejects foreign scanout without changing the display");
+		puts("PASS: HOST accepts retained CPU-mappable PRIME scanout");
 	return 0;
 }
