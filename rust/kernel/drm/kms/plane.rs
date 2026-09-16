@@ -137,7 +137,7 @@ pub trait DriverPlane: Send + Sync + Sized {
     /// The type to pass to the `args` field of [`UnregisteredPlane::new`].
     ///
     /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
-    /// don't need this can simply pass [`()`] here.
+    /// don't need this can simply pass `()` here.
     type Args;
 
     /// The parent [`KmsDriver`] implementation.
@@ -486,10 +486,9 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
     /// Attach a rotation property to this plane, advertising `supported_rotations` (a bitmask of
     /// `DRM_MODE_ROTATE_*` | `DRM_MODE_REFLECT_*`) with initial value `default_rotation`. The
     /// selected value is then readable from the plane state via
-    /// [`RawPlaneState::rotation`](crate::drm::kms::plane::RawPlaneState::rotation).
+    /// [`RawPlaneState::rotation`].
     ///
-    /// Call this during [`KmsDriver::probe`](crate::drm::kms::KmsDriver::probe), before the device
-    /// is registered.
+    /// Call this during [`KmsDriver::create_objects`], before the device is registered.
     pub fn create_rotation_property(
         &self,
         default_rotation: Rotation,
@@ -515,10 +514,9 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
     /// Without the property attached, a compositor cannot supply clips at all: unchanged commits
     /// arrive with an empty list, which is indistinguishable from "no damage information".
     ///
-    /// The clips are read back through
-    /// [`RawPlaneState::damage_clips`](crate::drm::kms::plane::RawPlaneState::damage_clips).
+    /// The clips are read back through [`RawPlaneState::for_each_damage_clip`].
     ///
-    /// Call this during [`KmsDriver::create_objects`](crate::drm::kms::KmsDriver::create_objects),
+    /// Call this during [`KmsDriver::create_objects`],
     /// before the device is registered.
     pub fn enable_fb_damage_clips(&self) {
         // SAFETY: `as_raw()` is a valid, not-yet-registered plane; attaching a property before
@@ -533,7 +531,7 @@ impl<T: DriverPlane> UnregisteredPlane<T> {
     /// required to have this property -- `drm_mode_config_validate()` `WARN`s at registration
     /// otherwise, because userspace has no way to know how the alpha will be interpreted.
     ///
-    /// Call this during [`KmsDriver::create_objects`](crate::drm::kms::KmsDriver::create_objects),
+    /// Call this during [`KmsDriver::create_objects`],
     /// before the device is registered.
     pub fn create_blend_mode_property(&self, supported_modes: BlendModes) -> Result {
         // SAFETY: `as_raw()` is a valid, not-yet-registered plane.
@@ -1233,8 +1231,8 @@ pub struct PlaneState<T: DriverPlaneState> {
 /// - Any C FFI callbacks generated using this trait are guaranteed that passed-in
 ///   [`struct drm_plane_state`] pointers are contained within a [`PlaneState<Self>`].
 ///
-/// [`struct drm_plane`]: srctree/include/drm_plane.h
-/// [`struct drm_plane_state`]: srctree/include/drm_plane.h
+/// [`struct drm_plane`]: srctree/include/drm/drm_plane.h
+/// [`struct drm_plane_state`]: srctree/include/drm/drm_plane.h
 pub trait DriverPlaneState: Sized + Send + Sync {
     /// The type for this driver's drm_plane implementation
     type Plane: DriverPlane<State = Self>;

@@ -188,7 +188,7 @@ pub trait DriverConnector: Send + Sync + Sized {
     /// The type to pass to the `args` field of [`UnregisteredConnector::new`].
     ///
     /// This type will be made available in in the `args` argument of [`Self::new`]. Drivers which
-    /// don't need this can simply pass [`()`] here.
+    /// don't need this can simply pass `()` here.
     type Args;
 
     /// The parent [`KmsDriver`] implementation.
@@ -1060,9 +1060,8 @@ pub trait RawConnectorState: AsRawConnectorState {
 }
 /// An electro-optical transfer function named by a `HDR_OUTPUT_METADATA` blob.
 ///
-/// Mirrors the `HDMI_EOTF_*` values in [`enum hdmi_eotf`]. A driver matches on this rather than
-/// comparing against the raw constants, so the one place that has to agree with the C enum is
-/// [`Eotf::from_raw`].
+/// Mirrors the `HDMI_EOTF_*` values in [`enum hdmi_eotf`]. Drivers can match these variants
+/// instead of comparing raw constants. Unrecognized values are preserved in [`Eotf::Other`].
 ///
 /// [`enum hdmi_eotf`]: srctree/include/linux/hdmi.h
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1134,8 +1133,8 @@ pub struct ConnectorState<T: DriverConnectorState> {
 /// - Any C FFI callbacks generated using this trait are guaranteed that passed-in
 ///   [`struct drm_connector_state`] pointers are contained within a [`ConnectorState<Self>`].
 ///
-/// [`struct drm_connector`]: srctree/include/drm_connector.h
-/// [`struct drm_connector_state`]: srctree/include/drm_connector.h
+/// [`struct drm_connector`]: srctree/include/drm/drm_connector.h
+/// [`struct drm_connector_state`]: srctree/include/drm/drm_connector.h
 pub trait DriverConnectorState: Sized + Send + Sync {
     /// The parent [`DriverConnector`].
     type Connector: DriverConnector<State = Self>;
