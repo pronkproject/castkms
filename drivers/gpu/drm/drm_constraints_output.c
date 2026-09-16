@@ -198,3 +198,4 @@ void drm_constraints_crtc_state_init(struct drm_crtc_state *state)
 	if (state->crtc->constraints_output)
 		state->constraints = drm_constraints_catalog_selected(state->crtc->constraints_output->catalog);
 }
+EXPORT_SYMBOL_GPL(drm_constraints_crtc_state_init);
