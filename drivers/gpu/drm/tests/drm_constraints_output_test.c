@@ -109,6 +109,42 @@ static void reset_and_pristine_state_retain_accepted_binding(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, fixture->released, 0);
 }
 
+static int accept_entry(struct drm_constraints_entry *entry, void *data)
+{
+	return 0;
+}
+
+static void fixed_default_survives_withdrawal_and_selection(struct kunit *test)
+{
+	struct output_fixture *f = new_fixture(test, "constraints-default");
+	struct drm_constraints_entry *initial = new_entry(test, f, f->crtc->base.id,
+							  f->plane->base.id);
+	struct drm_constraints_entry *target = new_entry(test, f, f->crtc->base.id,
+							 f->plane->base.id);
+	struct drm_constraints_list *list;
+	int ret;
+
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_crtc_default(f->crtc), NULL);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(f->crtc, initial, 4, &output_ops), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, target), 0);
+	list = drm_constraints_crtc_list(f->crtc);
+	KUNIT_ASSERT_EQ(test, drm_modeset_lock(&f->crtc->mutex, NULL), 0);
+	ret = drm_constraints_list_accept(list, target, accept_entry, NULL);
+	drm_modeset_unlock(&f->crtc->mutex);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	drm_mode_config_reset(&f->drm);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, target);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_withdraw(list,
+							    drm_constraints_entry_id(initial)), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_forget(list,
+							  drm_constraints_entry_id(initial)), 0);
+	kunit_release_action(test, put_entry, initial);
+	KUNIT_EXPECT_EQ(test, f->released, 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_crtc_default(f->crtc), initial);
+	drm_constraints_list_close(list);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_crtc_default(f->crtc), initial);
+}
+
 static void attaching_rejects_foreign_device_and_objects(struct kunit *test)
 {
 	struct output_fixture *fixture = new_fixture(test, "constraints-output");
@@ -289,6 +325,7 @@ static void property_rules_require_attached_supported_domains(struct kunit *test
 
 static struct kunit_case drm_constraints_output_tests[] = {
 	KUNIT_CASE(reset_and_pristine_state_retain_accepted_binding),
+	KUNIT_CASE(fixed_default_survives_withdrawal_and_selection),
 	KUNIT_CASE(attaching_rejects_foreign_device_and_objects),
 	KUNIT_CASE(attaching_requires_disabled_unregistered_output),
 	KUNIT_CASE(publishing_revalidates_complete_object_scope),

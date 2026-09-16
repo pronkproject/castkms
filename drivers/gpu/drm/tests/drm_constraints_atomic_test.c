@@ -43,7 +43,7 @@ struct atomic_fixture {
 	struct drm_plane *plane;
 	struct drm_constraints_entry *initial;
 	struct drm_constraints_entry *target;
-	struct test_backend backends[2];
+	struct test_backend backends[3];
 	struct drm_framebuffer *linear;
 	struct drm_framebuffer *tiled;
 	unsigned int installs;
@@ -879,7 +879,9 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
 	struct atomic_fixture *f = new_fixture(test);
 	struct drm_constraints_list *list = drm_constraints_crtc_list(f->crtc);
-	struct drm_constraints_entry *accepted = disable ? f->initial : f->target;
+	struct drm_constraints_entry *retiring = new_entry(test, f, DRM_FORMAT_XRGB8888,
+						 DRM_FORMAT_MOD_LINEAR, 2, NULL, 0);
+	struct drm_constraints_entry *accepted = disable ? retiring : f->target;
 	struct drm_atomic_commit *first;
 	struct drm_atomic_commit *other_update = NULL;
 	struct drm_prepare_output_generation output;
@@ -889,7 +891,7 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	struct dma_fence *fence;
 	struct task_struct *task;
 	struct retirement_worker worker;
-	u64 old_id = drm_constraints_entry_id(f->initial);
+	u64 old_id = drm_constraints_entry_id(retiring);
 	bool early;
 
 	KUNIT_ASSERT_NOT_NULL(test, other);
@@ -899,14 +901,15 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, other_update);
 		KUNIT_ASSERT_EQ(test, run_update(other_update, drm_atomic_check_only), 0);
 	}
-	first = new_update(test, f, NULL, f->linear);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, retiring), 0);
+	first = new_update(test, f, retiring, f->linear);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, first);
 	KUNIT_ASSERT_EQ(test, run_update(first, drm_atomic_check_only), 0);
 	KUNIT_ASSERT_EQ(test, run_update(first, swap_update), 0);
-	f->backends[0].source = drm_prepare_source_create(1);
-	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->backends[0].source);
+	f->backends[2].source = drm_prepare_source_create(1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->backends[2].source);
 	KUNIT_ASSERT_EQ(test,
-			kunit_add_action_or_reset(test, put_source, f->backends[0].source), 0);
+			kunit_add_action_or_reset(test, put_source, f->backends[2].source), 0);
 	next = disable ? new_disable(test, f) : new_update(test, f, f->target, f->tiled);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, next);
 	KUNIT_ASSERT_EQ(test, run_update(next, drm_atomic_check_only), 0);
@@ -914,11 +917,11 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	KUNIT_ASSERT_NOT_NULL(test, fence);
 	dma_fence_init(fence, &read_fence_ops, NULL, dma_fence_context_alloc(1), 1);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, finish_read, fence), 0);
-	claim = drm_prepare_source_claim(f->backends[0].source);
+	claim = drm_prepare_source_claim(f->backends[2].source);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, claim);
 	drm_prepare_read_release(claim, fence);
 	output = (struct drm_prepare_output_generation) {
-		.crtc_id = f->crtc->base.id, .source = f->backends[0].source,
+		.crtc_id = f->crtc->base.id, .source = f->backends[2].source,
 	};
 	ticket = drm_prepare_ticket_create(&output, 1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, ticket);
@@ -926,7 +929,7 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	KUNIT_ASSERT_EQ(test, drm_atomic_commit_prepare(next, ticket, observe_retiring_source), 0);
 	if (disable) {
 		drm_constraints_list_close(list);
-		f->backends[0].failed = true;
+		f->backends[2].failed = true;
 	}
 	KUNIT_ASSERT_EQ(test, run_update(next, swap_update), 0);
 	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(fence));
@@ -938,8 +941,8 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 		KUNIT_ASSERT_EQ(test, drm_constraints_list_forget(list, old_id), 0);
 	}
 	drm_atomic_commit_clear(first);
-	kunit_release_action(test, put_entry, f->initial);
-	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[0].released), 0);
+	kunit_release_action(test, put_entry, retiring);
+	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[2].released), 0);
 	worker.state = next;
 	init_completion(&worker.started);
 	init_completion(&worker.finished);
@@ -947,8 +950,8 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, task);
 	wait_for_completion(&worker.started);
 	early = wait_for_completion_timeout(&worker.finished, msecs_to_jiffies(20));
-	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[0].released), 0);
-	claim = drm_prepare_source_claim(f->backends[0].source);
+	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[2].released), 0);
+	claim = drm_prepare_source_claim(f->backends[2].source);
 	KUNIT_EXPECT_TRUE(test, IS_ERR(claim) && PTR_ERR(claim) == -EBUSY);
 	if (!IS_ERR(claim))
 		drm_prepare_read_release(claim, NULL);
@@ -966,9 +969,9 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	wait_for_completion(&worker.finished);
 	kthread_stop(task);
 	KUNIT_EXPECT_FALSE(test, early);
-	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[0].released), disable ? 0 : 1);
+	KUNIT_EXPECT_EQ(test, READ_ONCE(f->backends[2].released), disable ? 0 : 1);
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, accepted);
-	claim = drm_prepare_source_claim(f->backends[0].source);
+	claim = drm_prepare_source_claim(f->backends[2].source);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, claim);
 	drm_prepare_read_release(claim, NULL);
 }
