@@ -187,6 +187,31 @@ static struct atomic_fixture *new_fixture(struct kunit *test)
 	return f;
 }
 
+/* Allocate f before the shared device so backend data outlives its cleanup. */
+static void init_additional_output(struct kunit *test, struct atomic_fixture *f,
+				   struct drm_device *dev)
+{
+	static const u32 formats[] = { DRM_FORMAT_XRGB8888, DRM_FORMAT_ARGB8888 };
+	static const u64 modifiers[] = {
+		DRM_FORMAT_MOD_LINEAR, I915_FORMAT_MOD_X_TILED, DRM_FORMAT_MOD_INVALID,
+	};
+
+	f->dev = dev;
+	f->plane = drm_kunit_helper_create_primary_plane(test, dev, NULL, NULL,
+							 formats, ARRAY_SIZE(formats), modifiers);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->plane);
+	f->crtc = drm_kunit_helper_create_crtc(test, dev, f->plane, NULL, NULL, NULL);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->crtc);
+	/* All outputs must exist before allocating any atomic transactions. */
+	drm_mode_config_reset(dev);
+	f->initial = new_entry(test, f, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, 0, NULL, 0);
+	f->target = new_entry(test, f, DRM_FORMAT_ARGB8888, I915_FORMAT_MOD_X_TILED, 1, NULL, 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(f->crtc, f->initial, 4, &output_ops), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, f->target), 0);
+	f->linear = new_fb(test, f, DRM_FORMAT_XRGB8888, DRM_FORMAT_MOD_LINEAR, 128);
+	f->tiled = new_fb(test, f, DRM_FORMAT_ARGB8888, I915_FORMAT_MOD_X_TILED, 128);
+}
+
 static int lock_update(struct drm_atomic_commit *state, struct drm_modeset_acquire_ctx *ctx)
 {
 	int ret;
@@ -702,12 +727,15 @@ static int clear_retired_state(void *data)
 	return 0;
 }
 
-static void check_retained_native_read(struct kunit *test, bool failed_read, bool disable)
+static void check_retained_native_read(struct kunit *test, bool failed_read, bool disable,
+				      bool independent_output)
 {
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
 	struct atomic_fixture *f = new_fixture(test);
 	struct drm_constraints_catalog *catalog = drm_constraints_crtc_catalog(f->crtc);
 	struct drm_constraints_entry *accepted = disable ? f->initial : f->target;
-	struct drm_atomic_commit *first = new_update(test, f, NULL, f->linear);
+	struct drm_atomic_commit *first;
+	struct drm_atomic_commit *other_update = NULL;
 	struct drm_prepare_output_generation output;
 	struct drm_prepare_read_claim *claim;
 	struct drm_prepare_ticket *ticket;
@@ -718,6 +746,14 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	u64 old_id = drm_constraints_entry_id(f->initial);
 	bool early;
 
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	if (independent_output) {
+		init_additional_output(test, other, f->dev);
+		other_update = new_update(test, other, other->target, other->tiled);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, other_update);
+		KUNIT_ASSERT_EQ(test, run_update(other_update, drm_atomic_check_only), 0);
+	}
+	first = new_update(test, f, NULL, f->linear);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, first);
 	KUNIT_ASSERT_EQ(test, run_update(first, drm_atomic_check_only), 0);
 	KUNIT_ASSERT_EQ(test, run_update(first, swap_update), 0);
@@ -770,6 +806,14 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 	KUNIT_EXPECT_TRUE(test, IS_ERR(claim) && PTR_ERR(claim) == -EBUSY);
 	if (!IS_ERR(claim))
 		drm_prepare_read_release(claim, NULL);
+	if (other_update) {
+		KUNIT_EXPECT_EQ(test, run_update(other_update, swap_update), 0);
+		drm_atomic_commit_clear(other_update);
+		KUNIT_EXPECT_PTR_EQ(test, other->crtc->state->constraints, other->target);
+		KUNIT_EXPECT_PTR_EQ(test, other->plane->state->fb, other->tiled);
+		KUNIT_EXPECT_FALSE(test, completion_done(&worker.finished));
+		KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(fence));
+	}
 	if (failed_read)
 		dma_fence_set_error(fence, -EIO);
 	dma_fence_signal(fence);
@@ -785,17 +829,74 @@ static void check_retained_native_read(struct kunit *test, bool failed_read, boo
 
 static void predecessor_backend_survives_native_read(struct kunit *test)
 {
-	check_retained_native_read(test, false, false);
+	check_retained_native_read(test, false, false, false);
 }
 
 static void failed_read_retires_without_rolling_back_target(struct kunit *test)
 {
-	check_retained_native_read(test, true, false);
+	check_retained_native_read(test, true, false, false);
 }
 
 static void closed_output_shutdown_waits_for_native_read(struct kunit *test)
 {
-	check_retained_native_read(test, false, true);
+	check_retained_native_read(test, false, true, false);
+}
+
+static void native_read_retirement_does_not_stall_another_output(struct kunit *test)
+{
+	check_retained_native_read(test, false, false, true);
+}
+
+static void independent_outputs_keep_exact_bindings_during_animation(struct kunit *test)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture(test);
+	struct atomic_fixture *outputs[] = { f, other };
+	unsigned int frame, output;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	KUNIT_EXPECT_NE(test, drm_constraints_entry_id(f->initial),
+			drm_constraints_entry_id(other->initial));
+	KUNIT_EXPECT_NE(test, drm_constraints_entry_id(f->target),
+			drm_constraints_entry_id(other->target));
+	for (frame = 0; frame < 32; frame++) {
+		for (output = 0; output < ARRAY_SIZE(outputs); output++) {
+			struct atomic_fixture *active_output = outputs[output];
+			struct atomic_fixture *idle = outputs[1 - output];
+			struct drm_crtc_state *idle_state = idle->crtc->state;
+			struct drm_constraints_catalog *catalog =
+				drm_constraints_crtc_catalog(idle->crtc);
+			struct drm_constraints_snapshot *snapshot;
+			struct drm_constraints_entry *entry, *selected;
+			struct drm_atomic_commit *state;
+			u64 generation;
+			bool tiled = (frame + output) % 2;
+
+			snapshot = drm_constraints_catalog_snapshot(catalog, 0);
+			KUNIT_ASSERT_NOT_ERR_OR_NULL(test, snapshot);
+			generation = drm_constraints_snapshot_info(snapshot)->generation;
+			drm_constraints_snapshot_put(snapshot);
+			entry = tiled ? active_output->target : active_output->initial;
+			state = new_update(test, active_output, entry,
+					   tiled ? active_output->tiled : active_output->linear);
+			KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+			KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+			KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+			drm_atomic_commit_clear(state);
+			KUNIT_EXPECT_PTR_EQ(test, active_output->crtc->state->constraints, entry);
+			KUNIT_EXPECT_PTR_EQ(test, active_output->plane->state->fb,
+					   tiled ? active_output->tiled : active_output->linear);
+			selected = drm_constraints_catalog_selected(
+					drm_constraints_crtc_catalog(active_output->crtc));
+			KUNIT_EXPECT_PTR_EQ(test, selected, entry);
+			drm_constraints_entry_put(selected);
+			KUNIT_EXPECT_PTR_EQ(test, idle->crtc->state, idle_state);
+			snapshot = drm_constraints_catalog_snapshot(catalog, generation);
+			KUNIT_ASSERT_NOT_ERR_OR_NULL(test, snapshot);
+			drm_constraints_snapshot_put(snapshot);
+		}
+	}
 }
 
 static void proposed_scene_obeys_scalar_property_rules(struct kunit *test)
@@ -901,6 +1002,8 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(predecessor_backend_survives_native_read),
 	KUNIT_CASE(failed_read_retires_without_rolling_back_target),
 	KUNIT_CASE(closed_output_shutdown_waits_for_native_read),
+	KUNIT_CASE(native_read_retirement_does_not_stall_another_output),
+	KUNIT_CASE(independent_outputs_keep_exact_bindings_during_animation),
 	KUNIT_CASE(proposed_scene_obeys_scalar_property_rules),
 	KUNIT_CASE(installation_rechecks_proposed_property_values),
 	{}
