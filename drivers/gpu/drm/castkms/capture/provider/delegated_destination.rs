@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use kernel::{
     dma_buf::DmaBuf,
     dma_fence::{Fence, Status},
-    dma_resv::Usage,
+    dma_resv::{Snapshot, Usage},
     drm::fourcc,
     prelude::*,
     sync::{aref::ARef, Arc, Mutex},
@@ -110,6 +110,7 @@ impl Image {
     /// Reserve a unique destination use. Demand stays unbound to compositor sources.
     /// Explicit reuse covers all prior external users; a reservation snapshot alone cannot
     /// exclude racing native submissions or recover previously discarded error records.
+    /// External users must stop submitting new work before reserving the destination.
     pub(crate) fn reserve(
         self: &Arc<Self>,
         use_id: u64,
@@ -122,6 +123,7 @@ impl Image {
             Use {
                 image: self.clone(),
                 reuse,
+                dependencies: self.buffer().reservation().snapshot(Usage::Read)?,
                 active: AtomicBool::new(false),
             },
             GFP_KERNEL,
@@ -153,6 +155,7 @@ impl Image {
 pub(crate) struct Use {
     image: Arc<Image>,
     reuse: Option<ARef<Fence>>,
+    dependencies: Snapshot,
     active: AtomicBool,
 }
 
@@ -164,7 +167,8 @@ impl Use {
     pub(crate) fn ready(&self) -> Result<bool> {
         let mut pending = false;
         let dependencies = self.image.buffer().reservation().snapshot(Usage::Read)?;
-        for fence in Iterator::chain(self.reuse.iter().map(|f| &**f), dependencies.iter()) {
+        let retained = Iterator::chain(self.reuse.iter().map(|f| &**f), self.dependencies.iter());
+        for fence in Iterator::chain(retained, dependencies.iter()) {
             match fence.status() {
                 Status::Pending => pending = true,
                 Status::Complete(result) => result?,
