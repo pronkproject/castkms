@@ -34,6 +34,7 @@ pub(super) struct Display {
     pub(super) monitor: Arc<Monitor>,
     pub(super) host: Arc<configuration::Configuration>,
     pub(super) startup: Arc<renderer_startup::Startup>,
+    pub(crate) renderer_routes: Arc<crate::renderer::routing::Registry>,
 }
 
 #[pin_data]
@@ -106,6 +107,9 @@ impl State {
     }
 
     fn close(&self) {
+        for display in &self.displays {
+            display.renderer_routes.close();
+        }
         self.image_storage.close();
         self.validation.close();
         for display in &self.displays {
@@ -162,6 +166,8 @@ impl Owner {
             let monitor = Monitor::new()?;
             let host = configuration::Owner::new(output.clone(), execution.clone())?;
             let startup = renderer_startup::Owner::new_notified(output.identity(), changed.clone())?;
+            let renderer_routes =
+                crate::renderer::routing::Registry::new(output.identity(), changed.clone())?;
             displays.push(
                 Arc::new(
                     Display {
@@ -170,6 +176,7 @@ impl Owner {
                         monitor,
                         host: host.configuration(),
                         startup: startup.startup(),
+                        renderer_routes,
                     },
                     GFP_KERNEL,
                 )?,

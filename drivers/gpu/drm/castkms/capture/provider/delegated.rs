@@ -42,6 +42,20 @@ impl Capture {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Delegated {
+    /// Discover the current output worker, then intersect both authorities at admission.
+    pub(crate) fn create_routed_queue(
+        &self,
+        capacity: u32,
+    ) -> Result<super::delegated_queue::Queue> {
+        self.capture
+            .policy
+            .permission
+            .display()
+            .renderer_routes
+            .lookup()?
+            .create_queue(self, capacity)
+    }
+
     /// Shared advisory notifications do not identify a grant or authorize any operation.
     pub(super) fn changed(&self) -> kernel::sync::Arc<kernel::sync::poll::PollCondVar> {
         self.capture.policy.permission.device().changed.clone()

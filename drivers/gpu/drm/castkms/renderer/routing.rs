@@ -29,7 +29,6 @@ pub(crate) struct Registry {
     state: Mutex<State>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Registry {
     pub(crate) fn new(output: &Identity, changed: Arc<PollCondVar>) -> Result<Arc<Self>> {
         Arc::pin_init(
@@ -102,7 +101,6 @@ impl Registry {
 /// Allocate before the operation that transfers unique active-worker ownership.
 pub(crate) struct Prepared(UniqueArc<MaybeUninit<Route>>);
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Prepared {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self(UniqueArc::new_uninit(GFP_KERNEL)?))
@@ -115,7 +113,6 @@ pub(crate) struct Route {
     active: Observation,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Route {
     pub(crate) fn create_queue(&self, scope: &Delegated, capacity: u32) -> Result<Queue> {
         scope.create_queue_observed(&self.candidate, &self.active, capacity)
