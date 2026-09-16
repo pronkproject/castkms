@@ -486,7 +486,7 @@ impl Session {
                 }
             }
         };
-        job.release(completion);
+        drop(job.release(completion));
         Ok(())
     }
 
