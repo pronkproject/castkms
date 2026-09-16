@@ -4,9 +4,11 @@
 
 use super::{
     candidate::Candidate,
-    job::{Completion, SourceJob},
+    job::Completion,
     permission::Access,
+    private_pool::Pool,
     probe::Source as ProbeSource, //
+    render_job::{RenderJob, Rendered},
 };
 use crate::{
     execution::Description,
@@ -14,11 +16,13 @@ use crate::{
     scene::Configuration,
     Driver, //
 };
+use core::mem::MaybeUninit;
 use kernel::{
+    dma_buf::DmaBuf,
     dma_fence::Fence,
     drm::device::RegisteredDeviceRef,
     prelude::*,
-    sync::{Arc, Mutex}, //
+    sync::{aref::ARef, Arc, Mutex, UniqueArc}, //
 };
 
 enum Slot {
@@ -51,8 +55,20 @@ enum Slot {
 
 enum SourceSlot {
     Ready,
-    Publishing(u64),
-    Claimed { id: u64, job: SourceJob },
+    Publishing {
+        id: u64,
+        image: u64,
+    },
+    Releasing {
+        id: u64,
+        image: u64,
+    },
+    Claimed {
+        id: u64,
+        image: u64,
+        job: RenderJob,
+        completed: UniqueArc<MaybeUninit<Rendered>>,
+    },
 }
 
 struct State {
@@ -60,6 +76,7 @@ struct State {
     next_id: u64,
     slot: Slot,
     proposal: Option<Arc<super::proposal::Proposal>>,
+    images: Option<Pool>,
 }
 
 #[pin_data]
@@ -73,7 +90,7 @@ pub(crate) struct Session {
 impl Session {
     pub(crate) fn new(access: Access, device: RegisteredDeviceRef<Driver>) -> Result<Arc<Self>> {
         Arc::pin_init(
-            pin_init!(Self {
+            try_pin_init!(Self {
                 access,
                 device,
                 state <- kernel::new_mutex!(State {
@@ -81,6 +98,7 @@ impl Session {
                     next_id: 1,
                     slot: Slot::Idle,
                     proposal: None,
+                    images: Some(Pool::new()?),
                 }),
             }),
             GFP_KERNEL,
@@ -401,12 +419,79 @@ impl Session {
         }
     }
 
-    /// Reserve one changed current scene for publication by a transport adapter.
-    pub(crate) fn begin_source(&self) -> Result<PendingSource<'_>> {
+    /// Register private backing under an increasing endpoint-local name.
+    pub(crate) fn register_image(
+        &self,
+        id: u64,
+        dimensions: [u32; 2],
+        buffers: &[ARef<DmaBuf>],
+    ) -> Result {
         let mut state = self.state.lock();
         if state.closed {
             return Err(EKEYREVOKED);
         }
+        let State { slot, images, .. } = &mut *state;
+        let Slot::Renderer {
+            candidate, active, ..
+        } = slot
+        else {
+            return Err(EOPNOTSUPP);
+        };
+        images.as_mut().ok_or(ESHUTDOWN)?.insert(id, || {
+            candidate.register_private_image(active, dimensions, buffers)
+        })
+    }
+
+    /// Forget a name without completing native work. Claimed or publishing source jobs
+    /// must be released first; submitted native accesses retain their own registration.
+    pub(crate) fn unregister_image(&self, id: u64) -> Result {
+        let retired = {
+            let mut state = self.state.lock();
+            if let Slot::Renderer { source, .. } = &state.slot {
+                match source {
+                    SourceSlot::Publishing { image, .. }
+                    | SourceSlot::Releasing { image, .. }
+                    | SourceSlot::Claimed { image, .. }
+                        if *image == id =>
+                    {
+                        return Err(EBUSY)
+                    }
+                    _ => (),
+                }
+            }
+            state.images.as_mut().ok_or(ESHUTDOWN)?.remove(id)?
+        };
+        drop(retired);
+        self.access.device().changed.notify_all();
+        Ok(())
+    }
+
+    /// Borrow retained private storage, not an output claim or proof of pixel validity.
+    /// Output admission must intersect the image evidence with live recipient authority.
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn completed_image(&self, id: u64) -> Result<Arc<Rendered>> {
+        let state = self.state.lock();
+        if state.closed {
+            return Err(EKEYREVOKED);
+        }
+        let Slot::Renderer {
+            candidate, active, ..
+        } = &state.slot
+        else {
+            return Err(EOPNOTSUPP);
+        };
+        candidate.with_observed_control(&active.observation(), |_| {
+            state.images.as_ref().ok_or(ESHUTDOWN)?.completed(id)
+        })
+    }
+
+    /// Reserve one changed scene and its private destination before descriptor publication.
+    pub(crate) fn begin_source(&self, image_id: u64) -> Result<PendingSource<'_>> {
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(EKEYREVOKED);
+        }
+        let State { slot, images, .. } = &mut *state;
         let Slot::Renderer {
             candidate,
             active,
@@ -415,9 +500,9 @@ impl Session {
             last_content_serial,
             source,
             ..
-        } = &mut state.slot
+        } = slot
         else {
-            return if matches!(state.slot, Slot::Publishing | Slot::Activating { .. }) {
+            return if matches!(slot, Slot::Publishing | Slot::Activating { .. }) {
                 Err(EBUSY)
             } else {
                 Err(EOPNOTSUPP)
@@ -426,41 +511,48 @@ impl Session {
         if !matches!(source, SourceSlot::Ready) {
             return Err(EBUSY);
         }
-        let job = candidate.claim_source(active, *description, *last_content_serial)?;
-        let content_serial = match job.scene().content_serial() {
-            Some(content) => content.get(),
-            None => {
-                drop(state);
-                job.release_without_access();
-                return Err(ENODATA);
-            }
-        };
-        if *last_content_serial == Some(content_serial) {
-            drop(state);
-            job.release_without_access();
-            return Err(ENODATA);
-        }
+        candidate.with_observed_control(&active.observation(), |current| {
+            current.changed_content(*last_content_serial).map(|_| ())
+        })?;
+        let images = images.as_mut().ok_or(ESHUTDOWN)?;
+        let image = images.image(image_id)?;
         let id = *next_source_id;
-        *next_source_id = match id.checked_add(1) {
-            Some(next) => next,
-            None => {
-                drop(state);
-                job.release_without_access();
-                return Err(EOVERFLOW);
-            }
+        *next_source_id = id.checked_add(1).ok_or(EOVERFLOW)?;
+        let retired = images.withdraw(image_id)?;
+        let candidate = candidate.clone();
+        let active = active.observation();
+        let description = *description;
+        let previous = *last_content_serial;
+        *source = SourceSlot::Publishing {
+            id,
+            image: image_id,
         };
-        *source = SourceSlot::Publishing(id);
-        Ok(PendingSource {
+        drop(state);
+        let mut pending = PendingSource {
             session: self,
             id,
-            content_serial,
-            job: Some(job),
-        })
+            image: image_id,
+            content_serial: 0,
+            job: None,
+            completed: None,
+        };
+        drop(retired);
+        pending.completed = Some(UniqueArc::new_uninit(GFP_KERNEL)?);
+        pending.job = Some(candidate.claim_render_observed(
+            &active,
+            description,
+            previous,
+            image.prepare(id)?,
+        )?);
+        let job = pending.job.as_mut().ok_or(EIO)?;
+        pending.content_serial = job.source().scene().content_serial().ok_or(ENODATA)?.get();
+        job.observe_producers(&self.access.device().changed)?;
+        Ok(pending)
     }
 
     /// Resolve one published source job, accepting a repeated terminal record.
     pub(crate) fn release_source(&self, id: u64, completion: Completion) -> Result {
-        let job = {
+        let (job, completed, image) = {
             let mut state = self.state.lock();
             if state.closed {
                 return Err(EKEYREVOKED);
@@ -477,9 +569,15 @@ impl Session {
                 return Ok(());
             }
             match core::mem::replace(source, SourceSlot::Ready) {
-                SourceSlot::Claimed { id: current, job } if current == id => {
+                SourceSlot::Claimed {
+                    id: current,
+                    image,
+                    job,
+                    completed,
+                } if current == id => {
                     *last_released_source = Some(id);
-                    job
+                    *source = SourceSlot::Releasing { id, image };
+                    (job, completed, image)
                 }
                 other => {
                     *source = other;
@@ -487,7 +585,34 @@ impl Session {
                 }
             }
         };
-        drop(job.release(completion));
+        let rendered = job
+            .release(completion)
+            .map(|rendered| Arc::from(completed.write(rendered)));
+        let mut state = self.state.lock();
+        let State { slot, images, .. } = &mut *state;
+        let publication = match slot {
+            Slot::Renderer { source, .. } if matches!(&*source, SourceSlot::Releasing { id: current, .. } if *current == id) =>
+            {
+                let result = match rendered {
+                    Some(rendered) => match images.as_mut() {
+                        Some(images) => images.publish(image, rendered),
+                        None => Err(ESHUTDOWN),
+                    },
+                    None => Ok(None),
+                };
+                *source = SourceSlot::Ready;
+                result
+            }
+            _ => {
+                drop(state);
+                drop(rendered);
+                self.access.device().changed.notify_all();
+                return Ok(());
+            }
+        };
+        drop(state);
+        drop(publication?);
+        self.access.device().changed.notify_all();
         Ok(())
     }
 
@@ -497,7 +622,7 @@ impl Session {
     }
 
     pub(super) fn close(&self) {
-        let (candidate, active, source, proposal) = {
+        let (candidate, active, source, proposal, images) = {
             let mut state = self.state.lock();
             state.closed = true;
             let (candidate, active, source) = match core::mem::replace(&mut state.slot, Slot::Idle)
@@ -515,18 +640,27 @@ impl Session {
                     Some(active),
                     match source {
                         SourceSlot::Claimed { job, .. } => Some(job),
-                        SourceSlot::Ready | SourceSlot::Publishing(_) => None,
+                        SourceSlot::Ready
+                        | SourceSlot::Publishing { .. }
+                        | SourceSlot::Releasing { .. } => None,
                     },
                 ),
                 _ => (None, None, None),
             };
-            (candidate, active, source, state.proposal.take())
+            (
+                candidate,
+                active,
+                source,
+                state.proposal.take(),
+                state.images.take(),
+            )
         };
         if let Some(candidate) = candidate {
             candidate.cancel();
             drop(candidate);
         }
         drop(source);
+        drop(images);
         drop(active);
         let changed = proposal.is_some();
         drop(proposal);
@@ -541,13 +675,15 @@ impl Session {
 pub(crate) struct PendingSource<'a> {
     session: &'a Session,
     id: u64,
+    image: u64,
     content_serial: u64,
-    job: Option<SourceJob>,
+    job: Option<RenderJob>,
+    completed: Option<UniqueArc<MaybeUninit<Rendered>>>,
 }
 
 impl PendingSource<'_> {
     pub(crate) fn scene_description(&self) -> Result<super::description::Description<'_>> {
-        super::description::Description::new(self.job.as_ref().ok_or(EINVAL)?.scene())
+        super::description::Description::new(self.job.as_ref().ok_or(EINVAL)?.source().scene())
     }
 
     pub(crate) fn id(&self) -> u64 {
@@ -555,16 +691,21 @@ impl PendingSource<'_> {
     }
 
     pub(crate) fn producer_completion(&self) -> Result<Option<kernel::sync::aref::ARef<Fence>>> {
-        self.job.as_ref().ok_or(EINVAL)?.producer_completion()
+        self.job
+            .as_ref()
+            .ok_or(EINVAL)?
+            .source()
+            .producer_completion()
     }
 
     /// Publish the job after an adapter has completed every fallible operation.
     pub(crate) fn publish(mut self, publish: impl FnOnce()) -> Result {
+        let completed = self.completed.take().ok_or(EIO)?;
         let job = self.job.take().ok_or(EINVAL)?;
         let mut state = self.session.state.lock();
         if state.closed {
             drop(state);
-            job.release_without_access();
+            job.release(Completion::WithoutAccess);
             return Err(EKEYREVOKED);
         }
         let Slot::Renderer {
@@ -574,34 +715,40 @@ impl PendingSource<'_> {
         } = &mut state.slot
         else {
             drop(state);
-            job.release_without_access();
+            job.release(Completion::WithoutAccess);
             return Err(ECANCELED);
         };
-        if !matches!(source, SourceSlot::Publishing(id) if *id == self.id) {
+        if !matches!(source, SourceSlot::Publishing { id, image } if *id == self.id && *image == self.image)
+        {
             drop(state);
-            job.release_without_access();
+            job.release(Completion::WithoutAccess);
             return Err(ECANCELED);
         }
         publish();
         *last_content_serial = Some(self.content_serial);
-        *source = SourceSlot::Claimed { id: self.id, job };
+        *source = SourceSlot::Claimed {
+            id: self.id,
+            image: self.image,
+            job,
+            completed,
+        };
         Ok(())
     }
 }
 
 impl Drop for PendingSource<'_> {
     fn drop(&mut self) {
-        let Some(job) = self.job.take() else {
-            return;
-        };
+        let job = self.job.take();
         let mut state = self.session.state.lock();
         if let Slot::Renderer { source, .. } = &mut state.slot {
-            if matches!(source, SourceSlot::Publishing(id) if *id == self.id) {
+            if matches!(source, SourceSlot::Publishing { id, .. } if *id == self.id) {
                 *source = SourceSlot::Ready;
             }
         }
         drop(state);
-        job.release_without_access();
+        if let Some(job) = job {
+            job.release(Completion::WithoutAccess);
+        }
     }
 }
 

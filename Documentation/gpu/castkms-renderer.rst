@@ -6,7 +6,7 @@ Integration boundary
 ====================
 
 The Rust CastKMS renderer protocol in ``include/uapi/drm/castkms_drm.h`` is
-ready for coordinated Pronk/compositor integration at renderer version 8,
+ready for coordinated Pronk/compositor integration at renderer version 9,
 capability encoding version 2 and complete-scene encoding version 1. These
 are experimental driver interfaces, not a claim of upstream ABI acceptance.
 Use the header from the same revision; reject unsupported versions instead
@@ -168,18 +168,23 @@ merely because a process, endpoint or device disappeared.
 Complete scenes and read lifetime
 ========================================
 
-Use ``DEQUEUE_SCENE`` and ``DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES``. The stream
+Register renderer-private storage with ``REGISTER_IMAGE``, then supply its
+``image_id`` to ``DEQUEUE_SCENE`` and allocate
+``DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES`` for the result. The stream
 includes primary, overlays and cursor in back-to-front order, source crop,
 destination geometry, memory-plane descriptors and ordered plane/output
 color records. The producer sync_file covers all layers and must complete
 successfully before any source read. There is at most one outstanding job
-per endpoint; ``EBUSY`` requires releasing it and ``ENODATA`` means there is
-no new source-bearing scene.
+per endpoint; ``EBUSY`` also covers a private image still retained by native
+work or output reads. ``ENODATA`` means there is no new source-bearing scene.
+Failed descriptor publication installs no descriptors, admits no userspace
+access, and permits retry with the same image name.
 
-``RELEASE_SOURCE`` resolves the whole job. ``NO_ACCESS`` promises no source
-access occurred; ``CPU_DONE`` promises CPU access and coherency operations
+``RELEASE_SOURCE`` resolves the whole source-to-private job. ``NO_ACCESS``
+promises neither source nor private-image access occurred; ``CPU_DONE`` promises CPU access and coherency operations
 ended; ``SUBMITTED`` supplies a native sync_file covering every submitted
-source read and promises no later submission under that job. Keeping an
+source read and private-image write and promises no later submission under
+that job. Keeping an
 ordinary DMA-BUF descriptor does not authorize further reads. Private
 render targets and encoder/capture destinations have separate lifetimes.
 
@@ -200,18 +205,31 @@ reuse. Admission under the evidence rechecks live renderer authority and
 rejects a different output, configuration or execution incarnation.
 
 These are internal provider records, not userspace receipt handles. The
-renderer endpoint discards them on release. Evidence alone grants no capture
-authority and names no private allocation.
+renderer endpoint retains successful source-stage reports with their private
+image, including pending or failed native completion. Evidence alone grants
+no capture authority; output admission separately checks pixel validity.
 
 Private images
 --------------
 
-The kernel renderer provider can register private backing allocations and
-reserve one for a source-to-private-image job. It claims the source only
+``REGISTER_IMAGE`` retains one to four distinct readable/writable DMA-BUFs
+under a positive, increasing endpoint-local image name. Dimensions must match
+the active output. Failed registration does not consume the name. Registering
+storage neither accesses pixels nor excludes arbitrary external submissions.
+
+``DEQUEUE_SCENE`` reserves the selected image for a source-to-private job.
+It withdraws any retained content from that image before attempting reuse.
+Withdrawal does not end outstanding native accesses. It claims the source only
 after that independent storage and its cleanup record are available. The
 job's completion must cover both source reads and private-image writes.
 Its result binds the original content evidence to the reserved storage.
 Keeping that result prevents overwrite without holding a source-read claim.
+
+``UNREGISTER_IMAGE`` removes a name without making it reusable. A publishing,
+claimed or releasing source job returns ``EBUSY``. After source release,
+removal is allowed while submitted native work retains its own storage and
+budget. Success is not a native-completion or buffer-reuse signal. Cleanup
+remains available after renderer revocation.
 
 The trusted renderer owns the native format interpretation and must verify
 that its layout fits the supplied allocations. The kernel neither maps the
@@ -234,8 +252,8 @@ quarantines its storage and reports a failed reuse attempt, rather than
 pretending the allocation is available. Recovery from that fault is not
 implemented.
 
-Private-image registration and bound rendering are kernel-provider APIs.
-The renderer file does not expose them.
+The renderer file exposes registration and bound source jobs. Private images
+are retained by name for output-stage admission, not exported as capture results.
 
 Delegated output stages
 -----------------------
@@ -290,11 +308,11 @@ independently of result dequeue or the recipient's later use. Unreported
 claimed access is explicitly lost and quarantined, not normal completion
 or permission to reuse storage.
 
-These are internal provider operations and lifecycle tests. Public output-job
-transport, wakeup/queue integration, negotiated destination layouts and real
-GPU rendering remain unimplemented. The public capture endpoint still uses
-HOST delivery; the renderer endpoint does not publish private-image or output
-claims.
+Bounded output queues and advisory wakeups are implemented in the provider.
+Public output-job transport, delegated capture-file integration, negotiated
+destination layouts and real GPU rendering remain unimplemented. The public
+capture endpoint still uses HOST delivery; renderer scene jobs bind registered
+private images but do not yet publish recipient-output claims.
 
 GPU envelope and remaining work
 ========================================

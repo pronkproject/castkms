@@ -97,7 +97,6 @@ pub(crate) struct Rendered {
     _producer_observations: KVec<Wakeup>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Rendered {
     pub(crate) fn image(&self) -> &Image {
         self.usage.image()

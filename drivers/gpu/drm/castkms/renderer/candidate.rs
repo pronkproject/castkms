@@ -363,6 +363,7 @@ impl Candidate {
     }
 
     /// Claim the current live scene under this candidate's active incarnation.
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn claim_source(
         &self,
         active: &renderer_startup::Active,

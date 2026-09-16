@@ -50,7 +50,6 @@ pub(crate) struct Registry {
     state: Mutex<RegistryState>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Registry {
     pub(crate) fn new() -> Result<Arc<Self>> {
         let images = KVec::with_capacity(2 * MAX_IMAGES, GFP_KERNEL)?;
