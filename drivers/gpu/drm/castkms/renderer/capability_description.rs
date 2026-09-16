@@ -73,6 +73,8 @@ const _: () = {
         crate::execution::capabilities::MAX_FORMATS
             == uapi::DRM_CASTKMS_CAPABILITY_MAX_FORMATS as usize
     );
+    assert!(MAX_BYTES == core::mem::size_of::<Header>()
+        + core::mem::size_of::<Storage>() * crate::execution::capabilities::MAX_FORMATS);
 };
 
 const FEATURES: u32 = uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP
