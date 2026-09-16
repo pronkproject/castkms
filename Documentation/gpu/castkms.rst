@@ -3,13 +3,12 @@
 CastKMS virtual display
 ======================
 
-CastKMS is being developed as a virtual display whose images will eventually
-be composed in userspace. The Rust driver provides a display device and a
-CPU capture path for kernel callers and authorized userspace clients. Public
-HOST image capture is implemented through generic anonymous capture files.
-Renderer activation and source access are implemented, but delegated GPU
-final-image delivery is not complete. It is not a drop-in replacement for a
-working C CastKMS casting installation.
+CastKMS is a virtual display that can compose images in the kernel or delegate
+complete scenes to an authorized userspace renderer. The Rust driver provides
+a display device and a CPU capture path for kernel callers and authorized
+userspace clients. Public final-image capture uses generic anonymous capture
+files. Renderer activation and source access are available, while delegated
+GPU delivery to final capture images remains under development.
 
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create eight
 virtual outputs by default. The ``max_outputs`` parameter accepts one through
@@ -22,7 +21,7 @@ Negotiated GPU execution has a static envelope through 16384 by 16384;
 the active renderer profile determines actual acceptance. Neither bound is
 a receiver or transport policy. Cursor planes, eight
 shared overlays and per-plane color pipelines are enabled by default. Their
-module parameters allow disabling them for compatibility and testing.
+module parameters allow disabling them for focused testing.
 The virtual parent has DMA addressing configured before DRM registration so
 exporters can map imported attachments. Import retains the exporter's storage
 and reservation without requiring a persistent CPU mapping. It does not add
@@ -95,11 +94,9 @@ kernel clients do not construct userspace ioctl requests. These experimental
 facilities use ``kernel::sound::pcm`` for safe ALSA registration, callbacks,
 buffer access, controls and notifications. CastKMS owns the virtual playback
 engine, sample clocks, timer limits and CRTC interruption policy.
-ELD snapshots come from DRM's native EDID parser. The experimental userspace
-interfaces are distinct from the C driver's combined capture grant and audio
-tap ioctl. Consumers of that interface need to adopt the explicit audio-file
-pair. The ``audio`` selftest exercises real ALSA sample delivery, idle silence,
-descriptor revocation and attachment replacement on a disposable device::
+ELD snapshots come from DRM's native EDID parser. The ``audio`` selftest
+exercises real ALSA sample delivery, idle silence, descriptor revocation and
+attachment replacement on a disposable device::
 
     make -C tools/testing/selftests TARGETS=drm_castkms
     tools/testing/selftests/drm_castkms/audio /dev/dri/cardN
@@ -120,33 +117,6 @@ sink's volume to full and unmutes it. It checks recovery after disabling and
 re-enabling the CRTC, then repeats playback after monitor replacement::
 
     tools/testing/selftests/drm_castkms/audio-pipewire /dev/dri/cardN
-
-Audio compatibility with the C driver
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Both implementations provide stereo S16_LE playback at 48 kHz, an ELD control,
-a channel map and an HDMI/DP jack. Their maximum playback allocation, period
-limits and private capture queue size match. Neither exposes an ALSA capture
-device or accepts compressed audio passthrough.
-
-The Rust interface deliberately authorizes audio separately from images. A
-consumer must request the audio and revocation files rather than use the C
-driver's combined capture grant. That separation also allows audio capture to
-work with either video renderer without granting access to image storage.
-
-Every explicit monitor replacement creates a new sound-card lifetime and
-terminates the previous attachment's captures. The C driver can update ELD on
-an existing card when the display name remains unchanged. The Rust behavior
-keeps retained capabilities bound to the attachment that authorized them.
-
-Audio delivery follows CRTC activity rather than continuing through a disabled
-display. The CastKMS engine checks playback availability every millisecond; the C
-driver schedules playback notifications at the negotiated period interval.
-Capture uses its own ten-millisecond clock in both implementations. ALSA card
-identifiers remain ``CastKMS0`` through ``CastKMS7`` when available, although
-native ALSA may add a suffix while an older card with the same identifier is
-still retained. Human-readable card and PCM labels are not identical to the C
-driver's labels and should not be used as device identifiers.
 
 Virtual monitor control
 -----------------------
