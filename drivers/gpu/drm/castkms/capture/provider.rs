@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Kernel-issued capture of independently completed host images.
+//! Kernel-issued capture of independently completed images.
 //!
 //! Native authority and raw streams remain private. Each delivery operation validates
-//! current display access and image ownership before claiming a job, then copies outside
-//! policy locks. No operation exports source buffers or represents asynchronous GPU access.
+//! current display access and image ownership before claiming a job. HOST copies run outside
+//! policy locks; delegated output claims retain their private input and recipient destination
+//! through native completion. Capture operations never export compositor source buffers.
 
 mod creator;
 mod control_file;
@@ -12,7 +13,8 @@ mod client_file;
 mod files;
 mod description;
 mod delegated;
-mod delegated_destination;
+pub(crate) mod delegated_destination;
+pub(crate) mod delegated_request;
 mod frame;
 mod request;
 mod storage;

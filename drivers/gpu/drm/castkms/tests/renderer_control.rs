@@ -6,6 +6,7 @@ mod publication;
 mod private_images;
 mod delegated_authority;
 mod delegated_destinations;
+mod delegated_requests;
 
 use super::*;
 use crate::renderer::{

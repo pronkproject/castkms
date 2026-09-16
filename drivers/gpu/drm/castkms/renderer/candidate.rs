@@ -471,9 +471,21 @@ impl Candidate {
         content: &super::content::Released,
         f: impl FnOnce(&display_control::Current<'_>) -> Result<R>,
     ) -> Result<R> {
+        self.with_observed_control(active, |current| {
+            content.check(current, self.access.display().execution.describe())?;
+            f(current)
+        })
+    }
+
+    /// Validate an observed incarnation even when content or recipient reuse is pending.
+    pub(crate) fn with_observed_control<R>(
+        &self,
+        active: &renderer_startup::Observation,
+        f: impl FnOnce(&display_control::Current<'_>) -> Result<R>,
+    ) -> Result<R> {
         self.access.with_current(|current| {
             active.with_candidate(&self.resources, || {
-                content.check(&current, self.access.display().execution.describe())?;
+                current.check_scene_owner()?;
                 f(&current)
             })
         })
