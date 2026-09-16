@@ -243,6 +243,40 @@ static int run_update(struct drm_atomic_commit *state, int (*operation)(struct d
 	return ret;
 }
 
+static struct drm_atomic_commit *new_disable(struct kunit *test, struct atomic_fixture *f)
+{
+	struct drm_atomic_commit *state = drm_kunit_helper_atomic_state_alloc(test, f->dev, NULL);
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_crtc_state *crtc;
+	struct drm_plane_state *plane;
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	ret = lock_update(state, &ctx);
+	if (ret)
+		goto out;
+	crtc = drm_atomic_get_crtc_state(state, f->crtc);
+	if (IS_ERR(crtc)) {
+		ret = PTR_ERR(crtc);
+		goto out;
+	}
+	ret = drm_atomic_set_mode_for_crtc(crtc, NULL);
+	if (ret)
+		goto out;
+	crtc->active = false;
+	plane = drm_atomic_get_plane_state(state, f->plane);
+	if (IS_ERR(plane)) {
+		ret = PTR_ERR(plane);
+		goto out;
+	}
+	ret = drm_atomic_set_crtc_for_plane(plane, NULL);
+	if (!ret)
+		drm_atomic_set_fb_for_plane(plane, NULL);
+out:
+	unlock_update(state);
+	return ret ? ERR_PTR(ret) : state;
+}
+
 static int check_update(struct drm_atomic_commit *state)
 {
 	int ret = drm_atomic_constraints_prepare(state);
@@ -507,6 +541,81 @@ static void accepted_selection_persists_without_reselection(struct kunit *test)
 	drm_constraints_snapshot_put(snapshot);
 }
 
+static void closed_failed_backend_can_be_disabled(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *first = new_update(test, f, f->target, f->tiled);
+	struct drm_atomic_commit *stop;
+	struct drm_constraints_entry *selected;
+	unsigned int checks;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, first);
+	KUNIT_ASSERT_EQ(test, run_update(first, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(first, swap_update), 0);
+	f->backends[1].failed = true;
+	checks = f->backends[1].checks;
+	drm_constraints_catalog_close(drm_constraints_crtc_catalog(f->crtc));
+	stop = new_disable(test, f);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, stop);
+	KUNIT_ASSERT_EQ(test, run_update(stop, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(stop, swap_update), 0);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->enable);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_get_old_crtc_state(stop, f->crtc)->constraints,
+			    f->target);
+	KUNIT_EXPECT_EQ(test, f->backends[1].checks, checks);
+	selected = drm_constraints_catalog_selected(drm_constraints_crtc_catalog(f->crtc));
+	KUNIT_EXPECT_PTR_EQ(test, selected, f->target);
+	drm_constraints_entry_put(selected);
+}
+
+static void closure_after_check_still_permits_disable(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *stop = new_disable(test, f);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, stop);
+	KUNIT_ASSERT_EQ(test, run_update(stop, drm_atomic_check_only), 0);
+	drm_constraints_catalog_close(drm_constraints_crtc_catalog(f->crtc));
+	KUNIT_ASSERT_EQ(test, run_update(stop, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+}
+
+static void closure_rejects_checked_activation(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+	struct drm_crtc_state *before = f->crtc->state;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	drm_constraints_catalog_close(drm_constraints_crtc_catalog(f->crtc));
+	KUNIT_EXPECT_EQ(test, run_update(state, swap_update), -ESTALE);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
+}
+
+static void shutdown_cannot_select_through_closed_catalog(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *stop = new_disable(test, f);
+	struct drm_modeset_acquire_ctx ctx;
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, stop);
+	ret = lock_update(stop, &ctx);
+	if (!ret)
+		ret = drm_atomic_set_constraints_for_crtc(
+			drm_atomic_get_new_crtc_state(stop, f->crtc), f->target);
+	unlock_update(stop);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_ASSERT_EQ(test, run_update(stop, drm_atomic_check_only), 0);
+	drm_constraints_catalog_close(drm_constraints_crtc_catalog(f->crtc));
+	KUNIT_EXPECT_EQ(test, run_update(stop, swap_update), -ESTALE);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+}
+
 static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(target_creation_precedes_atomic_selection),
 	KUNIT_CASE(readiness_loss_after_check_prevents_installation),
@@ -521,6 +630,10 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(state_swap_rechecks_withdrawn_target),
 	KUNIT_CASE(state_swap_rechecks_failed_backend),
 	KUNIT_CASE(accepted_selection_persists_without_reselection),
+	KUNIT_CASE(closed_failed_backend_can_be_disabled),
+	KUNIT_CASE(closure_after_check_still_permits_disable),
+	KUNIT_CASE(closure_rejects_checked_activation),
+	KUNIT_CASE(shutdown_cannot_select_through_closed_catalog),
 	{}
 };
 

@@ -9,6 +9,8 @@
 #include <drm/drm_constraints_catalog.h>
 #include <drm/drm_constraints_entry.h>
 
+#include "drm_constraints_internal.h"
+
 struct drm_constraints_catalog {
 	struct kref ref;
 	struct mutex lock;
@@ -109,6 +111,23 @@ drm_constraints_catalog_selected(struct drm_constraints_catalog *catalog)
 	return entry;
 }
 EXPORT_SYMBOL_GPL(drm_constraints_catalog_selected);
+
+int drm_constraints_catalog_quiesce(struct drm_constraints_catalog *catalog,
+				    struct drm_constraints_entry *entry,
+				    int (*quiesce)(struct drm_constraints_entry *, void *),
+				    void *data)
+{
+	int index, ret;
+
+	mutex_lock(&catalog->lock);
+	index = find_entry(catalog, catalog->info.selected_id);
+	if (catalog->entries[index].entry != entry)
+		ret = -ESTALE;
+	else
+		ret = quiesce(entry, data);
+	mutex_unlock(&catalog->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
 
 int drm_constraints_catalog_add(struct drm_constraints_catalog *catalog,
 				struct drm_constraints_entry *entry)

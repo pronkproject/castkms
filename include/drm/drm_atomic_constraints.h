@@ -20,6 +20,9 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
  * Check validates allocation limits and calls the provider's full-scene check.
  * The prototype admits only one independent output per transaction and no
  * asynchronous plane update when constraints are involved.
+ * Fully disabling the CRTC with every plane detached retains its binding and
+ * remains possible after catalog closure or backend failure. Such quiescence
+ * selects no new entry and does not complete outstanding native source reads.
  */
 int drm_atomic_constraints_prepare(struct drm_atomic_commit *state);
 int drm_atomic_constraints_check(struct drm_atomic_commit *state);
