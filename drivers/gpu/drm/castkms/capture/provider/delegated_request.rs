@@ -57,14 +57,16 @@ impl Image {
         use_id: u64,
         reuse: Option<ARef<Fence>>,
     ) -> Result<Arc<Request>> {
-        let usage = self.reserve(use_id, reuse)?;
-        Arc::pin_init(
+        let request = Arc::pin_init(
             pin_init!(Request {
                 destination: self.clone(),
-                state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: Some(usage), completion: None }),
+                state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: None, completion: None }),
             }),
             GFP_KERNEL,
-        )
+        )?;
+        let usage = self.reserve(use_id, reuse)?;
+        request.state.lock().usage = Some(usage);
+        Ok(request)
     }
 }
 
