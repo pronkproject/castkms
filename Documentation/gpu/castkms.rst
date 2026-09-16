@@ -460,7 +460,9 @@ storage disappear from the accounting.
 Source mapping resources are prepared before admission. The read callback then
 checks the retained producer results and copies into the private image outside
 display, publication and reservation locks. Returning from the callback releases
-the claim before unmapping, which can acquire the buffer's reservation lock.
+the claim only after imported CPU-access intervals have been finalized.
+Native mapping cleanup follows outside the claim; it can acquire the buffer's
+reservation lock.
 A completed private image retains its layout, content serial and attribution,
 but not the source framebuffer, mapping or claim. Keeping that image therefore
 does not prevent the compositor from reusing its source buffer.
