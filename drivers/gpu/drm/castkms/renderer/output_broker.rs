@@ -108,7 +108,12 @@ impl Broker {
             })
         };
         for (slot, id, endpoint) in snapshot.into_iter().flatten() {
-            let claimed = endpoint.queue.lock().try_claim(image);
+            // Recipient metadata publication may fault in userspace. Never wait behind
+            // that client while selecting output for the renderer's independent stages.
+            let claimed = match endpoint.queue.try_lock() {
+                Some(mut queue) => queue.try_claim(image),
+                None => continue,
+            };
             if let Some(output) = claimed {
                 self.state.lock().cursor = (slot + 1) % QUEUE_LIMIT;
                 return Some(Job {
