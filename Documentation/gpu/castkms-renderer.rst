@@ -183,6 +183,27 @@ source read and promises no later submission under that job. Keeping an
 ordinary DMA-BUF descriptor does not authorize further reads. Private
 render targets and encoder/capture destinations have separate lifetimes.
 
+Source-stage content evidence
+-----------------------------
+
+The kernel source-job provider can retain content evidence after release:
+the original producer records, native render completion, content serial,
+output, configuration, owner and execution identity. It retains neither a
+framebuffer nor a source-read claim. Keeping the evidence therefore does
+not postpone source retirement or require the displayed content to remain
+unchanged.
+
+Pixel validity requires successful completion of every recorded producer
+and the render operation. A producer error is terminal for validity even
+while native access is still pending; it does not permit early storage
+reuse. Admission under the evidence rechecks live renderer authority and
+rejects a different output, configuration or execution incarnation.
+
+These are internal provider records, not userspace receipt handles. The
+renderer endpoint discards them on release. They grant no capture authority
+and name no private allocation; private-image binding, destination claims
+and delegated output delivery remain unimplemented.
+
 GPU envelope and remaining work
 ========================================
 
