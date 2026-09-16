@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 mod queue;
+mod pool;
 
 use super::{
     delegated_authority::grant,
