@@ -35,7 +35,7 @@ static const struct drm_constraints_entry_ops entry_ops = {
 };
 
 static int check(const struct drm_atomic_commit *state,
-		 const struct drm_crtc_state *crtc, void *backend)
+		 const struct drm_crtc_state *crtc, const struct drm_constraints_entry *entry)
 {
 	return 0;
 }

@@ -33,6 +33,7 @@
 struct test_backend {
 	bool failed;
 	unsigned int checks;
+	u64 checked_id;
 	unsigned int released;
 	struct drm_prepare_source *source;
 };
@@ -126,11 +127,13 @@ static const struct drm_constraints_entry_ops entry_ops = {
 };
 
 static int check_backend(const struct drm_atomic_commit *state,
-			 const struct drm_crtc_state *crtc, void *data)
+			 const struct drm_crtc_state *crtc,
+			 const struct drm_constraints_entry *entry)
 {
-	struct test_backend *backend = data;
+	struct test_backend *backend = drm_constraints_entry_data(entry);
 
 	backend->checks++;
+	backend->checked_id = drm_constraints_entry_id(entry);
 	return backend->failed ? -EIO : 0;
 }
 
@@ -408,6 +411,7 @@ static void target_creation_precedes_atomic_selection(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, selected, f->initial);
 	KUNIT_EXPECT_EQ(test, f->backends[0].checks, 0);
 	KUNIT_EXPECT_EQ(test, f->backends[1].checks, 1);
+	KUNIT_EXPECT_EQ(test, f->backends[1].checked_id, drm_constraints_entry_id(f->target));
 }
 
 static void readiness_loss_after_check_prevents_installation(struct kunit *test)
