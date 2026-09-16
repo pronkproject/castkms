@@ -19,6 +19,7 @@ struct output {
 	drmModeModeInfo mode;
 	struct buffer buffer;
 	struct drm_castkms_create_monitor_control monitor;
+	struct drm_castkms_monitor_files monitor_files;
 	struct drm_castkms_audio_files audio;
 	pid_t writer;
 };
@@ -189,8 +190,9 @@ int main(int argc, char **argv)
 		output->crtc = resources->crtcs[i];
 		output->connector = resources->connectors[i];
 		output->monitor.connector_id = output->connector;
+		output->monitor.files = (uintptr_t)&output->monitor_files;
 		CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL, &output->monitor) == 0);
-		CHECK(ioctl(output->monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+		CHECK(ioctl(output->monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 		connector = drmModeGetConnector(fd, output->connector);
 		CHECK(connector && connector->count_modes > 0);
 		output->mode = connector->modes[0];
@@ -234,10 +236,10 @@ int main(int argc, char **argv)
 		struct output *output = &outputs[i];
 		struct drm_castkms_audio_files old = output->audio;
 
-		CHECK(ioctl(output->monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
+		CHECK(ioctl(output->monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
 		audio_terminal(old.audio_fd);
 		stop_writer(output);
-		CHECK(ioctl(output->monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+		CHECK(ioctl(output->monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 		output->audio = audio_capture(fd, output->crtc, output->connector);
 		start_writer(i);
 		for (unsigned int other = 0; other < OUTPUTS; other++)
@@ -266,7 +268,7 @@ int main(int argc, char **argv)
 		audio_terminal(output->audio.audio_fd);
 		stop_writer(output);
 		CHECK(close(output->audio.audio_fd) == 0 && close(output->audio.revoke_fd) == 0);
-		CHECK(close(output->monitor.control_fd) == 0 && close(output->monitor.revoke_fd) == 0);
+		CHECK(close(output->monitor_files.control_fd) == 0 && close(output->monitor_files.revoke_fd) == 0);
 		destroy_buffer(fd, &output->buffer);
 	}
 	CHECK(close(fd) == 0);

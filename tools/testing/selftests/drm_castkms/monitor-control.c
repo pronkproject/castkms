@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Exercise the exclusive virtual-monitor capability through real DRM files. */
 #include <fcntl.h>
+#include <dirent.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include "fixture.h"
 
 #include "../../../../include/uapi/drm/castkms_drm.h"
+
+_Static_assert(sizeof(struct drm_castkms_create_monitor_control) == 32,
+	       "monitor request layout");
+_Static_assert(sizeof(struct drm_castkms_monitor_files) == 8,
+	       "monitor result layout");
 
 static const unsigned char edid_1080p[128] = {
 	0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00,
@@ -51,18 +58,33 @@ static void expect_connection(int fd, uint32_t connector_id,
 
 static int create_control(int fd, uint32_t connector_id, int *revoke_fd)
 {
+	struct drm_castkms_monitor_files files;
 	struct drm_castkms_create_monitor_control request = {
 		.connector_id = connector_id,
-		.control_fd = -1,
+		.files = (uintptr_t)&files,
 	};
 
 	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 		       &request) == 0);
-	CHECK(request.control_fd >= 0);
-	CHECK(request.revoke_fd >= 0);
-	CHECK(request.control_fd != request.revoke_fd);
-	*revoke_fd = request.revoke_fd;
-	return request.control_fd;
+	CHECK(files.control_fd >= 0);
+	CHECK(files.revoke_fd >= 0);
+	CHECK(files.control_fd != files.revoke_fd);
+	*revoke_fd = files.revoke_fd;
+	return files.control_fd;
+}
+
+static unsigned int open_files(void)
+{
+	DIR *directory = opendir("/proc/self/fd");
+	struct dirent *entry;
+	unsigned int count = 0;
+
+	CHECK(directory);
+	while ((entry = readdir(directory)))
+		if (entry->d_name[0] != '.')
+			count++;
+	CHECK(closedir(directory) == 0);
+	return count;
 }
 
 static void expect_ioctl_error(int fd, unsigned long command, void *request,
@@ -75,7 +97,10 @@ static void expect_ioctl_error(int fd, unsigned long command, void *request,
 
 int main(int argc, char **argv)
 {
-	struct drm_castkms_create_monitor_control create = {0};
+	struct drm_castkms_monitor_files files;
+	struct drm_castkms_create_monitor_control create = {
+		.files = (uintptr_t)&files,
+	};
 	struct drm_castkms_monitor_query query = {0};
 	struct drm_castkms_monitor_attach attach = {0};
 	struct drm_castkms_monitor_detach detach = {0};
@@ -103,12 +128,46 @@ int main(int argc, char **argv)
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EINVAL);
 	create.flags = 0;
-	create.reserved = 1;
+	create.reserved[0] = 1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EINVAL);
-	create.reserved = 0;
+	create.reserved[0] = 0;
 	expect_ioctl_error(peer, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EACCES);
+
+	/* Failed result copyout must leave both the fd table and fallback intact. */
+	unsigned int before = open_files();
+	create.files = 1;
+	for (int i = 0; i < 4; i++) {
+		expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
+				   &create, EFAULT);
+		CHECK(open_files() == before);
+		expect_connection(fd, connector_id, DRM_MODE_CONNECTED);
+	}
+	create.files = (uintptr_t)&files;
+	/* The request is input-only; only its explicit result pointer is written. */
+	long page_size = sysconf(_SC_PAGESIZE);
+	void *partial = mmap(NULL, 2 * page_size, PROT_READ | PROT_WRITE,
+		MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(partial != MAP_FAILED);
+	CHECK(mprotect((char *)partial + page_size, page_size, PROT_NONE) == 0);
+	create.files = (uintptr_t)((char *)partial + page_size - sizeof(int32_t));
+	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
+			   &create, EFAULT);
+	CHECK(open_files() == before);
+	expect_connection(fd, connector_id, DRM_MODE_CONNECTED);
+	CHECK(munmap(partial, 2 * page_size) == 0);
+	create.files = (uintptr_t)&files;
+	struct drm_castkms_create_monitor_control *readonly = mmap(NULL, page_size,
+		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(readonly != MAP_FAILED);
+	*readonly = create;
+	CHECK(mprotect(readonly, page_size, PROT_READ) == 0);
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL, readonly) == 0);
+	CHECK(close(files.control_fd) == 0 && close(files.revoke_fd) == 0);
+	CHECK(munmap(readonly, page_size) == 0);
+	CHECK(open_files() == before);
+	expect_connection(fd, connector_id, DRM_MODE_CONNECTED);
 
 	control = create_control(fd, connector_id, &revoke);
 	CHECK(fcntl(control, F_GETFD) == FD_CLOEXEC);
@@ -149,7 +208,6 @@ int main(int argc, char **argv)
 	attach.edid_ptr = (uintptr_t)edid_1080p;
 	CHECK(ioctl(control, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 	expect_connection(fd, connector_id, DRM_MODE_CONNECTED);
-	create.control_fd = -1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EBUSY);
 	CHECK(drmDropMaster(fd) == 0);

@@ -157,6 +157,12 @@ requires the master to hold the connector and replaces the standalone monitor
 with a disconnected managed monitor. A second capability is rejected while
 the first remains open for that connector.
 
+Monitor protocol version 2 uses an input-only creation request with a ``files``
+pointer to ``drm_castkms_monitor_files``. Both descriptor numbers are copied
+before the managed monitor is published and the descriptors are installed.
+Failure installs neither file and leaves the standalone monitor unchanged;
+callers must discard all output bytes on failure, including partial copyout.
+
 The anonymous close-on-exec control file supports only query, attach and detach
 operations. Attach accepts either a complete validated EDID or no EDID, in
 which case the driver publishes its fallback modes. Each successful change
