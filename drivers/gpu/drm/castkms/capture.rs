@@ -16,4 +16,5 @@ pub(crate) mod permission;
 pub(crate) mod provider;
 pub(crate) mod requests;
 pub(crate) mod request_budget;
+mod reuse;
 pub(crate) mod streams;
