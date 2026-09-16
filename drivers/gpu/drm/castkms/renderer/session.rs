@@ -44,6 +44,7 @@ enum Slot {
         id: u64,
         candidate: Arc<Candidate>,
         active: renderer_startup::Active,
+        route: super::routing::Owner,
         _source: ProbeSource,
         description: Description,
         next_source_id: u64,
@@ -371,9 +372,11 @@ impl Session {
                 .handback(&registered)
                 .map(|description| (None, description))
         } else {
-            proposal
-                .activate(&registered)
-                .map(|(active, source, description)| (Some((active, source)), description))
+            super::routing::Prepared::new().and_then(|prepared| {
+                proposal.activate(&registered).map(|(active, source, description)| {
+                    (Some((active, source, prepared)), description)
+                })
+            })
         };
         let mut state = self.state.lock();
         if state.closed {
@@ -396,11 +399,28 @@ impl Session {
                 registered.hotplug_event();
                 Ok(description)
             }
-            Ok((Some((active, source)), description)) => {
+            Ok((Some((active, source, prepared)), description)) => {
+                let route = match self.access.display().renderer_routes.publish(
+                    prepared,
+                    &candidate,
+                    &active,
+                ) {
+                    Ok(route) => route,
+                    Err(error) => {
+                        // Execution was published, but shutdown or replacement won discovery.
+                        // The candidate cannot be restored as an unactivated reservation.
+                        state.slot = Slot::Idle;
+                        let retired = state.proposal.take();
+                        drop(state);
+                        drop((active, source, candidate, retired));
+                        return Err(error);
+                    }
+                };
                 state.slot = Slot::Renderer {
                     id,
                     candidate,
                     active,
+                    route,
                     _source: source,
                     description,
                     next_source_id: 1,
@@ -622,18 +642,19 @@ impl Session {
     }
 
     pub(super) fn close(&self) {
-        let (candidate, active, source, proposal, images) = {
+        let (candidate, active, source, route, proposal, images) = {
             let mut state = self.state.lock();
             state.closed = true;
-            let (candidate, active, source) = match core::mem::replace(&mut state.slot, Slot::Idle)
+            let (candidate, active, source, route) = match core::mem::replace(&mut state.slot, Slot::Idle)
             {
                 Slot::Active { candidate, .. } | Slot::Activating { candidate, .. } => {
-                    (Some(candidate), None, None)
+                    (Some(candidate), None, None, None)
                 }
                 Slot::Renderer {
                     candidate,
                     active,
                     source,
+                    route,
                     ..
                 } => (
                     Some(candidate),
@@ -644,13 +665,15 @@ impl Session {
                         | SourceSlot::Publishing { .. }
                         | SourceSlot::Releasing { .. } => None,
                     },
+                    Some(route),
                 ),
-                _ => (None, None, None),
+                _ => (None, None, None, None),
             };
             (
                 candidate,
                 active,
                 source,
+                route,
                 state.proposal.take(),
                 state.images.take(),
             )
@@ -661,6 +684,7 @@ impl Session {
         }
         drop(source);
         drop(images);
+        drop(route);
         drop(active);
         let changed = proposal.is_some();
         drop(proposal);

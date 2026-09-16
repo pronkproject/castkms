@@ -957,6 +957,62 @@ mod cases {
     }
 
     #[test]
+    fn session_close_removes_routing_without_completing_native_output() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let session = Session::new(owner.access(), device.to_registered_ref())?;
+            let pending = session.begin(device.execution.describe().generation)?;
+            let candidate_id = pending.id();
+            pending.publish()?;
+            session.candidate(candidate_id)?.submit_private_probe(None)?;
+            let proposal = session.propose_profile(candidate_id, linear_profile()?)?;
+            device.atomic_update(|transaction| {
+                transaction.add_crtc_state(crtc)?.tag_transition(proposal.transition);
+                Ok(())
+            })?;
+            session.activate(candidate_id)?;
+            let grantor = super::super::delegated_authority::grant(&file, crtc, connector)?;
+            let scope = grantor.capture().describe_delegated()?;
+            let mut queue = scope.create_routed_queue(1)?;
+            let destination = scope.register_destination(
+                &super::super::private_images::buffer(device, drm::gem::ExportAccess::ReadWrite)?,
+                drm::fourcc::XRGB8888,
+                0,
+                2560,
+                0,
+            )?;
+            session.register_image(
+                1,
+                [640, 480],
+                &[super::super::private_images::buffer(device, drm::gem::ExportAccess::ReadWrite)?],
+            )?;
+            let source = session.begin_source(1)?;
+            let id = source.id();
+            source.publish(|| {})?;
+            session.release_source(id, Completion::Cpu)?;
+            queue.queue_to(1, &destination, None)?;
+            let job = queue.try_claim(&session.completed_image(1)?).ok_or(EINVAL)?;
+            let mut native = ManualFence::new()?;
+            job.claim.release(Completion::Submitted(native.fence()));
+            session.close_for_test();
+            check(scope.create_routed_queue(1).err() == Some(ENODEV))?;
+            check(queue.advance() == 0)?;
+            check(!queue.has_results())?;
+            check(destination.reserve(2, None).err() == Some(EBUSY))?;
+            native.complete(Ok(()))?;
+            let start = kernel::time::Instant::<kernel::time::Monotonic>::now();
+            while !queue.has_results() {
+                queue.advance();
+                if start.elapsed() > kernel::time::Delta::from_secs(2) {
+                    return Err(ETIMEDOUT);
+                }
+                kernel::time::delay::fsleep(kernel::time::Delta::from_millis(1));
+            }
+            queue.dequeue(|result| check(result.result == Err(EIO)))
+        })
+    }
+
+    #[test]
     fn session_publishes_one_changed_source_until_release() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
