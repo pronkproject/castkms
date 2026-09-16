@@ -3,6 +3,7 @@
 #include <linux/err.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_constraints.h>
+#include <drm/drm_atomic_prepare_request.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_constraints_list.h>
@@ -48,6 +49,33 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_set_constraints_for_crtc);
+
+static int build_restore_default(struct drm_atomic_commit *state, void *data)
+{
+	struct drm_crtc *crtc = data;
+	struct drm_constraints_entry *entry = drm_constraints_crtc_default(crtc);
+	struct drm_crtc_state *proposed, *old;
+	int ret;
+
+	if (!entry)
+		return -EOPNOTSUPP;
+	proposed = drm_atomic_get_crtc_state(state, crtc);
+	if (IS_ERR(proposed))
+		return PTR_ERR(proposed);
+	old = drm_atomic_get_old_crtc_state(state, crtc);
+	if (old->enable || old->active || old->plane_mask)
+		return -EBUSY;
+	ret = drm_atomic_set_constraints_for_crtc(proposed, entry);
+	if (ret)
+		return ret;
+	return old->constraints == entry ? DRM_ATOMIC_REQUEST_UNCHANGED : 0;
+}
+
+int drm_atomic_constraints_restore_default(struct drm_crtc *crtc)
+{
+	return drm_atomic_commit_request(crtc->dev, build_restore_default, crtc);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_constraints_restore_default);
 
 static bool unchanged_disable(struct drm_atomic_commit *state, struct drm_crtc_state *crtc)
 {

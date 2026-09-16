@@ -3,6 +3,7 @@
 #define __DRM_ATOMIC_CONSTRAINTS_H__
 
 struct drm_atomic_commit;
+struct drm_crtc;
 struct drm_crtc_state;
 struct drm_constraints_entry;
 
@@ -14,6 +15,19 @@ struct drm_constraints_entry;
  */
 int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 				       struct drm_constraints_entry *entry);
+
+/*
+ * Restore a disabled, plane-free output to its retained fixed default through
+ * an ordinary blocking atomic request. An enabled output returns EBUSY. A new
+ * default selection must be available and pass provider validation. Already
+ * selected defaults are no-ops, not a readiness promise for future rendering.
+ *
+ * The caller keeps the device/CRTC alive, excludes competing modesets and new
+ * owners, and has revoked the departing owner's source access. Do not hold
+ * modeset locks: the request acquires them and may drop them while waiting for
+ * preparation. Success does not establish an owner interval or reopen a list.
+ */
+int drm_atomic_constraints_restore_default(struct drm_crtc *crtc);
 
 /*
  * Common atomic validation. Prepare adds the complete affected plane/color

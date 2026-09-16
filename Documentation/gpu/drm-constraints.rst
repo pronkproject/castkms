@@ -200,6 +200,19 @@ and restore a safe default before exposing it to a replacement client that
 has not opted in. That lifecycle and client opt-in are not implemented by the
 native list helpers alone.
 
+The output separately retains the fixed default supplied at attachment.
+``drm_atomic_constraints_restore_default()`` selects that default through a
+blocking atomic request only after the output is disabled and plane-free.
+It does not reuse an enabled scene. A changed selection must pass the default's
+availability and provider checks. Failure leaves the selected binding alone;
+list closure is permanent and is not undone by restoration. A repeated request
+for the already selected default installs no further state.
+
+The caller must prevent competing modesets and replacement owners throughout
+restoration and revoke the departing owner's source access beforehand. It must
+not hold modeset locks across the request. The helper does not implement that
+authority policy or make the default immune to later backend failure.
+
 Rust access and tests
 =====================
 
