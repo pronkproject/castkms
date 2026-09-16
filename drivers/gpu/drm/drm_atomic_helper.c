@@ -31,6 +31,7 @@
 #include <linux/media-bus-format.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_constraints.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_gamma.h>
 #include <drm/drm_atomic_power.h>
@@ -3367,8 +3368,7 @@ static void install_state(struct drm_atomic_commit *state)
 
 static int install_prepared_state(void *data)
 {
-	install_state(data);
-	return 0;
+	return drm_atomic_constraints_install(data, install_state);
 }
 
 static int install_with_driver(struct drm_atomic_commit *state,
