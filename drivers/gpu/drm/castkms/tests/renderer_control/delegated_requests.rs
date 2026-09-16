@@ -2,6 +2,7 @@
 
 mod queue;
 mod pool;
+mod routing;
 
 use super::{
     delegated_authority::grant,
