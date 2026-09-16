@@ -60,6 +60,207 @@ mod cases {
     }
 
     #[test]
+    fn released_content_does_not_retain_source_reads_during_animation() -> Result {
+        with_display(|device, crtc, connector, scanout, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, execution) = proposal.activate(device)?;
+            for _ in 0..16 {
+                let job = candidate.claim_source(&active, execution, None)?;
+                let serial = job.scene().content_serial();
+                let source = device
+                    .output
+                    .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                    .ok_or(EINVAL)?;
+                let content = job.release(Completion::Cpu).ok_or(EINVAL)?;
+                source.seal();
+                check(source.prepared()?.is_some())?;
+                device.atomic_update(|transaction| {
+                    transaction.set_crtc_config(crtc, Some(scanout))
+                })?;
+                check(content.content_serial() == serial)?;
+                candidate.with_content(&active, &content, || Ok(()))?;
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn released_content_requires_successful_native_completion() -> Result {
+        for result in [Ok(()), Err(EIO)] {
+            with_display(|device, crtc, connector, _, file| {
+                let owner = owner(&file, crtc, connector)?;
+                let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                candidate.submit_private_probe(None)?;
+                let proposal = gate_profile(&candidate, device, crtc, false)?;
+                let (active, _, execution) = proposal.activate(device)?;
+                let job = candidate.claim_source(&active, execution, None)?;
+                let mut native = ManualFence::new()?;
+                let content = job
+                    .release(Completion::Submitted(native.fence()))
+                    .ok_or(EINVAL)?;
+                check(matches!(
+                    content.status(),
+                    kernel::dma_fence::Status::Pending
+                ))?;
+                let mut calls = 0;
+                check(
+                    candidate.with_content(&active, &content, || {
+                        calls += 1;
+                        Ok(())
+                    }) == Err(EAGAIN),
+                )?;
+                check(calls == 0)?;
+                native.complete(result)?;
+                check(candidate.with_content(&active, &content, || Ok(())) == result)
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn producer_failure_is_not_erased_by_successful_rendering() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, execution) = proposal.activate(device)?;
+            let mut producer = ManualFence::new()?;
+            producer.complete(Err(EIO))?;
+            device.atomic_update(|transaction| {
+                transaction
+                    .add_plane_state(crtc.primary_plane())?
+                    .set_producer_fence(Some(producer.fence()));
+                Ok(())
+            })?;
+            let job = candidate.claim_source(&active, execution, None)?;
+            let source = device
+                .output
+                .with_accepted(|accepted| accepted.map(|item| ARef::from(item.source)))
+                .ok_or(EINVAL)?;
+            let mut native = ManualFence::new()?;
+            let content = job
+                .release(Completion::Submitted(native.fence()))
+                .ok_or(EINVAL)?;
+            source.seal();
+            let prepared = source.prepared()?.ok_or(EAGAIN)?;
+            let retirement = prepared.completion()?.ok_or(EINVAL)?;
+            check(matches!(
+                retirement.status(),
+                kernel::dma_fence::Status::Pending
+            ))?;
+            check(candidate.with_content(&active, &content, || Ok(())) == Err(EIO))?;
+            native.complete(Ok(()))?;
+            check(matches!(
+                retirement.status(),
+                kernel::dma_fence::Status::Complete(Ok(()))
+            ))?;
+            check(candidate.with_content(&active, &content, || Ok(())) == Err(EIO))?;
+            // A fresh source use has its own producer records, not a persistent image error.
+            device.atomic_update(|transaction| {
+                transaction.add_plane_state(crtc.primary_plane())?;
+                Ok(())
+            })?;
+            let next = candidate
+                .claim_source(&active, execution, None)?
+                .release_cpu();
+            candidate.with_content(&active, &next, || Ok(()))
+        })
+    }
+
+    #[test]
+    fn no_access_release_produces_no_content_evidence() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, execution) = proposal.activate(device)?;
+            let job = candidate.claim_source(&active, execution, None)?;
+            check(job.release(Completion::WithoutAccess).is_none())
+        })
+    }
+
+    #[test]
+    fn released_content_requires_live_authority_and_the_same_configuration() -> Result {
+        for revoke in [false, true] {
+            with_display(|device, crtc, connector, scanout, file| {
+                let owner = owner(&file, crtc, connector)?;
+                let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+                candidate.submit_private_probe(None)?;
+                let proposal = gate_profile(&candidate, device, crtc, false)?;
+                let (active, _, execution) = proposal.activate(device)?;
+                let content = candidate
+                    .claim_source(&active, execution, None)?
+                    .release_cpu();
+                if revoke {
+                    owner.revoke();
+                } else {
+                    device.atomic_update(|transaction| transaction.set_crtc_config(crtc, None))?;
+                    device.atomic_update(|transaction| {
+                        transaction.set_crtc_config(crtc, Some(scanout))
+                    })?;
+                }
+                let mut called = false;
+                check(
+                    candidate.with_content(&active, &content, || {
+                        called = true;
+                        Ok(())
+                    }) == Err(if revoke { EKEYREVOKED } else { ESTALE }),
+                )?;
+                check(!called)
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn replacement_renderer_cannot_adopt_content_evidence() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, execution) = proposal.activate(device)?;
+            let content = candidate
+                .claim_source(&active, execution, None)?
+                .release_cpu();
+            let replacement = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            replacement.submit_private_probe(None)?;
+            let proposal = gate_profile(&replacement, device, crtc, false)?;
+            let (next, _, _) = proposal.activate(device)?;
+            check(candidate.with_content(&active, &content, || Ok(())) == Err(EIO))?;
+            check(replacement.with_content(&next, &content, || Ok(())) == Err(ESTALE))
+        })
+    }
+
+    #[test]
+    fn another_output_cannot_adopt_content_evidence() -> Result {
+        let other = CastKms::new(c"castkms-content-other-output")?;
+        with_display(|device, crtc, connector, _, file| {
+            let authority = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(authority.access())?, GFP_KERNEL)?;
+            candidate.submit_private_probe(None)?;
+            let proposal = gate_profile(&candidate, device, crtc, false)?;
+            let (active, _, execution) = proposal.activate(device)?;
+            let content = candidate
+                .claim_source(&active, execution, None)?
+                .release_cpu();
+            with_registered_display(&other, |other, crtc, connector, _, file| {
+                let authority = owner(&file, crtc, connector)?;
+                let candidate = Arc::new(Candidate::begin(authority.access())?, GFP_KERNEL)?;
+                candidate.submit_private_probe(None)?;
+                let proposal = gate_profile(&candidate, other, crtc, false)?;
+                let (active, _, _) = proposal.activate(other)?;
+                check(candidate.with_content(&active, &content, || Ok(())) == Err(EACCES))
+            })
+        })
+    }
+
+    #[test]
     fn negotiated_gpu_contract_accepts_tiling_float_and_larger_modes() -> Result {
         with_display(|device, crtc, connector, scanout, file| {
             let owner = owner(&file, crtc, connector)?;

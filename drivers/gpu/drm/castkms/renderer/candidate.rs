@@ -378,6 +378,23 @@ impl Candidate {
         })
     }
 
+    /// Check released source-stage evidence under live renderer authority.
+    /// The callback may reserve a bounded next stage but must separately authorize capture.
+    /// No lock may escape, and no pixel access or waiting is allowed in the callback.
+    pub(crate) fn with_content<R>(
+        &self,
+        active: &renderer_startup::Active,
+        content: &super::content::Released,
+        f: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
+        self.access.with_current(|current| {
+            active.with_candidate(&self.resources, || {
+                content.check(&current, self.access.display().execution.describe())?;
+                f()
+            })
+        })
+    }
+
     fn snapshot_then(
         &self,
         image: &Completed,
