@@ -18,7 +18,7 @@ struct dma_fence_wakeup;
  * Returns an owned observation or an error pointer. May sleep.
  */
 struct dma_fence_wakeup *dma_fence_wakeup_create(struct dma_fence *fence,
-					       wait_queue_head_t *wait);
+						 wait_queue_head_t *wait);
 
 /**
  * dma_fence_wakeup_destroy - detach an observation without waiting for completion

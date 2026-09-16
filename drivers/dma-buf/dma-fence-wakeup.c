@@ -22,7 +22,7 @@ static void fence_wakeup(struct dma_fence *fence, struct dma_fence_cb *callback)
 }
 
 struct dma_fence_wakeup *dma_fence_wakeup_create(struct dma_fence *fence,
-					       wait_queue_head_t *wait)
+						 wait_queue_head_t *wait)
 {
 	struct dma_fence_wakeup *wakeup;
 
