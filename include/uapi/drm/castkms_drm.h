@@ -473,68 +473,10 @@ struct drm_castkms_renderer_source_plane {
 	__u32 reserved;
 };
 
-/**
- * struct drm_castkms_renderer_source - one claimed scene source
- * @job_id: nonzero name for RENDERER_RELEASE_SOURCE
- * @content_serial: nonzero content identity within this output
- * @modifier: framebuffer DRM_FORMAT_MOD_* value, or DRM_FORMAT_MOD_INVALID
- * @format: framebuffer DRM_FORMAT_* value
- * @width: framebuffer width in pixels
- * @height: framebuffer height in pixels
- * @plane_count: number of initialized entries in @planes
- * @producer_fd: close-on-exec sync_file for captured producer dependencies,
- * or -1 when no native wait is needed
- * @reserved: returned as zero
- * @source: source rectangle in unsigned 16.16 coordinates
- * @destination: destination dimensions in output pixels
- * @output: complete output dimensions in pixels
- * @planes: source planes; unused entries contain fd -1 and zero metadata
- *
- * Each descriptor names ordinary, non-revocable DMA-BUF storage. The job's
- * source-read claim separately governs access until RELEASE_SOURCE. Retaining
- * a descriptor after release does not authorize another source read. The
- * producer sync_file covers dependencies captured when KMS accepted the scene;
- * the renderer must wait for it before reading any source plane.
- */
-struct drm_castkms_renderer_source {
-	__u64 job_id;
-	__u64 content_serial;
-	__u64 modifier;
-	__u32 format;
-	__u32 width;
-	__u32 height;
-	__u32 plane_count;
-	__s32 producer_fd;
-	__u32 reserved;
-	__u32 source[4];
-	__u32 destination[2];
-	__u32 output[2];
-	struct drm_castkms_renderer_source_plane
-		planes[DRM_CASTKMS_RENDERER_MAX_PLANES];
-};
-
-/**
- * struct drm_castkms_renderer_dequeue_source - publish the next changed scene
- * @result: pointer to writable struct drm_castkms_renderer_source storage
- * @flags: must be zero
- * @reserved: must be zero
- *
- * Only an activated renderer may dequeue. At most one source job is published
- * at a time. EBUSY means that job still needs release; ENODATA means the
- * current content was already published or the output is blank. Success copies
- * all metadata before installing plane descriptors. Failure installs no
- * descriptor; output memory may have been partially written and must not be
- * used.
- */
-struct drm_castkms_renderer_dequeue_source {
-	__u64 result;
-	__u32 flags;
-	__u32 reserved[3];
-};
 
 /**
  * struct drm_castkms_renderer_release_source - resolve one source read
- * @job_id: job returned by RENDERER_DEQUEUE_SOURCE
+ * @job_id: job returned by RENDERER_DEQUEUE_SCENE
  * @completion_fd: sync_file descriptor for SUBMITTED, otherwise -1
  * @kind: one DRM_CASTKMS_RENDERER_RELEASE_* value
  * @flags: must be zero
@@ -554,7 +496,7 @@ struct drm_castkms_renderer_release_source {
 };
 
 /* Complete-scene stream, native byte order. All records are eight-byte aligned.
- * DEQUEUE_SCENE shares the source queue and RELEASE_SOURCE lifetime contract.
+ * DEQUEUE_SCENE claims one complete scene until RELEASE_SOURCE.
  * The result consists of a scene header, layer records with their color records,
  * then output color records. Layer order is back-to-front, with zpos ties in
  * KMS plane creation order. Source rectangles use unsigned 16.16 pixels;
@@ -717,7 +659,7 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_RENDERER_GET_SNAPSHOT 0x07
 #define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x08
 #define DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER 0x09
-#define DRM_CASTKMS_RENDERER_DEQUEUE_SOURCE 0x0a
+/* 0x0a was the removed single-framebuffer dequeue; do not reuse it. */
 #define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x0b
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
 #define DRM_CASTKMS_RENDERER_REGISTER_PROFILE 0x0d
@@ -773,9 +715,6 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER,
 			 struct drm_castkms_renderer_commit_takeover),
-	DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SOURCE =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_DEQUEUE_SOURCE,
-			 struct drm_castkms_renderer_dequeue_source),
 	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_SOURCE,
 			 struct drm_castkms_renderer_release_source),

@@ -4,7 +4,7 @@
 
 use super::{
     candidate::Candidate,
-    job::{Completion, Description as SourceDescription, Plane, SourceJob},
+    job::{Completion, SourceJob},
     permission::Access,
     probe::Source as ProbeSource, //
 };
@@ -553,14 +553,6 @@ impl PendingSource<'_> {
 
     pub(crate) fn id(&self) -> u64 {
         self.id
-    }
-
-    pub(crate) fn description(&self) -> Result<SourceDescription> {
-        self.job.as_ref().ok_or(EINVAL)?.description()
-    }
-
-    pub(crate) fn plane(&self, index: usize) -> Result<Plane<'_>> {
-        self.job.as_ref().ok_or(EINVAL)?.plane(index)
     }
 
     pub(crate) fn producer_completion(&self) -> Result<Option<kernel::sync::aref::ARef<Fence>>> {

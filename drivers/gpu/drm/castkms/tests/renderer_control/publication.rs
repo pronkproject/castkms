@@ -12,6 +12,7 @@ use crate::{
 };
 use kernel::{
     dma_fence::testing::ManualFence,
+    drm::gem::BaseObject,
     sync::aref::ARef, //
 };
 
@@ -633,21 +634,24 @@ mod cases {
             let pending = session.begin_source()?;
             let job_id = pending.id();
             check(job_id == unpublished_id + 1)?;
-            let description = pending.description()?;
-            check(description.format == drm::fourcc::XRGB8888)?;
-            check(description.modifier.is_none())?;
-            check(description.dimensions == [640, 480])?;
-            check(description.source == [0, 0, 640 << 16, 480 << 16])?;
-            check(description.destination == [640, 480])?;
+            let description = pending.scene_description()?;
+            check(description.layers.len() == 1)?;
+            let layer = description.layers[0];
+            check(layer.framebuffer().format() == drm::fourcc::XRGB8888)?;
+            check(layer.framebuffer().modifier().is_none())?;
+            check(layer.geometry().source == [0, 0, 640 << 16, 480 << 16])?;
+            check(layer.geometry().destination == [640, 480])?;
             check(description.output == [640, 480])?;
-            check(description.plane_count == 1)?;
+            check(layer.framebuffer().plane_count() == 1)?;
             check(description.content_serial != 0)?;
-            let plane = pending.plane(0)?;
-            check(plane.pitch == 2560)?;
-            check(plane.offset == 0)?;
-            let buffer = plane.export()?;
+            check(layer.framebuffer().pitch(0)? == 2560)?;
+            check(layer.framebuffer().offset(0)? == 0)?;
+            let buffer = layer.framebuffer().object_at(0)?.export_dma_buf(
+                kernel::drm::gem::ExportAccess::ReadOnly,
+            )?;
             check(!buffer.is_writable())?;
             check(session.begin_source().err() == Some(EBUSY))?;
+            drop(description);
             let mut published = false;
             pending.publish(|| published = true)?;
             check(published)?;

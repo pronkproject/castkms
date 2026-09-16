@@ -271,7 +271,7 @@ Each kernel job owns both retained scene metadata and its preparation read
 claim; the framebuffer reference alone does not delay source reuse.
 
 The renderer dequeue ioctl prepares ordinary source DMA-BUFs and reserves every
-descriptor before copying fixed-size metadata. Only the final, infallible
+descriptor before copying bounded scene metadata. Only the final, infallible
 publication step installs close-on-exec descriptors and makes the job require a
 userspace release. Failure before publication reports that no access occurred
 and returns the queue slot. At most one source job is outstanding, and an
@@ -280,12 +280,16 @@ unchanged content serial is not claimed again.
 Complete-scene renderer descriptions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Renderer contract version 6 adds ``RENDERER_DEQUEUE_SCENE`` alongside the
-existing single-image dequeue operation. Both use the same one-job queue and
-``RENDERER_RELEASE_SOURCE``. A renderer should allocate the advertised maximum
-of 64 KiB for the result. Insufficient capacity returns ``ENOSPC``; failure
-does not consume the scene or install any descriptors, even if userspace
-memory was partially written. Blank and unchanged scenes return ``ENODATA``.
+``RENDERER_DEQUEUE_SCENE`` is the only scene dequeue operation and uses
+``RENDERER_RELEASE_SOURCE`` to end its read claim. A renderer should allocate
+the advertised maximum of 64 KiB for the result. Insufficient capacity returns
+``ENOSPC``; failure does not consume the scene or install any descriptors, even
+if userspace memory was partially written. Blank and unchanged scenes return
+``ENODATA``.
+
+The former single-framebuffer dequeue command is removed. Its command slot
+is left unassigned and returns ``ENOTTY``; there is no subset encoding or
+fallback protocol to select when a scene contains additional layers.
 
 The version-one result contains a header followed by back-to-front layer
 records and output color records. Each layer includes its role, stacking
