@@ -9,6 +9,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn plane_and_crtc_expose_distinct_object_identities() -> Result {
+        use crtc::RawCrtc;
+        use plane::RawPlane;
+
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-kms-object-identities", None)?;
+        let dev = testing::TestDevice::new(allocate(parent.as_ref(), &counts, false)?)?;
+        let crtc = dev.crtc()?;
+        let plane = dev.plane()?;
+        assert_ne!(crtc.object_id(), 0);
+        assert_ne!(plane.object_id(), 0);
+        assert_ne!(crtc.object_id(), plane.object_id());
+        // These are distinct DRM names even when both per-type indices are zero.
+        assert_eq!(crtc.index(), 0);
+        assert_eq!(plane.index(), 0);
+        Ok(())
+    }
+
+    #[test]
     fn crtc_check_inspection_excludes_mutation() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-kms-inspect-crtc", None)?;

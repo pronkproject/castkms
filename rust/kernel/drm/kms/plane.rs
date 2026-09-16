@@ -666,6 +666,12 @@ pub unsafe trait ModesettablePlane: AsRawPlane {
 /// This is implemented internally by DRM, and provides many of the basic methods for working with
 /// planes.
 pub trait RawPlane: AsRawPlane {
+    /// DRM object ID, not a reference or modesetting authority.
+    fn object_id(&self) -> u32 {
+        // SAFETY: The initialized plane retains its immutable base identity for its lifetime.
+        unsafe { (*self.as_raw()).base.id }
+    }
+
     /// Return the index of this DRM plane
     #[inline]
     fn index(&self) -> u32 {
