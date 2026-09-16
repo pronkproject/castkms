@@ -66,6 +66,22 @@ impl<'a, T: KmsDriver> Output<'a, T> {
         unsafe { &*bindings::drm_constraints_crtc_default(self.crtc.as_raw()).cast() }
     }
 
+    /// Restore a disabled, plane-free output's fixed default through atomic validation.
+    ///
+    /// The caller must first revoke departing source access and exclude new owners and
+    /// competing updates through completion. Do not hold modeset locks or locks needed by
+    /// source readers. This method does not establish that authority gate or disable scanout.
+    ///
+    /// An active output returns `EBUSY`. A changed binding requires an available default and
+    /// successful provider checks; failure leaves the accepted binding unchanged. An already
+    /// selected default in an open list is a no-op, not a promise of future readiness. Closed
+    /// lists return `ESTALE`, including when the default is already selected, and stay closed.
+    pub fn restore_default(&self) -> Result {
+        // SAFETY: The output borrow retains initialized topology and excludes cleanup. Native
+        // requests own validation, preparation and modeset locking throughout the operation.
+        to_result(unsafe { bindings::drm_atomic_constraints_restore_default(self.crtc.as_raw()) })
+    }
+
     /// Offer a ready backend after native device, output, plane and property scope checks.
     ///
     /// Adding an entry changes neither the accepted binding nor current buffer validity.
