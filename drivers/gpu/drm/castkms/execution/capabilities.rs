@@ -26,6 +26,9 @@ pub(crate) struct Format {
 
 #[derive(Clone, Copy)]
 pub(crate) struct GeometryLimits {
+    /// Inclusive framebuffer and output dimension bounds, independently per axis.
+    pub(crate) min_output: [u32; 2],
+    pub(crate) min_source: [u32; 2],
     pub(crate) output: [u32; 2],
     pub(crate) source: [u32; 2],
     pub(crate) crop: bool,
@@ -75,6 +78,12 @@ impl Profile {
         let geometry = limits.geometry;
         if geometry.output.contains(&0)
             || geometry.source.contains(&0)
+            || geometry.min_output.contains(&0)
+            || geometry.min_source.contains(&0)
+            || (0..2).any(|axis| {
+                geometry.min_output[axis] > geometry.output[axis]
+                    || geometry.min_source[axis] > geometry.source[axis]
+            })
             || geometry.min_scale == 0
             || geometry.min_scale > geometry.max_scale
             || limits.layers == 0
@@ -208,7 +217,10 @@ impl Profile {
 
     fn check_output(&self, output: [u32; 2]) -> Result {
         if output.contains(&0)
-            || (0..2).any(|axis| output[axis] > self.limits.geometry.output[axis])
+            || (0..2).any(|axis| {
+                output[axis] < self.limits.geometry.min_output[axis]
+                    || output[axis] > self.limits.geometry.output[axis]
+            })
         {
             return Err(EOPNOTSUPP);
         }
@@ -219,7 +231,9 @@ impl Profile {
         let limits = self.limits.geometry;
         if geometry.output != output
             || source.contains(&0)
-            || (0..2).any(|axis| source[axis] > limits.source[axis])
+            || (0..2).any(|axis| {
+                source[axis] < limits.min_source[axis] || source[axis] > limits.source[axis]
+            })
             || (!limits.position && geometry.position != [0, 0])
             || (!limits.fractional && geometry.source.iter().any(|value| value & 0xffff != 0))
         {
@@ -272,6 +286,8 @@ mod tests {
     fn limits() -> Limits {
         Limits {
             geometry: GeometryLimits {
+                min_output: [1; 2],
+                min_source: [1; 2],
                 output: [16384; 2],
                 source: [16384; 2],
                 crop: true,
@@ -311,6 +327,50 @@ mod tests {
             GFP_KERNEL,
         )?;
         Profile::new(limits, formats)
+    }
+
+    #[test]
+    fn exact_dimensions_reject_smaller_and_larger_scenes() -> Result {
+        let mut limits = limits();
+        limits.geometry.min_output = [1920, 1080];
+        limits.geometry.output = [1920, 1080];
+        limits.geometry.min_source = [640, 480];
+        limits.geometry.source = [640, 480];
+        let profile = profile(limits, None)?;
+        profile.check_output([1920, 1080])?;
+        for output in [[1919, 1080], [1921, 1080], [1920, 1079], [1920, 1081]] {
+            assert_eq!(profile.check_output(output), Err(EOPNOTSUPP));
+        }
+        // Source limits describe the complete framebuffer, not the cropped area.
+        let geometry = Geometry {
+            source: [0, 0, 320 << 16, 240 << 16],
+            position: [0; 2],
+            destination: [640, 480],
+            output: [1920, 1080],
+        };
+        profile.check_geometry(geometry, [640, 480], geometry.output)?;
+        for source in [[639, 480], [641, 480], [640, 479], [640, 481]] {
+            assert_eq!(
+                profile.check_geometry(geometry, source, geometry.output),
+                Err(EOPNOTSUPP)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn dimension_ranges_are_positive_and_ordered() -> Result {
+        for axis in 0..2 {
+            for minimum in [0, 16385] {
+                let mut bad = limits();
+                bad.geometry.min_output[axis] = minimum;
+                assert!(matches!(profile(bad, None), Err(EINVAL)));
+                let mut bad = limits();
+                bad.geometry.min_source[axis] = minimum;
+                assert!(matches!(profile(bad, None), Err(EINVAL)));
+            }
+        }
+        Ok(())
     }
 
     #[test]

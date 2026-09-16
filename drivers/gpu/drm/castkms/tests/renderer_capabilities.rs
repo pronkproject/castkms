@@ -12,6 +12,8 @@ use kernel::drm::kms::{
 fn limits() -> Limits {
     Limits {
         geometry: GeometryLimits {
+            min_output: [1; 2],
+            min_source: [1; 2],
             output: [16384; 2],
             source: [16384; 2],
             crop: true,

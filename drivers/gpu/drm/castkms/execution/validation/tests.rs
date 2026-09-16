@@ -23,6 +23,8 @@ fn renderer(output: [u32; 2]) -> Result<Contract> {
         Profile::new(
             Limits {
                 geometry: GeometryLimits {
+                    min_output: [1; 2],
+                    min_source: [1; 2],
                     output,
                     source: output,
                     crop: true,
