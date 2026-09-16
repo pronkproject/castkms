@@ -91,6 +91,7 @@ drm-y := \
 	drm_connector.o \
 	drm_constraints.o \
 	drm_constraints_entry.o \
+	drm_constraints_catalog.o \
 	drm_crtc.o \
 	drm_displayid.o \
 	drm_drv.o \
