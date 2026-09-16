@@ -154,8 +154,8 @@ pub(crate) fn plane(format: u32, index: usize) -> Result<Plane> {
 
 /// Decode a pixel using bounded reads at (plane, byte within row, row).
 ///
-/// Alpha is ignored for the opaque primary plane. YUV uses BT.601 limited range,
-/// a fixed interpretation used by the packed-pixel compatibility helper.
+/// Alpha is ignored for the opaque primary plane. The packed-pixel copy path
+/// decodes YUV as BT.601 limited range.
 pub(crate) fn pixel(
     format: u32,
     x: usize,
