@@ -39,6 +39,7 @@ mod properties;
 mod retirement;
 mod routing;
 mod installation;
+mod constraints;
 
 use super::*;
 use crate::{
@@ -46,7 +47,7 @@ use crate::{
     faux,
     sync::Arc,
 };
-use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
 #[derive(Default)]
 struct Counts {
@@ -66,6 +67,11 @@ struct Counts {
     install_calls: AtomicU32,
     install_successes: AtomicU32,
     fail_install: AtomicU32,
+    constraints_capacity: AtomicU32,
+    constraints_checks: AtomicU32,
+    fail_constraints: AtomicU32,
+    fail_constraints_at_install: AtomicU32,
+    constraints_id: AtomicU64,
     // Borrowed only by synchronous preparation callbacks while their source is retained.
     preparation_source: AtomicPtr<bindings::drm_prepare_source>,
     preparation_capacity: AtomicU32,
@@ -500,12 +506,18 @@ impl KmsDriver for TestDriver {
     fn create_objects(dev: &UnregisteredKmsDevice<'_, Self>) -> Result {
         use connector::AsRawConnector;
         use crtc::{AsRawCrtc, RawCrtc};
-        use plane::AsRawPlane;
+        use plane::{AsRawPlane, RawPlane};
 
         let capacity = dev.counts.preparation_capacity.load(Ordering::Relaxed);
         if capacity != 0 {
             dev.enable_preparation(capacity)?;
         }
+        let constraints_capacity = dev.counts.constraints_capacity.load(Ordering::Relaxed);
+        let domain = if constraints_capacity != 0 {
+            Some(dev.enable_constraints(constraints_capacity)?)
+        } else {
+            None
+        };
         let plane = plane::UnregisteredPlane::<TestPlane>::new(
             dev,
             0,
@@ -543,6 +555,42 @@ impl KmsDriver for TestDriver {
         )?;
         connector.attach_encoder(encoder)?;
         dev.connector.store(connector.as_raw(), Ordering::Relaxed);
+        if let Some(domain) = domain {
+            use crate::drm::constraints::{Description, Format, OpaqueEntry, Size};
+
+            let size = Size::new(1, 1, 640, 480);
+            let description = Description::new(
+                size,
+                &[Format::new(
+                    plane.object_id(), fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size,
+                )],
+                &[],
+            )?;
+            let entry = OpaqueEntry::new_stateless(&domain, crtc.object_id(), &description)?;
+            dev.attach_constraints(crtc, &entry, 4)?;
+            dev.counts.constraints_id.store(entry.id(), Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn constraints_check(
+        state: &atomic::AtomicStateReader<Self>,
+        crtc: &crtc::OpaqueCrtcState<Self>,
+        entry: &crate::drm::constraints::OpaqueEntry,
+    ) -> Result {
+        use crtc::{RawCrtc, RawCrtcState};
+
+        let counts = &state.drm_dev().counts;
+        counts.constraints_checks.fetch_add(1, Ordering::Relaxed);
+        if entry.id() != counts.constraints_id.load(Ordering::Relaxed)
+            || entry.crtc_id() != crtc.crtc().object_id()
+            || state.get_new_crtc_state(crtc.crtc()).is_none()
+        {
+            return Err(EINVAL);
+        }
+        if counts.fail_constraints.load(Ordering::Relaxed) != 0 {
+            return Err(EIO);
+        }
         Ok(())
     }
 
@@ -563,6 +611,9 @@ impl KmsDriver for TestDriver {
         counts.install_calls.fetch_add(1, Ordering::Relaxed);
         if counts.fail_install.load(Ordering::Relaxed) != 0 {
             return install.reject(EAGAIN);
+        }
+        if counts.fail_constraints_at_install.load(Ordering::Relaxed) != 0 {
+            counts.fail_constraints.store(1, Ordering::Relaxed);
         }
         install.install_then(|| { counts.install_successes.fetch_add(1, Ordering::Relaxed); })
     }

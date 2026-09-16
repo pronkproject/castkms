@@ -112,6 +112,10 @@ unsafe impl AlwaysRefCounted for OpaqueEntry {
 }
 
 impl OpaqueEntry {
+    pub(crate) fn as_raw(&self) -> *mut bindings::drm_constraints_entry {
+        self.0.get()
+    }
+
     /// Create an entry for a backend with no private per-entry resources.
     ///
     /// Common DRM owns destruction, so a fixed default does not pin its provider's module.

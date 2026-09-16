@@ -4,6 +4,7 @@
 
 pub mod atomic;
 pub mod blob;
+pub mod constraints;
 pub mod preparation;
 pub mod connector;
 pub mod crtc;
@@ -234,6 +235,20 @@ impl<'a, T: Driver> UnregisteredKmsDevice<'a, T> {
 /// [`PhantomData<Self>`]: PhantomData
 #[vtable]
 pub trait KmsDriver: Driver<Kms = Self> + Sized {
+    /// Validate a complete proposed scene against its retained constraints entry.
+    ///
+    /// Called during validation and again before acceptance, with modeset and constraints-list
+    /// locks held. Inspect only: do not mutate state, acquire modeset locks, reenter list
+    /// operations, change external state or wait for userspace. Resources must be ready before
+    /// the entry is offered. Returning success is not permission to read source pixels.
+    fn constraints_check(
+        _state: &atomic::AtomicStateReader<Self>,
+        _crtc: &crtc::OpaqueCrtcState<Self>,
+        _entry: &super::constraints::OpaqueEntry,
+    ) -> Result {
+        Err(EOPNOTSUPP)
+    }
+
     /// Serialize policy revalidation with native software-state installation.
     ///
     /// Called after predecessor waits, with modeset locks held but before native

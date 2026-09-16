@@ -217,11 +217,25 @@ Rust access and tests
 =====================
 
 ``kernel::drm::constraints`` wraps descriptions, property records, domains,
-typed backend entries, lists, snapshots and encoded bytes. Native C code owns
+typed and opaque backend entries, lists, snapshots and encoded bytes. Native C code owns
 validation, identity allocation and serialization. Rust views borrow their owning
 description or snapshot; entries retain typed provider resources and their
 callback module. Construction and final release require sleepable context.
-These metadata wrappers do not provide Rust KMS attachment or installation.
+
+During exclusive KMS setup, ``UnregisteredKmsDevice::enable_constraints()``
+creates the device namespace before CRTC construction. After creating all
+referenced planes and properties, ``attach_constraints()`` attaches each
+output's fixed default. Both require an implemented
+``KmsDriver::constraints_check()`` callback. The callback receives read-only
+atomic state and opaque entry metadata during validation and final acceptance;
+it must not reenter list operations or acquire modeset locks. These interfaces
+use common native state lifetime and installation without publishing UAPI.
+
+``OpaqueEntry::new_stateless()`` uses common DRM destruction for backends
+without private per-entry resources. It avoids a permanent default retaining
+its provider module solely for a metadata release callback. Device and accepted
+state ownership must independently protect execution resources. Entries with
+private resources retain their provider callback and module through final release.
 
 The ``drm_constraints*`` and ``drm_atomic_constraints`` KUnit suites cover
 bounded metadata, scopes, snapshots, withdrawal, closure, native state
@@ -234,6 +248,9 @@ Threaded tests hold a native read fence through target acceptance or shutdown
 and verify that cleanup cannot release the predecessor backend early. The
 ``drm_atomic_property`` suite checks proposed-value decoding; Rust suites are
 named ``rust_drm_constraints_*``.
+The ``rust_drm_kms_constraints`` suite attaches a default to a Rust virtual
+output with shmem framebuffers and checks validation, installation rejection,
+retry and shutdown after provider failure. It does not execute a GPU backend.
 
 Use ``kunit.filter_glob=*constraints*`` for the constraints suites and run the
 atomic property suite separately or with broader DRM tests. Build modular DRM

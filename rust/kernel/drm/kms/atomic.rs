@@ -419,7 +419,7 @@ unsafe impl<T: KmsDriver> AlwaysRefCounted for AtomicState<T> {
     }
 }
 
-/// Read-only object-state access during atomic installation or commit-tail callbacks.
+/// Read-only object-state access during validation, installation or commit-tail callbacks.
 ///
 /// Installation callbacks inspect candidate states while modeset locks are held. DRM publishes
 /// the new states before scheduling the commit worker. Another atomic check may
@@ -432,8 +432,10 @@ pub struct AtomicStateReader<T: KmsDriver>(ManuallyDrop<ARef<AtomicState<T>>>);
 impl<T: KmsDriver> AtomicStateReader<T> {
     /// # Safety
     ///
-    /// `ptr` must be a commit for `T` supplied to a DRM commit callback. The reader must not
-    /// outlive that callback, and hardware completion must not be signaled while it is in use.
+    /// `ptr` must be a commit for `T` supplied to a DRM validation or commit callback. The
+    /// callback must stabilize all old and new object states for the reader's lifetime and
+    /// exclude mutable payload access. The reader must not outlive the callback. A commit
+    /// callback must not signal hardware completion while the reader is in use.
     pub(super) unsafe fn new(ptr: NonNull<bindings::drm_atomic_commit>) -> Self {
         // SAFETY: The callback borrows DRM's reference, as required above. Suppress its put.
         Self(ManuallyDrop::new(unsafe { ARef::from_raw(ptr.cast()) }))
