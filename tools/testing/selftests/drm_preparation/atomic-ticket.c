@@ -58,8 +58,8 @@ static int submit(int fd, uint32_t crtc, uint32_t property, int ticket, uint32_t
 	};
 	int ret;
 
-	/* Observe one submission, including EAGAIN, without library retries. */
-	ret = ioctl(fd, DRM_IOCTL_MODE_ATOMIC, &request);
+	/* Exercise the libdrm submission path used by atomic KMS clients. */
+	ret = drmIoctl(fd, DRM_IOCTL_MODE_ATOMIC, &request);
 	return ret < 0 ? -errno : ret;
 }
 
@@ -87,11 +87,11 @@ int main(int argc, char **argv)
 		ksft_exit_skip("No CRTC available\n");
 	crtc = resources->crtcs[0];
 	drmModeFreeResources(resources);
-	property = find_property(fd, crtc, "PREPARE_FD");
+	property = find_property(fd, crtc, DRM_PREPARE_FD_PROPERTY);
 	if (!property)
 		ksft_exit_fail_msg("Preparation capability has no CRTC property\n");
 
-	ksft_set_plan(13);
+	ksft_set_plan(15);
 	errno = 0;
 	ksft_test_result(drmIoctl(fd, DRM_IOCTL_MODE_PREPARE_REPLACE, &malformed) == -1 &&
 			 errno == EINVAL, "Empty output set rejected\n");
@@ -121,6 +121,13 @@ int main(int argc, char **argv)
 	ksft_test_result(submit(fd, crtc, property, stale, 0) == -ESTALE,
 			 "Replacement invalidates earlier generation\n");
 	close(stale);
+	close(ticket);
+	ticket = issue(fd, crtc);
+	ksft_test_result(submit(fd, crtc, property, ticket, DRM_MODE_ATOMIC_NONBLOCK) == 0,
+			 "Nonblocking ready ticket succeeds through libdrm\n");
+	ksft_test_result(drmIoctl(ticket, DRM_IOCTL_PREPARE_QUERY, &query) == 0 &&
+			 query.status == DRM_PREPARE_CONSUMED,
+			 "Nonblocking acceptance consumes the ready ticket\n");
 	close(ticket);
 	ksft_test_result(submit(fd, crtc, find_property(fd, crtc, "OUT_FENCE_PTR"), 0,
 			 DRM_MODE_ATOMIC_NONBLOCK) == -EINVAL,
