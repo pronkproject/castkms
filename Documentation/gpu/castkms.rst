@@ -181,14 +181,12 @@ description remains fixed throughout the connector lifetime; runtime renderer
 transitions are not enabled. Reading it grants no capture permission and does
 not reserve acceptance of a later display update.
 
-HOST_V1 requires native CastKMS linear XRGB8888 storage, at most 1920 by 1080,
-covering the complete output without cropping or scaling. Each source allocation
-is bounded by 16 MiB and contains complete, four-byte-aligned strides. Clients
-render the cursor into the primary image; hardware cursor and color transforms
-are not provided. Atomic validation applies the same eligibility check as the
-renderer before accepting a visible plane. Rejection preserves the current
-display for test-only, blocking and nonblocking submissions. General PRIME and
-framebuffer creation remain independent of eligibility for HOST scanout.
+HOST_V1 currently accepts the CPU compositor's linear source formats,
+with dimensions through 8192 by 8192 and at most 512 MiB per source allocation.
+Checked sampling supports cropping, positioning and scaling; cursor, overlays
+and color operations are described above. Imported storage additionally needs
+usable CPU-access and mapping support. Atomic layout validation alone does not
+qualify an exporter's runtime mapping or synchronization behavior.
 
 ``execution`` defines eligibility without acquiring a mapping or reading pixels.
 Its property adapter serializes a kernel-accessible description; neither the
@@ -424,19 +422,20 @@ userspace promise to submit work into a DMA fence.
 Private host composition
 ------------------------
 
-The kernel has a small internal compositor for the executor-absent path. It
-accepts native CastKMS shmem, linear XRGB8888, and an entire framebuffer matching
-the output size without scaling or clipping, up to 1920 by 1080. Foreign
-imports are not eligible merely because their format says linear. The checked
-layout also bounds offsets, aligned row pitches and the full allocation.
+The kernel has a bounded software compositor for HOST execution. It accepts
+the linear source formats, layer geometry and color operations described above,
+using native CastKMS shmem or CPU-mappable imports. Foreign imports are not
+usable merely because their format says linear. Checked per-format layouts
+bound offsets, row pitches and the last accessed byte of every memory plane.
+Private results remain packed XRGB8888 regardless of source format.
 
-Each host pool contains two private images, each at most 8 MiB. Their complete
+Each host pool contains two private images, each at most 256 MiB. Their complete
 allocations start cleared, and neither a GEM handle nor a DMA-BUF export is
 available through the image interface. A worker reserves a free image before
 taking any claim on the displayed source. If both images are occupied, it
 reports busy without waiting for reuse or retaining source access.
 
-Private images also share a 16 MiB budget for their output. Each image keeps
+Private images also share a 512 MiB budget for their output. Each image keeps
 its page-rounded allocation charged until the storage is released, including
 when a caller retains an image after its pool closes. Replacement pools must
 use the same budget. If older images leave insufficient room, allocation
@@ -469,7 +468,7 @@ slot. The snapshot keeps the image's actual output identity, configuration,
 content serial and owner, even after the display changes. Those observations
 do not grant permission to deliver the image.
 
-One output's snapshot budget is limited to 16 MiB independently of the host
+One output's snapshot budget is limited to 512 MiB independently of the host
 pool. Current and retired copies must share it; each allocation keeps its
 credit until final native release. Exhaustion rejects the optional copy
 without waiting or reserving a compositor source. The private copy interface
