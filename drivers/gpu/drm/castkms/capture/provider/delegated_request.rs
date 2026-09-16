@@ -1,0 +1,311 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+//! Independently authorized private-image-to-recipient writes and native retirement.
+
+use super::delegated_destination::{Image, Use};
+use crate::{
+    renderer::{candidate::Candidate, job::Completion, render_job::Rendered},
+    renderer_startup::{Active, Observation},
+    scene::ContentSerial,
+};
+use kernel::{
+    dma_fence::{
+        retirement::{Retire, Retirement},
+        Fence, Status as FenceStatus,
+    },
+    prelude::*,
+    sync::{aref::ARef, Arc, Mutex},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Status {
+    Pending,
+    Complete(Result),
+    /// Native access is unresolved. Storage is quarantined, not reusable.
+    Lost,
+}
+
+#[derive(Clone, Copy)]
+enum Phase {
+    Queued,
+    Claimed,
+    Submitted,
+    Complete(Result),
+    Lost,
+}
+
+struct State {
+    phase: Phase,
+    cancelled: bool,
+    content: Option<ContentSerial>,
+    usage: Option<Arc<Use>>,
+}
+
+/// One destination use, initially without private pixels or compositor source access.
+#[pin_data]
+pub(crate) struct Request {
+    destination: Arc<Image>,
+    #[pin]
+    state: Mutex<State>,
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Image {
+    pub(crate) fn request(
+        self: &Arc<Self>,
+        use_id: u64,
+        reuse: Option<ARef<Fence>>,
+    ) -> Result<Arc<Request>> {
+        let usage = self.reserve(use_id, reuse)?;
+        Arc::pin_init(
+            pin_init!(Request {
+                destination: self.clone(),
+                state <- kernel::new_mutex!(State { phase: Phase::Queued, cancelled: false, content: None, usage: Some(usage) }),
+            }),
+            GFP_KERNEL,
+        )
+    }
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Request {
+    /// Stop unclaimed work immediately; claimed work retains storage until native retirement.
+    pub(crate) fn cancel(&self) {
+        let retired = {
+            let mut state = self.state.lock();
+            match state.phase {
+                Phase::Queued => {
+                    if let Some(usage) = &state.usage {
+                        usage.retire();
+                    }
+                    state.phase = Phase::Complete(Err(ECANCELED));
+                    state.usage.take()
+                }
+                Phase::Claimed | Phase::Submitted => {
+                    state.cancelled = true;
+                    None
+                }
+                Phase::Complete(_) | Phase::Lost => None,
+            }
+        };
+        drop(retired);
+    }
+
+    fn fail_queued(&self, error: Error) {
+        let retired = {
+            let mut state = self.state.lock();
+            if matches!(state.phase, Phase::Queued) {
+                if let Some(usage) = &state.usage {
+                    usage.retire();
+                }
+                state.phase = Phase::Complete(Err(error));
+                state.usage.take()
+            } else {
+                None
+            }
+        };
+        drop(retired);
+    }
+
+    /// Reconcile queued authority loss. Submitted work remains pending until actual cleanup.
+    pub(crate) fn status(&self) -> Status {
+        if matches!(self.state.lock().phase, Phase::Queued) {
+            if let Err(error) = self.destination.scope().with_current(|_| Ok(())) {
+                self.fail_queued(error);
+            }
+        }
+        match self.state.lock().phase {
+            Phase::Queued | Phase::Claimed | Phase::Submitted => Status::Pending,
+            Phase::Complete(result) => Status::Complete(result),
+            Phase::Lost => Status::Lost,
+        }
+    }
+
+    pub(crate) fn content_serial(&self) -> Option<ContentSerial> {
+        let state = self.state.lock();
+        if matches!(state.phase, Phase::Complete(Ok(()))) {
+            state.content
+        } else {
+            None
+        }
+    }
+
+    /// Claim one bounded E-to-D stage only after source production and destination reuse
+    /// succeeded. `Ok(None)` is pending; every error terminates an unclaimed request.
+    /// Native queues and mappings must isolate this output stage from source-reading work.
+    pub(crate) fn try_claim(
+        self: &Arc<Self>,
+        renderer: &Arc<Candidate>,
+        active: &Active,
+        image: &Arc<Rendered>,
+    ) -> Result<Option<Claim>> {
+        let result = self.prepare_claim(renderer, active, image);
+        if let Err(error) = result.as_ref() {
+            self.fail_queued(*error);
+        }
+        result
+    }
+
+    fn prepare_claim(
+        self: &Arc<Self>,
+        renderer: &Arc<Candidate>,
+        active: &Active,
+        image: &Arc<Rendered>,
+    ) -> Result<Option<Claim>> {
+        let usage = {
+            let state = self.state.lock();
+            match state.phase {
+                Phase::Queued => state.usage.as_ref().ok_or(EIO)?.clone(),
+                Phase::Complete(Err(error)) => return Err(error),
+                Phase::Lost => return Err(EIO),
+                _ => return Err(EALREADY),
+            }
+        };
+        // Authority loss is terminal even while a downstream reuse fence is pending.
+        self.destination.scope().with_current(|_| Ok(()))?;
+        let observation = active.observation();
+        renderer.with_observed_control(&observation, |_| Ok(()))?;
+        let source_ready = match image.content().status() {
+            FenceStatus::Pending => false,
+            FenceStatus::Complete(result) => {
+                result?;
+                true
+            }
+        };
+        let destination_ready = usage.ready()?;
+        if !source_ready || !destination_ready {
+            return Ok(None);
+        }
+        let report = Arc::pin_init(
+            pin_init!(Report { completion <- kernel::new_mutex!(None) }),
+            GFP_KERNEL,
+        )?;
+        let retirement = Retirement::new(Hold {
+            request: self.clone(),
+            image: image.clone(),
+            renderer: renderer.clone(),
+            observation: observation.clone(),
+            report: report.clone(),
+        })?;
+        self.destination
+            .scope()
+            .with_image(renderer, &observation, image, |current| {
+                if current.uses_reservation(usage.image().buffer().reservation())? {
+                    return Err(EINVAL);
+                }
+                let mut state = self.state.lock();
+                if !matches!(state.phase, Phase::Queued) {
+                    return Err(ECANCELED);
+                }
+                state.content = image.content().content_serial();
+                state.phase = Phase::Claimed;
+                Ok(())
+            })?;
+        Ok(Some(Claim {
+            request: self.clone(),
+            report,
+            retirement: Some(retirement),
+        }))
+    }
+
+    /// Called only after access ended. Returned storage owners are dropped outside policy locks.
+    fn complete(&self, result: Result) -> Option<Arc<Use>> {
+        let mut state = self.state.lock();
+        if !matches!(state.phase, Phase::Submitted) {
+            return None;
+        }
+        if let Some(usage) = &state.usage {
+            usage.retire();
+        }
+        state.phase = Phase::Complete(if state.cancelled {
+            Err(ECANCELED)
+        } else {
+            result
+        });
+        state.usage.take()
+    }
+}
+
+#[pin_data]
+struct Report {
+    #[pin]
+    completion: Mutex<Option<Completion>>,
+}
+
+struct Hold {
+    request: Arc<Request>,
+    image: Arc<Rendered>,
+    renderer: Arc<Candidate>,
+    observation: Observation,
+    report: Arc<Report>,
+}
+
+// SAFETY: The local module owns the callback and all CastKMS destructors it invokes.
+#[vtable]
+unsafe impl Retire for Hold {
+    fn retire(self) {
+        let completion = self.report.completion.lock().take();
+        let Some(completion) = completion else {
+            return;
+        };
+        let native = match completion {
+            Completion::Cpu => Ok(()),
+            Completion::WithoutAccess => Err(ECANCELED),
+            Completion::Submitted(fence) => match fence.status() {
+                FenceStatus::Complete(result) => result,
+                FenceStatus::Pending => Err(EIO),
+            },
+        };
+        let scoped = self.request.destination.scope().with_image(
+            &self.renderer,
+            &self.observation,
+            &self.image,
+            |_| Ok(self.request.complete(native)),
+        );
+        let retired = match scoped {
+            Ok(retired) => retired,
+            Err(error) => self.request.complete(Err(error)),
+        };
+        drop(retired);
+        // Dropping the retained image releases E independently of result dequeue or D reuse.
+    }
+}
+
+/// Preauthorized bounded output stage. Dropping it without a report is terminal worker loss.
+#[must_use = "output claims must report native completion or confirm no access"]
+pub(crate) struct Claim {
+    request: Arc<Request>,
+    report: Arc<Report>,
+    retirement: Option<Retirement<Hold>>,
+}
+
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+impl Claim {
+    /// Report only materialized native work covering E reads and D writes. CPU completion
+    /// includes cache maintenance. No-access promises that neither allocation was accessed.
+    pub(crate) fn release(mut self, completion: Completion) {
+        let fence = match &completion {
+            Completion::Submitted(fence) => Some(fence.clone()),
+            _ => None,
+        };
+        *self.report.completion.lock() = Some(completion);
+        self.request.state.lock().phase = Phase::Submitted;
+        if let Some(retirement) = self.retirement.take() {
+            match fence {
+                Some(fence) => retirement.submit(&fence),
+                None => drop(retirement),
+            }
+        }
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        if let Some(retirement) = self.retirement.take() {
+            self.request.state.lock().phase = Phase::Lost;
+            // Unknown access is not completion. Retain E, D, accounting and callback code;
+            // native-driver recovery or a future explicit recovery protocol must resolve it.
+            core::mem::forget(retirement);
+        }
+    }
+}

@@ -99,6 +99,10 @@ impl Delegated {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Image {
+    pub(super) fn scope(&self) -> &Delegated {
+        &self.scope
+    }
+
     pub(crate) fn layout(&self) -> Layout {
         self.layout
     }
@@ -161,6 +165,18 @@ pub(crate) struct Use {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Use {
+    pub(super) fn image(&self) -> &Image {
+        &self.image
+    }
+
+    /// End provider exclusion after native access ends, before publishing a terminal result.
+    /// Retained metadata references must not clear a newer reservation when later dropped.
+    pub(super) fn retire(&self) {
+        if self.active.swap(false, Ordering::Relaxed) {
+            self.image.state.lock().busy = false;
+        }
+    }
+
     /// Typed readiness: a completed EAGAIN is an error, never a pending dependency.
     /// This observation is not native exclusion. The recipient and trusted renderer must
     /// serialize subsequent external use until the output stage has released its write.
@@ -180,8 +196,6 @@ impl Use {
 
 impl Drop for Use {
     fn drop(&mut self) {
-        if self.active.load(Ordering::Relaxed) {
-            self.image.state.lock().busy = false;
-        }
+        self.retire();
     }
 }

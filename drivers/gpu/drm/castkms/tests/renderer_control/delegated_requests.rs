@@ -1,0 +1,422 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+use super::{
+    delegated_authority::grant,
+    private_images::{activate, buffer},
+    *,
+};
+use crate::{
+    capture::provider::{
+        delegated_destination::Image as Destination,
+        delegated_request::{Request, Status},
+        Grantor,
+    },
+    renderer::{job::Completion, private_image::Image, render_job::Rendered},
+    renderer_startup::Active,
+};
+use kernel::{
+    dma_fence::testing::ManualFence,
+    drm::{fourcc, gem::ExportAccess},
+    time::{delay::fsleep, Delta, Instant, Monotonic},
+};
+
+struct Fixture {
+    owner: Owner,
+    renderer: Arc<Candidate>,
+    active: Active,
+    execution: crate::execution::Description,
+    grantor: Grantor,
+    private: Arc<Image>,
+    rendered: Arc<Rendered>,
+    destination: Arc<Destination>,
+}
+
+fn with_output(f: impl FnOnce(Fixture) -> Result) -> Result {
+    with_display(|device, crtc, connector, _, file| {
+        let owner = owner(&file, crtc, connector)?;
+        let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+        let (active, execution) = activate(&renderer, device, crtc)?;
+        let grantor = grant(&file, crtc, connector)?;
+        let private = renderer.register_private_image(
+            &active,
+            [640, 480],
+            &[buffer(device, ExportAccess::ReadWrite)?],
+        )?;
+        let rendered = Arc::new(
+            renderer
+                .claim_render(&active, execution, None, private.prepare(1)?)?
+                .release(Completion::Cpu)
+                .ok_or(EINVAL)?,
+            GFP_KERNEL,
+        )?;
+        let destination = grantor
+            .capture()
+            .describe_delegated()?
+            .register_destination(
+                &buffer(device, ExportAccess::ReadWrite)?,
+                fourcc::XRGB8888,
+                0,
+                2560,
+                0,
+            )?;
+        f(Fixture {
+            owner,
+            renderer,
+            active,
+            execution,
+            grantor,
+            private,
+            rendered,
+            destination,
+        })
+    })
+}
+
+fn wait(request: &Request, expected: Status) -> Result {
+    let start = Instant::<Monotonic>::now();
+    while request.status() == Status::Pending {
+        if start.elapsed() > Delta::from_secs(2) {
+            return Err(ETIMEDOUT);
+        }
+        fsleep(Delta::from_millis(1));
+    }
+    check(request.status() == expected)
+}
+
+fn private_available(image: &Arc<Image>, use_id: u64) -> Result {
+    let start = Instant::<Monotonic>::now();
+    loop {
+        match image.prepare(use_id) {
+            Ok(prepared) => {
+                drop(prepared);
+                return Ok(());
+            }
+            Err(EBUSY) if start.elapsed() < Delta::from_secs(2) => fsleep(Delta::from_millis(1)),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+#[kunit_tests(rust_castkms_delegated_requests)]
+mod cases {
+    use super::*;
+
+    #[test]
+    fn pending_destination_does_not_retain_private_storage() -> Result {
+        with_output(|fixture| {
+            let mut reuse = ManualFence::new()?;
+            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            check(
+                request
+                    .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                    .is_none(),
+            )?;
+            drop(fixture.rendered);
+            private_available(&fixture.private, 2)?;
+            check(request.status() == Status::Pending)?;
+            reuse.complete(Ok(()))?;
+            request.cancel();
+            check(request.status() == Status::Complete(Err(ECANCELED)))
+        })
+    }
+
+    #[test]
+    fn native_output_keeps_private_storage_until_access_ends() -> Result {
+        for result in [Ok(()), Err(EIO), Err(EAGAIN)] {
+            with_output(|fixture| {
+                let request = fixture.destination.request(1, None)?;
+                let serial = fixture.rendered.content().content_serial();
+                let claim = request
+                    .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                    .ok_or(EINVAL)?;
+                let mut native = ManualFence::new()?;
+                claim.release(Completion::Submitted(native.fence()));
+                drop(fixture.rendered);
+                check(request.status() == Status::Pending)?;
+                check(fixture.private.prepare(2).err() == Some(EBUSY))?;
+                check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+                native.complete(result)?;
+                wait(&request, Status::Complete(result))?;
+                private_available(&fixture.private, 2)?;
+                check(request.content_serial() == if result.is_ok() { serial } else { None })?;
+                drop(fixture.destination.reserve(2, None)?);
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cancellation_after_claim_waits_for_native_access() -> Result {
+        with_output(|fixture| {
+            let request = fixture.destination.request(1, None)?;
+            let claim = request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                .ok_or(EINVAL)?;
+            request.cancel();
+            let mut native = ManualFence::new()?;
+            claim.release(Completion::Submitted(native.fence()));
+            drop(fixture.rendered);
+            check(request.status() == Status::Pending)?;
+            check(fixture.private.prepare(2).err() == Some(EBUSY))?;
+            native.complete(Ok(()))?;
+            wait(&request, Status::Complete(Err(ECANCELED)))?;
+            private_available(&fixture.private, 2)
+        })
+    }
+
+    #[test]
+    fn revoked_claim_may_retire_but_cannot_publish_a_new_frame() -> Result {
+        with_output(|fixture| {
+            let request = fixture.destination.request(1, None)?;
+            let claim = request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                .ok_or(EINVAL)?;
+            drop(fixture.grantor);
+            let mut native = ManualFence::new()?;
+            claim.release(Completion::Submitted(native.fence()));
+            drop(fixture.rendered);
+            check(request.status() == Status::Pending)?;
+            native.complete(Ok(()))?;
+            wait(&request, Status::Complete(Err(EKEYREVOKED)))?;
+            check(request.content_serial().is_none())?;
+            private_available(&fixture.private, 2)
+        })
+    }
+
+    #[test]
+    fn dropping_request_handle_does_not_release_native_ownership() -> Result {
+        with_output(|fixture| {
+            let request = fixture.destination.request(1, None)?;
+            let claim = request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                .ok_or(EINVAL)?;
+            let mut native = ManualFence::new()?;
+            claim.release(Completion::Submitted(native.fence()));
+            drop(request);
+            drop(fixture.rendered);
+            check(fixture.private.prepare(2).err() == Some(EBUSY))?;
+            check(fixture.destination.reserve(2, None).err() == Some(EBUSY))?;
+            native.complete(Ok(()))?;
+            private_available(&fixture.private, 2)?;
+            drop(fixture.destination.reserve(2, None)?);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn losing_active_ownership_does_not_invalidate_native_cleanup() -> Result {
+        with_output(|fixture| {
+            let request = fixture.destination.request(1, None)?;
+            let claim = request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                .ok_or(EINVAL)?;
+            let mut native = ManualFence::new()?;
+            claim.release(Completion::Submitted(native.fence()));
+            drop(fixture.active);
+            drop(fixture.rendered);
+            check(request.status() == Status::Pending)?;
+            native.complete(Ok(()))?;
+            wait(&request, Status::Complete(Err(EIO)))?;
+            private_available(&fixture.private, 2)
+        })
+    }
+
+    #[test]
+    fn revoked_renderer_is_rejected_even_while_destination_reuse_waits() -> Result {
+        with_output(|fixture| {
+            let reuse = ManualFence::new()?;
+            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            fixture.owner.revoke();
+            check(
+                request
+                    .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)
+                    .err()
+                    == Some(EKEYREVOKED),
+            )?;
+            check(request.status() == Status::Complete(Err(EKEYREVOKED)))
+        })
+    }
+
+    #[test]
+    fn queued_revocation_reconciles_without_waiting_for_destination() -> Result {
+        with_output(|fixture| {
+            let reuse = ManualFence::new()?;
+            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            drop(fixture.grantor);
+            check(request.status() == Status::Complete(Err(EKEYREVOKED)))
+        })
+    }
+
+    #[test]
+    fn reuse_error_is_terminal_instead_of_retried_as_pending() -> Result {
+        with_output(|fixture| {
+            let mut reuse = ManualFence::new()?;
+            let request = fixture.destination.request(1, Some(reuse.fence()))?;
+            reuse.complete(Err(EAGAIN))?;
+            check(
+                request
+                    .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)
+                    .err()
+                    == Some(EAGAIN),
+            )?;
+            check(request.status() == Status::Complete(Err(EAGAIN)))?;
+            drop(fixture.destination.reserve(2, None)?);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn cpu_and_no_access_reports_release_both_stages_synchronously() -> Result {
+        for access in [true, false] {
+            with_output(|fixture| {
+                let request = fixture.destination.request(1, None)?;
+                let claim = request
+                    .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                    .ok_or(EINVAL)?;
+                claim.release(if access {
+                    Completion::Cpu
+                } else {
+                    Completion::WithoutAccess
+                });
+                drop(fixture.rendered);
+                check(
+                    request.status()
+                        == Status::Complete(if access { Ok(()) } else { Err(ECANCELED) }),
+                )?;
+                private_available(&fixture.private, 2)?;
+                drop(fixture.destination.reserve(2, None)?);
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn request_has_only_one_claim_and_one_terminal_result() -> Result {
+        with_output(|fixture| {
+            let request = fixture.destination.request(1, None)?;
+            let claim = request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)?
+                .ok_or(EINVAL)?;
+            let duplicate = request
+                .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)
+                .err();
+            // Resolve the real claim even if the duplicate check fails.
+            claim.release(Completion::Cpu);
+            check(duplicate == Some(EALREADY))?;
+            request.cancel();
+            check(request.status() == Status::Complete(Ok(())))?;
+            check(
+                request
+                    .try_claim(&fixture.renderer, &fixture.active, &fixture.rendered)
+                    .err()
+                    == Some(EALREADY),
+            )
+        })
+    }
+
+    #[test]
+    fn failed_private_production_never_becomes_an_output_claim() -> Result {
+        with_output(|fixture| {
+            drop(fixture.rendered);
+            let mut native = ManualFence::new()?;
+            let rendered = Arc::new(
+                fixture
+                    .renderer
+                    .claim_render(
+                        &fixture.active,
+                        fixture.execution,
+                        None,
+                        fixture.private.prepare(2)?,
+                    )?
+                    .release(Completion::Submitted(native.fence()))
+                    .ok_or(EINVAL)?,
+                GFP_KERNEL,
+            )?;
+            let request = fixture.destination.request(1, None)?;
+            check(
+                request
+                    .try_claim(&fixture.renderer, &fixture.active, &rendered)?
+                    .is_none(),
+            )?;
+            native.complete(Err(EAGAIN))?;
+            check(
+                request
+                    .try_claim(&fixture.renderer, &fixture.active, &rendered)
+                    .err()
+                    == Some(EAGAIN),
+            )?;
+            check(request.status() == Status::Complete(Err(EAGAIN)))?;
+            drop(rendered);
+            private_available(&fixture.private, 3)
+        })
+    }
+
+    #[test]
+    fn animation_continues_while_a_separate_output_write_is_pending() -> Result {
+        with_display(|device, crtc, connector, scanout, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let (active, execution) = activate(&renderer, device, crtc)?;
+            let grantor = grant(&file, crtc, connector)?;
+            let private = renderer.register_private_image(
+                &active,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            let independent = renderer.register_private_image(
+                &active,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            let rendered = Arc::new(
+                renderer
+                    .claim_render(&active, execution, None, private.prepare(1)?)?
+                    .release(Completion::Cpu)
+                    .ok_or(EINVAL)?,
+                GFP_KERNEL,
+            )?;
+            let destination = grantor
+                .capture()
+                .describe_delegated()?
+                .register_destination(
+                    &buffer(device, ExportAccess::ReadWrite)?,
+                    fourcc::XRGB8888,
+                    0,
+                    2560,
+                    0,
+                )?;
+            let request = destination.request(1, None)?;
+            let claim = request
+                .try_claim(&renderer, &active, &rendered)?
+                .ok_or(EINVAL)?;
+            let mut native = ManualFence::new()?;
+            claim.release(Completion::Submitted(native.fence()));
+            let original = rendered.content().content_serial();
+            drop(rendered);
+            let mut previous = original;
+            for use_id in 1..=8 {
+                device.atomic_update(|transaction| {
+                    transaction.set_crtc_config(crtc, Some(scanout))
+                })?;
+                let job = renderer.claim_render(
+                    &active,
+                    execution,
+                    None,
+                    independent.prepare(use_id)?,
+                )?;
+                let frame = job.release(Completion::Cpu).ok_or(EINVAL)?;
+                check(frame.content().content_serial() != previous)?;
+                previous = frame.content().content_serial();
+                drop(frame);
+                check(request.status() == Status::Pending)?;
+                check(private.prepare(2).err() == Some(EBUSY))?;
+            }
+            native.complete(Ok(()))?;
+            wait(&request, Status::Complete(Ok(())))?;
+            check(request.content_serial() == original)?;
+            private_available(&private, 2)
+        })
+    }
+}
