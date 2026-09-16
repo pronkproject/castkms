@@ -41,6 +41,18 @@
 #define DRM_CASTKMS_CAPABILITY_IMPORTED (1U << 1)
 #define DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER (1U << 2)
 
+/* Scene values and the corresponding capability-mask bits share one namespace. */
+#define DRM_CASTKMS_YUV_ENCODING_BT601 0
+#define DRM_CASTKMS_YUV_ENCODING_BT709 1
+#define DRM_CASTKMS_YUV_ENCODING_BT2020 2 /* Nonconstant luminance. */
+#define DRM_CASTKMS_YUV_RANGE_LIMITED 0
+#define DRM_CASTKMS_YUV_RANGE_FULL 1
+#define DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT601 (1U << DRM_CASTKMS_YUV_ENCODING_BT601)
+#define DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT709 (1U << DRM_CASTKMS_YUV_ENCODING_BT709)
+#define DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT2020 (1U << DRM_CASTKMS_YUV_ENCODING_BT2020)
+#define DRM_CASTKMS_CAPABILITY_YUV_RANGE_LIMITED (1U << DRM_CASTKMS_YUV_RANGE_LIMITED)
+#define DRM_CASTKMS_CAPABILITY_YUV_RANGE_FULL (1U << DRM_CASTKMS_YUV_RANGE_FULL)
+
 /*
  * Native-endian immutable whole-scene contract. Exactly format_count records
  * follow this 128-byte header. Unknown flags and reserved fields must be zero.
@@ -556,8 +568,8 @@ struct drm_castkms_renderer_layer {
 	__u32 source[4];
 	__s32 position[2];
 	__u32 destination[2];
-	__u32 color_encoding; /* 0 BT.601, 1 BT.709, 2 BT.2020 nonconstant. */
-	__u32 color_range; /* 0 limited, 1 full. */
+	__u32 color_encoding; /* DRM_CASTKMS_YUV_ENCODING_* value, not a mask. */
+	__u32 color_range; /* DRM_CASTKMS_YUV_RANGE_* value, not a mask. */
 	__u32 plane_count;
 	__u32 color_count;
 	struct drm_castkms_renderer_source_plane planes[4];
