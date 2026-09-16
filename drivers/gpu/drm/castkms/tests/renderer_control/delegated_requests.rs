@@ -114,6 +114,19 @@ mod cases {
     use super::*;
 
     #[test]
+    fn rejected_request_admission_does_not_consume_a_destination_use() -> Result {
+        with_output(|fixture| {
+            check(fixture.destination.request(0, None).err() == Some(EINVAL))?;
+            let first = fixture.destination.request(1, None)?;
+            check(fixture.destination.request(2, None).err() == Some(EBUSY))?;
+            first.cancel();
+            let second = fixture.destination.request(2, None)?;
+            second.cancel();
+            check(second.status() == Status::Complete(Err(ECANCELED)))
+        })
+    }
+
+    #[test]
     fn destination_becoming_a_source_is_rejected_at_output_claim() -> Result {
         with_display(|device, crtc, connector, scanout, file| {
             let fixture = output_fixture(device, crtc, connector, &file)?;
