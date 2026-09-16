@@ -28,6 +28,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_file.h>
+#include <drm/drm_constraints_device.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_mode_config.h>
@@ -785,6 +786,7 @@ void drm_mode_config_cleanup(struct drm_device *dev)
 	idr_destroy(&dev->mode_config.object_idr);
 	drm_modeset_lock_fini(&dev->mode_config.connection_mutex);
 	drm_atomic_prepare_display_fini(dev);
+	drm_constraints_device_fini(dev);
 }
 EXPORT_SYMBOL(drm_mode_config_cleanup);
 
