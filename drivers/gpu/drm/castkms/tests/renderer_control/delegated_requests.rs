@@ -102,6 +102,79 @@ mod cases {
     use super::*;
 
     #[test]
+    fn independent_recipients_retire_shared_private_storage_separately() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let renderer = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let (active, execution) = activate(&renderer, device, crtc)?;
+            let first = grant(&file, crtc, connector)?;
+            let second = grant(&file, crtc, connector)?;
+            let private = renderer.register_private_image(
+                &active,
+                [640, 480],
+                &[buffer(device, ExportAccess::ReadWrite)?],
+            )?;
+            let rendered = Arc::new(
+                renderer
+                    .claim_render(&active, execution, None, private.prepare(1)?)?
+                    .release(Completion::Cpu)
+                    .ok_or(EINVAL)?,
+                GFP_KERNEL,
+            )?;
+            let serial = rendered.content().content_serial();
+            let mut destinations = KVec::new();
+            for grantor in [&first, &second] {
+                destinations.push(
+                    grantor
+                        .capture()
+                        .describe_delegated()?
+                        .register_destination(
+                            &buffer(device, ExportAccess::ReadWrite)?,
+                            fourcc::XRGB8888,
+                            0,
+                            2560,
+                            0,
+                        )?,
+                    GFP_KERNEL,
+                )?;
+            }
+            let first_request = destinations[0].request(1, None)?;
+            let second_request = destinations[1].request(1, None)?;
+            let mut first_native = ManualFence::new()?;
+            let mut second_native = ManualFence::new()?;
+            first_request
+                .try_claim(&renderer, &active, &rendered)?
+                .ok_or(EINVAL)?
+                .release(Completion::Submitted(first_native.fence()));
+            second_request
+                .try_claim(&renderer, &active, &rendered)?
+                .ok_or(EINVAL)?
+                .release(Completion::Submitted(second_native.fence()));
+            drop(rendered);
+            drop(first);
+            first_native.complete(Ok(()))?;
+            wait(&first_request, Status::Complete(Err(EKEYREVOKED)))?;
+            check(first_request.content_serial().is_none())?;
+            check(second_request.status() == Status::Pending)?;
+            check(private.prepare(2).err() == Some(EBUSY))?;
+            check(destinations[1].reserve(2, None).err() == Some(EBUSY))?;
+
+            second_native.complete(Ok(()))?;
+            wait(&second_request, Status::Complete(Ok(())))?;
+            check(second_request.content_serial() == serial)?;
+            private_available(&private, 2)?;
+            let next = destinations[1].request(2, None)?;
+            // Old terminal handles must not release the next use's exclusion.
+            drop(first_request);
+            drop(second_request);
+            check(destinations[1].reserve(3, None).err() == Some(EBUSY))?;
+            next.cancel();
+            drop(destinations[1].reserve(3, None)?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn pending_destination_does_not_retain_private_storage() -> Result {
         with_output(|fixture| {
             let mut reuse = ManualFence::new()?;
