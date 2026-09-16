@@ -121,6 +121,26 @@ impl Fence {
         }
     }
 
+    /// Native signaling time, independent of whether completion succeeded.
+    ///
+    /// Pending fences return `None` without waiting for their work. For a signaled fence,
+    /// the native helper synchronizes with timestamp publication. Later observations return
+    /// the same timestamp, not the query time. This value alone does not establish validity
+    /// of pixels or other dependencies. Invalid negative native timestamps return `EINVAL`.
+    pub fn signal_time(&self) -> Result<Option<crate::time::Instant<crate::time::Monotonic>>> {
+        if self.status() == Status::Pending {
+            return Ok(None);
+        }
+        // SAFETY: Status inspection observed the terminal signal bit on this retained fence.
+        // The native helper waits only for publication of its immutable signal timestamp.
+        let timestamp = unsafe { bindings::dma_fence_timestamp(self.as_raw()) };
+        if timestamp < 0 {
+            return Err(EINVAL);
+        }
+        // SAFETY: Native ktime_t is signed and the nonnegative Instant range was checked.
+        Ok(Some(unsafe { crate::time::Instant::from_ktime(timestamp) }))
+    }
+
     /// Retain the same completion record independently of its current owner.
     pub fn to_owned_ref(&self) -> ARef<Self> {
         self.into()

@@ -109,6 +109,39 @@ mod cases {
     use super::*;
 
     #[test]
+    fn signal_time_is_native_completion_time_not_query_time() -> Result {
+        use crate::time::{delay::fsleep, Delta, Instant, Monotonic};
+
+        for result in [Ok(()), Err(EIO)] {
+            let mut owner = ManualFence::new()?;
+            let fence = owner.fence();
+            assert!(fence.signal_time()?.is_none());
+            let before = Instant::<Monotonic>::now();
+            owner.complete(result)?;
+            let after = Instant::<Monotonic>::now();
+            let signaled = fence.signal_time()?.ok_or(EINVAL)?;
+            assert!(signaled.as_nanos() >= before.as_nanos());
+            assert!(signaled.as_nanos() <= after.as_nanos());
+            assert_eq!(fence.status(), Status::Complete(result));
+            fsleep(Delta::from_millis(1));
+            assert_eq!(fence.signal_time()?.map(|time| time.as_nanos()), Some(signaled.as_nanos()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn negative_native_signal_time_is_not_a_rust_instant() -> Result {
+        let mut owner = ManualFence::new()?;
+        // SAFETY: The test is the only signal owner. Native timestamps accept signed ktime;
+        // the Rust observer must reject the value outside its nonnegative Instant invariant.
+        unsafe { bindings::dma_fence_signal_timestamp(owner.fence.as_raw(), -1) };
+        owner.completed = true;
+        assert_eq!(owner.fence.status(), Status::Complete(Ok(())));
+        assert!(matches!(owner.fence.signal_time(), Err(EINVAL)));
+        Ok(())
+    }
+
+    #[test]
     fn empty_merge_needs_no_wait() -> Result {
         assert!(Fence::merge_completion(&[])?.is_none());
         Ok(())

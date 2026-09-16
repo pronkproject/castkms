@@ -11,3 +11,8 @@ __rust_helper void rust_helper_dma_fence_put(struct dma_fence *fence)
 {
 	dma_fence_put(fence);
 }
+
+__rust_helper ktime_t rust_helper_dma_fence_timestamp(struct dma_fence *fence)
+{
+	return dma_fence_timestamp(fence);
+}
