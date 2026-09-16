@@ -4,8 +4,9 @@
 
 use super::{
     permission::Access,
-    private_image::Image,
+    private_image::{Image, Prepared},
     probe::{Probe, Source as ProbeSource},
+    render_job::RenderJob,
 };
 use crate::{
     display_control,
@@ -417,6 +418,37 @@ impl Candidate {
         )?;
         check()?;
         Ok(image)
+    }
+
+    /// Bind sources only after independent private storage and cleanup have been reserved.
+    /// Failed admission drops the preparation outside the policy locks, without source access.
+    pub(crate) fn claim_render(
+        &self,
+        active: &renderer_startup::Active,
+        execution: Description,
+        previous_content_serial: Option<u64>,
+        destination: Prepared,
+    ) -> Result<RenderJob> {
+        let source = self.access.with_current(|current| {
+            active.with_candidate(&self.resources, || {
+                if self.access.display().execution.describe() != execution
+                    || execution.profile != Profile::GpuV1
+                {
+                    return Err(ESTALE);
+                }
+                destination.image().check_owner(&self.proposal_owner)?;
+                if destination.image().dimensions() != current.configuration().dimensions() {
+                    return Err(ESTALE);
+                }
+                for buffer in destination.image().buffers() {
+                    if current.uses_reservation(buffer.reservation())? {
+                        return Err(EINVAL);
+                    }
+                }
+                SourceJob::claim(&current, previous_content_serial, execution)
+            })
+        })?;
+        Ok(RenderJob::new(source, destination))
     }
 
     /// Check released source-stage evidence under live renderer authority.
