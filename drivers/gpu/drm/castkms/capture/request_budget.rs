@@ -11,7 +11,7 @@ use kernel::{
 };
 
 pub(crate) const CAPACITY_LIMIT: u32 = 8;
-const QUEUE_LIMIT: usize = 16;
+pub(crate) const QUEUE_LIMIT: usize = 16;
 
 #[pin_data]
 pub(crate) struct Budget {
