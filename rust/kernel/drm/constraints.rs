@@ -7,9 +7,16 @@
 //! atomic checks remain responsible for complete scenes and resource combinations.
 
 mod description;
+mod entry;
 
 pub use description::{
     Description,
     Format,
     Size, //
+};
+
+pub use entry::{
+    Backend,
+    Domain,
+    Entry, //
 };
