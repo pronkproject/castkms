@@ -6,7 +6,7 @@ Integration boundary
 ====================
 
 The Rust CastKMS renderer protocol in ``include/uapi/drm/castkms_drm.h`` is
-ready for coordinated Pronk/compositor integration at renderer version 7,
+ready for coordinated Pronk/compositor integration at renderer version 8,
 capability encoding version 2 and complete-scene encoding version 1. These
 are experimental driver interfaces, not a claim of upstream ABI acceptance.
 Use the header from the same revision; reject unsupported versions instead

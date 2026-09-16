@@ -17,6 +17,7 @@ struct Register {
     result: u64,
     profile_size: u32,
     flags: u32,
+    reserved: [u64; 2],
 }
 // SAFETY: Integer fields accept every bit pattern.
 unsafe impl FromBytes for Register {}
@@ -50,6 +51,7 @@ pub(super) fn register(session: &Session, arg: usize) -> Result {
         || request.profile == 0
         || request.result == 0
         || request.flags != 0
+        || request.reserved != [0; 2]
         || request.profile_size < 128
     {
         return Err(EINVAL);

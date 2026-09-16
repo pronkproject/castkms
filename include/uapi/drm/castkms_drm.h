@@ -8,7 +8,7 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 2
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 7
+#define DRM_CASTKMS_RENDERER_VERSION 8
 
 /*
  * Request-only unsigned CRTC property. Zero means an ordinary update. A nonzero
@@ -98,7 +98,8 @@ struct drm_castkms_capability_format {
 /*
  * Register one immutable target for an existing BEGIN_TAKEOVER candidate.
  * profile points to exactly profile_size bytes of capability encoding.
- * result points to drm_castkms_renderer_profile_result; flags must be zero.
+ * result points to drm_castkms_renderer_profile_result; flags and reserved
+ * must be zero. Renderer version 8 adds explicit reserved request space.
  * HOST requires no userspace probe; a RENDERER target requires normal probe
  * completion. Registration does not change KMS acceptance. Include transition
  * in CASTKMS_TRANSITION on an ordinary compatible atomic update, then invoke
@@ -112,6 +113,7 @@ struct drm_castkms_renderer_register_profile {
 	__u64 result;
 	__u32 profile_size;
 	__u32 flags;
+	__u64 reserved[2];
 };
 
 struct drm_castkms_renderer_profile_result {
