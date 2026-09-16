@@ -200,7 +200,7 @@ The execution blob describes coarse renderer identity, not scene admission.
 Clients must query the active capability contract rather than branch on
 HOST_V1 versus GPU_V1 to decide whether a scene is supported. Plane
 properties describe a static baseline, not the complete negotiated modifier
-set. Renderer version 8 exposes immutable active and pending profiles,
+set. The renderer protocol exposes immutable active and pending profiles,
 tagged transition scenes and negotiated HOST handback; see
 :doc:`castkms-renderer` for the protocol and its remaining limits.
 GPU_V1 alone does not promise a complete GPU capture path or
@@ -286,10 +286,6 @@ the advertised maximum of 64 KiB for the result. Insufficient capacity returns
 ``ENOSPC``; failure does not consume the scene or install any descriptors, even
 if userspace memory was partially written. Blank and unchanged scenes return
 ``ENODATA``.
-
-The former single-framebuffer dequeue command is removed. Its command slot
-is left unassigned and returns ``ENOTTY``; there is no subset encoding or
-fallback protocol to select when a scene contains additional layers.
 
 The version-one result contains a header followed by back-to-front layer
 records and output color records. Each layer includes its role, stacking
@@ -538,8 +534,8 @@ An observer may check without waiting or wait interruptibly. Worker shutdown
 wakes every observer with ``ENODEV``, and interruption leaves observation
 available for a retry. Waiting is consumer work outside display, reservation
 and worker lifecycle locks, with no source claim. Waking on shutdown does not
-certify that the owner's separate source-work drain has finished. The older
-untracked outcome interface remains a single consumable result for internal
+certify that the owner's separate source-work drain has finished. An
+untracked outcome is a single consumable result for internal
 inspection; it is not an independent completion for each queued request.
 
 Dropping a request observer or a shared handle does not stop execution.
