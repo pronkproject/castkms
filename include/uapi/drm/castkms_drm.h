@@ -778,14 +778,21 @@ enum {
  * versions or profiles must not be interpreted as permission to import buffers.
  * Reading the description reserves neither a generation nor an atomic commit.
  *
- * HOST_V1 requires native CastKMS shmem, linear XRGB8888, and one opaque primary
- * covering the whole output at 1:1 sampling. Width and height are bounded by
- * 1920 and 1080. Source allocations are at most 16 MiB; offsets and strides are
- * aligned to four bytes and the allocation includes every complete stride.
- * No crop, scale, rotation, reflection, hardware cursor, overlay or nonidentity
- * color operation is supported. Clients include the cursor in primary rendering.
+ * HOST_V1 identifies the built-in CPU compositor. Its current implementation
+ * accepts CPU-supported linear RGB, monochrome and YUV through 8192x8192,
+ * with at most 512 MiB per source allocation and checked per-plane row bounds.
+ * It supports positioned, cropped and scaled layers, cursor/overlay planes,
+ * and the advertised output and plane color operations. Imports additionally
+ * require usable exporter CPU-access and mapping support.
  * Disabled outputs and blank active outputs require no source allocation.
- * Successful PRIME import does not establish eligibility for that profile.
+ * Successful PRIME import alone does not establish HOST usability. Public
+ * capture destinations have separate format and allocation limits.
+ *
+ * This experimental profile name has survived implementation expansion; the
+ * blob is not a whole-scene capability table. Use renderer QUERY_CAPABILITIES
+ * for active/pending contracts; plane properties are only a static baseline.
+ * Do not assume the original single-plane limits or infer negotiated modifier
+ * support from this execution blob.
  *
  * GPU_V1 identifies one activated userspace renderer. New HOST source reads are
  * rejected while that renderer owns execution; work admitted before activation
