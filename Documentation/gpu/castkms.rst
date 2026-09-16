@@ -4,10 +4,12 @@ CastKMS virtual display
 ======================
 
 CastKMS is being developed as a virtual display whose images will eventually
-be composed in userspace. The Rust driver provides a display device and an
-internal CPU capture path for kernel callers and tests. Public image capture
-is not enabled. It is not a replacement for a working C CastKMS casting
-installation.
+be composed in userspace. The Rust driver provides a display device and a
+CPU capture path for kernel callers and authorized userspace clients. Public
+HOST image capture is implemented through generic anonymous capture files.
+Renderer activation and source access are implemented, but delegated GPU
+final-image delivery is not complete. It is not a drop-in replacement for a
+working C CastKMS casting installation.
 
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create eight
 virtual outputs by default. The ``max_outputs`` parameter accepts one through
@@ -32,9 +34,9 @@ clock uses DRM's immediate-event fallback. The timer reads no pixels, and a
 flip event does not mean that a receiver has displayed a frame. Receiver and
 encoder frame-rate limits do not control the display clock.
 The normal device path does not schedule pixel reads on its own. An internal
-capture adapter drives composition only when a kernel caller requests a frame
-through an authorized stream. Normal DRM operations on a caller's own buffers
-are not a capture capability.
+capture adapter drives composition only when a kernel or userspace caller
+requests a frame through an authorized stream. Normal DRM operations on a
+caller's own buffers are not a capture capability.
 
 An explicitly authorized service can replace the development monitor and
 publish attachment and EDID state through a narrow capability file. There is
@@ -386,10 +388,10 @@ success result. Test-only validation does not run framebuffer preparation.
 
 The internal CPU read path takes a claim against the published generation and
 rechecks that it is still current before reading. That claim establishes a
-read lifetime, not permission to capture. No userspace interface exposes those
-pixels. Capture delivery must establish authorization independently. A later
-reservation scan cannot recover producer error history discarded before
-collection.
+read lifetime, not permission to capture. The source claim itself exposes no
+pixels to userspace; capture delivery establishes authorization independently.
+A later reservation scan cannot recover producer error history discarded
+before collection.
 
 The shared Rust reservation interface provides read-only, usage-filtered
 snapshots through GEM objects without mapping pixels. It retains individual
@@ -472,6 +474,12 @@ pool. Current and retired copies must share it; each allocation keeps its
 credit until final native release. Exhaustion rejects the optional copy
 without waiting or reserving a compositor source. The private copy interface
 does not yet export buffers or activate a userspace renderer.
+
+These scanout and private-storage bounds are not public capture destination
+limits. The current HOST destination path accepts single-plane linear XRGB8888
+with at most 16 MiB per registered allocation and 16 registrations per client.
+An output can therefore be valid for scanout but too large for public HOST
+delivery. Larger capture destinations require separate implementation work.
 
 ``renderer_startup.rs`` owns one candidate reservation and that snapshot
 budget for each output. Canceling a candidate frees the reservation, not the
