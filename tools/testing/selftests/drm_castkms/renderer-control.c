@@ -216,7 +216,7 @@ static struct drm_castkms_renderer_capabilities query_capabilities(int fd)
 	CHECK(result.active_offset == sizeof(result));
 	CHECK(result.active_size >= sizeof(struct drm_castkms_capability_profile));
 	CHECK(result.active_offset + result.active_size <= result.size);
-	if (result.flags & DRM_CASTKMS_CAPABILITY_PENDING) {
+	if (result.flags & DRM_CASTKMS_CAPABILITY_STATE_PENDING) {
 		CHECK(result.pending_offset == result.active_offset + result.active_size);
 		CHECK(result.pending_offset + result.pending_size == result.size);
 		CHECK(result.transition && result.pending_generation);
@@ -284,11 +284,11 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate,
 	} profile = {
 		.header = {
 			.version = DRM_CASTKMS_CAPABILITY_VERSION,
-			.kind = DRM_CASTKMS_CAPABILITY_RENDERER,
-			.flags = DRM_CASTKMS_CAPABILITY_CROP | DRM_CASTKMS_CAPABILITY_FRACTIONAL |
-				 DRM_CASTKMS_CAPABILITY_POSITION | DRM_CASTKMS_CAPABILITY_SCALE |
-				 DRM_CASTKMS_CAPABILITY_SRGB | DRM_CASTKMS_CAPABILITY_PLANE_MATRIX |
-				 DRM_CASTKMS_CAPABILITY_OUTPUT_MATRIX,
+			.kind = DRM_CASTKMS_CAPABILITY_KIND_RENDERER,
+			.flags = DRM_CASTKMS_CAPABILITY_PROFILE_CROP | DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL |
+				 DRM_CASTKMS_CAPABILITY_PROFILE_POSITION | DRM_CASTKMS_CAPABILITY_PROFILE_SCALE |
+				 DRM_CASTKMS_CAPABILITY_PROFILE_SRGB | DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX |
+				 DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX,
 			.format_count = 2, .max_output = { width, height },
 			.min_output = { width, height }, .min_source = { 1, 1 },
 			.max_source = { 16384, 16384 }, .min_scale = 1 << 12,
@@ -307,8 +307,8 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate,
 	for (unsigned int i = 0; i < 2; i++) {
 		profile.formats[i] = (struct drm_castkms_capability_format) {
 			.fourcc = DRM_FORMAT_XRGB8888, .plane_count = 1,
-			.flags = DRM_CASTKMS_CAPABILITY_NATIVE | DRM_CASTKMS_CAPABILITY_IMPORTED |
-				 (i ? DRM_CASTKMS_CAPABILITY_EXPLICIT_MODIFIER : 0),
+			.flags = DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE | DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED |
+				 (i ? DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER : 0),
 			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = UINT32_MAX,
 		};
 	}
@@ -328,12 +328,12 @@ static uint64_t register_linear_profile(int fd, uint64_t candidate,
 	profile.header.min_output[0] = width + 1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EINVAL);
 	profile.header.min_output[0] = width;
-	CHECK(!(query_capabilities(fd).flags & DRM_CASTKMS_CAPABILITY_PENDING));
+	CHECK(!(query_capabilities(fd).flags & DRM_CASTKMS_CAPABILITY_STATE_PENDING));
 	/* Registration visibility survives an undeliverable reply. */
 	request.result = 1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EFAULT);
 	state = query_capabilities(fd);
-	CHECK(state.flags == DRM_CASTKMS_CAPABILITY_PENDING);
+	CHECK(state.flags == DRM_CASTKMS_CAPABILITY_STATE_PENDING);
 	request.result = (uintptr_t)&result;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE, &request, EBUSY);
 	return state.transition;
@@ -752,13 +752,13 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_capabilities pending_caps =
 		query_capabilities(next_files.renderer_fd);
 	tag_transition(peer, request.crtc_id, transition, true);
-	CHECK(query_capabilities(next_files.renderer_fd).flags == DRM_CASTKMS_CAPABILITY_PENDING);
+	CHECK(query_capabilities(next_files.renderer_fd).flags == DRM_CASTKMS_CAPABILITY_STATE_PENDING);
 	commit.candidate_id = candidate.candidate_id;
 	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER,
 			   &commit, EAGAIN);
 	tag_transition(peer, request.crtc_id, transition, false);
 	CHECK(query_capabilities(next_files.renderer_fd).flags ==
-	      (DRM_CASTKMS_CAPABILITY_PENDING | DRM_CASTKMS_CAPABILITY_GATED));
+	      (DRM_CASTKMS_CAPABILITY_STATE_PENDING | DRM_CASTKMS_CAPABILITY_STATE_GATED));
 	commit_takeover(next_files.renderer_fd, candidate.candidate_id);
 	commit_takeover(next_files.renderer_fd, candidate.candidate_id);
 	struct drm_castkms_renderer_capabilities active_caps =
@@ -902,7 +902,7 @@ int main(int argc, char **argv)
 		begin_takeover(host_files.renderer_fd, next.generation);
 	CHECK(host_candidate.profile == DRM_CASTKMS_EXECUTION_GPU_V1);
 	struct drm_castkms_capability_profile host_profile = {
-		.version = DRM_CASTKMS_CAPABILITY_VERSION, .kind = DRM_CASTKMS_CAPABILITY_HOST,
+		.version = DRM_CASTKMS_CAPABILITY_VERSION, .kind = DRM_CASTKMS_CAPABILITY_KIND_HOST,
 	};
 	struct drm_castkms_renderer_profile_result host_result;
 	struct drm_castkms_renderer_register_profile host_request = {

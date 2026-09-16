@@ -75,9 +75,9 @@ pub(super) fn query(session: &Session, arg: usize) -> Result {
     let size = active_offset + active.len() + pending_size;
     let mut flags = 0;
     if snapshot.pending.is_some() {
-        flags |= uapi::DRM_CASTKMS_CAPABILITY_PENDING;
+        flags |= uapi::DRM_CASTKMS_CAPABILITY_STATE_PENDING;
         if snapshot.validation.pending.is_some_and(|(_, gated)| gated) {
-            flags |= uapi::DRM_CASTKMS_CAPABILITY_GATED;
+            flags |= uapi::DRM_CASTKMS_CAPABILITY_STATE_GATED;
         }
     }
     let description = Description {
