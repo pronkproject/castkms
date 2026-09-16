@@ -674,7 +674,28 @@ static void failed_suspend_returns_no_saved_state(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, before);
 }
 
+static int unrelated_deadlock(struct drm_atomic_commit *state, void *data)
+{
+	struct request_fixture *f = data;
+	int ret = build_request(state, data);
+
+	if (ret)
+		return ret;
+	return f->builds == 1 ? -EDEADLK : 0;
+}
+
+static void unrelated_deadlock_is_not_retried(struct kunit *test)
+{
+	struct request_fixture *f = new_request(test, true);
+
+	KUNIT_EXPECT_EQ(test, drm_atomic_commit_request(f->dev, unrelated_deadlock, f), -EDEADLK);
+	KUNIT_EXPECT_EQ(test, f->builds, 1);
+	KUNIT_EXPECT_EQ(test, f->checks, 0);
+	KUNIT_EXPECT_EQ(test, f->installations, 0);
+}
+
 static struct kunit_case cases[] = {
+	KUNIT_CASE(unrelated_deadlock_is_not_retried),
 	KUNIT_CASE(ready_request_installs_once),
 	KUNIT_CASE(ordinary_request_needs_no_accounting),
 	KUNIT_CASE(build_failure_does_not_install),
