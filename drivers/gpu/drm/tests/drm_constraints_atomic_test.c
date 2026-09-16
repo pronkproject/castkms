@@ -1033,6 +1033,83 @@ static void independent_outputs_keep_exact_bindings_during_animation(struct kuni
 	}
 }
 
+static void shutdown_disables_all_unavailable_outputs(struct kunit *test)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture(test);
+	struct atomic_fixture *outputs[] = { f, other };
+	struct drm_constraints_entry *bindings[2];
+	unsigned int checks[2], i;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	bindings[0] = f->target;
+	bindings[1] = other->initial;
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		struct atomic_fixture *output = outputs[i];
+		struct drm_atomic_commit *state = new_update(test, output, bindings[i],
+							    i ? output->linear : output->tiled);
+
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+		KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_commit), 0);
+		drm_atomic_commit_clear(state);
+		output->backends[1 - i].failed = true;
+		checks[i] = output->backends[1 - i].checks;
+		drm_constraints_list_close(drm_constraints_crtc_list(output->crtc));
+	}
+	drm_atomic_helper_shutdown(f->dev);
+	KUNIT_EXPECT_EQ(test, f->installs, 3);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		struct atomic_fixture *output = outputs[i];
+		struct drm_constraints_entry *selected;
+
+		KUNIT_EXPECT_FALSE(test, output->crtc->state->enable);
+		KUNIT_EXPECT_FALSE(test, output->crtc->state->active);
+		KUNIT_EXPECT_EQ(test, output->crtc->state->plane_mask, 0);
+		KUNIT_EXPECT_PTR_EQ(test, output->plane->state->fb, NULL);
+		KUNIT_EXPECT_PTR_EQ(test, output->crtc->state->constraints, bindings[i]);
+		KUNIT_EXPECT_EQ(test, output->backends[1 - i].checks, checks[i]);
+		selected = drm_constraints_list_selected(drm_constraints_crtc_list(output->crtc));
+		KUNIT_EXPECT_PTR_EQ(test, selected, bindings[i]);
+		drm_constraints_entry_put(selected);
+	}
+}
+
+static void multi_output_shutdown_rechecks_every_binding(struct kunit *test)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_crtc_state *first_before, *other_before, *proposed;
+	struct drm_atomic_commit *state;
+	struct drm_modeset_acquire_ctx ctx;
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	first_before = f->crtc->state;
+	other_before = other->crtc->state;
+	state = new_disable(test, f);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	ret = lock_update(state, &ctx);
+	proposed = ret ? ERR_PTR(ret) : drm_atomic_get_crtc_state(state, other->crtc);
+	unlock_update(state);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, proposed);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	/* Inject a changed target after validation; neither output may install. */
+	drm_constraints_entry_put(proposed->constraints);
+	proposed->constraints = drm_constraints_entry_get(other->target);
+	KUNIT_EXPECT_EQ(test, run_update(state, swap_update), -EOPNOTSUPP);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, first_before);
+	KUNIT_EXPECT_PTR_EQ(test, other->crtc->state, other_before);
+	drm_constraints_entry_put(proposed->constraints);
+	proposed->constraints = drm_constraints_entry_get(other->initial);
+	drm_constraints_list_close(drm_constraints_crtc_list(f->crtc));
+	drm_constraints_list_close(drm_constraints_crtc_list(other->crtc));
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+	KUNIT_EXPECT_PTR_EQ(test, other->crtc->state->constraints, other->initial);
+}
+
 static void proposed_scene_obeys_scalar_property_rules(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1285,6 +1362,8 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(closed_output_shutdown_waits_for_native_read),
 	KUNIT_CASE(native_read_retirement_does_not_stall_another_output),
 	KUNIT_CASE(independent_outputs_keep_exact_bindings_during_animation),
+	KUNIT_CASE(shutdown_disables_all_unavailable_outputs),
+	KUNIT_CASE(multi_output_shutdown_rechecks_every_binding),
 	KUNIT_CASE(proposed_scene_obeys_scalar_property_rules),
 	KUNIT_CASE(installation_rechecks_proposed_property_values),
 	KUNIT_CASE(complete_scene_checks_overlay_and_cursor_contracts),

@@ -49,16 +49,30 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 }
 EXPORT_SYMBOL_GPL(drm_atomic_set_constraints_for_crtc);
 
-static int find_output(struct drm_atomic_commit *state, struct drm_crtc_state **selected)
+static bool unchanged_disable(struct drm_atomic_commit *state, struct drm_crtc_state *crtc)
+{
+	const struct drm_crtc_state *old = drm_atomic_get_old_crtc_state(state, crtc->crtc);
+
+	return old && !crtc->enable && !crtc->active && !crtc->plane_mask &&
+		crtc->constraints == old->constraints;
+}
+
+static int find_output(struct drm_atomic_commit *state, struct drm_crtc_state **selected,
+		       bool *quiesce_all)
 {
 	struct drm_crtc_state *crtc_state;
 	struct drm_crtc *crtc;
 	unsigned int count = 0;
+	bool all_disabled = true;
 	int i;
 
 	*selected = NULL;
+	*quiesce_all = false;
 	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
+		if (crtc->dev != state->dev || crtc_state->crtc != crtc)
+			return -EXDEV;
 		count++;
+		all_disabled &= unchanged_disable(state, crtc_state);
 		if (!crtc->constraints_output) {
 			if (crtc_state->constraints)
 				return -EINVAL;
@@ -66,23 +80,39 @@ static int find_output(struct drm_atomic_commit *state, struct drm_crtc_state **
 		}
 		if (!crtc_state->constraints)
 			return -EINVAL;
-		if (crtc->dev != state->dev || crtc_state->crtc != crtc)
-			return -EXDEV;
+		drm_modeset_lock_assert_held(&crtc->mutex);
 		*selected = crtc_state;
 	}
-	if (*selected && (count != 1 || state->async_update))
+	if (*selected && state->async_update)
 		return -EOPNOTSUPP;
+	if (*selected && count != 1) {
+		if (!all_disabled)
+			return -EOPNOTSUPP;
+		*quiesce_all = true;
+	}
 	return 0;
 }
 
 int drm_atomic_constraints_prepare(struct drm_atomic_commit *state)
 {
 	struct drm_crtc_state *selected, *old;
-	int ret;
+	struct drm_crtc *crtc;
+	bool quiesce_all;
+	int i, ret;
 
-	ret = find_output(state, &selected);
+	ret = find_output(state, &selected, &quiesce_all);
 	if (ret || !selected)
 		return ret;
+	if (quiesce_all) {
+		for_each_new_crtc_in_state(state, crtc, selected, i) {
+			if (!crtc->constraints_output)
+				continue;
+			ret = drm_atomic_add_affected_planes(state, crtc);
+			if (ret)
+				return ret;
+		}
+		return 0;
+	}
 	old = drm_atomic_get_old_crtc_state(state, selected->crtc);
 	if (selected->constraints != old->constraints) {
 		if (!state->allow_modeset)
@@ -107,11 +137,7 @@ struct constraints_update {
 
 static bool quiescing_output(const struct constraints_update *update)
 {
-	const struct drm_crtc_state *crtc = update->crtc;
-
-	return !crtc->enable && !crtc->active && !crtc->plane_mask &&
-		crtc->constraints == drm_atomic_get_old_crtc_state(update->state,
-								 crtc->crtc)->constraints;
+	return unchanged_disable(update->state, update->crtc);
 }
 
 static int check_properties(struct constraints_update *update,
@@ -204,14 +230,34 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 	return output->ops->check(update->state, update->crtc, drm_constraints_entry_data(entry));
 }
 
+static int check_quiescing_outputs(struct drm_atomic_commit *state)
+{
+	struct constraints_update update = { .state = state };
+	struct drm_crtc *crtc;
+	int i, ret;
+
+	for_each_new_crtc_in_state(state, crtc, update.crtc, i) {
+		if (!crtc->constraints_output)
+			continue;
+		ret = drm_constraints_list_quiesce(drm_constraints_crtc_list(crtc),
+						    update.crtc->constraints, check_scene, &update);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
 int drm_atomic_constraints_check(struct drm_atomic_commit *state)
 {
 	struct constraints_update update = { .state = state };
 	struct drm_constraints_list *list;
-	int ret = find_output(state, &update.crtc);
+	bool quiesce_all;
+	int ret = find_output(state, &update.crtc, &quiesce_all);
 
 	if (ret || !update.crtc)
 		return ret;
+	if (quiesce_all)
+		return check_quiescing_outputs(state);
 	list = drm_constraints_crtc_list(update.crtc->crtc);
 	if (quiescing_output(&update))
 		return drm_constraints_list_quiesce(list, update.crtc->constraints,
@@ -237,14 +283,27 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 {
 	struct constraints_update update = { .state = state, .install = install };
 	struct drm_constraints_list *list;
+	bool quiesce_all;
 	int ret;
 
 	if (!install)
 		return -EINVAL;
-	ret = find_output(state, &update.crtc);
+	ret = find_output(state, &update.crtc, &quiesce_all);
 	if (ret)
 		return ret;
 	if (!update.crtc) {
+		install(state);
+		return 0;
+	}
+	if (quiesce_all) {
+		ret = check_quiescing_outputs(state);
+		if (ret)
+			return ret;
+		/*
+		 * Modeset locks stabilize every retained selection through swap.
+		 * No offer is selected or backend work accepted, so withdrawal and
+		 * closure may race without requiring nested list locks.
+		 */
 		install(state);
 		return 0;
 	}
