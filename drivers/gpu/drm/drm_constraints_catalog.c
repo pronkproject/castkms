@@ -186,6 +186,70 @@ int drm_constraints_catalog_suggest(struct drm_constraints_catalog *catalog, u64
 }
 EXPORT_SYMBOL_GPL(drm_constraints_catalog_suggest);
 
+static int validate_entry(struct drm_constraints_catalog *catalog,
+			  struct drm_constraints_entry *entry)
+{
+	int index;
+	u64 id;
+
+	lockdep_assert_held(&catalog->lock);
+	if (!entry)
+		return -EINVAL;
+	id = drm_constraints_entry_id(entry);
+	index = find_entry(catalog, id);
+	if (index < 0 || catalog->entries[index].entry != entry)
+		return -ESTALE;
+	if (!catalog->entries[index].selectable && catalog->info.selected_id != id)
+		return -ESTALE;
+	return 0;
+}
+
+int drm_constraints_catalog_check(struct drm_constraints_catalog *catalog,
+				  struct drm_constraints_entry *entry,
+				  int (*check)(struct drm_constraints_entry *, void *), void *data)
+{
+	int ret;
+
+	if (!check)
+		return -EINVAL;
+	mutex_lock(&catalog->lock);
+	ret = validate_entry(catalog, entry);
+	if (!ret)
+		ret = check(entry, data);
+	mutex_unlock(&catalog->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_catalog_check);
+
+int drm_constraints_catalog_accept(struct drm_constraints_catalog *catalog,
+				   struct drm_constraints_entry *entry,
+				   int (*install)(struct drm_constraints_entry *, void *), void *data)
+{
+	int ret;
+	bool changed;
+
+	if (!install)
+		return -EINVAL;
+	mutex_lock(&catalog->lock);
+	ret = validate_entry(catalog, entry);
+	if (ret)
+		goto out;
+	changed = catalog->info.selected_id != drm_constraints_entry_id(entry);
+	if (changed && catalog->info.generation == U64_MAX) {
+		ret = -EOVERFLOW;
+		goto out;
+	}
+	ret = install(entry, data);
+	if (!ret && changed) {
+		catalog->info.selected_id = drm_constraints_entry_id(entry);
+		catalog->info.generation++;
+	}
+out:
+	mutex_unlock(&catalog->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_catalog_accept);
+
 struct drm_constraints_snapshot *
 drm_constraints_catalog_snapshot(struct drm_constraints_catalog *catalog, u64 generation)
 {
