@@ -35,6 +35,33 @@ mod cases {
     use super::*;
 
     #[test]
+    fn closing_discovery_does_not_wait_for_recipient_publication() -> Result {
+        for failed_copy in [false, true] {
+            with_output(|fixture| {
+                let broker = Broker::new()?;
+                let registration = register(&broker, &fixture)?;
+                let result = registration.with_queue(|queue| {
+                    queue.queue_to(1, &fixture.destination, None)?;
+                    // Simulate a recipient still owning its metadata exclusion while
+                    // another endpoint closes renderer discovery. Closing must return.
+                    broker.close();
+                    check(broker.try_claim(&fixture.rendered).is_none())?;
+                    check(fixture.destination.reserve(None).err() == Some(EBUSY))?;
+                    if failed_copy { Err(EFAULT) } else { Ok(()) }
+                });
+                check(result == if failed_copy { Err(EFAULT) } else { Ok(()) })?;
+                // The operation's epilogue must reconcile closure even on copy failure.
+                drop(fixture.destination.reserve(None)?);
+                registration.with_queue(|queue| {
+                    check(queue.queue_to(2, &fixture.destination, None) == Err(ESHUTDOWN))?;
+                    queue.dequeue(|result| check(result.result == Err(ECANCELED)))
+                })
+            })?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn busy_recipient_notifies_again_after_releasing_queue_exclusion() -> Result {
         with_output(|fixture| {
             let broker = Broker::new()?;

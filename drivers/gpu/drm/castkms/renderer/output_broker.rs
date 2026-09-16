@@ -7,6 +7,7 @@ use crate::capture::{
     provider::delegated_queue::{Job as OutputJob, Queue},
     request_budget::QUEUE_LIMIT,
 };
+use core::sync::atomic::{AtomicBool, Ordering};
 use kernel::{
     prelude::*,
     sync::{Arc, Mutex},
@@ -14,8 +15,27 @@ use kernel::{
 
 #[pin_data]
 struct Endpoint {
+    closing: AtomicBool,
     #[pin]
     queue: Mutex<Queue>,
+}
+
+impl Endpoint {
+    /// Stop discovery without waiting behind a recipient's faulting metadata copy.
+    fn request_close(&self) {
+        self.closing.store(true, Ordering::SeqCst);
+        self.finish_close();
+    }
+
+    /// Every queue operation rechecks after unlocking. Either the closer acquires
+    /// exclusion here or its current holder observes closure in its own epilogue.
+    fn finish_close(&self) {
+        if self.closing.load(Ordering::SeqCst) {
+            if let Some(mut queue) = self.queue.try_lock() {
+                let _ = queue.try_close();
+            }
+        }
+    }
 }
 
 struct Entry {
@@ -72,7 +92,10 @@ impl Broker {
     ) -> Result<Registration> {
         self.state.lock().admission()?;
         let endpoint = Arc::pin_init(
-            try_pin_init!(Endpoint { queue <- kernel::new_mutex!(create()?) }),
+            try_pin_init!(Endpoint {
+                closing: AtomicBool::new(false),
+                queue <- kernel::new_mutex!(create()?),
+            }),
             GFP_KERNEL,
         )?;
         let id = {
@@ -111,9 +134,17 @@ impl Broker {
             // Recipient metadata publication may fault in userspace. Never wait behind
             // that client while selecting output for the renderer's independent stages.
             let claimed = match endpoint.queue.try_lock() {
-                Some(mut queue) => queue.try_claim(image),
+                Some(mut queue) => {
+                    if endpoint.closing.load(Ordering::SeqCst) {
+                        let _ = queue.try_close();
+                        None
+                    } else {
+                        queue.try_claim(image)
+                    }
+                }
                 None => continue,
             };
+            endpoint.finish_close();
             if let Some(output) = claimed {
                 self.state.lock().cursor = (slot + 1) % QUEUE_LIMIT;
                 return Some(Job {
@@ -133,7 +164,7 @@ impl Broker {
             core::mem::replace(&mut state.entries, core::array::from_fn(|_| None))
         };
         for entry in retired.into_iter().flatten() {
-            let _ = entry.endpoint.queue.lock().try_close();
+            entry.endpoint.request_close();
         }
     }
 }
@@ -166,9 +197,13 @@ impl Registration {
     ) -> Result<R> {
         let (changed, result) = {
             let mut queue = self.endpoint.queue.lock();
+            if self.endpoint.closing.load(Ordering::SeqCst) {
+                let _ = queue.try_close();
+            }
             let changed = queue.changed().clone();
             (changed, operation(&mut queue))
         };
+        self.endpoint.finish_close();
         // A worker may have observed an in-lock notification and skipped this busy
         // recipient. Notify after unlocking so accepted demand cannot lose its wakeup.
         changed.notify_all();
@@ -186,7 +221,7 @@ impl Drop for Registration {
                 .find(|entry| entry.as_ref().is_some_and(|entry| entry.id == self.id))
                 .and_then(Option::take)
         };
-        let _ = self.endpoint.queue.lock().try_close();
+        self.endpoint.request_close();
         drop(retired);
     }
 }
