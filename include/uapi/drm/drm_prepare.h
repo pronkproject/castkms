@@ -7,6 +7,7 @@
 /* Experimental assignments for the preparation development interface. */
 #define DRM_CAP_ATOMIC_PREPARATION 0x16
 #define DRM_CLIENT_CAP_ATOMIC_PREPARATION 8
+#define DRM_PREPARE_FD_PROPERTY "PREPARE_FD"
 
 /**
  * struct drm_mode_prepare_replace - Prepare replacement of current output uses
@@ -26,6 +27,9 @@
  * and is not persistent display state. A missing or changed output generation
  * rejects acceptance with ESTALE; preparation must then be requested again.
  * Final file release cancels unused preparation. No pixel access is granted.
+ * Do not echo PREPARE_FD from property readback or include it in a generic
+ * property dump/restore. Omit it unless deliberately submitting a ticket;
+ * readback -1 is not equivalent to leaving the property absent.
  *
  * A blocking atomic request with no PREPARE_FD assignment prepares internally
  * on participating devices. Supplying PREPARE_FD, including -1, selects the
