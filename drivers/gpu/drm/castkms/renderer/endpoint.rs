@@ -26,7 +26,7 @@ enum State {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     Empty,
-    Prepared,
+    Draft,
     Publishing,
     Published,
     Withdrawn,
@@ -183,7 +183,7 @@ impl Endpoint {
             let (phase, constraints_id) = match &*state {
                 State::Closed => return Err(EKEYREVOKED),
                 State::Empty => (Phase::Empty, 0),
-                State::Draft { .. } => (Phase::Prepared, 0),
+                State::Draft { .. } => (Phase::Draft, 0),
                 State::Publishing => (Phase::Publishing, 0),
                 State::Ready { offer, .. } => (
                     if offer.is_live() { Phase::Published } else { Phase::Withdrawn },
