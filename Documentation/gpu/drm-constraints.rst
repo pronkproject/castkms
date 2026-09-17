@@ -513,8 +513,10 @@ installation cross that module boundary. The standalone
 ``tools/testing/selftests/drm_constraints/constraints-model.py`` explores
 publication orderings; it is not GPU or ioctl qualification.
 
-Remaining integration includes coalesced DRM-event notifications, client opt-in
-and normal atomic property decoding, production CastKMS backend selection and
-recovery, and a real compositor consumer. Kernel-controlled provider coverage
-is test evidence, not independent production-ABI demand or physical-GPU
-qualification.
+Remaining integration centers on the userspace side: libdrm must preserve the
+experimental change event for a compositor, and a real compositor must allocate
+from the descriptions, select entries and recover after list changes. The UAPI
+also needs review alongside that consumer before its provisional numbers and
+record layouts can be treated as stable. Physical cross-GPU rendering remains
+separate qualification work. Kernel-controlled provider coverage is test
+evidence, not independent production-ABI demand or physical-GPU qualification.
