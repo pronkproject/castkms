@@ -22,6 +22,21 @@ enum State {
     Closed,
 }
 
+/// Advisory lifecycle metadata, separate from accepted KMS selection and GPU completion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Phase {
+    Empty,
+    Prepared,
+    Publishing,
+    Published,
+    Withdrawn,
+}
+
+pub(crate) struct Description {
+    pub(crate) phase: Phase,
+    pub(crate) constraints_id: u64,
+}
+
 /// One worker declaration per file lifetime. Replacement uses an independent endpoint.
 /// A retained endpoint reference is not permission to renew a closed worker.
 #[pin_data(PinnedDrop)]
@@ -159,12 +174,42 @@ impl Endpoint {
 
     /// Advisory identity only, not a promise that an entry is selected or still ready.
     pub(crate) fn constraints_id(&self) -> Result<u64> {
+        Ok(self.describe()?.constraints_id)
+    }
+
+    pub(crate) fn describe(&self) -> Result<Description> {
         let state = self.state.lock();
-        match &*state {
-            State::Closed => Err(EKEYREVOKED),
-            State::Ready { offer, .. } => self.access.with_output(|| Ok(offer.entry().id())),
-            _ => self.access.with_output(|| Ok(0)),
-        }
+        self.access.with_output(|| {
+            let (phase, constraints_id) = match &*state {
+                State::Closed => return Err(EKEYREVOKED),
+                State::Empty => (Phase::Empty, 0),
+                State::Draft { .. } => (Phase::Prepared, 0),
+                State::Publishing => (Phase::Publishing, 0),
+                State::Ready { offer, .. } => (
+                    if offer.is_live() { Phase::Published } else { Phase::Withdrawn },
+                    offer.entry().id(),
+                ),
+            };
+            Ok(Description { phase, constraints_id })
+        })
+    }
+
+    /// Stop new selection and admission without closing the outstanding release channel.
+    /// Cleanup authority does not require current pixel permission. Repeated withdrawal
+    /// waits for the same terminal callback; accepted state and submitted reads are retained.
+    pub(crate) fn withdraw(&self) -> Result {
+        let revocation = {
+            let state = self.state.lock();
+            match &*state {
+                State::Ready { offer, .. } => offer.revocation(),
+                State::Closed => return Err(EKEYREVOKED),
+                State::Publishing => return Err(EBUSY),
+                _ => return Err(ENODATA),
+            }
+        };
+        revocation.revoke();
+        self.access.device().changed.notify_all();
+        Ok(())
     }
 
     /// Exclude new operations before revocation or resource destruction outside the mutex.

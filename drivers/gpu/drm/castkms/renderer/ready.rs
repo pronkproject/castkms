@@ -130,6 +130,10 @@ impl Owner {
     pub(crate) fn worker(&self) -> Arc<Worker> {
         self.worker.clone()
     }
+
+    pub(super) fn revocation(&self) -> kernel::sync::aref::ARef<kernel::drm::capture::Revocation> {
+        self.authority.revocation()
+    }
 }
 
 impl Drop for Owner {
@@ -147,6 +151,11 @@ pub(crate) struct Ready<'a> {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Worker {
+    /// Advisory availability only; source admission still holds the readiness guard.
+    pub(super) fn is_live(&self) -> bool {
+        self.live.load(Ordering::Acquire)
+    }
+
     pub(crate) fn output(&self) -> &crate::output::Identity {
         &self.output
     }

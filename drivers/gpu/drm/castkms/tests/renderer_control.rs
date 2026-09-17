@@ -19,6 +19,7 @@ mod offer_publication;
 mod offer_sources;
 mod endpoints;
 mod endpoint_streams;
+mod endpoint_withdrawal;
 
 use super::*;
 use crate::renderer::{
