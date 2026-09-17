@@ -339,6 +339,7 @@ impl CrtcState {
         }
         scene.finalize(state.content);
         scene.output_color = state.output_color.clone();
+        scene.set_constraints(state.constraints_entry());
         state.checked_scene = Some(scene);
         Ok(())
     }
@@ -513,8 +514,12 @@ impl Crtc {
         } else if !state.visible {
             let mut scene = scene::Scene::blank(state.blank_owner.clone());
             scene.output_color = state.output_color.clone();
+            scene.set_constraints(state.constraints_entry());
             SceneUpdate::Replace(Some(scene))
-        } else if old.visible && state.content == old.content {
+        } else if old.visible && state.content == old.content
+            && old.constraints_entry().map(core::ptr::from_ref)
+                == state.constraints_entry().map(core::ptr::from_ref)
+        {
             SceneUpdate::Retain
         } else {
             let mut scene = commit
@@ -534,6 +539,7 @@ impl Crtc {
             });
             scene.finalize(state.content);
             scene.output_color = state.output_color.clone();
+            scene.set_constraints(state.constraints_entry());
             SceneUpdate::Replace(Some(scene))
         };
         commit.crtc().display.output.publish_with_configuration(
