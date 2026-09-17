@@ -14,6 +14,7 @@ use crate::{
 use kernel::{
     drm::{
         auth::CurrentMasterGuard,
+        capture::{Authority, Creator, Registration},
         device::Registered,
         kms::{
             connector::Connector,
@@ -24,6 +25,7 @@ use kernel::{
     },
     prelude::*,
     sync::{
+        aref::ARef,
         Arc,
         Mutex, //
     }, //
@@ -60,6 +62,19 @@ struct Policy {
     revoked: Mutex<bool>,
 }
 
+// SAFETY: Native authority ownership retains the callback module and policy allocation.
+#[vtable]
+unsafe impl kernel::drm::capture::Policy for Policy {
+    fn revoke(&self) {
+        let mut revoked = self.revoked.lock();
+        *revoked = true;
+        self.permission.target.device().validation.revoke_owner(&self.transition_owner);
+        drop(revoked);
+        self.workers.close();
+        self.permission.target.device().changed.notify_all();
+    }
+}
+
 /// Unique issuer lifetime, distinct from retained access handles.
 ///
 /// Revocation waits for in-progress authorization callbacks, not GPU work. Callback
@@ -67,6 +82,8 @@ struct Policy {
 #[must_use = "dropping the owner revokes renderer access"]
 pub(crate) struct Owner {
     access: Access,
+    authority: ARef<Authority<Policy>>,
+    creator: Option<Registration>,
 }
 
 impl Owner {
@@ -83,9 +100,21 @@ impl Owner {
             }),
             GFP_KERNEL,
         )?;
+        let authority = Authority::new(policy.clone())?;
         Ok(Self {
             access: Access { policy },
+            authority,
+            creator: None,
         })
+    }
+
+    /// Attach issuer cleanup while its exact master-file role remains stabilized.
+    pub(crate) fn track_creator(&mut self, creator: &Creator) -> Result {
+        if self.creator.is_some() {
+            return Err(EEXIST);
+        }
+        self.creator = Some(creator.register(&self.authority)?);
+        Ok(())
     }
 
     pub(crate) fn access(&self) -> Access {
@@ -94,15 +123,7 @@ impl Owner {
 
     /// Permanently stop admission; call outside callbacks and native DRM locks.
     pub(crate) fn revoke(&self) {
-        let mut revoked = self.access.policy.revoked.lock();
-        *revoked = true;
-        self.access
-            .device()
-            .validation
-            .revoke_owner(&self.access.policy.transition_owner);
-        drop(revoked);
-        self.access.policy.workers.close();
-        self.access.device().changed.notify_all();
+        self.authority.revoke();
     }
 }
 
