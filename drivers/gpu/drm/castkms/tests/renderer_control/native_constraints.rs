@@ -18,18 +18,18 @@ mod cases {
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
             let access = owner.access();
-            let candidate = Arc::new(Candidate::begin(access.clone())?, GFP_KERNEL)?;
-            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let draft = crate::renderer::draft::Draft::new(
+                access.clone(), private_images::profile()?, [640, 480],
+            )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                proposal.register_image(
-                    [640, 480],
+                draft.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            candidate.submit_private_probe(None)?;
-            let ready = proposal.prepare_worker(&pool, [640, 480])?;
-            let other = proposal.prepare_worker(&pool, [640, 480])?;
+            draft.submit_probe(None)?;
+            let ready = draft.prepare_worker(&pool)?;
+            let other = draft.prepare_worker(&pool)?;
             let worker = ready.worker();
             let first = provider.prepare(worker.clone())?;
             let second = provider.prepare(worker.clone())?;
@@ -97,17 +97,17 @@ mod cases {
             let control = device.constraints_output(crtc)?;
             check(core::ptr::eq(&*control.selected(), provider.initial()))?;
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let draft = crate::renderer::draft::Draft::new(
+                owner.access(), private_images::profile()?, [640, 480],
+            )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                proposal.register_image(
-                    [640, 480],
+                draft.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            candidate.submit_private_probe(None)?;
-            let ready = proposal.prepare_worker(&pool, [640, 480])?;
+            draft.submit_probe(None)?;
+            let ready = draft.prepare_worker(&pool)?;
             let entry = provider.prepare(ready.worker())?;
             check(entry.description().output().minimum() == (640, 480))?;
             check(entry.description().output().maximum() == (640, 480))?;
@@ -161,17 +161,17 @@ mod cases {
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let draft = crate::renderer::draft::Draft::new(
+                owner.access(), private_images::profile()?, [640, 480],
+            )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                proposal.register_image(
-                    [640, 480],
+                draft.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            candidate.submit_private_probe(None)?;
-            let ready = proposal.prepare_worker(&pool, [640, 480])?;
+            draft.submit_probe(None)?;
+            let ready = draft.prepare_worker(&pool)?;
             let entry = provider.prepare(ready.worker())?;
             drop(ready);
             check(provider.publish(&control, &entry) == Err(EKEYREVOKED))?;
@@ -189,17 +189,17 @@ mod cases {
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let draft = crate::renderer::draft::Draft::new(
+                owner.access(), private_images::profile()?, [640, 480],
+            )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                proposal.register_image(
-                    [640, 480],
+                draft.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            candidate.submit_private_probe(None)?;
-            let ready = proposal.prepare_worker(&pool, [640, 480])?;
+            draft.submit_probe(None)?;
+            let ready = draft.prepare_worker(&pool)?;
             let entry = provider.prepare(ready.worker())?;
             // Inject native membership without provider membership to force add failure.
             control.add(&entry)?;
@@ -233,17 +233,17 @@ mod cases {
                 .ok_or(EINVAL)?;
             let other = other.constraints.as_ref().ok_or(EINVAL)?;
             let owner = owner(&file, crtc, connector)?;
-            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let draft = crate::renderer::draft::Draft::new(
+                owner.access(), private_images::profile()?, [640, 480],
+            )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                proposal.register_image(
-                    [640, 480],
+                draft.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            candidate.submit_private_probe(None)?;
-            let ready = proposal.prepare_worker(&pool, [640, 480])?;
+            draft.submit_probe(None)?;
+            let ready = draft.prepare_worker(&pool)?;
             check(other.prepare(ready.worker()).err() == Some(EINVAL))?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&device.constraints_output(crtc)?, &entry)?;
