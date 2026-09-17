@@ -167,6 +167,56 @@ static void returning_master_cannot_restart_closed_recovery(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, drm_is_current_master(priv));
 }
 
+static void internal_master_waits_for_successful_recovery(struct kunit *test)
+{
+	struct drm_device *dev = new_device(test, true);
+	bool acquired;
+
+	fail_recovery(dev);
+	acquired = drm_master_internal_acquire(dev);
+	KUNIT_EXPECT_FALSE(test, acquired);
+	if (acquired)
+		drm_master_internal_release(dev);
+	drm_constraints_owner_flush(dev);
+	acquired = drm_master_internal_acquire(dev);
+	KUNIT_EXPECT_TRUE(test, acquired);
+	if (acquired)
+		drm_master_internal_release(dev);
+}
+
+static void internal_master_cannot_restart_closed_recovery(struct kunit *test)
+{
+	struct drm_device *dev = new_device(test, true);
+	bool acquired;
+
+	drm_constraints_owner_stop(dev);
+	acquired = drm_master_internal_acquire(dev);
+	KUNIT_EXPECT_FALSE(test, acquired);
+	if (acquired)
+		drm_master_internal_release(dev);
+	drm_constraints_owner_flush(dev);
+	mutex_lock(&dev->master_mutex);
+	KUNIT_EXPECT_EQ(test, drm_constraints_owner_check(dev), -ENODEV);
+	mutex_unlock(&dev->master_mutex);
+}
+
+static void internal_master_preserves_nonparticipating_devices(struct kunit *test)
+{
+	struct drm_device *dev = new_device(test, false);
+	struct file *file = new_file(test, dev);
+	bool acquired;
+
+	acquired = drm_master_internal_acquire(dev);
+	KUNIT_EXPECT_TRUE(test, acquired);
+	if (acquired)
+		drm_master_internal_release(dev);
+	KUNIT_ASSERT_EQ(test, drm_master_open(file->private_data), 0);
+	acquired = drm_master_internal_acquire(dev);
+	KUNIT_EXPECT_FALSE(test, acquired);
+	if (acquired)
+		drm_master_internal_release(dev);
+}
+
 static struct kunit_case drm_constraints_auth_tests[] = {
 	KUNIT_CASE(implicit_master_waits_for_successful_recovery),
 	KUNIT_CASE(implicit_master_cannot_restart_closed_recovery),
@@ -174,6 +224,9 @@ static struct kunit_case drm_constraints_auth_tests[] = {
 	KUNIT_CASE(returning_master_waits_for_successful_recovery),
 	KUNIT_CASE(associated_master_waits_before_replacing_identity),
 	KUNIT_CASE(returning_master_cannot_restart_closed_recovery),
+	KUNIT_CASE(internal_master_waits_for_successful_recovery),
+	KUNIT_CASE(internal_master_cannot_restart_closed_recovery),
+	KUNIT_CASE(internal_master_preserves_nonparticipating_devices),
 	{}
 };
 
