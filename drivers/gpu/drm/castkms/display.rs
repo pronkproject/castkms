@@ -17,7 +17,6 @@ use crtc::{
     RawCrtc,
     RawCrtcState, //
 };
-use core::sync::atomic::{AtomicU32, Ordering};
 use kernel::{
     device,
     drm::{
@@ -40,7 +39,6 @@ pub(super) struct Plane {
 #[pin_data]
 pub(super) struct Crtc {
     pub(super) display: Arc<super::device::Display>,
-    transition_property: AtomicU32,
     allocation_topology: SetOnce<Arc<super::execution::constraints::Topology>>,
 }
 #[pin_data]
@@ -444,25 +442,8 @@ impl crtc::DriverCrtc for Crtc {
     fn new(_: &Device<Driver>, display: &Self::Args) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
             display: display.clone(),
-            transition_property: AtomicU32::new(0),
             allocation_topology: SetOnce::new(),
         })
-    }
-
-    fn atomic_set_property(&self, state: &mut CrtcState, property: u32, value: u64) -> Result {
-        if property != self.transition_property.load(Ordering::Relaxed) {
-            return Err(EINVAL);
-        }
-        state.tag_transition(value);
-        Ok(())
-    }
-
-    fn atomic_get_property(&self, _: &CrtcState, property: u32) -> Result<u64> {
-        if property != self.transition_property.load(Ordering::Relaxed) {
-            return Err(EINVAL);
-        }
-        // Request-only input: neither state duplication nor readback renews a tag.
-        Ok(0)
     }
 
     fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
@@ -808,12 +789,6 @@ impl KmsDriver for Driver {
                 )?;
             }
             allocations.push((crtc, allocation_planes), GFP_KERNEL)?;
-            if domain.is_none() {
-                let transition = crtc.attach_replayable_range_property(
-                    c"CASTKMS_TRANSITION", 0, u64::MAX, 0,
-                )?;
-                crtc.transition_property.store(transition, Ordering::Relaxed);
-            }
             crtc.enable_color_mgmt(256, true, 256);
             crtc.set_gamma_size(256)?;
             let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
@@ -830,9 +805,6 @@ impl KmsDriver for Driver {
                 display.monitor.clone(),
             )?;
             connector.attach_edid_property();
-            if !dev.constraints_enabled {
-                display.execution.attach(connector)?;
-            }
             connector.attach_encoder(encoder)?;
         }
         if dev.enable_overlay {

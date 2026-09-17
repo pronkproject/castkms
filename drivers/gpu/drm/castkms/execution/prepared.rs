@@ -1,22 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! One preallocated execution description, with retired storage returned after publication.
+//! One prepared execution-description change.
 
-use super::{
-    property,
-    Description,
-    Profile, //
-};
-use crate::Driver;
-use kernel::{
-    drm::{
-        device::Registered,
-        kms::blob::Blob,
-        Device, //
-    },
-    prelude::*,
-    sync::Arc, //
-};
+use super::{Description, Profile};
+use kernel::{prelude::*, sync::Arc};
 
 #[derive(Clone, Copy)]
 pub(super) struct Change {
@@ -26,28 +13,22 @@ pub(super) struct Change {
 
 /// Metadata prepared for one publication object, not permission to activate a renderer.
 ///
-/// No source or image pool is retained. Successful publication exchanges the prepared blob
-/// for the retired one and consumes the transition. Drop outside native object-ID and driver
-/// control locks so retired native metadata is released only after control has finished.
+/// No source, image pool, DRM object, or userspace-visible property is retained.
 pub(crate) struct Prepared {
     pub(super) origin: Arc<()>,
     pub(super) pending: Option<Change>,
-    pub(super) blob: Blob<Driver>,
 }
 
 impl Prepared {
     pub(super) fn new(
-        device: &Device<Driver, Registered>,
         origin: Arc<()>,
         expected: Description,
         profile: Profile,
     ) -> Result<Self> {
         let next = next_description(expected, profile)?;
-        let blob = Blob::new(device, &property::encode(next))?;
         Ok(Self {
             origin,
             pending: Some(Change { expected, next }),
-            blob,
         })
     }
 

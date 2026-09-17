@@ -769,7 +769,7 @@ mod cases {
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let before = device.execution.describe();
             let proposal = gate_profile(&candidate, device, crtc, true)?;
-            let mut prepared = device.execution.prepare(device, Profile::HostV1)?;
+            let mut prepared = device.execution.prepare(Profile::HostV1)?;
             let next = prepared.description()?;
             check(next.generation == before.generation + 1)?;
             check(device.execution.describe() == before)?;
@@ -1200,9 +1200,9 @@ mod cases {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let mut first = device.execution.prepare(device, Profile::HostV1)?;
+            let mut first = device.execution.prepare(Profile::HostV1)?;
             let proposal = gate_profile(&candidate, device, crtc, true)?;
-            let mut stale = device.execution.prepare(device, Profile::HostV1)?;
+            let mut stale = device.execution.prepare(Profile::HostV1)?;
             let proposed = stale.description()?;
             owner
                 .access()
@@ -1244,7 +1244,7 @@ mod cases {
             let permission = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(permission.access())?, GFP_KERNEL)?;
             let proposal = gate_profile(&candidate, device, crtc, true)?;
-            let mut prepared = device.execution.prepare(device, Profile::HostV1)?;
+            let mut prepared = device.execution.prepare(Profile::HostV1)?;
             let proposed = prepared.description()?;
             with_registered_display(
                 &other,
@@ -1291,7 +1291,7 @@ mod cases {
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let proposal = gate_profile(&candidate, device, crtc, true)?;
             let before = device.execution.describe();
-            let mut prepared = device.execution.prepare(device, Profile::HostV1)?;
+            let mut prepared = device.execution.prepare(Profile::HostV1)?;
             let proposed = prepared.description()?;
             device.execution.close();
             owner
@@ -1308,7 +1308,7 @@ mod cases {
                     )
                 })?;
             check(matches!(
-                device.execution.prepare(device, Profile::HostV1),
+                device.execution.prepare(Profile::HostV1),
                 Err(ENODEV)
             ))?;
             check(prepared.description()? == proposed)?;
@@ -1316,34 +1316,4 @@ mod cases {
         })
     }
 
-    #[test]
-    fn a_foreign_blob_device_cannot_change_the_owning_publication() -> Result {
-        let display = CastKms::new(c"castkms-prepared-blob-owner")?;
-        let other = CastKms::new(c"castkms-prepared-blob-other")?;
-        with_registered_display(&display, |device, crtc, connector, _, file| {
-            let permission = owner(&file, crtc, connector)?;
-            let candidate = Arc::new(Candidate::begin(permission.access())?, GFP_KERNEL)?;
-            let proposal = gate_profile(&candidate, device, crtc, true)?;
-            let before = device.execution.describe();
-            with_registered_display(&other, |other, _, _, _, _| {
-                let mut prepared = device.execution.prepare(other, Profile::HostV1)?;
-                let proposed = prepared.description()?;
-                permission
-                    .access()
-                    .with_installed_transition(device, |current, locked| {
-                        check(
-                            device.execution.publish_proposal(
-                                locked,
-                                &mut prepared,
-                                proposal.describe().generation,
-                                current.configuration(),
-                                |contract| current.check_contract(contract),
-                            ) == Err(EINVAL),
-                        )
-                    })?;
-                check(prepared.description()? == proposed)?;
-                check(device.execution.describe() == before)
-            })
-        })
-    }
 }

@@ -11,7 +11,6 @@ pub(crate) mod proposal;
 pub(crate) mod validation;
 pub(crate) mod coordinator;
 
-pub(crate) mod property;
 pub(crate) mod publication;
 mod prepared;
 pub(crate) use prepared::Prepared;
