@@ -108,19 +108,19 @@ static uint32_t property_id(int fd, uint32_t object, const char *name)
 	return id;
 }
 
-static void check_offer_properties(int fd, uint32_t crtc, uint64_t id, uint32_t plane)
+static void check_offer_rules(int fd, uint32_t crtc, uint64_t id, uint32_t plane)
 {
 	struct drm_mode_list_constraints query = { .crtc_id = crtc };
 	struct drm_mode_constraints_list *list;
 	struct drm_mode_constraints *entries;
 	static const char * const names[] = {
-		"CRTC_X", "CRTC_Y", "SRC_X", "SRC_Y", "COLOR_ENCODING", "COLOR_RANGE",
+		"COLOR_ENCODING", "COLOR_RANGE",
 	};
-	uint32_t ids[6];
-	bool found[6] = { 0 };
-	unsigned int count = 0, total = 0, plane_limits = 0;
+	uint32_t ids[2];
+	bool found[2] = { 0 }, geometry_found = false;
+	unsigned int count = 0, total = 0, geometries = 0, plane_limits = 0;
 
-	for (unsigned int i = 0; i < 6; i++)
+	for (unsigned int i = 0; i < 2; i++)
 		ids[i] = property_id(fd, plane, names[i]);
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_LIST_CONSTRAINTS, &query) == 0);
 	list = calloc(1, query.size);
@@ -169,23 +169,28 @@ static void check_offer_properties(int fd, uint32_t crtc, uint64_t id, uint32_t 
 					continue;
 				}
 				count++;
-				for (unsigned int rule = 0; rule < 6; rule++) {
+				for (unsigned int rule = 0; rule < 2; rule++) {
 					if (property->property_id != ids[rule])
 						continue;
 					CHECK(!found[rule]);
 					found[rule] = true;
-					if (rule < 4) {
-						uint32_t type = rule < 2 ? DRM_MODE_PROP_SIGNED_RANGE :
-									 DRM_MODE_PROP_RANGE;
+					CHECK(property->type == DRM_MODE_PROP_ENUM);
+					CHECK(!property->minimum && !property->maximum);
+					CHECK(property->mask == (rule ? 0x3 : 0x7));
+				}
+			} else if (header->type == DRM_MODE_CONSTRAINTS_RECORD_PLANE_GEOMETRY) {
+				struct drm_mode_constraints_plane_geometry *geometry;
 
-						CHECK(property->type == type);
-						CHECK(!property->minimum && !property->maximum &&
-						      !property->mask);
-					} else {
-						CHECK(property->type == DRM_MODE_PROP_ENUM);
-						CHECK(!property->minimum && !property->maximum);
-						CHECK(property->mask == (rule == 4 ? 0x7 : 0x3));
-					}
+				geometry = (void *)header;
+				CHECK(header->length == sizeof(*geometry));
+				CHECK(header->flags == DRM_MODE_CONSTRAINTS_RECORD_REQUIRED);
+				CHECK(!geometry->flags);
+				CHECK(geometry->min_scale == (1U << 16));
+				CHECK(geometry->max_scale == (1U << 16));
+				geometries++;
+				if (geometry->plane_id == plane) {
+					CHECK(!geometry_found);
+					geometry_found = true;
 				}
 			} else if (header->type == DRM_MODE_CONSTRAINTS_RECORD_PLANE_LIMIT) {
 				struct drm_mode_constraints_plane_limit *limit = (void *)header;
@@ -218,9 +223,10 @@ static void check_offer_properties(int fd, uint32_t crtc, uint64_t id, uint32_t 
 		}
 		CHECK(cursor == end);
 	}
-	CHECK(count == 6 && total == 54);
+	CHECK(count == 2 && total == 18);
+	CHECK(geometry_found && geometries == 9);
 	CHECK(plane_limits == 2);
-	for (unsigned int i = 0; i < 6; i++)
+	for (unsigned int i = 0; i < 2; i++)
 		CHECK(found[i]);
 	free(list);
 }
@@ -566,7 +572,7 @@ int main(int argc, char **argv)
 			   I915_FORMAT_MOD_4_TILED, 1,
 			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 			   mode->hdisplay, mode->vdisplay);
-	check_offer_properties(fd, create.crtc_id, worker, plane);
+	check_offer_rules(fd, create.crtc_id, worker, plane);
 	select_framebuffer(fd, create.crtc_id, plane, tiled.fb, worker);
 	CHECK(selected(fd, create.crtc_id, 2) == worker);
 
