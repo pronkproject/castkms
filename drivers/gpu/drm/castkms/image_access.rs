@@ -29,9 +29,10 @@ pub(crate) struct Current<'a> {
 }
 
 impl<'a> Current<'a> {
-    /// Require current pixel attribution in addition to control of the output.
+    /// Require current pixel attribution and HOST execution in addition to output control.
     pub(crate) fn new(control: display_control::Current<'a>) -> Result<Self> {
         control.check_scene_owner()?;
+        control.check_host_image()?;
         let [width, height] = control.configuration().dimensions();
         Ok(Self {
             control,
