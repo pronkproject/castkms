@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <linux/err.h>
+#include <linux/slab.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_constraints.h>
 #include <drm/drm_atomic_prepare_request.h>
@@ -119,7 +120,6 @@ static int find_output(struct drm_atomic_commit *state, struct drm_crtc_state **
 {
 	struct drm_crtc_state *crtc_state;
 	struct drm_crtc *crtc;
-	unsigned int count = 0;
 	bool all_disabled = true;
 	int i;
 
@@ -128,7 +128,6 @@ static int find_output(struct drm_atomic_commit *state, struct drm_crtc_state **
 	for_each_new_crtc_in_state(state, crtc, crtc_state, i) {
 		if (crtc->dev != state->dev || crtc_state->crtc != crtc)
 			return -EXDEV;
-		count++;
 		all_disabled &= unchanged_disable(state, crtc_state);
 		if (!crtc->constraints_output) {
 			if (crtc_state->constraints)
@@ -142,11 +141,8 @@ static int find_output(struct drm_atomic_commit *state, struct drm_crtc_state **
 	}
 	if (*selected && state->async_update)
 		return -EOPNOTSUPP;
-	if (*selected && count != 1) {
-		if (!all_disabled)
-			return -EOPNOTSUPP;
+	if (*selected && all_disabled)
 		*quiesce_all = true;
-	}
 	return 0;
 }
 
@@ -160,23 +156,20 @@ int drm_atomic_constraints_prepare(struct drm_atomic_commit *state)
 	ret = find_output(state, &selected, &quiesce_all);
 	if (ret || !selected)
 		return ret;
-	if (quiesce_all) {
-		for_each_new_crtc_in_state(state, crtc, selected, i) {
-			if (!crtc->constraints_output)
-				continue;
-			ret = drm_atomic_add_affected_planes(state, crtc);
-			if (ret)
-				return ret;
+	for_each_new_crtc_in_state(state, crtc, selected, i) {
+		if (!crtc->constraints_output)
+			continue;
+		old = drm_atomic_get_old_crtc_state(state, crtc);
+		if (selected->constraints != old->constraints) {
+			if (!state->allow_modeset)
+				return -EINVAL;
+			selected->mode_changed = true;
 		}
-		return 0;
+		ret = drm_atomic_add_affected_planes(state, crtc);
+		if (ret)
+			return ret;
 	}
-	old = drm_atomic_get_old_crtc_state(state, selected->crtc);
-	if (selected->constraints != old->constraints) {
-		if (!state->allow_modeset)
-			return -EINVAL;
-		selected->mode_changed = true;
-	}
-	return drm_atomic_add_affected_planes(state, selected->crtc);
+	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_constraints_prepare);
 
@@ -311,32 +304,48 @@ int drm_atomic_constraints_check(struct drm_atomic_commit *state)
 {
 	struct constraints_update update = { .state = state };
 	struct drm_constraints_list *list;
+	struct drm_crtc *crtc;
 	bool quiesce_all;
+	int i;
 	int ret = find_output(state, &update.crtc, &quiesce_all);
 
 	if (ret || !update.crtc)
 		return ret;
 	if (quiesce_all)
 		return check_quiescing_outputs(state);
-	list = drm_constraints_crtc_list(update.crtc->crtc);
-	if (quiescing_output(&update))
-		return drm_constraints_list_quiesce(list, update.crtc->constraints,
-						       check_scene, &update);
-	ret = drm_constraints_lease_check(update.crtc);
-	if (ret)
-		return ret;
-	return drm_constraints_list_check(list, update.crtc->constraints,
-					     check_scene, &update);
+	for_each_new_crtc_in_state(state, crtc, update.crtc, i) {
+		list = drm_constraints_crtc_list(crtc);
+		if (!list)
+			continue;
+		if (quiescing_output(&update)) {
+			ret = drm_constraints_list_quiesce(list, update.crtc->constraints,
+							  check_scene, &update);
+		} else {
+			ret = drm_constraints_lease_check(update.crtc);
+			if (!ret)
+				ret = drm_constraints_list_check(list, update.crtc->constraints,
+							 check_scene, &update);
+		}
+		if (ret)
+			return ret;
+	}
+	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_constraints_check);
 
-static int install_scene(struct drm_constraints_entry *entry, void *data)
+static int install_scenes(void *data)
 {
 	struct constraints_update *update = data;
-	int ret = check_scene(entry, data);
+	struct drm_crtc *crtc;
+	int i, ret;
 
-	if (ret)
-		return ret;
+	for_each_new_crtc_in_state(update->state, crtc, update->crtc, i) {
+		if (!crtc->constraints_output)
+			continue;
+		ret = check_scene(update->crtc->constraints, update);
+		if (ret)
+			return ret;
+	}
 	update->install(update->state);
 	return 0;
 }
@@ -345,9 +354,11 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 				    void (*install)(struct drm_atomic_commit *state))
 {
 	struct constraints_update update = { .state = state, .install = install };
-	struct drm_constraints_list *list;
+	struct drm_constraints_selection *selections;
+	struct drm_crtc *crtc;
+	unsigned int count = 0;
 	bool quiesce_all;
-	int ret;
+	int i, ret;
 
 	if (!install)
 		return -EINVAL;
@@ -370,14 +381,26 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 		install(state);
 		return 0;
 	}
-	list = drm_constraints_crtc_list(update.crtc->crtc);
-	if (quiescing_output(&update))
-		return drm_constraints_list_quiesce(list, update.crtc->constraints,
-						       install_scene, &update);
-	ret = drm_constraints_lease_check(update.crtc);
-	if (ret)
-		return ret;
-	return drm_constraints_list_accept(list, update.crtc->constraints,
-					      install_scene, &update);
+	selections = kcalloc(state->dev->mode_config.num_crtc, sizeof(*selections), GFP_KERNEL);
+	if (!selections)
+		return -ENOMEM;
+	for_each_new_crtc_in_state(state, crtc, update.crtc, i) {
+		if (!crtc->constraints_output)
+			continue;
+		if (!quiescing_output(&update)) {
+			ret = drm_constraints_lease_check(update.crtc);
+			if (ret)
+				goto out;
+		}
+		selections[count++] = (struct drm_constraints_selection) {
+			.list = drm_constraints_crtc_list(crtc),
+			.entry = update.crtc->constraints,
+			.quiesce = quiescing_output(&update),
+		};
+	}
+	ret = drm_constraints_lists_accept(selections, count, install_scenes, &update);
+out:
+	kfree(selections);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_constraints_install);

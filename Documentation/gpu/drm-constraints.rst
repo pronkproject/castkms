@@ -23,11 +23,12 @@ must not be inferred from successful native tests.
 The Rust test provider uses private shmem allocations and CPU sampling; it
 does not establish physical-GPU or cross-device import support.
 
-Selecting constraints or updating an enabled scene admits only one independent
-output per transaction involving constraints. A full disable may include
-multiple CRTCs when every CRTC in the transaction is disabled, plane-free and
-retains its accepted binding. Asynchronous plane updates are rejected. Drivers
-which do not attach constraints keep their ordinary atomic behavior.
+Selecting constraints and updating scenes may include multiple outputs in one
+atomic transaction. Acceptance stabilizes every affected list, validates all
+selections and swaps state once. Contention returns ``-EBUSY`` without accepting
+any selection; retry the whole transaction. Asynchronous plane updates are
+rejected. Drivers which do not attach constraints keep their ordinary atomic
+behavior.
 
 Leased outputs retain their fixed default contract until every outstanding
 lease of that output is revoked or destroyed, including leases retained by an
@@ -314,8 +315,8 @@ Device-wide shutdown may disable several outputs in one transaction. Each
 binding is checked before the single state installation. The caller's modeset
 locks keep those selections unchanged through installation; the helper does
 not hold several list locks at once. Closure or withdrawal does not invalidate
-that operation, since it accepts no new backend work. Enabling an output or
-changing any binding in the same transaction remains unsupported.
+that operation, since it accepts no new backend work. Transactions which also
+enable an output or change a binding use the full list-cohort acceptance path.
 
 State reset restores the accepted binding even after closure. It is not
 default-contract restoration or the start of a new owner interval. Full

@@ -551,7 +551,7 @@ static void asynchronous_updates_are_not_admitted(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
-static void multi_output_transactions_are_not_admitted(struct kunit *test)
+static void transactions_may_include_outputs_without_constraints(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
 	struct drm_plane *plane = drm_kunit_helper_create_primary_plane(test, f->dev,
@@ -570,9 +570,9 @@ static void multi_output_transactions_are_not_admitted(struct kunit *test)
 	added = ret ? ERR_PTR(ret) : drm_atomic_get_crtc_state(state, other);
 	unlock_update(state);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, added);
-	KUNIT_EXPECT_EQ(test, run_update(state, check_update), -EOPNOTSUPP);
-	KUNIT_EXPECT_EQ(test, run_update(state, install_update), -EOPNOTSUPP);
-	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, install_update), 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
 }
 
 static int swap_update(struct drm_atomic_commit *state)
@@ -1363,6 +1363,70 @@ static void shutdown_disables_all_unavailable_outputs(struct kunit *test)
 	}
 }
 
+static void constraints_cohort_acceptance(struct kunit *test, bool withdraw, bool fail)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture(test);
+	struct atomic_fixture *outputs[] = { f, other };
+	struct drm_atomic_commit *state;
+	struct drm_crtc_state *proposed;
+	struct drm_modeset_acquire_ctx ctx;
+	u64 generations[2];
+	unsigned int i;
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	state = new_update(test, f, f->target, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	ret = lock_update(state, &ctx);
+	proposed = ret ? ERR_PTR(ret) : drm_atomic_get_crtc_state(state, other->crtc);
+	if (!IS_ERR(proposed))
+		ret = drm_atomic_set_constraints_for_crtc(proposed, other->target);
+	unlock_update(state);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, proposed);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_ASSERT_EQ(test, run_update(state, check_update), 0);
+	if (withdraw)
+		KUNIT_ASSERT_EQ(test,
+			drm_constraints_list_withdraw(drm_constraints_crtc_list(other->crtc),
+						      drm_constraints_entry_id(other->target)), 0);
+	other->backends[1].failed = fail;
+	for (i = 0; i < ARRAY_SIZE(outputs); i++)
+		KUNIT_ASSERT_EQ(test, drm_constraints_list_observe(
+			drm_constraints_crtc_list(outputs[i]->crtc), &generations[i]), 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, install_update),
+			withdraw ? -ESTALE : fail ? -EIO : 0);
+	KUNIT_EXPECT_EQ(test, f->installs, withdraw || fail ? 0 : 1);
+	for (i = 0; i < ARRAY_SIZE(outputs); i++) {
+		struct atomic_fixture *output = outputs[i];
+		struct drm_constraints_list *list = drm_constraints_crtc_list(output->crtc);
+		struct drm_constraints_entry *selected = drm_constraints_list_selected(list);
+		u64 generation;
+
+		KUNIT_EXPECT_PTR_EQ(test, selected,
+				    withdraw || fail ? output->initial : output->target);
+		drm_constraints_entry_put(selected);
+		KUNIT_ASSERT_EQ(test, drm_constraints_list_observe(list, &generation), 0);
+		KUNIT_EXPECT_EQ(test, generation, generations[i] + !(withdraw || fail));
+	}
+}
+
+static void constraints_cohort_selects_all_outputs_once(struct kunit *test)
+{
+	constraints_cohort_acceptance(test, false, false);
+}
+
+static void withdrawn_last_selection_rejects_whole_cohort(struct kunit *test)
+{
+	constraints_cohort_acceptance(test, true, false);
+}
+
+static void failed_last_backend_rejects_whole_cohort(struct kunit *test)
+{
+	constraints_cohort_acceptance(test, false, true);
+}
+
 static void multi_output_shutdown_rechecks_every_binding(struct kunit *test)
 {
 	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
@@ -1386,7 +1450,8 @@ static void multi_output_shutdown_rechecks_every_binding(struct kunit *test)
 	/* Inject a changed target after validation; neither output may install. */
 	drm_constraints_entry_put(proposed->constraints);
 	proposed->constraints = drm_constraints_entry_get(other->target);
-	KUNIT_EXPECT_EQ(test, run_update(state, swap_update), -EOPNOTSUPP);
+	other->backends[1].failed = true;
+	KUNIT_EXPECT_EQ(test, run_update(state, swap_update), -EIO);
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state, first_before);
 	KUNIT_EXPECT_PTR_EQ(test, other->crtc->state, other_before);
 	drm_constraints_entry_put(proposed->constraints);
@@ -2103,7 +2168,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(selection_requires_modeset_permission),
 	KUNIT_CASE(source_allocation_respects_exact_geometry),
 	KUNIT_CASE(asynchronous_updates_are_not_admitted),
-	KUNIT_CASE(multi_output_transactions_are_not_admitted),
+	KUNIT_CASE(transactions_may_include_outputs_without_constraints),
 	KUNIT_CASE(validation_includes_unchanged_active_planes),
 	KUNIT_CASE(selection_requires_owned_mutable_proposed_state),
 	KUNIT_CASE(core_validation_observes_selected_constraints),
@@ -2133,6 +2198,9 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(independent_outputs_keep_exact_bindings_during_animation),
 	KUNIT_CASE(shutdown_disables_all_unavailable_outputs),
 	KUNIT_CASE(multi_output_shutdown_rechecks_every_binding),
+	KUNIT_CASE(constraints_cohort_selects_all_outputs_once),
+	KUNIT_CASE(withdrawn_last_selection_rejects_whole_cohort),
+	KUNIT_CASE(failed_last_backend_rejects_whole_cohort),
 	KUNIT_CASE(prepared_shutdown_retains_pending_native_reads),
 	KUNIT_CASE(proposed_scene_obeys_scalar_property_rules),
 	KUNIT_CASE(installation_rechecks_proposed_property_values),

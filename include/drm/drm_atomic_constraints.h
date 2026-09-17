@@ -46,21 +46,20 @@ int drm_atomic_constraints_restore_default(struct drm_crtc *crtc);
  * state before driver checks and marks changed constraints as a modeset.
  * Check validates allocation limits and scalar property rules from proposed
  * state, then calls the provider's full-scene check.
- * Selecting or updating an enabled scene admits only one independent output
- * per transaction. Asynchronous plane updates are not supported.
+ * Selecting or updating scenes may include multiple outputs in one transaction.
+ * Asynchronous plane updates are not supported.
  * Outstanding leases retain an output's fixed default contract. Nondefault
  * bindings on leased outputs return EBUSY at validation and acceptance.
  * Fully disabling the CRTC with every plane detached retains its binding and
  * remains possible after list closure or backend failure. Such quiescence
  * selects no new entry and does not complete outstanding native source reads.
- * Multiple CRTCs may be disabled together only when every CRTC in the
- * transaction is disabled, plane-free and retains its accepted binding.
  */
 int drm_atomic_constraints_prepare(struct drm_atomic_commit *state);
 int drm_atomic_constraints_check(struct drm_atomic_commit *state);
 
 /*
- * Final post-wait installation under the list lock. The caller holds modeset
+ * Final post-wait installation under every affected list lock. Contention
+ * returns EBUSY before acceptance; retry the entire transaction. The caller holds modeset
  * and provider authority locks, and has completed all resource preparation.
  * The continuation must install state without failure; returning from it is
  * the acceptance boundary. The transaction already owns its backend binding.
