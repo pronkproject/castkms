@@ -28,6 +28,8 @@
  */
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_constraints.h>
+#include <drm/drm_constraints_entry.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_prepare_auth.h>
 #include <drm/drm_atomic_prepare_owner.h>
@@ -397,7 +399,18 @@ static int drm_atomic_crtc_set_property(struct drm_crtc *crtc,
 	struct drm_mode_config *config = &dev->mode_config;
 	int ret;
 
-	if (property == config->prop_active)
+	if (property == config->prop_constraints_id) {
+		struct drm_constraints_entry *entry;
+
+		if (state->constraints && drm_constraints_entry_id(state->constraints) == val)
+			return 0;
+		entry = drm_atomic_resolve_constraints_for_crtc(crtc, val);
+		if (IS_ERR(entry))
+			return PTR_ERR(entry);
+		ret = drm_atomic_set_constraints_for_crtc(state, entry);
+		drm_constraints_entry_put(entry);
+		return ret;
+	} else if (property == config->prop_active)
 		state->active = val;
 	else if (property == config->prop_mode_id) {
 		struct drm_property_blob *mode =
@@ -455,7 +468,9 @@ drm_atomic_crtc_get_property(struct drm_crtc *crtc,
 	struct drm_device *dev = crtc->dev;
 	struct drm_mode_config *config = &dev->mode_config;
 
-	if (property == config->prop_active)
+	if (property == config->prop_constraints_id)
+		*val = state->constraints ? drm_constraints_entry_id(state->constraints) : 0;
+	else if (property == config->prop_active)
 		*val = drm_atomic_crtc_effectively_active(state);
 	else if (property == config->prop_mode_id)
 		*val = (state->mode_blob) ? state->mode_blob->base.id : 0;
@@ -1259,6 +1274,11 @@ int drm_atomic_set_property(struct drm_atomic_commit *state,
 		crtc_state = drm_atomic_get_crtc_state(state, crtc);
 		if (IS_ERR(crtc_state)) {
 			ret = PTR_ERR(crtc_state);
+			break;
+		}
+		if (prop == state->dev->mode_config.prop_constraints_id &&
+		    file_priv && !READ_ONCE(file_priv->kms_constraints)) {
+			ret = -EOPNOTSUPP;
 			break;
 		}
 

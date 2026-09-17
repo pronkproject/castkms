@@ -55,6 +55,9 @@ int drm_atomic_validate_user_request(const struct drm_atomic_user_request *reque
 	for (i = 0; i < drm_atomic_request_count(values); i++) {
 		const struct drm_atomic_request_entry *entry = drm_atomic_request_entry(values, i);
 
+		if (entry->type == DRM_ATOMIC_REQUEST_CONSTRAINTS &&
+		    !READ_ONCE(file->kms_constraints))
+			return -EOPNOTSUPP;
 		if (entry->type != DRM_ATOMIC_REQUEST_OBJECT || !entry->reference)
 			continue;
 		ret = validate_object(entry->reference, file);

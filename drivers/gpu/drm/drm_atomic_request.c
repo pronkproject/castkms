@@ -7,6 +7,7 @@
 #include <drm/drm_colorop.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_constraints_entry.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_property.h>
 
@@ -48,6 +49,13 @@ static int validate_entry(struct drm_device *dev,
 	    prop == dev->mode_config.prop_out_fence_ptr ||
 	    prop == dev->mode_config.writeback_out_fence_ptr_property)
 		return -EOPNOTSUPP;
+	if (prop == dev->mode_config.prop_constraints_id)
+		return entry->object->type == DRM_MODE_OBJECT_CRTC &&
+		       entry->type == DRM_ATOMIC_REQUEST_CONSTRAINTS && entry->constraints &&
+		       drm_constraints_entry_in_domain(entry->constraints,
+						       dev->mode_config.constraints_domain) &&
+		       drm_constraints_entry_crtc(entry->constraints) == entry->object->id ?
+		       0 : -EINVAL;
 	if (prop == dev->mode_config.prop_in_fence_fd)
 		return entry->object->type == DRM_MODE_OBJECT_PLANE &&
 		       entry->type == DRM_ATOMIC_REQUEST_FENCE ? 0 : -EINVAL;
@@ -87,6 +95,9 @@ static void retain_entry(const struct drm_atomic_request_entry *entry)
 		break;
 	case DRM_ATOMIC_REQUEST_FENCE:
 		dma_fence_get(entry->fence);
+		break;
+	case DRM_ATOMIC_REQUEST_CONSTRAINTS:
+		drm_constraints_entry_get(entry->constraints);
 		break;
 	case DRM_ATOMIC_REQUEST_SCALAR:
 		break;
@@ -144,6 +155,9 @@ void drm_atomic_request_destroy(struct drm_atomic_request *request)
 			break;
 		case DRM_ATOMIC_REQUEST_FENCE:
 			dma_fence_put(entry->fence);
+			break;
+		case DRM_ATOMIC_REQUEST_CONSTRAINTS:
+			drm_constraints_entry_put(entry->constraints);
 			break;
 		case DRM_ATOMIC_REQUEST_SCALAR:
 			break;

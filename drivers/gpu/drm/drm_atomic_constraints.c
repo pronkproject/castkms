@@ -22,6 +22,25 @@ static int candidate_available(struct drm_constraints_entry *entry, void *data)
 	return 0;
 }
 
+struct drm_constraints_entry *
+drm_atomic_resolve_constraints_for_crtc(struct drm_crtc *crtc, u64 id)
+{
+	struct drm_constraints_list *list;
+	struct drm_constraints_entry *accepted;
+
+	if (!crtc || !id)
+		return ERR_PTR(-EINVAL);
+	drm_modeset_lock_assert_held(&crtc->mutex);
+	list = drm_constraints_crtc_list(crtc);
+	if (!list)
+		return ERR_PTR(-EOPNOTSUPP);
+	accepted = crtc->state ? crtc->state->constraints : NULL;
+	if (accepted && drm_constraints_entry_id(accepted) == id)
+		return drm_constraints_entry_get(accepted);
+	return drm_constraints_list_lookup(list, id);
+}
+EXPORT_SYMBOL_GPL(drm_atomic_resolve_constraints_for_crtc);
+
 int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 				       struct drm_constraints_entry *entry)
 {
@@ -40,9 +59,13 @@ int drm_atomic_set_constraints_for_crtc(struct drm_crtc_state *state,
 	list = drm_constraints_crtc_list(state->crtc);
 	if (!list)
 		return -EOPNOTSUPP;
-	ret = drm_constraints_list_check(list, entry, candidate_available, NULL);
-	if (ret)
-		return ret;
+	if (entry == state->constraints)
+		return 0;
+	if (!state->crtc->state || entry != state->crtc->state->constraints) {
+		ret = drm_constraints_list_check(list, entry, candidate_available, NULL);
+		if (ret)
+			return ret;
+	}
 	old = state->constraints;
 	state->constraints = drm_constraints_entry_get(entry);
 	if (old)
@@ -66,6 +89,11 @@ static int build_restore_default(struct drm_atomic_commit *state, void *data)
 	old = drm_atomic_get_old_crtc_state(state, crtc);
 	if (old->enable || old->active || old->plane_mask)
 		return -EBUSY;
+	/* Restoring a default is not shutdown through an unavailable binding. */
+	ret = drm_constraints_list_check(drm_constraints_crtc_list(crtc), entry,
+					 candidate_available, NULL);
+	if (ret)
+		return ret;
 	ret = drm_atomic_set_constraints_for_crtc(proposed, entry);
 	if (ret)
 		return ret;

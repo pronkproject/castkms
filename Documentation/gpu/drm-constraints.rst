@@ -16,7 +16,7 @@ activation acknowledgment.
 The implementation provides native atomic helpers and experimental read-only
 listing through ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``. The DRM core also has a
 bounded event producer, an experimental change-event encoding and explicit
-client subscription. The selection property is not implemented. No production
+client subscription and persistent ``CONSTRAINTS_ID`` selection. No production
 CastKMS provider is attached to these helpers. The native test provider uses
 framebuffer metadata, not GPU allocation or PRIME import. Those boundaries
 must not be inferred from successful native tests.
@@ -179,8 +179,30 @@ The first successful subscription allocates one bounded producer, retained
 until file closure. Repeated enable/disable cycles pause and resume that same
 producer. Failed subscription does not publish events or enable the capability.
 File teardown stops deferred work before disposing the remaining DRM events.
-The client adapter is tested through the ordinary ioctl dispatcher; atomic
-selection through a property remains unimplemented.
+The client adapter is tested through the ordinary ioctl dispatcher.
+
+Persistent atomic selection
+===========================
+
+Participating CRTCs expose ``DRM_CONSTRAINTS_ID_PROPERTY`` (``CONSTRAINTS_ID``),
+an atomic unsigned range with positive, device-scoped entry IDs. The property
+is absent from unattached outputs. Writing it requires the constraints client
+capability, including when repeating the accepted ID. Zero is invalid.
+
+Supply a listed selectable ID together with its compatible framebuffer,
+geometry, color and synchronization state. A changed binding requires
+``DRM_MODE_ATOMIC_ALLOW_MODESET``. Omitting the property preserves the accepted
+binding; repeating it does not request a transition. Readback reports accepted
+state, not presentation or GPU completion. ``TEST_ONLY`` neither changes that
+readback nor reserves target availability. Actual installation rechecks the
+entry and complete scene; withdrawn targets return ``ESTALE``.
+
+Preparation resolves the identifier into an owned entry reference before
+waiting. Retries use that exact reference, not a fresh numeric lookup, and
+recheck client opt-in and modesetting authority. Retention does not preserve
+availability. A fully disabled, plane-free update may repeat its accepted ID
+after list closure, allowing ordinary persistent-property clients to quiesce
+a failed output. It cannot select another binding through the closed list.
 
 Bounded change notifications
 ===========================

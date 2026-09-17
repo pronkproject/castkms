@@ -18,6 +18,23 @@
  * other than 0 or 1 return EINVAL; unsupported devices return EOPNOTSUPP.
  */
 #define DRM_CLIENT_CAP_KMS_CONSTRAINTS 9
+#define DRM_CONSTRAINTS_ID_PROPERTY "CONSTRAINTS_ID"
+
+/*
+ * CONSTRAINTS_ID is persistent atomic CRTC state on participating outputs.
+ * After client opt-in, select a listed positive ID alongside its compatible
+ * framebuffer, geometry, color and synchronization state. Omission retains
+ * the accepted binding; repeating it requests no transition. Zero is invalid.
+ * A changed ID requires DRM_MODE_ATOMIC_ALLOW_MODESET. Readback describes
+ * accepted state, not presentation or native execution completion.
+ *
+ * TEST_ONLY reserves nothing. Withdrawn or stale targets fail with ESTALE at
+ * real acceptance; an incompatible scene gets the ordinary validation error.
+ * Outstanding leases retain their output's fixed default contract; selecting
+ * other constraints returns EBUSY. An accepted binding remains retained through
+ * retirement, including terminal backend failure. Disabling a failed output
+ * may retain its binding but cannot select another one through a closed list.
+ */
 
 #define DRM_MODE_CONSTRAINTS_VERSION 1
 #define DRM_MODE_CONSTRAINTS_MAX_BYTES (16U * 1024U * 1024U)

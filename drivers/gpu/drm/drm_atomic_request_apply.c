@@ -2,6 +2,7 @@
 
 #include <linux/export.h>
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_constraints.h>
 #include <drm/drm_atomic_request.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_connector.h>
@@ -24,7 +25,8 @@ bool drm_atomic_request_supports_property(struct drm_mode_object *object,
 		       drm_atomic_is_plane_color_property(obj_to_plane(object), property) ||
 		       drm_atomic_is_plane_geometry_property(obj_to_plane(object), property);
 	if (object->type == DRM_MODE_OBJECT_CRTC)
-		return property == config->prop_mode_id ||
+		return property == config->prop_constraints_id ||
+		       property == config->prop_mode_id ||
 		       property == config->prop_active ||
 		       drm_atomic_is_crtc_color_property(obj_to_crtc(object), property) ||
 		       (property->atomic_replay_scalar &&
@@ -81,6 +83,8 @@ static int apply_entry(struct drm_atomic_commit *state,
 		crtc_state = drm_atomic_get_crtc_state(state, obj_to_crtc(entry->object));
 		if (IS_ERR(crtc_state))
 			return PTR_ERR(crtc_state);
+		if (entry->property == state->dev->mode_config.prop_constraints_id)
+			return drm_atomic_set_constraints_for_crtc(crtc_state, entry->constraints);
 		if (entry->property == state->dev->mode_config.prop_active) {
 			crtc_state->active = entry->scalar;
 			return 0;
@@ -126,7 +130,7 @@ static int apply_entry(struct drm_atomic_commit *state,
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
  * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H, SRC_X/Y/W/H, rotation,
  * COLOR_ENCODING and COLOR_RANGE, controller
- * MODE_ID/ACTIVE and DEGAMMA_LUT/CTM/GAMMA_LUT, and connector CRTC_ID.
+ * MODE_ID/ACTIVE, CONSTRAINTS_ID and DEGAMMA_LUT/CTM/GAMMA_LUT, and connector CRTC_ID.
  * Driver-private CRTC ranges explicitly marked as replayable scalars are also
  * supported. Other private properties and asynchronous flips are not supported.
  * No check or commit runs.

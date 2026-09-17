@@ -2,10 +2,21 @@
 #ifndef __DRM_ATOMIC_CONSTRAINTS_H__
 #define __DRM_ATOMIC_CONSTRAINTS_H__
 
+#include <linux/types.h>
+
 struct drm_atomic_commit;
 struct drm_crtc;
 struct drm_crtc_state;
 struct drm_constraints_entry;
+
+/*
+ * Resolve a positive property ID under the CRTC lock to an owned binding.
+ * Retain the exact accepted entry even if its list is closed, so a request can
+ * quiesce without changing identity. Other targets use ordinary list lookup.
+ * Resolution reserves neither availability nor authority for acceptance.
+ */
+struct drm_constraints_entry *
+drm_atomic_resolve_constraints_for_crtc(struct drm_crtc *crtc, u64 id);
 
 /*
  * Set a candidate binding in a transaction's owned, unchecked proposed CRTC
