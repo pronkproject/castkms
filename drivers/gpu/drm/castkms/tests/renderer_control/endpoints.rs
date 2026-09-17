@@ -136,9 +136,11 @@ mod cases {
             ])?;
             let mut fence = kernel::dma_fence::testing::ManualFence::new()?;
             endpoint.submit_probe(Some(fence.fence()))?;
+            check(endpoint.check_probe() == Err(EBUSY))?;
             check(endpoint.publish(|_| Ok(())) == Err(EAGAIN))?;
-            fence.complete(Err(EIO))?;
-            check(endpoint.publish(|_| Ok(())) == Err(EIO))?;
+            fence.complete(Err(EAGAIN))?;
+            check(endpoint.check_probe() == Err(EREMOTEIO))?;
+            check(endpoint.publish(|_| Ok(())) == Err(EAGAIN))?;
             endpoint.unregister_image(1)?;
             check(device.constraints_output(crtc)?.snapshot(0)?.info().count == 1)?;
             endpoint.close();
