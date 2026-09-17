@@ -147,6 +147,10 @@ compatible complete atomic scene. To replace a worker, prepare and publish
 another endpoint, then select it atomically. Keep old reporting channels until
 their admitted work is resolved. Multi-output atomic selection uses ordinary
 KMS transaction semantics, with independent endpoint read accounting.
+Final acceptance retains every participating worker's readiness through the
+same native state swap. Readiness contention returns ``EBUSY`` without
+accepting any output; retry the complete atomic update after re-querying as
+appropriate. A failed or withdrawn member never partially selects the cohort.
 
 Unexpected worker loss is not transparent migration. A withdrawn selected
 binding remains retained; its buffers must not be reinterpreted as HOST.

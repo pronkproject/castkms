@@ -193,6 +193,16 @@ impl Worker {
         Ok(Ready { worker: self, resources })
     }
 
+    /// Compose several independent output guards without waiting while another is held.
+    /// A busy cohort rejects acceptance and must be retried as a complete transaction.
+    pub(crate) fn try_hold_ready(&self) -> Result<Ready<'_>> {
+        let resources = self.resources.try_lock().ok_or(EBUSY)?;
+        if resources.is_none() {
+            return Err(EKEYREVOKED);
+        }
+        Ok(Ready { worker: self, resources })
+    }
+
     /// Exclude installation, mark terminal, then withdraw offers and release private storage.
     /// Call outside native DRM and provider locks; no native fence is signaled here.
     pub(crate) fn revoke(&self) {

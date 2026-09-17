@@ -9,10 +9,7 @@ use crate::{
         SceneView, //
     },
     output::Identity,
-    renderer::ready::{
-        Ready,
-        Worker, //
-    }, //
+    renderer::ready::Worker, //
 };
 use kernel::{
     drm::constraints::{
@@ -121,15 +118,6 @@ impl Backend {
                 }
                 worker.check_scene(scene)
             }
-        }
-    }
-
-    /// Serialize final acceptance with renderer loss; HOST owns no delegated worker.
-    /// Unchanged, fully disabled shutdown must bypass this operation for failed workers.
-    pub(crate) fn hold_ready(&self) -> Result<Option<Ready<'_>>> {
-        match self {
-            Self::Host => Ok(None),
-            Self::Renderer(worker) => worker.hold_ready().map(Some),
         }
     }
 
