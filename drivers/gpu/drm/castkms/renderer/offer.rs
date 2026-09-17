@@ -44,6 +44,17 @@ impl Offer {
         Control { access: self.access.clone(), entry: self.entry.clone() }
     }
 
+    /// Retain only withdrawal authority for cleanup outside endpoint exclusion.
+    pub(super) fn revocation(
+        &self,
+    ) -> kernel::sync::aref::ARef<kernel::drm::capture::Revocation> {
+        self._owner.revocation()
+    }
+
+    pub(super) fn is_live(&self) -> bool {
+        self._owner.worker().is_live()
+    }
+
     /// Copy the reply before native publication while issuer authority is stable.
     /// On any error callers ignore the copied identity. The callback must not publish files,
     /// select this entry, revoke its owner, or reenter authority. Success lists a ready offer
