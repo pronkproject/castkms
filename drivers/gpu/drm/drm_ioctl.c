@@ -41,9 +41,11 @@
 #include <drm/drm_print.h>
 #include <uapi/drm/drm_prepare.h>
 #include <uapi/drm/drm_capture.h>
+#include <uapi/drm/drm_constraints.h>
 
 #include "drm_atomic_prepare_uapi.h"
 #include "drm_capture_uapi.h"
+#include "drm_constraints_uapi.h"
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
 
@@ -723,6 +725,7 @@ static const struct drm_ioctl_desc drm_ioctls[] = {
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CLOSEFB, drm_mode_closefb_ioctl, 0),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_PREPARE_REPLACE, drm_mode_prepare_replace_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, drm_mode_create_capture_grant_ioctl, DRM_MASTER),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_LIST_CONSTRAINTS, drm_mode_list_constraints_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_PAGE_FLIP, drm_mode_page_flip_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_DIRTYFB, drm_mode_dirtyfb_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CREATE_DUMB, drm_mode_create_dumb_ioctl, 0),

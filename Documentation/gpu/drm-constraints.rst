@@ -13,8 +13,9 @@ its compatible scene are accepted together at state installation. Checking
 the scene is not a reservation, and acceptance needs no later userspace
 activation acknowledgment.
 
-The implementation is a kernel-only prototype. It does not allocate a client
-capability, listing ioctl, selection property or notification event. No
+The implementation provides native atomic helpers and experimental read-only
+listing through ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``. A client capability,
+selection property and notification event are not implemented. No production
 CastKMS provider is attached to these helpers. The native test provider uses
 framebuffer metadata, not GPU allocation or PRIME import. Those boundaries
 must not be inferred from successful native tests.
@@ -69,7 +70,8 @@ retiring work, not just currently offered entries.
 The current native bounds are 4096 format records and 64 scalar property
 records per description, and at most 64 entries per output list. Providers
 choose their retained-entry quota and may choose a smaller list limit.
-These are kernel prototype bounds, not allocated wire-ABI constants.
+The experimental UAPI declares corresponding bounds in
+``include/uapi/drm/drm_constraints.h``.
 Format capacity accounts for per-plane expansion: the same format/modifier
 alternative on ten planes consumes ten records. Large immutable descriptions
 permit virtual allocation rather than requiring contiguous memory. The
@@ -117,9 +119,31 @@ including when the kernel buffer is unaligned.
 
 The snapshot retains its original generation, identities and availability
 even after the list changes or closes. The serialized bytes themselves
-retain no resources and grant no authority. These are kernel-only layout
-definitions, not an installed UAPI. The encoder does not implement a userspace
-ioctl, request validation, failure-copyout semantics or event delivery.
+retain no resources and grant no authority. The encoder uses the installed
+UAPI structures in ``drm_constraints.h``. Userspace copyout is a separate
+operation and does not hold list or provider locks while faulting.
+
+Read-only listing
+=================
+
+``DRM_IOCTL_MODE_LIST_CONSTRAINTS`` takes ``struct drm_mode_list_constraints``
+and requires the current modesetting master. CRTC lookup respects the calling
+file's lease visibility. Unknown or inaccessible CRTCs return ``-ENOENT``;
+outputs without constraints return ``-EOPNOTSUPP``. A closed list returns
+``-ESTALE``. Discovery does not opt a file into selecting constraints or
+receiving notifications, and does not change its accepted KMS contract.
+
+Flags, padding and reserved inputs must be zero. Set both the data pointer and
+capacity to zero for size discovery; otherwise both must be nonzero. A nonzero
+expected generation must match the retained snapshot. Success and ``-ENOSPC``
+return its generation and required size. An undersized buffer receives no
+payload. Other errors provide no usable output metadata; discard any partially
+copied bytes on ``-EFAULT``. Allocation and copying use the actual bounded
+snapshot size, not the caller's advertised capacity.
+
+The ioctl returns no descriptors and performs no activation. It does not use
+``-EAGAIN`` and is suitable for libdrm's ordinary ``drmIoctl()`` wrapper. A
+successful query reserves neither availability nor subsequent selection.
 
 Native atomic integration
 =========================
@@ -267,7 +291,8 @@ output's fixed default. Both require an implemented
 ``KmsDriver::constraints_check()`` callback. The callback receives read-only
 atomic state and opaque entry metadata during validation and final acceptance;
 it must not reenter list operations or acquire modeset locks. These interfaces
-use common native state lifetime and installation without publishing UAPI.
+use common native state lifetime and installation; backend readiness and
+authority remain provider responsibilities.
 
 ``Device::constraints_output()`` borrows provider control under a registration
 guard. It exposes scoped publication, snapshots, identity lookup, suggestion,
@@ -316,6 +341,9 @@ Complete-scene cases include overlay/cursor allocation, cropping, scaling,
 alpha and stacking, while independent outputs repeatedly update without
 sharing selection or retirement. Encoding tests cover maximum lists, zero
 padding, short buffers and unaligned storage on both x86-32 and x86-64.
+The ``drm_constraints_query`` suite checks bounded userspace copying, while
+``drm_constraints_uapi`` exercises the actual ioctl dispatcher, sizing metadata
+on ``-ENOSPC``, master admission and lease visibility.
 Threaded tests hold a native read fence through target acceptance or shutdown
 and verify that cleanup cannot release the predecessor backend early. The
 ``drm_atomic_property`` suite checks proposed-value decoding; Rust suites are
@@ -351,8 +379,8 @@ installation cross that module boundary. The standalone
 ``tools/testing/selftests/drm_constraints/constraints-model.py`` explores
 publication orderings; it is not GPU or ioctl qualification.
 
-Remaining integration includes userspace listing validation and error copyout,
-coalesced DRM-event notifications, client opt-in and normal atomic property
-decoding, owner-interval/default restoration, CastKMS adoption and a real
-compositor consumer. Kernel-controlled provider coverage is test evidence,
-not independent production-ABI demand or physical-GPU qualification.
+Remaining integration includes coalesced DRM-event notifications, client opt-in
+and normal atomic property decoding, production CastKMS backend selection and
+recovery, and a real compositor consumer. Kernel-controlled provider coverage
+is test evidence, not independent production-ABI demand or physical-GPU
+qualification.
