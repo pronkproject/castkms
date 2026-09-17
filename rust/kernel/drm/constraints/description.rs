@@ -60,7 +60,7 @@ impl Size {
 pub struct Format(bindings::drm_constraints_format);
 
 impl Format {
-    /// Construct allocation metadata using standard DRM fourcc and modifier values.
+    /// Construct explicit-layout metadata using standard DRM fourcc and modifier values.
     pub const fn new(plane_id: u32, format: u32, modifier: u64, size: Size) -> Self {
         Self(bindings::drm_constraints_format {
             plane_id,
@@ -68,6 +68,17 @@ impl Format {
             modifier,
             size: size.0,
             flags: 0,
+        })
+    }
+
+    /// Describe framebuffer creation without an explicit modifier, not necessarily linear.
+    pub const fn implicit(plane_id: u32, format: u32, size: Size) -> Self {
+        Self(bindings::drm_constraints_format {
+            plane_id,
+            format,
+            modifier: 0,
+            size: size.0,
+            flags: bindings::DRM_CONSTRAINTS_FORMAT_IMPLICIT,
         })
     }
 

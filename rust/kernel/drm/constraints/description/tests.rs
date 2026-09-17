@@ -33,6 +33,27 @@ mod cases {
     }
 
     #[test]
+    fn implicit_and_explicit_linear_keep_independent_bounds() -> Result {
+        let output = Size::exact(128, 64);
+        let formats = [
+            Format::new(7, fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, output),
+            Format::implicit(7, fourcc::XRGB8888, Size::exact(256, 128)),
+        ];
+        let description = Description::new(output, &formats, &[])?;
+        let stored = description.formats();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[0].modifier(), Some(fourcc::FORMAT_MOD_LINEAR));
+        assert_eq!(stored[1].modifier(), None);
+        assert_eq!(stored[0].size().minimum(), (128, 64));
+        assert_eq!(stored[1].size().minimum(), (256, 128));
+        assert!(matches!(
+            Description::new(output, &[formats[1], formats[1]], &[]),
+            Err(EEXIST)
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn native_validation_rejects_bad_or_duplicate_records() -> Result {
         let size = Size::exact(128, 64);
         let format = Format::new(7, fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size);
