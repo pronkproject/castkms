@@ -86,6 +86,8 @@ struct drm_minor {
 	struct dentry *debugfs_root;
 };
 
+struct drm_constraints_events;
+
 /**
  * struct drm_pending_event - Event queued up for userspace to read
  *
@@ -209,6 +211,15 @@ struct drm_file {
 
 	/** @atomic_preparation: Client accepts explicit output preparation tickets. */
 	bool atomic_preparation;
+
+	/**
+	 * @kms_constraints:
+	 *
+	 * Client opt-in to KMS constraints. Changes hold @constraints_lock and
+	 * all modeset locks. Read with READ_ONCE() under modeset locks when
+	 * validating a userspace selection. This is not modesetting authority.
+	 */
+	bool kms_constraints;
 
 	/**
 	 * @aspect_ratio_allowed:
@@ -420,6 +431,23 @@ struct drm_file {
 
 	/** @event_read_lock: Serializes drm_read(). */
 	struct mutex event_read_lock;
+
+	/**
+	 * @constraints_lock:
+	 *
+	 * Serializes constraints subscription and atomic client-capability
+	 * changes. Outside modeset locks; atomic validation must not acquire it.
+	 */
+	struct mutex constraints_lock;
+
+	/**
+	 * @constraints_events:
+	 *
+	 * Bounded notification storage, retained after first subscription until
+	 * file teardown. Protected by @constraints_lock. Paused while the client
+	 * capability is disabled; queued records retain their own lifetime.
+	 */
+	struct drm_constraints_events *constraints_events;
 
 	/**
 	 * @prime:

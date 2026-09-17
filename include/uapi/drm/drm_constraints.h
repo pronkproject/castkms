@@ -5,6 +5,20 @@
 #include "drm.h"
 
 /* Experimental constraints description interface. */
+/*
+ * Set the client capability to 1 after enabling DRM_CLIENT_CAP_ATOMIC to opt
+ * into KMS constraints and subscribe to list-change events. Neither capability
+ * grants modesetting authority. Query each output at setup and resume.
+ *
+ * Set it to 0 to stop new notifications. Previously queued records remain
+ * readable. A current master cannot disable it while a visible participating
+ * output has nondefault accepted constraints: restore those defaults first,
+ * or relinquish modesetting ownership. Such a disable returns EBUSY.
+ * Disable this capability before disabling DRM_CLIENT_CAP_ATOMIC. Values
+ * other than 0 or 1 return EINVAL; unsupported devices return EOPNOTSUPP.
+ */
+#define DRM_CLIENT_CAP_KMS_CONSTRAINTS 9
+
 #define DRM_MODE_CONSTRAINTS_VERSION 1
 #define DRM_MODE_CONSTRAINTS_MAX_BYTES (16U * 1024U * 1024U)
 #define DRM_MODE_CONSTRAINTS_MAX_ENTRIES 64U

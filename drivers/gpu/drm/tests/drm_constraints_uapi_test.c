@@ -20,11 +20,13 @@
 #include <kunit/test.h>
 
 #include "../drm_internal.h"
+#include "../drm_constraints_events.h"
 
 static const struct file_operations test_fops = {
 	.owner = THIS_MODULE,
 	.release = drm_release_noglobal,
 	.unlocked_ioctl = drm_ioctl,
+	.read = drm_read,
 };
 
 static const struct drm_driver test_driver = {
@@ -60,7 +62,7 @@ static const struct drm_constraints_output_ops output_ops = { .check = check };
 
 static struct file *new_file(struct kunit *test, struct drm_device *dev)
 {
-	struct file *file = mock_drm_getfile(dev->primary, O_RDWR);
+	struct file *file = mock_drm_getfile(dev->primary, O_RDWR | O_NONBLOCK);
 
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, file);
 	atomic_inc(&dev->open_count);
@@ -227,11 +229,237 @@ static void ioctl_encoding_requires_modesetting_master(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, _IOC_DIR(DRM_IOCTL_MODE_LIST_CONSTRAINTS), _IOC_READ | _IOC_WRITE);
 }
 
+static void client_cap(struct kunit *test, struct file *file, unsigned long address,
+		       u64 capability, u64 value, long expected)
+{
+	struct drm_set_client_cap request = { .capability = capability, .value = value };
+
+	KUNIT_ASSERT_EQ(test, copy_to_user((void __user *)address, &request, sizeof(request)), 0);
+	KUNIT_EXPECT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_CLIENT_CAP, address), expected);
+}
+
+static void subscription_requires_atomic_support(struct kunit *test)
+{
+	struct query_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	unsigned long address = user_page(test);
+
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 2, -EINVAL);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, -EOPNOTSUPP);
+	KUNIT_EXPECT_FALSE(test, priv->kms_constraints);
+	KUNIT_EXPECT_PTR_EQ(test, priv->constraints_events, NULL);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	KUNIT_EXPECT_TRUE(test, priv->kms_constraints);
+	KUNIT_ASSERT_NOT_NULL(test, priv->constraints_events);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 0, -EBUSY);
+	KUNIT_EXPECT_TRUE(test, priv->atomic);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 0, 0);
+	KUNIT_EXPECT_FALSE(test, priv->kms_constraints);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 0, 0);
+	KUNIT_EXPECT_FALSE(test, priv->atomic);
+}
+
+static void check_unavailable_subscription(struct kunit *test, bool constraints_enabled)
+{
+	struct device *parent = drm_kunit_helper_alloc_device(test);
+	struct drm_device *dev;
+	struct drm_file *priv;
+	struct file *file;
+	unsigned long address = user_page(test);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
+	dev = __drm_kunit_helper_alloc_drm_device_with_driver(test, parent,
+							    sizeof(*dev), 0, &test_driver);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	if (constraints_enabled)
+		KUNIT_ASSERT_EQ(test, drm_constraints_device_init(dev, 8), 0);
+	file = new_file(test, dev);
+	priv = file->private_data;
+	client_cap(test, file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	client_cap(test, file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, -EOPNOTSUPP);
+	KUNIT_EXPECT_PTR_EQ(test, priv->constraints_events, NULL);
+	KUNIT_EXPECT_FALSE(test, priv->kms_constraints);
+}
+
+static void unsupported_devices_do_not_create_subscriptions(struct kunit *test)
+{
+	check_unavailable_subscription(test, false);
+}
+
+static void outputless_devices_do_not_publish_opt_in(struct kunit *test)
+{
+	check_unavailable_subscription(test, true);
+}
+
+static u64 change_suggestion(struct kunit *test, struct query_fixture *f, bool selected)
+{
+	struct drm_constraints_list *list = drm_constraints_crtc_list(f->crtc);
+	u64 id = drm_constraints_entry_id(f->crtc->state->constraints);
+	u64 generation;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_suggest(list, selected ? id : 0), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_observe(list, &generation), 0);
+	return generation;
+}
+
+static void read_change(struct kunit *test, struct query_fixture *f, unsigned long address,
+			u64 generation)
+{
+	struct drm_event_kms_constraints_list_changed event;
+	loff_t offset = 0;
+
+	KUNIT_ASSERT_EQ(test, drm_read(f->file, (char __user *)address, sizeof(event), &offset),
+			sizeof(event));
+	KUNIT_ASSERT_EQ(test, copy_from_user(&event, (void __user *)address, sizeof(event)), 0);
+	KUNIT_EXPECT_EQ(test, event.base.type, DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED);
+	KUNIT_EXPECT_EQ(test, event.crtc_id, f->crtc->base.id);
+	KUNIT_EXPECT_EQ(test, event.generation, generation);
+}
+
+static void subscription_pause_retains_one_bounded_producer(struct kunit *test)
+{
+	struct query_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	struct drm_constraints_events *events;
+	unsigned long address = user_page(test);
+	u64 first, latest = 0;
+	unsigned int i;
+	loff_t offset = 0;
+
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	events = priv->constraints_events;
+	KUNIT_ASSERT_NOT_NULL(test, events);
+	first = change_suggestion(test, f, true);
+	drm_constraints_events_flush(events);
+	for (i = 0; i < 32; i++) {
+		client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 0, 0);
+		latest = change_suggestion(test, f, i & 1);
+		client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+		KUNIT_EXPECT_PTR_EQ(test, priv->constraints_events, events);
+		drm_constraints_events_flush(events);
+	}
+	read_change(test, f, address, first);
+	drm_constraints_events_flush(events);
+	read_change(test, f, address, latest);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 0, 0);
+	latest = change_suggestion(test, f, false);
+	drm_constraints_events_flush(events);
+	KUNIT_EXPECT_EQ(test,
+			drm_read(f->file, (char __user *)address, PAGE_SIZE, &offset), -EAGAIN);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	drm_constraints_events_flush(events);
+	read_change(test, f, address, latest);
+}
+
+static int install_test_selection(struct drm_constraints_entry *entry, void *data)
+{
+	struct drm_crtc *crtc = data;
+	struct drm_constraints_entry *previous = crtc->state->constraints;
+
+	crtc->state->constraints = drm_constraints_entry_get(entry);
+	drm_constraints_entry_put(previous);
+	return 0;
+}
+
+/* Supply disabled accepted state to test file policy independently of decoding. */
+static int select_test_entry(struct drm_crtc *crtc, struct drm_constraints_entry *entry)
+{
+	struct drm_modeset_acquire_ctx ctx;
+	int ret;
+
+	drm_modeset_acquire_init(&ctx, 0);
+	for (;;) {
+		ret = drm_modeset_lock_all_ctx(crtc->dev, &ctx);
+		if (ret != -EDEADLK)
+			break;
+		ret = drm_modeset_backoff(&ctx);
+		if (ret)
+			break;
+	}
+	if (!ret)
+		ret = drm_constraints_list_accept(drm_constraints_crtc_list(crtc), entry,
+						  install_test_selection, crtc);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+	return ret;
+}
+
+static struct drm_constraints_entry *new_target(struct kunit *test, struct query_fixture *f)
+{
+	struct drm_constraints_entry *entry =
+		drm_constraints_entry_create_stateless(drm_constraints_device_domain(f->dev),
+			f->crtc->base.id,
+			drm_constraints_entry_description(drm_constraints_crtc_default(f->crtc)));
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, entry), 0);
+	return entry;
+}
+
+static void current_owner_cannot_disable_a_nondefault_contract(struct kunit *test)
+{
+	struct query_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	struct drm_constraints_entry *target = new_target(test, f);
+	unsigned long address = user_page(test);
+
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	KUNIT_ASSERT_EQ(test, select_test_entry(f->crtc, target), 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 0, -EBUSY);
+	KUNIT_EXPECT_TRUE(test, priv->kms_constraints);
+	KUNIT_ASSERT_EQ(test, select_test_entry(f->crtc, drm_constraints_crtc_default(f->crtc)), 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 0, 0);
+	KUNIT_EXPECT_FALSE(test, priv->kms_constraints);
+}
+
+static void departed_owner_can_disable_its_subscription(struct kunit *test)
+{
+	struct query_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	struct drm_constraints_entry *target = new_target(test, f);
+	unsigned long address = user_page(test);
+
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	KUNIT_ASSERT_EQ(test, select_test_entry(f->crtc, target), 0);
+	kunit_release_action(test, stop_owner, f->dev);
+	KUNIT_ASSERT_EQ(test, drm_dropmaster_ioctl(f->dev, NULL, priv), 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 0, 0);
+	KUNIT_EXPECT_FALSE(test, priv->kms_constraints);
+}
+
+static void file_close_discards_subscribed_records(struct kunit *test)
+{
+	struct query_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	unsigned long address = user_page(test);
+
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	KUNIT_ASSERT_NOT_NULL(test, priv->constraints_events);
+	change_suggestion(test, f, true);
+	drm_constraints_events_flush(priv->constraints_events);
+	kunit_release_action(test, stop_owner, f->dev);
+	kunit_release_action(test, close_file, f->file);
+	f->file = NULL;
+}
+
 static struct kunit_case constraints_uapi_cases[] = {
 	KUNIT_CASE(ioctl_publishes_sizing_metadata_on_enospc),
 	KUNIT_CASE(ioctl_checks_master_and_output_scope),
 	KUNIT_CASE(ioctl_respects_lease_visibility),
 	KUNIT_CASE(ioctl_encoding_requires_modesetting_master),
+	KUNIT_CASE(subscription_requires_atomic_support),
+	KUNIT_CASE(unsupported_devices_do_not_create_subscriptions),
+	KUNIT_CASE(outputless_devices_do_not_publish_opt_in),
+	KUNIT_CASE(subscription_pause_retains_one_bounded_producer),
+	KUNIT_CASE(current_owner_cannot_disable_a_nondefault_contract),
+	KUNIT_CASE(departed_owner_can_disable_its_subscription),
+	KUNIT_CASE(file_close_discards_subscribed_records),
 	{}
 };
 

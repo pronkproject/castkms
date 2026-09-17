@@ -15,8 +15,8 @@ activation acknowledgment.
 
 The implementation provides native atomic helpers and experimental read-only
 listing through ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``. The DRM core also has a
-bounded event producer and an experimental change-event encoding. Client
-subscription and the selection property are not implemented. No production
+bounded event producer, an experimental change-event encoding and explicit
+client subscription. The selection property is not implemented. No production
 CastKMS provider is attached to these helpers. The native test provider uses
 framebuffer metadata, not GPU allocation or PRIME import. Those boundaries
 must not be inferred from successful native tests.
@@ -156,6 +156,32 @@ The ioctl returns no descriptors and performs no activation. It does not use
 ``-EAGAIN`` and is suitable for libdrm's ordinary ``drmIoctl()`` wrapper. A
 successful query reserves neither availability nor subsequent selection.
 
+Client opt-in
+=============
+
+Enable ``DRM_CLIENT_CAP_ATOMIC`` before setting
+``DRM_CLIENT_CAP_KMS_CONSTRAINTS`` to one through ``DRM_IOCTL_SET_CLIENT_CAP``.
+The latter records support for constraints and subscribes the file to list
+changes. Neither capability grants modesetting authority. Notifications still
+require current-master identity and visible CRTCs. Atomic preparation is a
+separate capability and is not implicitly enabled.
+
+Setting the constraints capability to zero pauses notification production.
+Already queued records remain readable. A current master cannot opt out while
+a visible output has nondefault accepted constraints; that request returns
+``-EBUSY`` without changing the subscription. Restore the fixed defaults or
+relinquish modesetting ownership first. Disable constraints support before
+disabling atomic support. Unsupported devices or devices with no attached
+constraints output return ``-EOPNOTSUPP`` on subscription; values other than
+zero or one return ``-EINVAL``.
+
+The first successful subscription allocates one bounded producer, retained
+until file closure. Repeated enable/disable cycles pause and resume that same
+producer. Failed subscription does not publish events or enable the capability.
+File teardown stops deferred work before disposing the remaining DRM events.
+The client adapter is tested through the ordinary ioctl dispatcher; atomic
+selection through a property remains unimplemented.
+
 Bounded change notifications
 ===========================
 
@@ -181,8 +207,7 @@ event-space waiters and joins deferred work before releasing the file context.
 Queued event slots independently retain their storage until consumed or
 discarded during file teardown.
 
-The producer is exercised through native tests; no client-subscription UAPI
-is attached yet. Read-only listing does not subscribe a file. Clients must
+Read-only listing does not subscribe a file. Clients must
 query at initial setup and resume, and their DRM event dispatch must expose
 the complete record instead of silently consuming an unknown event type.
 

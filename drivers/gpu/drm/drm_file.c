@@ -51,6 +51,7 @@
 
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
+#include "drm_constraints_client.h"
 
 /* from BKL pushdown */
 DEFINE_MUTEX(drm_global_mutex);
@@ -152,6 +153,7 @@ struct drm_file *drm_file_alloc(struct drm_minor *minor)
 	INIT_LIST_HEAD(&file->lhead);
 	INIT_LIST_HEAD(&file->fbs);
 	mutex_init(&file->fbs_lock);
+	mutex_init(&file->constraints_lock);
 	INIT_LIST_HEAD(&file->blobs);
 	INIT_LIST_HEAD(&file->pending_event_list);
 	INIT_LIST_HEAD(&file->event_list);
@@ -259,6 +261,7 @@ void drm_file_free(struct drm_file *file)
 	if (!drm_core_check_feature(dev, DRIVER_COMPUTE_ACCEL))
 		drm_debugfs_clients_remove(file);
 
+	drm_constraints_client_release(file);
 	drm_events_release(file);
 
 	if (drm_core_check_feature(dev, DRIVER_MODESET)) {
