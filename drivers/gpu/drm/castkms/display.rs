@@ -229,7 +229,9 @@ impl plane::DriverPlane for Plane {
         if state.geometry.is_some() {
             if state.plane().kind == scene::Kind::Cursor {
                 let framebuffer = state.framebuffer().ok_or(EINVAL)?;
-                if framebuffer.width() > 512 || framebuffer.height() > 512 {
+                if framebuffer.width() > super::execution::potential::MAX_CURSOR_DIMENSION
+                    || framebuffer.height() > super::execution::potential::MAX_CURSOR_DIMENSION
+                {
                     return Err(EINVAL);
                 }
             }
@@ -610,7 +612,10 @@ impl KmsDriver for Driver {
             min_resolution: (1, 1),
             max_resolution: (super::execution::potential::MAX_DIMENSION,
                 super::execution::potential::MAX_DIMENSION),
-            max_cursor: (512, 512),
+            max_cursor: (
+                super::execution::potential::MAX_CURSOR_DIMENSION,
+                super::execution::potential::MAX_CURSOR_DIMENSION,
+            ),
             preferred_depth: 24,
             preferred_fourcc: Some(fourcc::XRGB8888),
             enable_default_client: false,
