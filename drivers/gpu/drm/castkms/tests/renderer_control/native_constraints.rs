@@ -155,6 +155,65 @@ mod cases {
     }
 
     #[test]
+    fn exact_tiled_worker_admits_tiled_scanout() -> Result {
+        let display = CastKms::new_constraints(c"castkms-native-tiled", 1)?;
+        with_registered_display(&display, |device, crtc, connector, scanout, file| {
+            let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
+            let control = device.constraints_output(crtc)?;
+            let owner = owner(&file, crtc, connector)?;
+            let modifier = drm::fourcc::I915_FORMAT_MOD_4_TILED;
+            let draft = crate::renderer::draft::Draft::new(
+                owner.access(), private_images::profile_for(Some(modifier))?, [640, 480],
+            )?;
+            let mut pool = Pool::new()?;
+            pool.insert(1, || {
+                draft.register_image(
+                    &[private_images::buffer(device, ExportAccess::ReadWrite)?],
+                )
+            })?;
+            draft.submit_probe(None)?;
+            let ready = draft.prepare_worker(&pool)?;
+            let entry = provider.prepare(ready.worker())?;
+            provider.publish(&control, &entry)?;
+            let object = shmem::Object::<gem::Object>::new(
+                device, 640 * 480 * 4, Default::default(), Default::default(),
+            )?;
+            let framebuffer = Framebuffer::from_objects(device, &FramebufferLayout {
+                width: 640, height: 480, format: drm::fourcc::XRGB8888,
+                modifier: Some(modifier), interlaced: false,
+                planes: &[FramebufferPlane { object: &object, pitch: 2560, offset: 0 }],
+            })?;
+            let tiled = CrtcScanout {
+                mode: scanout.mode,
+                framebuffer: &framebuffer,
+                connectors: scanout.connectors,
+                position: scanout.position,
+            };
+
+            check(device.atomic_update(|state| {
+                state.set_crtc_config(crtc, Some(&tiled))
+            }) == Err(EINVAL))?;
+            device.atomic_update(|mut state| {
+                state.as_mut().set_crtc_config(crtc, Some(&tiled))?;
+                state.add_crtc_state(crtc)?.set_constraints(&entry)
+            })?;
+            let scene = crtc.display.output.with_accepted(|accepted| {
+                accepted.and_then(|accepted| accepted.scene.cloned())
+            }).ok_or(EINVAL)?;
+            check(scene.primary().ok_or(EINVAL)?.framebuffer().modifier() == Some(modifier))?;
+            check(!scene.host_binding())?;
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            control.restore_default()?;
+            control.withdraw(entry.id())?;
+            control.forget(entry.id())?;
+            drop(provider.remove(&entry));
+            drop(ready);
+            drop(pool.remove(1)?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn cancelled_worker_is_never_published() -> Result {
         let display = CastKms::new_constraints(c"castkms-native-cancel", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
