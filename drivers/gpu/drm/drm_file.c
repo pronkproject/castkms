@@ -156,6 +156,7 @@ struct drm_file *drm_file_alloc(struct drm_minor *minor)
 	INIT_LIST_HEAD(&file->pending_event_list);
 	INIT_LIST_HEAD(&file->event_list);
 	init_waitqueue_head(&file->event_wait);
+	init_waitqueue_head(&file->event_space_wait);
 	file->event_space = 4096; /* set aside 4k for event buffer */
 
 	spin_lock_init(&file->master_lookup_lock);
@@ -600,6 +601,7 @@ put_back_event:
 			}
 
 			ret += length;
+			wake_up_all(&file_priv->event_space_wait);
 			kfree(e);
 		}
 	}
@@ -736,6 +738,7 @@ void drm_event_cancel_free(struct drm_device *dev,
 	if (p->file_priv) {
 		p->file_priv->event_space += p->event->length;
 		list_del(&p->pending_link);
+		wake_up_all(&p->file_priv->event_space_wait);
 	}
 	spin_unlock_irqrestore(&dev->event_lock, flags);
 

@@ -43,6 +43,7 @@ static struct signaling_fixture *new_fixture(struct kunit *test)
 	drm_mode_config_reset(f->dev);
 	INIT_LIST_HEAD(&f->file.pending_event_list);
 	f->file.event_space = 4096;
+	init_waitqueue_head(&f->file.event_space_wait);
 	return f;
 }
 
