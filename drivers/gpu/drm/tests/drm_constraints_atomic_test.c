@@ -1794,7 +1794,9 @@ static struct drm_plane *new_scene_plane(struct kunit *test, struct atomic_fixtu
 
 static struct drm_constraints_entry *
 new_scene_entry(struct kunit *test, struct atomic_fixture *f,
-		struct drm_plane *overlay, struct drm_plane *cursor)
+		struct drm_plane *overlay, struct drm_plane *cursor,
+		const struct drm_constraints_plane_limit *plane_limits,
+		unsigned int plane_limit_count)
 {
 	const struct drm_constraints_size output = { 128, 64, 128, 64 };
 	const struct drm_constraints_format formats[] = {
@@ -1844,8 +1846,9 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
 
-	description = drm_constraints_description_create(&output, formats, ARRAY_SIZE(formats),
-							 rules, ARRAY_SIZE(rules));
+	description = drm_constraints_description_create_with_plane_limits(
+		&output, formats, ARRAY_SIZE(formats), rules, ARRAY_SIZE(rules),
+		plane_limits, plane_limit_count);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	entry = drm_constraints_entry_create(drm_constraints_device_domain(f->dev),
@@ -1885,6 +1888,28 @@ out:
 	return ret;
 }
 
+static int set_scene_plane(struct drm_atomic_commit *state, struct drm_crtc *crtc,
+			   struct drm_plane *plane, struct drm_framebuffer *fb)
+{
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_plane_state *proposed;
+	int ret = lock_update(state, &ctx);
+
+	if (ret)
+		goto out;
+	proposed = drm_atomic_get_plane_state(state, plane);
+	if (IS_ERR(proposed)) {
+		ret = PTR_ERR(proposed);
+		goto out;
+	}
+	ret = drm_atomic_set_crtc_for_plane(proposed, crtc);
+	if (!ret)
+		drm_atomic_set_fb_for_plane(proposed, fb);
+out:
+	unlock_update(state);
+	return ret;
+}
+
 static void complete_scene_checks_overlay_and_cursor_contracts(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1894,7 +1919,7 @@ static void complete_scene_checks_overlay_and_cursor_contracts(struct kunit *tes
 							  DRM_FORMAT_MOD_LINEAR, 128);
 	struct drm_framebuffer *cursor_fb = new_fb(test, f, DRM_FORMAT_ARGB8888,
 							 DRM_FORMAT_MOD_LINEAR, 64);
-	struct drm_constraints_entry *entry = new_scene_entry(test, f, overlay, cursor);
+	struct drm_constraints_entry *entry = new_scene_entry(test, f, overlay, cursor, NULL, 0);
 	struct drm_atomic_commit *state, *next;
 	struct drm_plane_state *plane;
 
@@ -1939,6 +1964,42 @@ static void complete_scene_checks_overlay_and_cursor_contracts(struct kunit *tes
 	KUNIT_EXPECT_NOT_NULL(test, drm_atomic_get_new_plane_state(next, overlay));
 	KUNIT_EXPECT_NOT_NULL(test, drm_atomic_get_new_plane_state(next, cursor));
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, entry);
+}
+
+static void proposed_scene_obeys_overlapping_plane_limits(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_plane *overlay = new_scene_plane(test, f, DRM_PLANE_TYPE_OVERLAY, 1);
+	struct drm_plane *cursor = new_scene_plane(test, f, DRM_PLANE_TYPE_CURSOR, 2);
+	struct drm_framebuffer *overlay_fb = new_fb(test, f, DRM_FORMAT_ARGB8888,
+							  DRM_FORMAT_MOD_LINEAR, 128);
+	struct drm_framebuffer *cursor_fb = new_fb(test, f, DRM_FORMAT_ARGB8888,
+							 DRM_FORMAT_MOD_LINEAR, 64);
+	const u32 all_planes[] = { f->plane->base.id, overlay->base.id, cursor->base.id };
+	const u32 auxiliary_planes[] = { overlay->base.id, cursor->base.id };
+	const struct drm_constraints_plane_limit limits[] = {
+		{ .max_active = 2, .count = ARRAY_SIZE(all_planes), .plane_ids = all_planes },
+		{ .max_active = 1, .count = ARRAY_SIZE(auxiliary_planes),
+		  .plane_ids = auxiliary_planes },
+	};
+	struct drm_constraints_entry *entry = new_scene_entry(test, f, overlay, cursor,
+							       limits, ARRAY_SIZE(limits));
+	struct drm_atomic_commit *state;
+
+	drm_mode_config_reset(f->dev);
+	state = new_update(test, f, entry, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, add_scene_plane(state, f->crtc, overlay, overlay_fb, true), 0);
+	KUNIT_ASSERT_EQ(test, add_scene_plane(state, f->crtc, cursor, cursor_fb, false), 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+
+	KUNIT_ASSERT_EQ(test, set_scene_plane(state, NULL, f->plane, NULL), 0);
+	/* Two active planes fit the broad limit but not the auxiliary limit. */
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+
+	KUNIT_ASSERT_EQ(test, set_scene_plane(state, f->crtc, f->plane, f->tiled), 0);
+	KUNIT_ASSERT_EQ(test, set_scene_plane(state, NULL, cursor, NULL), 0);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), 0);
 }
 
 static void put_lease_master(void *data)
@@ -2284,6 +2345,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(proposed_scene_obeys_scalar_property_rules),
 	KUNIT_CASE(installation_rechecks_proposed_property_values),
 	KUNIT_CASE(complete_scene_checks_overlay_and_cursor_contracts),
+	KUNIT_CASE(proposed_scene_obeys_overlapping_plane_limits),
 	{}
 };
 
