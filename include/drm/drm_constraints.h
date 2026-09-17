@@ -140,6 +140,19 @@ const struct drm_constraints_plane_limit *
 drm_constraints_description_plane_limits(const struct drm_constraints_description *description,
 					 unsigned int *count);
 
+/*
+ * Return whether @candidate supports every state described by @required.
+ *
+ * The comparison covers the common allocation, scalar-property and active-plane
+ * metadata. Plane-limit implication is deliberately conservative: a nontrivial
+ * candidate limit must have an identical plane set in @required with an equal or
+ * tighter ceiling. True proves coverage of the represented metadata; false may
+ * also mean that this bounded structural comparison cannot prove the relationship.
+ * Provider checks outside these descriptions remain separate.
+ */
+bool drm_constraints_description_covers(const struct drm_constraints_description *candidate,
+					const struct drm_constraints_description *required);
+
 /* Test one scalar using the rule's declared native DRM property semantics. */
 bool drm_constraints_property_matches(const struct drm_constraints_property *property, u64 value);
 

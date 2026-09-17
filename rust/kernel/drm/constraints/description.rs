@@ -314,6 +314,17 @@ impl Description {
         // SAFETY: A nonempty native array is initialized, non-null and retained by the borrow.
         unsafe { slice::from_raw_parts(ptr.cast(), count as usize) }
     }
+
+    /// Test whether this description structurally covers all of `required`.
+    ///
+    /// A true result proves coverage of the common allocation, scalar-property and
+    /// active-plane metadata. A false result can also mean that the conservative native
+    /// comparison cannot prove an implication between differently shaped plane limits.
+    /// Provider validation not represented by either description remains separate.
+    pub fn covers(&self, required: &Self) -> bool {
+        // SAFETY: Both shared references retain initialized immutable native descriptions.
+        unsafe { bindings::drm_constraints_description_covers(self.0.get(), required.0.get()) }
+    }
 }
 
 #[cfg(CONFIG_KUNIT)]

@@ -37,6 +37,26 @@ create_description(struct kunit *test, const struct drm_constraints_size *output
 	return description;
 }
 
+static struct drm_constraints_description *
+create_complete_description(struct kunit *test, const struct drm_constraints_size *output,
+			    const struct drm_constraints_format *formats,
+			    unsigned int format_count,
+			    const struct drm_constraints_property *properties,
+			    unsigned int property_count,
+			    const struct drm_constraints_plane_limit *limits,
+			    unsigned int limit_count)
+{
+	struct drm_constraints_description *description;
+
+	description = drm_constraints_description_create(output, formats,
+							 format_count, properties,
+							 property_count, limits,
+							 limit_count);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put, description), 0);
+	return description;
+}
+
 static void drm_constraints_copies_all_allocation_information(struct kunit *test)
 {
 	struct drm_constraints_size output = output_size;
@@ -382,6 +402,106 @@ static void drm_constraints_rejects_malformed_plane_limits(struct kunit *test)
 #undef EXPECT_LIMIT_ERROR
 }
 
+static void drm_constraints_description_recognizes_structural_coverage(struct kunit *test)
+{
+	const struct drm_constraints_size candidate_output = { 1280, 720, 3840, 2160 };
+	struct drm_constraints_format required_format = linear;
+	struct drm_constraints_format candidate_formats[] = { linear, linear };
+	struct drm_constraints_property required_property = {
+		.object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_SIGNED_RANGE,
+		.minimum = (u64)-16, .maximum = 16,
+	};
+	struct drm_constraints_property candidate_property = {
+		.object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_SIGNED_RANGE,
+		.minimum = (u64)-32, .maximum = 32,
+	};
+	u32 required_ids[] = { 17, 18, 19 };
+	u32 candidate_ids[] = { 19, 17, 18 };
+	struct drm_constraints_plane_limit required_limit = {
+		.max_active = 1, .count = ARRAY_SIZE(required_ids), .plane_ids = required_ids,
+	};
+	struct drm_constraints_plane_limit candidate_limit = {
+		.max_active = 2, .count = ARRAY_SIZE(candidate_ids), .plane_ids = candidate_ids,
+	};
+	struct drm_constraints_description *required, *candidate, *unrestricted;
+
+	required_format.size = (struct drm_constraints_size) { 64, 32, 1920, 1080 };
+	required_format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED;
+	required_format.pitch_alignment = 256;
+	required_format.offset_alignment = 4096;
+	required_format.max_pitch = 8192;
+	candidate_formats[0].size = (struct drm_constraints_size) { 1, 1, 8192, 8192 };
+	candidate_formats[0].pitch_alignment = 64;
+	candidate_formats[0].offset_alignment = 1024;
+	candidate_formats[0].max_pitch = 16384;
+	candidate_formats[1].plane_id = 18;
+
+	required = create_complete_description(test, &output_size, &required_format, 1,
+					       &required_property, 1, &required_limit, 1);
+	candidate = create_complete_description(test, &candidate_output, candidate_formats,
+						ARRAY_SIZE(candidate_formats),
+						&candidate_property, 1, &candidate_limit, 1);
+	unrestricted = create_complete_description(test, &candidate_output, candidate_formats,
+						   ARRAY_SIZE(candidate_formats),
+						   NULL, 0, NULL, 0);
+
+	KUNIT_EXPECT_TRUE(test, drm_constraints_description_covers(required, required));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_description_covers(candidate, required));
+	KUNIT_EXPECT_TRUE(test, drm_constraints_description_covers(unrestricted, required));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_description_covers(required, candidate));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_description_covers(NULL, required));
+	KUNIT_EXPECT_FALSE(test, drm_constraints_description_covers(candidate, NULL));
+}
+
+static void drm_constraints_description_rejects_incomplete_coverage(struct kunit *test)
+{
+	struct drm_constraints_format required_format = linear;
+	struct drm_constraints_format candidate_format;
+	struct drm_constraints_property required_property = {
+		.object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_RANGE,
+		.minimum = 2, .maximum = 8,
+	};
+	struct drm_constraints_property candidate_property = required_property;
+	u32 ids[] = { 17, 18, 19 };
+	struct drm_constraints_plane_limit required_limit = {
+		.max_active = 2, .count = ARRAY_SIZE(ids), .plane_ids = ids,
+	};
+	struct drm_constraints_plane_limit candidate_limit = required_limit;
+	struct drm_constraints_description *required, *candidate;
+
+	required_format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED;
+	required_format.pitch_alignment = 256;
+	required_format.offset_alignment = 4096;
+	required_format.max_pitch = 8192;
+	required = create_complete_description(test, &output_size, &required_format, 1,
+					       &required_property, 1, &required_limit, 1);
+
+#define EXPECT_INCOMPLETE() do { \
+	candidate = create_complete_description(test, &output_size, &candidate_format, 1, \
+						&candidate_property, 1, &candidate_limit, 1); \
+	KUNIT_EXPECT_FALSE(test, drm_constraints_description_covers(candidate, required)); \
+} while (0)
+	candidate_format = required_format;
+	candidate_format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE;
+	EXPECT_INCOMPLETE();
+	candidate_format = required_format;
+	candidate_format.pitch_alignment = 512;
+	EXPECT_INCOMPLETE();
+	candidate_format = required_format;
+	candidate_property.maximum = 7;
+	EXPECT_INCOMPLETE();
+	candidate_property = required_property;
+	candidate_property.property_id++;
+	EXPECT_INCOMPLETE();
+	candidate_property = required_property;
+	candidate_limit.max_active = 1;
+	EXPECT_INCOMPLETE();
+	candidate_limit = required_limit;
+	ids[2]++;
+	EXPECT_INCOMPLETE();
+#undef EXPECT_INCOMPLETE
+}
+
 static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_preserves_large_plane_modifier_matrix),
 	KUNIT_CASE(drm_constraints_copies_all_allocation_information),
@@ -396,6 +516,8 @@ static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_rejects_malformed_property_rules),
 	KUNIT_CASE(drm_constraints_copies_overlapping_plane_limits),
 	KUNIT_CASE(drm_constraints_rejects_malformed_plane_limits),
+	KUNIT_CASE(drm_constraints_description_recognizes_structural_coverage),
+	KUNIT_CASE(drm_constraints_description_rejects_incomplete_coverage),
 	{}
 };
 
