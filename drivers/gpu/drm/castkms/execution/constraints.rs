@@ -29,6 +29,25 @@ pub(crate) struct Plane {
     pub(crate) kind: Kind,
 }
 
+/// Owned immutable plane identities for one output's allocation descriptions.
+///
+/// The setup owner supplies existing planes eligible for that output. Numeric identities
+/// retain neither KMS objects nor authority; native publication still validates scope.
+pub(crate) struct Topology {
+    planes: KVec<Plane>,
+}
+
+impl Topology {
+    pub(crate) fn new(planes: KVec<Plane>) -> Result<Self> {
+        check_planes(&planes)?;
+        Ok(Self { planes })
+    }
+
+    pub(crate) fn planes(&self) -> &[Plane] {
+        &self.planes
+    }
+}
+
 fn check_planes(planes: &[Plane]) -> Result {
     if planes.is_empty() || planes.len() > crate::scene::MAX_PLANES {
         return Err(EINVAL);
@@ -359,6 +378,24 @@ mod tests {
         assert!(matches!(host(&planes, &[]), Err(EINVAL)));
         planes[1].id = 0;
         assert!(matches!(host(&planes, &[]), Err(EINVAL)));
+        Ok(())
+    }
+
+    #[test]
+    fn topology_owns_validated_plane_identities() -> Result {
+        assert!(matches!(Topology::new(KVec::new()), Err(EINVAL)));
+        let mut stored = KVec::new();
+        for plane in planes() {
+            stored.push(plane, GFP_KERNEL)?;
+        }
+        let topology = Topology::new(stored)?;
+        assert_eq!(topology.planes().len(), 3);
+        assert_eq!(topology.planes()[1].id, 8);
+        assert!(topology.planes()[1].kind == Kind::Overlay);
+        assert_eq!(
+            host(topology.planes(), &[])?.output().maximum(),
+            (8192, 8192)
+        );
         Ok(())
     }
 }
