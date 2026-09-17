@@ -19,13 +19,14 @@ use kernel::{
 
 /// Evidence captured with an authorized source claim, not a capture grant or private image.
 ///
-/// Only producer records are retained from the scene. In particular, this object cannot
-/// delay source retirement by retaining a read claim or a framebuffer reference.
+/// Producer records and exact backend attribution are retained from the scene. This object
+/// cannot delay source retirement by retaining a read claim or a framebuffer reference.
 pub(super) struct Evidence {
     output: Identity,
     configuration: Configuration,
     owner: Option<MasterRef<Driver>>,
     execution: Description,
+    constraints: Option<ARef<kernel::drm::constraints::OpaqueEntry>>,
     content: Option<ContentSerial>,
     producers: [Option<Arc<Dependencies>>; MAX_PLANES],
 }
@@ -41,6 +42,7 @@ impl Evidence {
             configuration: current.configuration().clone(),
             owner: scene.owner().cloned(),
             execution,
+            constraints: scene.constraints().map(ARef::from),
             content: scene.content_serial(),
             producers,
         }
@@ -121,13 +123,14 @@ impl Released {
 
     /// Observe eligibility under the caller's current display and renderer exclusion.
     /// Success grants no capture authority and reserves no later operation.
-    pub(super) fn check(&self, current: &Current<'_>, execution: Description) -> Result {
+    pub(crate) fn check(&self, current: &Current<'_>, execution: Description) -> Result {
         current.check_scene_owner()?;
         if self.evidence.output != *current.output_identity()
             || self.evidence.owner.as_ref() != Some(current.master())
         {
             return Err(EACCES);
         }
+        current.check_constraints(self.evidence.constraints.as_deref())?;
         if self.evidence.configuration != *current.configuration()
             || self.evidence.execution != execution
         {

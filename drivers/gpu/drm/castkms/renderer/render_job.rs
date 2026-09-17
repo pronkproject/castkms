@@ -28,6 +28,41 @@ pub(crate) struct RenderJob {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl RenderJob {
+    /// Bind a prepared private image to the exact accepted worker under live authority.
+    /// Storage reservation happens before entering native and worker admission locks.
+    pub(crate) fn claim_bound(
+        access: &super::permission::Access,
+        entry: &kernel::drm::constraints::Entry<crate::execution::constraints::backend::Backend>,
+        image_id: u64,
+        previous_content_serial: Option<u64>,
+        execution: crate::execution::Description,
+        destination: Prepared,
+    ) -> Result<Self> {
+        let backend = entry.backend();
+        let crate::execution::constraints::backend::Backend::Renderer(worker) = &*backend else {
+            return Err(EOPNOTSUPP);
+        };
+        if worker.interval() != access.interval() {
+            return Err(ESTALE);
+        }
+        let source = access.with_current(|current| {
+            let ready = worker.hold_ready()?;
+            if !ready.contains(image_id, destination.image()) {
+                return Err(EACCES);
+            }
+            if destination.image().dimensions() != current.configuration().dimensions() {
+                return Err(ESTALE);
+            }
+            for buffer in destination.image().buffers() {
+                if current.uses_reservation(buffer.reservation())? {
+                    return Err(EINVAL);
+                }
+            }
+            SourceJob::claim_bound(&current, entry, &ready, previous_content_serial, execution)
+        })?;
+        Ok(Self::new(source, destination))
+    }
+
     pub(super) fn new(source: SourceJob, destination: Prepared) -> Self {
         Self {
             source,

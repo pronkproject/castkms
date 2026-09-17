@@ -67,6 +67,36 @@ impl SourceJob {
         previous_content_serial: Option<u64>,
         execution: Description,
     ) -> Result<Self> {
+        current.check_constraints(None)?;
+        Self::claim_current(current, previous_content_serial, execution)
+    }
+
+    /// Admit a source read only for the accepted entry and its held ready worker.
+    /// The caller holds current permission exclusion before acquiring readiness.
+    /// Retaining an entry or observing list selection alone cannot authorize this call.
+    pub(crate) fn claim_bound(
+        current: &display_control::Current<'_>,
+        entry: &kernel::drm::constraints::Entry<crate::execution::constraints::backend::Backend>,
+        ready: &super::ready::Ready<'_>,
+        previous_content_serial: Option<u64>,
+        execution: Description,
+    ) -> Result<Self> {
+        let backend = entry.backend();
+        let crate::execution::constraints::backend::Backend::Renderer(worker) = &*backend else {
+            return Err(EOPNOTSUPP);
+        };
+        if !ready.belongs_to(worker) || worker.output() != current.output_identity() {
+            return Err(EACCES);
+        }
+        current.check_constraints(Some(entry))?;
+        Self::claim_current(current, previous_content_serial, execution)
+    }
+
+    fn claim_current(
+        current: &display_control::Current<'_>,
+        previous_content_serial: Option<u64>,
+        execution: Description,
+    ) -> Result<Self> {
         let (scene, claim) = current.claim_changed_scene(previous_content_serial)?;
         let binding = match binding::Retained::new(scene.constraints()) {
             Ok(binding) => binding,
