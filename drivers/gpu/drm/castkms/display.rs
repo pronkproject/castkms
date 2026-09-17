@@ -753,18 +753,18 @@ impl KmsDriver for Driver {
             let crtc =
                 crtc::UnregisteredCrtc::<Crtc>::new(dev, plane, cursor, None, display.clone())?;
             allocation_planes.push(
-                super::execution::constraints::Plane {
-                    id: plane.object_id(),
-                    kind: scene::Kind::Primary,
-                },
+                super::execution::constraints::Plane::from_kms(
+                    plane,
+                    scene::Kind::Primary,
+                )?,
                 GFP_KERNEL,
             )?;
             if let Some(cursor) = cursor {
                 allocation_planes.push(
-                    super::execution::constraints::Plane {
-                        id: cursor.object_id(),
-                        kind: scene::Kind::Cursor,
-                    },
+                    super::execution::constraints::Plane::from_kms(
+                        cursor,
+                        scene::Kind::Cursor,
+                    )?,
                     GFP_KERNEL,
                 )?;
             }
@@ -807,10 +807,10 @@ impl KmsDriver for Driver {
                 plane.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
                 for (_, allocation_planes) in &mut allocations {
                     allocation_planes.push(
-                        super::execution::constraints::Plane {
-                            id: plane.object_id(),
-                            kind: scene::Kind::Overlay,
-                        },
+                        super::execution::constraints::Plane::from_kms(
+                            plane,
+                            scene::Kind::Overlay,
+                        )?,
                         GFP_KERNEL,
                     )?;
                 }
