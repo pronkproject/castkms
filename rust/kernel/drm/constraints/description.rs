@@ -239,13 +239,9 @@ impl Description {
     /// invalid modifiers, malformed storage rules and duplicate plane/format/modifier tuples.
     /// Arbitrary supported tiled modifiers are not restricted to the kernel compositor's linear
     /// layouts.
-    /// Scalar rules must be valid and distinct by object/property ID; an empty rule list is valid.
-    pub fn new(output: Size, formats: &[Format], properties: &[Property]) -> Result<ARef<Self>> {
-        Self::new_with_plane_limits(output, formats, properties, &[])
-    }
-
-    /// Validate and copy allocation metadata, scalar rules and active-plane ceilings.
-    pub fn new_with_plane_limits(
+    /// Scalar rules must be valid and distinct by object/property ID; empty rule and limit lists
+    /// are valid.
+    pub fn new(
         output: Size,
         formats: &[Format],
         properties: &[Property],
@@ -257,7 +253,7 @@ impl Description {
         // SAFETY: Transparent wrappers have native layout, all inputs remain readable for the
         // call, and native construction copies all input without retaining borrowed pointers.
         let raw = from_err_ptr(unsafe {
-            bindings::drm_constraints_description_create_with_plane_limits(
+            bindings::drm_constraints_description_create(
                 &output.0,
                 formats.as_ptr().cast(),
                 count,

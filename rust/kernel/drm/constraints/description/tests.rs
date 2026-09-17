@@ -15,7 +15,7 @@ mod cases {
             fourcc::FORMAT_MOD_LINEAR,
             Size::exact(128, 64),
         )];
-        let description = Description::new(Size::new(64, 32, 256, 128), &formats, &[])?;
+        let description = Description::new(Size::new(64, 32, 256, 128), &formats, &[], &[])?;
         formats[0] = Format::new(9, fourcc::ARGB8888, 1, Size::exact(32, 16));
         assert_eq!(formats[0].plane_id(), 9);
         assert_eq!(description.output().minimum(), (64, 32));
@@ -39,7 +39,7 @@ mod cases {
             Format::new(7, fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, output),
             Format::implicit(7, fourcc::XRGB8888, Size::exact(256, 128)),
         ];
-        let description = Description::new(output, &formats, &[])?;
+        let description = Description::new(output, &formats, &[], &[])?;
         let stored = description.formats();
         assert_eq!(stored.len(), 2);
         assert_eq!(stored[0].modifier(), Some(fourcc::FORMAT_MOD_LINEAR));
@@ -47,7 +47,7 @@ mod cases {
         assert_eq!(stored[0].size().minimum(), (128, 64));
         assert_eq!(stored[1].size().minimum(), (256, 128));
         assert!(matches!(
-            Description::new(output, &[formats[1], formats[1]], &[]),
+            Description::new(output, &[formats[1], formats[1]], &[], &[]),
             Err(EEXIST)
         ));
         Ok(())
@@ -58,7 +58,7 @@ mod cases {
         let size = Size::exact(256, 128);
         let formats = [Format::new(7, fourcc::NV12, 1, size)
             .with_storage(false, true, 256, 4096, 65536)];
-        let description = Description::new(size, &formats, &[])?;
+        let description = Description::new(size, &formats, &[], &[])?;
         let format = &description.formats()[0];
         assert!(!format.permits_native());
         assert!(format.permits_imported());
@@ -80,7 +80,7 @@ mod cases {
                 .with_storage(true, false, 8, 1, 4),
         ] {
             assert!(matches!(
-                Description::new(size, &[format], &[]),
+                Description::new(size, &[format], &[], &[]),
                 Err(EINVAL)
             ));
         }
@@ -90,17 +90,17 @@ mod cases {
     fn native_validation_rejects_bad_or_duplicate_records() -> Result {
         let size = Size::exact(128, 64);
         let format = Format::new(7, fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size);
-        assert!(matches!(Description::new(size, &[], &[]), Err(EINVAL)));
+        assert!(matches!(Description::new(size, &[], &[], &[]), Err(EINVAL)));
         assert!(matches!(
-            Description::new(Size::exact(0, 64), &[format], &[]),
+            Description::new(Size::exact(0, 64), &[format], &[], &[]),
             Err(EINVAL)
         ));
         assert!(matches!(
-            Description::new(size, &[format, format], &[]),
+            Description::new(size, &[format, format], &[], &[]),
             Err(EEXIST)
         ));
         assert!(matches!(
-            Description::new(size, &[Format::new(7, 0, 0, size)], &[]),
+            Description::new(size, &[Format::new(7, 0, 0, size)], &[], &[]),
             Err(EINVAL)
         ));
         Ok(())
@@ -114,7 +114,7 @@ mod cases {
             Format::new(7, fourcc::XRGB8888, 0, Size::exact(128, 64)),
             Format::new(7, fourcc::ARGB8888, X_TILED, Size::exact(256, 128)),
         ];
-        let description = Description::new(Size::exact(128, 64), &formats, &[])?;
+        let description = Description::new(Size::exact(128, 64), &formats, &[], &[])?;
         assert_eq!(description.formats()[1].modifier(), Some(X_TILED));
         assert_eq!(description.formats()[1].size().minimum(), (256, 128));
         assert_eq!(description.formats()[1].size().maximum(), (256, 128));
@@ -131,7 +131,7 @@ mod cases {
             Property::enum_values(7, 25, 1 << 63),
             Property::bitmask(7, 26, 3),
         ];
-        let description = Description::new(size, &formats, &rules)?;
+        let description = Description::new(size, &formats, &rules, &[])?;
         rules[0] = Property::unsigned_range(7, 23, 0, 1);
         assert!(rules[0].matches(1));
         let stored = description.properties();
@@ -148,7 +148,7 @@ mod cases {
         assert!(!stored[2].matches(64));
         assert!(stored[3].matches(3));
         assert!(!stored[3].matches(4));
-        assert!(Description::new(size, &formats, &[])?
+        assert!(Description::new(size, &formats, &[], &[])?
             .properties()
             .is_empty());
         Ok(())
@@ -160,15 +160,25 @@ mod cases {
         let formats = [Format::new(7, fourcc::XRGB8888, 0, size)];
         let rule = Property::unsigned_range(7, 23, 0, 1);
         assert!(matches!(
-            Description::new(size, &formats, &[rule, rule]),
+            Description::new(size, &formats, &[rule, rule], &[]),
             Err(EEXIST)
         ));
         assert!(matches!(
-            Description::new(size, &formats, &[Property::signed_range(7, 23, 1, -1)]),
+            Description::new(
+                size,
+                &formats,
+                &[Property::signed_range(7, 23, 1, -1)],
+                &[],
+            ),
             Err(EINVAL)
         ));
         assert!(matches!(
-            Description::new(size, &formats, &[Property::enum_values(7, 23, 0)]),
+            Description::new(
+                size,
+                &formats,
+                &[Property::enum_values(7, 23, 0)],
+                &[],
+            ),
             Err(EINVAL)
         ));
         Ok(())
@@ -181,15 +191,16 @@ mod cases {
         let all = [7, 8, 9];
         let overlays = [8, 9];
         let limits = [PlaneLimit::new(2, &all)?, PlaneLimit::new(1, &overlays)?];
-        let description =
-            Description::new_with_plane_limits(size, &formats, &[], &limits)?;
+        let description = Description::new(size, &formats, &[], &limits)?;
         let stored = description.plane_limits();
         assert_eq!(stored.len(), 2);
         assert_eq!(stored[0].max_active(), 2);
         assert_eq!(stored[0].plane_ids(), [7, 8, 9]);
         assert_eq!(stored[1].max_active(), 1);
         assert_eq!(stored[1].plane_ids(), [8, 9]);
-        assert!(Description::new(size, &formats, &[])?.plane_limits().is_empty());
+        assert!(Description::new(size, &formats, &[], &[])?
+            .plane_limits()
+            .is_empty());
         Ok(())
     }
 
@@ -205,7 +216,7 @@ mod cases {
             (1, &[7, 7][..], EEXIST),
         ] {
             let limit = PlaneLimit::new(maximum, ids)?;
-            assert!(Description::new_with_plane_limits(size, &formats, &[], &[limit])
+            assert!(Description::new(size, &formats, &[], &[limit])
                 .is_err_and(|actual| actual == error));
         }
         Ok(())

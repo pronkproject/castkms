@@ -31,7 +31,7 @@ create_description(struct kunit *test, const struct drm_constraints_size *output
 {
 	struct drm_constraints_description *description;
 
-	description = drm_constraints_description_create(output, formats, count, NULL, 0);
+	description = drm_constraints_description_create(output, formats, count, NULL, 0, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put, description), 0);
 	return description;
@@ -92,7 +92,7 @@ static void drm_constraints_preserves_large_plane_modifier_matrix(struct kunit *
 	KUNIT_EXPECT_MEMEQ(test, view, formats, sizeof(*formats) * total);
 	formats[total - 1] = formats[0];
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, total, NULL, 0),
+		drm_constraints_description_create(&output_size, formats, total, NULL, 0, NULL, 0),
 		ERR_PTR(-EEXIST));
 }
 
@@ -107,11 +107,13 @@ static void drm_constraints_rejects_invalid_dimensions(struct kunit *test)
 
 	for (i = 0; i < ARRAY_SIZE(invalid); i++) {
 		KUNIT_EXPECT_PTR_EQ(test,
-			drm_constraints_description_create(&invalid[i], &linear, 1, NULL, 0),
+			drm_constraints_description_create(&invalid[i], &linear, 1, NULL, 0,
+							   NULL, 0),
 			ERR_PTR(-EINVAL));
 		format.size = invalid[i];
 		KUNIT_EXPECT_PTR_EQ(test,
-			drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							   NULL, 0),
 			ERR_PTR(-EINVAL));
 	}
 }
@@ -121,21 +123,21 @@ static void drm_constraints_rejects_invalid_formats(struct kunit *test)
 	struct drm_constraints_format formats[] = { linear, linear };
 
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 2, NULL, 0),
+		drm_constraints_description_create(&output_size, formats, 2, NULL, 0, NULL, 0),
 		ERR_PTR(-EEXIST));
 	formats[0].plane_id = 0;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 1, NULL, 0),
+		drm_constraints_description_create(&output_size, formats, 1, NULL, 0, NULL, 0),
 		ERR_PTR(-EINVAL));
 	formats[0] = linear;
 	formats[0].format = 0;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 1, NULL, 0),
+		drm_constraints_description_create(&output_size, formats, 1, NULL, 0, NULL, 0),
 		ERR_PTR(-EINVAL));
 	formats[0] = linear;
 	formats[0].modifier = DRM_FORMAT_MOD_INVALID;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 1, NULL, 0),
+		drm_constraints_description_create(&output_size, formats, 1, NULL, 0, NULL, 0),
 		ERR_PTR(-EINVAL));
 	formats[0] = linear;
 	formats[1].plane_id++;
@@ -145,16 +147,18 @@ static void drm_constraints_rejects_invalid_formats(struct kunit *test)
 static void drm_constraints_bounds_input_before_access(struct kunit *test)
 {
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(NULL, &linear, 1, NULL, 0), ERR_PTR(-EINVAL));
-	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, NULL, 1, NULL, 0),
+		drm_constraints_description_create(NULL, &linear, 1, NULL, 0, NULL, 0),
 		ERR_PTR(-EINVAL));
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, &linear, 0, NULL, 0),
+		drm_constraints_description_create(&output_size, NULL, 1, NULL, 0, NULL, 0),
+		ERR_PTR(-EINVAL));
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, &linear, 0, NULL, 0, NULL, 0),
 		ERR_PTR(-EINVAL));
 	KUNIT_EXPECT_PTR_EQ(test,
 		drm_constraints_description_create(&output_size, &linear,
-						   DRM_CONSTRAINTS_MAX_FORMATS + 1, NULL, 0),
+						   DRM_CONSTRAINTS_MAX_FORMATS + 1, NULL, 0,
+						   NULL, 0),
 		ERR_PTR(-EINVAL));
 }
 
@@ -177,7 +181,7 @@ static void drm_constraints_distinguishes_implicit_layout(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, view[1].size.min_width, 1920);
 	formats[0] = formats[1];
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, formats, 2, NULL, 0),
+		drm_constraints_description_create(&output_size, formats, 2, NULL, 0, NULL, 0),
 		ERR_PTR(-EEXIST));
 }
 
@@ -187,12 +191,12 @@ static void drm_constraints_rejects_ambiguous_layout_flags(struct kunit *test)
 
 	format.flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT << 1;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+		drm_constraints_description_create(&output_size, &format, 1, NULL, 0, NULL, 0),
 		ERR_PTR(-EINVAL));
 	format.flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT;
 	format.modifier = I915_FORMAT_MOD_X_TILED;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+		drm_constraints_description_create(&output_size, &format, 1, NULL, 0, NULL, 0),
 		ERR_PTR(-EINVAL));
 }
 
@@ -202,28 +206,33 @@ static void drm_constraints_rejects_invalid_storage_rules(struct kunit *test)
 
 	format.storage_flags = 0;
 	KUNIT_EXPECT_PTR_EQ(test,
-			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
 			    ERR_PTR(-EINVAL));
 	format = linear;
 	format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED << 1;
 	KUNIT_EXPECT_PTR_EQ(test,
-			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
 			    ERR_PTR(-EINVAL));
 	format = linear;
 	format.pitch_alignment = 3;
 	KUNIT_EXPECT_PTR_EQ(test,
-			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
 			    ERR_PTR(-EINVAL));
 	format = linear;
 	format.offset_alignment = 0;
 	KUNIT_EXPECT_PTR_EQ(test,
-			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
 			    ERR_PTR(-EINVAL));
 	format = linear;
 	format.pitch_alignment = 256;
 	format.max_pitch = 128;
 	KUNIT_EXPECT_PTR_EQ(test,
-			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
 			    ERR_PTR(-EINVAL));
 }
 
@@ -244,7 +253,7 @@ static void drm_constraints_copies_bounded_property_rules(struct kunit *test)
 	unsigned int count;
 
 	description = drm_constraints_description_create(&output_size, &linear, 1,
-							rules, ARRAY_SIZE(rules));
+							rules, ARRAY_SIZE(rules), NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put, description), 0);
 	memset(rules, 0, sizeof(rules));
@@ -292,22 +301,23 @@ static void drm_constraints_rejects_malformed_property_rules(struct kunit *test)
 	for (i = 0; i < ARRAY_SIZE(invalid); i++)
 		KUNIT_EXPECT_PTR_EQ(test,
 			drm_constraints_description_create(&output_size, &linear, 1,
-							   &invalid[i], 1),
+							   &invalid[i], 1, NULL, 0),
 			ERR_PTR(-EINVAL));
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, &linear, 1, duplicate, 2),
+		drm_constraints_description_create(&output_size, &linear, 1, duplicate, 2,
+						   NULL, 0),
 		ERR_PTR(-EEXIST));
 	rule.type = DRM_MODE_PROP_BLOB;
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, &linear, 1, &rule, 1),
+		drm_constraints_description_create(&output_size, &linear, 1, &rule, 1, NULL, 0),
 		ERR_PTR(-EOPNOTSUPP));
 	KUNIT_EXPECT_FALSE(test, drm_constraints_property_matches(&rule, 0));
 	KUNIT_EXPECT_PTR_EQ(test,
-		drm_constraints_description_create(&output_size, &linear, 1, NULL, 1),
+		drm_constraints_description_create(&output_size, &linear, 1, NULL, 1, NULL, 0),
 		ERR_PTR(-EINVAL));
 	KUNIT_EXPECT_PTR_EQ(test,
 		drm_constraints_description_create(&output_size, &linear, 1, &rule,
-						   DRM_CONSTRAINTS_MAX_PROPERTIES + 1),
+						   DRM_CONSTRAINTS_MAX_PROPERTIES + 1, NULL, 0),
 		ERR_PTR(-EINVAL));
 }
 
@@ -323,7 +333,7 @@ static void drm_constraints_copies_overlapping_plane_limits(struct kunit *test)
 	const struct drm_constraints_plane_limit *view;
 	unsigned int count;
 
-	description = drm_constraints_description_create_with_plane_limits(
+	description = drm_constraints_description_create(
 		&output_size, &linear, 1, NULL, 0, limits, ARRAY_SIZE(limits));
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put, description), 0);
@@ -349,7 +359,7 @@ static void drm_constraints_rejects_malformed_plane_limits(struct kunit *test)
 	};
 
 #define EXPECT_LIMIT_ERROR(error) \
-	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create_with_plane_limits( \
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create( \
 		&output_size, &linear, 1, NULL, 0, &limit, 1), ERR_PTR(error))
 	limit.max_active = 0;
 	EXPECT_LIMIT_ERROR(-EINVAL);
@@ -367,7 +377,7 @@ static void drm_constraints_rejects_malformed_plane_limits(struct kunit *test)
 	ids[0] = ids[1];
 	EXPECT_LIMIT_ERROR(-EEXIST);
 	ids[0] = 17;
-	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create_with_plane_limits(
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create(
 		&output_size, &linear, 1, NULL, 0, NULL, 1), ERR_PTR(-EINVAL));
 #undef EXPECT_LIMIT_ERROR
 }

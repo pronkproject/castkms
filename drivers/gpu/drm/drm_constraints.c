@@ -67,8 +67,7 @@ static bool size_valid(const struct drm_constraints_size *size)
 }
 
 struct drm_constraints_description *
-drm_constraints_description_create_with_plane_limits(
-				   const struct drm_constraints_size *output,
+drm_constraints_description_create(const struct drm_constraints_size *output,
 				   const struct drm_constraints_format *formats,
 				   unsigned int count,
 				   const struct drm_constraints_property *properties,
@@ -175,19 +174,6 @@ err_properties:
 	kfree(description->properties);
 	kvfree(description);
 	return ERR_PTR(-ENOMEM);
-}
-EXPORT_SYMBOL_GPL(drm_constraints_description_create_with_plane_limits);
-
-struct drm_constraints_description *
-drm_constraints_description_create(const struct drm_constraints_size *output,
-				   const struct drm_constraints_format *formats,
-				   unsigned int count,
-				   const struct drm_constraints_property *properties,
-				   unsigned int property_count)
-{
-	return drm_constraints_description_create_with_plane_limits(output, formats, count,
-							   properties, property_count,
-							   NULL, 0);
 }
 EXPORT_SYMBOL_GPL(drm_constraints_description_create);
 

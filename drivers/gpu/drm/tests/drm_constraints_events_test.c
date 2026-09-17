@@ -93,7 +93,8 @@ static struct event_fixture *new_fixture(struct kunit *test)
 		format.plane_id = plane->base.id;
 		f->crtc[i] = drm_kunit_helper_create_crtc(test, f->dev, plane, NULL, NULL, NULL);
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->crtc[i]);
-		description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
+		description = drm_constraints_description_create(&size, &format, 1, NULL, 0,
+								 NULL, 0);
 		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 		KUNIT_ASSERT_EQ(test,
 				kunit_add_action_or_reset(test, put_description, description), 0);

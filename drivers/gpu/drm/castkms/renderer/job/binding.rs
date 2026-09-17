@@ -86,7 +86,7 @@ mod tests {
         let domain = Domain::new(1)?;
         let size = Size::exact(640, 480);
         let description =
-            Description::new(size, &[Format::implicit(7, fourcc::XRGB8888, size)], &[])?;
+            Description::new(size, &[Format::implicit(7, fourcc::XRGB8888, size)], &[], &[])?;
         Entry::new(
             &domain,
             3,

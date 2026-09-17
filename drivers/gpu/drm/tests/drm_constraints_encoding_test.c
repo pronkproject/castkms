@@ -61,7 +61,7 @@ static struct encoding_fixture *new_fixture_with_layout(struct kunit *test, bool
 	f->domain = drm_constraints_domain_create(DRM_CONSTRAINTS_MAX_ENTRIES);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->domain);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_domain, f->domain), 0);
-	f->description = drm_constraints_description_create_with_plane_limits(
+	f->description = drm_constraints_description_create(
 		&output, &format, 1, &property, 1, &plane_limit, 1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, f->description), 0);
@@ -322,7 +322,7 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 		for (plane = 0; plane < DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT; plane++)
 			plane_ids[i * DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT + plane] = plane + 1;
 	}
-	description = drm_constraints_description_create_with_plane_limits(
+	description = drm_constraints_description_create(
 		&size, formats, DRM_CONSTRAINTS_MAX_FORMATS,
 		properties, DRM_CONSTRAINTS_MAX_PROPERTIES,
 		plane_limits, DRM_CONSTRAINTS_MAX_PLANE_LIMITS);

@@ -105,8 +105,9 @@ struct drm_constraints_plane_limit {
 };
 
 /*
- * Immutable, independently referenced allocation information. Creation copies
- * all input before returning; the caller retains ownership of its input.
+ * Immutable, independently referenced allocation, scalar-property and
+ * active-plane-limit information. Creation copies all input before returning;
+ * the caller retains ownership of its input.
  * Formats must contain distinct (plane_id, format, modifier, flags) tuples. These
  * limits are necessary, not sufficient, for display: provider atomic checks
  * still validate complete scenes, standard properties and shared resources.
@@ -116,13 +117,6 @@ struct drm_constraints_plane_limit {
  */
 struct drm_constraints_description *
 drm_constraints_description_create(const struct drm_constraints_size *output,
-				   const struct drm_constraints_format *formats,
-				   unsigned int count,
-				   const struct drm_constraints_property *properties,
-				   unsigned int property_count);
-struct drm_constraints_description *
-drm_constraints_description_create_with_plane_limits(
-				   const struct drm_constraints_size *output,
 				   const struct drm_constraints_format *formats,
 				   unsigned int count,
 				   const struct drm_constraints_property *properties,

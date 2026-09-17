@@ -180,7 +180,7 @@ mod tests {
     ) -> Result<ARef<Entry<Renderer>>> {
         let size = Size::new(1, 1, 1920, 1080);
         let description =
-            Description::new(size, &[Format::implicit(7, fourcc::XRGB8888, size)], &[])?;
+            Description::new(size, &[Format::implicit(7, fourcc::XRGB8888, size)], &[], &[])?;
         Entry::new(
             domain,
             crtc,

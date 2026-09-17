@@ -34,7 +34,7 @@ static struct drm_constraints_list *new_list(struct kunit *test)
 	domain = drm_constraints_domain_create(4);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, domain);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_domain, domain), 0);
-	description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
+	description = drm_constraints_description_create(&size, &format, 1, NULL, 0, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	initial = drm_constraints_entry_create_stateless(domain, 19, description);
