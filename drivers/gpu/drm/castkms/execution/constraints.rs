@@ -194,11 +194,19 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
             properties.push(Property::unsigned_range(plane.id, ids.source_x, 0, 0), GFP_KERNEL)?;
             properties.push(Property::unsigned_range(plane.id, ids.source_y, 0, 0), GFP_KERNEL)?;
         }
-        if profile
+        let supports_yuv = profile
             .formats()
             .iter()
-            .any(|format| format_supported(plane, format) && crate::formats::is_yuv(format.fourcc))
-        {
+            .any(|format| format_supported(plane, format) && crate::formats::is_yuv(format.fourcc));
+        let supports_rgb = profile
+            .formats()
+            .iter()
+            .any(|format| {
+                format_supported(plane, format) && !crate::formats::is_yuv(format.fourcc)
+            });
+        // Encoding and range are meaningful only for YUV framebuffers, while a generic
+        // scalar property rule applies unconditionally to every use of this plane.
+        if supports_yuv && !supports_rgb {
             properties.push(
                 Property::enum_values(plane.id, ids.color_encoding, encoding_mask),
                 GFP_KERNEL,
@@ -510,6 +518,35 @@ mod tests {
             properties[5].mask(),
             1 << kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE
         );
+        Ok(())
+    }
+
+    #[test]
+    fn mixed_rgb_and_yuv_allocations_keep_color_rules_conditional() -> Result {
+        let mut limits = limits();
+        limits.color.yuv_encodings = [false, true, false];
+        limits.color.yuv_ranges = [false, true];
+        limits.roles = [1, 0, 0];
+        let mut formats = KVec::new();
+        for (fourcc, planes) in [(fourcc::XRGB8888, 1), (fourcc::NV12, 2)] {
+            formats.push(
+                RendererFormat {
+                    fourcc,
+                    modifier: Some(TILED),
+                    planes,
+                    native: false,
+                    imported: true,
+                    pitch_alignment: 16,
+                    offset_alignment: 4096,
+                    max_pitch: 65536,
+                },
+                GFP_KERNEL,
+            )?;
+        }
+
+        let description = renderer(&Profile::new(limits, formats)?, &planes())?;
+        assert!(description.properties().is_empty());
+        assert_eq!(description.formats().len(), 2);
         Ok(())
     }
 
