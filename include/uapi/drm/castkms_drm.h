@@ -14,7 +14,7 @@
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND 1
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_FORMATS 256
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_HEADER_BYTES 128U
-#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES 32U
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES 40U
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_BYTES \
 	(DRM_CASTKMS_RENDERER_CONSTRAINTS_HEADER_BYTES + \
 	 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES * \
@@ -66,7 +66,7 @@
  * describe the composed image, not an individual layer's destination rectangle.
  * max_color_operations applies independently to each plane color pipeline and
  * to the output color pipeline.
- * Header and 32-byte format-record layouts are fixed within a version;
+ * Header and 40-byte format-record layouts are fixed within a version;
  * new record fields require a new version.
  */
 struct drm_castkms_renderer_constraints {
@@ -92,17 +92,21 @@ struct drm_castkms_renderer_constraints {
 /*
  * Exact fourcc/modifier/plane-count tuple. Without EXPLICIT_MODIFIER, modifier
  * must be zero and denotes implicit layout, distinct from explicit LINEAR.
- * At least one provenance flag is required. Alignments are positive powers of
- * two and apply to each memory plane. Only tuples whose max_pitch admits an
- * aligned pitch at the declared minimum source width under generic DRM fourcc
- * layout rules can be published. Modifier- and driver-specific rules may be
- * stricter. Duplicate tuples are rejected.
+ * At least one provenance flag is required. width_alignment and
+ * height_alignment are positive powers of two in pixels. The byte alignments
+ * are positive powers of two and apply to each memory plane. Only tuples with
+ * at least one aligned size inside the declared source bounds, and whose
+ * max_pitch admits an aligned pitch at the smallest such width under generic
+ * DRM fourcc layout rules, can be published. Modifier- and driver-specific
+ * rules may be stricter. Duplicate tuples are rejected.
  */
 struct drm_castkms_renderer_constraints_format {
 	__u32 fourcc;
 	__u32 plane_count;
 	__u64 modifier;
 	__u32 flags;
+	__u32 width_alignment;
+	__u32 height_alignment;
 	__u32 pitch_alignment;
 	__u32 offset_alignment;
 	__u32 max_pitch;

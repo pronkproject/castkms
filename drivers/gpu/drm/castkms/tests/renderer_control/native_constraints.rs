@@ -175,6 +175,8 @@ mod cases {
                         planes,
                         native: true,
                         imported: true,
+                        width_alignment: 1,
+                        height_alignment: 1,
                         pitch_alignment: 1,
                         offset_alignment: 1,
                         max_pitch: u32::MAX,
