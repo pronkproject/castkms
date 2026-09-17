@@ -13,6 +13,7 @@ mod session_outputs;
 mod ready_worker;
 mod native_constraints;
 mod offer_drafts;
+mod offer_lifetimes;
 
 use super::*;
 use crate::renderer::{
