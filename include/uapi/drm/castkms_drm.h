@@ -360,6 +360,10 @@ struct drm_castkms_renderer_release_source {
  * Layers use premultiplied pixel alpha (opaque for formats without alpha), source
  * over an opaque black background. Plane color precedes blending; output color
  * follows blending. All unused memory-plane records contain fd -1 and zeros.
+ * A producer already completed with an error makes dequeue return EREMOTEIO;
+ * its native errno is never interpreted as queue readiness. No files or source
+ * claim are published on that failure. The failed scene is discarded; another
+ * dequeue returns ENODATA until a new scene is accepted.
  * The producer fd covers all layers and must complete successfully before any
  * source read; -1 denotes no outstanding producer fence. Retaining ordinary
  * DMA-BUF fds does not authorize reads after RELEASE_SOURCE.

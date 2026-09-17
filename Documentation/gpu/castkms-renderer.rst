@@ -101,8 +101,12 @@ acquire source access. There is one outstanding job per endpoint.
 The scene includes primary, overlays and cursor in stable back-to-front order,
 source crop, destination geometry and ordered plane/output color operations.
 Sampling is nearest-neighbor; blending is premultiplied source-over against
-opaque black. The producer fence covers all layers and must complete
-successfully before reading. Each exported descriptor is close-on-exec.
+opaque black. A producer already completed with an error makes dequeue return
+``EREMOTEIO`` without publishing files or a source claim; its native error is
+not a queue-readiness result. The failed scene is discarded, so polling becomes
+idle and dequeue returns ``ENODATA`` until a new scene is accepted. The producer
+fence covers all layers and must complete successfully before reading. Each
+exported descriptor is close-on-exec.
 Failed metadata copy or admission installs no descriptors and permits retry.
 
 ``poll`` is an advisory dequeue prompt, not a reservation or completion
