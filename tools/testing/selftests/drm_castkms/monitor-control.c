@@ -211,7 +211,7 @@ int main(int argc, char **argv)
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EBUSY);
 	CHECK(drmDropMaster(fd) == 0);
-	CHECK(drmSetMaster(peer) == 0);
+	acquire_master(peer);
 
 	detach.flags = 1;
 	expect_ioctl_error(control, DRM_IOCTL_CASTKMS_MONITOR_DETACH,
