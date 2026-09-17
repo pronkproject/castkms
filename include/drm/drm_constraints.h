@@ -10,6 +10,8 @@ struct drm_constraints_description;
 #define DRM_CONSTRAINTS_MAX_FORMATS 4096
 #define DRM_CONSTRAINTS_MAX_PROPERTIES 64
 #define DRM_CONSTRAINTS_FORMAT_IMPLICIT (1U << 0)
+#define DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE 1U
+#define DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED 2U
 
 /**
  * struct drm_constraints_size - inclusive integer pixel dimensions
@@ -35,10 +37,16 @@ struct drm_constraints_size {
  * @modifier: explicit DRM format modifier, or zero for implicit layout
  * @size: permitted framebuffer dimensions for this format/modifier pair
  * @flags: DRM_CONSTRAINTS_FORMAT_IMPLICIT for layout without FB_MODIFIERS, or zero
+ * @storage_flags: permitted DRM_CONSTRAINTS_FORMAT_STORAGE_* origins
+ * @pitch_alignment: required byte alignment of every plane pitch
+ * @offset_alignment: required byte alignment of every plane offset
+ * @max_pitch: maximum pitch in bytes for every plane
  *
  * Implicit layout does not promise linear storage. A zero modifier with zero
  * flags describes explicit LINEAR; the same modifier with IMPLICIT describes
- * framebuffer creation without DRM_MODE_FB_MODIFIERS. Other flags are invalid.
+ * framebuffer creation without DRM_MODE_FB_MODIFIERS. Storage flags apply to
+ * every memory plane. Alignments are nonzero powers of two. Other flags are
+ * invalid.
  */
 struct drm_constraints_format {
 	u32 plane_id;
@@ -46,6 +54,10 @@ struct drm_constraints_format {
 	u64 modifier;
 	struct drm_constraints_size size;
 	u32 flags;
+	u32 storage_flags;
+	u32 pitch_alignment;
+	u32 offset_alignment;
+	u32 max_pitch;
 };
 
 /**

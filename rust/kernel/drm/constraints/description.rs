@@ -60,6 +60,9 @@ impl Size {
 pub struct Format(bindings::drm_constraints_format);
 
 impl Format {
+    const DEFAULT_STORAGE: u32 = bindings::DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE
+        | bindings::DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED;
+
     /// Construct explicit-layout metadata using standard DRM fourcc and modifier values.
     pub const fn new(plane_id: u32, format: u32, modifier: u64, size: Size) -> Self {
         Self(bindings::drm_constraints_format {
@@ -68,6 +71,10 @@ impl Format {
             modifier,
             size: size.0,
             flags: 0,
+            storage_flags: Self::DEFAULT_STORAGE,
+            pitch_alignment: 1,
+            offset_alignment: 1,
+            max_pitch: u32::MAX,
         })
     }
 
@@ -79,7 +86,38 @@ impl Format {
             modifier: 0,
             size: size.0,
             flags: bindings::DRM_CONSTRAINTS_FORMAT_IMPLICIT,
+            storage_flags: Self::DEFAULT_STORAGE,
+            pitch_alignment: 1,
+            offset_alignment: 1,
+            max_pitch: u32::MAX,
         })
+    }
+
+    /// Restrict storage origin, pitch alignment, offset alignment and maximum pitch.
+    ///
+    /// At least one origin must be allowed. Alignments apply to every framebuffer memory plane
+    /// and must be nonzero powers of two. [`Description::new`] validates these requirements.
+    pub const fn with_storage(
+        mut self,
+        native: bool,
+        imported: bool,
+        pitch_alignment: u32,
+        offset_alignment: u32,
+        max_pitch: u32,
+    ) -> Self {
+        self.0.storage_flags = if native {
+            bindings::DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE
+        } else {
+            0
+        } | if imported {
+            bindings::DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED
+        } else {
+            0
+        };
+        self.0.pitch_alignment = pitch_alignment;
+        self.0.offset_alignment = offset_alignment;
+        self.0.max_pitch = max_pitch;
+        self
     }
 
     /// DRM plane object ID.
@@ -104,6 +142,25 @@ impl Format {
     /// Inclusive framebuffer allocation bounds, not fractional source-rectangle bounds.
     pub const fn size(&self) -> Size {
         Size(self.0.size)
+    }
+
+    /// Whether storage created on the queried DRM device is permitted.
+    pub const fn permits_native(&self) -> bool {
+        self.0.storage_flags & bindings::DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE != 0
+    }
+
+    /// Whether PRIME-imported DMA-BUF storage is permitted.
+    pub const fn permits_imported(&self) -> bool {
+        self.0.storage_flags & bindings::DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED != 0
+    }
+
+    /// Required pitch alignment, required offset alignment and maximum pitch in bytes.
+    pub const fn storage_layout(&self) -> (u32, u32, u32) {
+        (
+            self.0.pitch_alignment,
+            self.0.offset_alignment,
+            self.0.max_pitch,
+        )
     }
 }
 
@@ -140,8 +197,9 @@ impl Description {
     /// Validate and copy bounded allocation metadata and scalar rules into native owned storage.
     ///
     /// Rejects empty or over-limit format lists, invalid dimensions, unknown fourcc values,
-    /// invalid modifiers and duplicate plane/format/modifier tuples. Arbitrary supported tiled
-    /// modifiers are not restricted to the kernel compositor's linear layouts.
+    /// invalid modifiers, malformed storage rules and duplicate plane/format/modifier tuples.
+    /// Arbitrary supported tiled modifiers are not restricted to the kernel compositor's linear
+    /// layouts.
     /// Scalar rules must be valid and distinct by object/property ID; an empty rule list is valid.
     pub fn new(output: Size, formats: &[Format], properties: &[Property]) -> Result<ARef<Self>> {
         let count = formats.len().try_into().map_err(|_| E2BIG)?;

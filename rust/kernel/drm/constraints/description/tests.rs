@@ -54,6 +54,39 @@ mod cases {
     }
 
     #[test]
+    fn storage_requirements_are_retained() -> Result {
+        let size = Size::exact(256, 128);
+        let formats = [Format::new(7, fourcc::NV12, 1, size)
+            .with_storage(false, true, 256, 4096, 65536)];
+        let description = Description::new(size, &formats, &[])?;
+        let format = &description.formats()[0];
+        assert!(!format.permits_native());
+        assert!(format.permits_imported());
+        assert_eq!(format.storage_layout(), (256, 4096, 65536));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_storage_requirements_are_rejected() {
+        let size = Size::exact(256, 128);
+        for format in [
+            Format::new(7, fourcc::XRGB8888, 0, size)
+                .with_storage(false, false, 1, 1, 4),
+            Format::new(7, fourcc::XRGB8888, 0, size)
+                .with_storage(true, false, 3, 1, 4),
+            Format::new(7, fourcc::XRGB8888, 0, size)
+                .with_storage(true, false, 1, 0, 4),
+            Format::new(7, fourcc::XRGB8888, 0, size)
+                .with_storage(true, false, 8, 1, 4),
+        ] {
+            assert!(matches!(
+                Description::new(size, &[format], &[]),
+                Err(EINVAL)
+            ));
+        }
+    }
+
+    #[test]
     fn native_validation_rejects_bad_or_duplicate_records() -> Result {
         let size = Size::exact(128, 64);
         let format = Format::new(7, fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size);

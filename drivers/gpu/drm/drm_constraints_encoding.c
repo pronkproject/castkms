@@ -9,6 +9,7 @@
 #include <drm/drm_constraints_list.h>
 #include <drm/drm_constraints_encoding.h>
 #include <drm/drm_constraints_entry.h>
+#include <drm/drm_fourcc.h>
 
 /* Explicit padding owns every byte copied from these native stack objects. */
 static_assert(sizeof(struct drm_mode_constraints_list) == 64);
@@ -16,13 +17,14 @@ static_assert(sizeof(struct drm_mode_constraints) == 40);
 static_assert(sizeof(struct drm_mode_constraints_description) == 16);
 static_assert(sizeof(struct drm_mode_constraints_record) == 16);
 static_assert(sizeof(struct drm_mode_constraints_output_size) == 32);
-static_assert(sizeof(struct drm_mode_constraints_plane_format) == 56);
+static_assert(sizeof(struct drm_mode_constraints_plane_format) == 72);
 static_assert(sizeof(struct drm_mode_constraints_property) == 56);
 static_assert(offsetof(struct drm_mode_constraints_list, generation) == 8);
 static_assert(offsetof(struct drm_mode_constraints_list, reserved) == 48);
 static_assert(offsetof(struct drm_mode_constraints, reserved) == 24);
 static_assert(offsetof(struct drm_mode_constraints_plane_format, modifier) == 24);
 static_assert(offsetof(struct drm_mode_constraints_plane_format, layout_flags) == 48);
+static_assert(offsetof(struct drm_mode_constraints_plane_format, max_pitch) == 68);
 static_assert(offsetof(struct drm_mode_constraints_property, minimum) == 32);
 static_assert(DRM_CONSTRAINTS_MAX_ENTRIES <= DRM_MODE_CONSTRAINTS_MAX_ENTRIES);
 static_assert(DRM_CONSTRAINTS_MAX_FORMATS <= DRM_MODE_CONSTRAINTS_MAX_FORMATS);
@@ -80,6 +82,7 @@ static size_t encode_description(struct drm_constraints_description *description
 	memcpy((u8 *)buffer + offset, &output, sizeof(output));
 	offset += sizeof(output);
 	for (i = 0; i < format_count; i++) {
+		const struct drm_format_info *info = __drm_format_info(formats[i].format);
 		struct drm_mode_constraints_plane_format record = {
 			.header = {
 				.type = DRM_MODE_CONSTRAINTS_RECORD_PLANE_FORMAT,
@@ -94,6 +97,16 @@ static size_t encode_description(struct drm_constraints_description *description
 			.max_height = formats[i].size.max_height,
 			.layout_flags = formats[i].flags & DRM_CONSTRAINTS_FORMAT_IMPLICIT ?
 					DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT : 0,
+			.storage_flags =
+				(formats[i].storage_flags & DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE ?
+				 DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE : 0) |
+				(formats[i].storage_flags &
+				 DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED ?
+				 DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_IMPORTED : 0),
+			.plane_count = info->num_planes,
+			.pitch_alignment = formats[i].pitch_alignment,
+			.offset_alignment = formats[i].offset_alignment,
+			.max_pitch = formats[i].max_pitch,
 		};
 
 		memcpy((u8 *)buffer + offset, &record, sizeof(record));

@@ -13,6 +13,11 @@ static const struct drm_constraints_format linear = {
 	.format = DRM_FORMAT_XRGB8888,
 	.modifier = DRM_FORMAT_MOD_LINEAR,
 	.size = { 1, 1, 8192, 8192 },
+	.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE |
+			 DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED,
+	.pitch_alignment = 1,
+	.offset_alignment = 1,
+	.max_pitch = U32_MAX,
 };
 
 static void description_put(void *data)
@@ -191,6 +196,37 @@ static void drm_constraints_rejects_ambiguous_layout_flags(struct kunit *test)
 		ERR_PTR(-EINVAL));
 }
 
+static void drm_constraints_rejects_invalid_storage_rules(struct kunit *test)
+{
+	struct drm_constraints_format format = linear;
+
+	format.storage_flags = 0;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
+	format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED << 1;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
+	format.pitch_alignment = 3;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
+	format.offset_alignment = 0;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
+	format.pitch_alignment = 256;
+	format.max_pitch = 128;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+			    ERR_PTR(-EINVAL));
+}
+
 static void drm_constraints_copies_bounded_property_rules(struct kunit *test)
 {
 	struct drm_constraints_property rules[] = {
@@ -284,6 +320,7 @@ static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_bounds_input_before_access),
 	KUNIT_CASE(drm_constraints_distinguishes_implicit_layout),
 	KUNIT_CASE(drm_constraints_rejects_ambiguous_layout_flags),
+	KUNIT_CASE(drm_constraints_rejects_invalid_storage_rules),
 	KUNIT_CASE(drm_constraints_copies_bounded_property_rules),
 	KUNIT_CASE(drm_constraints_rejects_malformed_property_rules),
 	{}
