@@ -165,9 +165,11 @@ update with ALLOW_MODESET; omission retains accepted state.
 The fixed HOST contract accepts CPU-readable linear formats through 8192 by
 8192 with checked allocation/layout bounds. Renderer offers describe independent
 whole-scene restrictions, including exact private-pool dimensions and supported
-format/modifier tuples. The vendor-neutral static plane envelope also includes
-packed RGB layouts which only a selected renderer may accept; its modifier list
-remains linear. Static plane properties are not the complete admission contract.
+format/modifier/storage tuples, scalar geometry and YUV restrictions, and
+overlapping total-layer and per-role plane limits. The vendor-neutral static
+plane envelope also includes packed RGB layouts which only a selected renderer
+may accept; its modifier list remains linear. Static plane properties are not
+the complete admission contract.
 See :doc:`castkms-renderer` for preparation, publication, ordinary KMS selection
 and outstanding read lifetimes.
 

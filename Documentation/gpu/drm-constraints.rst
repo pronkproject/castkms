@@ -280,8 +280,9 @@ does not request another transition. A changed binding requires modeset
 permission and marks the transaction as needing a modeset.
 
 Core validation first adds affected plane/color state, including unchanged
-active planes, then checks allocation and scalar rules after driver checking.
-Scalar values come from proposed atomic state, never current-state readback.
+active planes, then checks allocation storage and dimensions, overlapping
+active-plane limits, and scalar rules after driver checking. Scalar values come
+from proposed atomic state, never current-state readback.
 The provider's full-scene callback is required both during validation and
 immediately before acceptance. All resources required by that callback must
 already be ready. The callback must not mutate the transaction or its proposed
