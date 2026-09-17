@@ -234,6 +234,7 @@ static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 	struct drm_mode_constraints_list *list;
 	struct drm_mode_constraints *entries;
 	bool found = false;
+	unsigned int outputs = 0;
 
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_LIST_CONSTRAINTS, &query) == 0);
 	list = calloc(1, query.size);
@@ -273,7 +274,15 @@ static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 			CHECK((size_t)(end - cursor) >= sizeof(*header));
 			CHECK(header->length >= sizeof(*header));
 			CHECK(header->length <= (size_t)(end - cursor));
-			if (header->type == DRM_MODE_CONSTRAINTS_RECORD_PLANE_FORMAT) {
+			if (header->type == DRM_MODE_CONSTRAINTS_RECORD_OUTPUT_SIZE) {
+				struct drm_mode_constraints_output_size *output = (void *)header;
+
+				CHECK(header->length == sizeof(*output));
+				CHECK(header->flags == DRM_MODE_CONSTRAINTS_RECORD_REQUIRED);
+				CHECK(output->min_width == width && output->max_width == width);
+				CHECK(output->min_height == height && output->max_height == height);
+				outputs++;
+			} else if (header->type == DRM_MODE_CONSTRAINTS_RECORD_PLANE_FORMAT) {
 				struct drm_mode_constraints_plane_format *format = (void *)header;
 
 				CHECK(header->length == sizeof(*format));
@@ -296,7 +305,7 @@ static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 		}
 		CHECK(cursor == end);
 	}
-	CHECK(found);
+	CHECK(found && outputs == 1);
 	free(list);
 }
 
@@ -514,10 +523,11 @@ int main(int argc, char **argv)
 	reject_host_framebuffer(fd, plane, tiled.fb);
 	CHECK(selected(fd, create.crtc_id, 1) == host);
 
-	constraints.header.min_output[0] = mode->hdisplay;
-	constraints.header.max_output[0] = mode->hdisplay;
-	constraints.header.min_output[1] = mode->vdisplay;
-	constraints.header.max_output[1] = mode->vdisplay;
+	/* The published offer must narrow broad implementation limits to this pool. */
+	constraints.header.min_output[0] = 1;
+	constraints.header.max_output[0] = 16384;
+	constraints.header.min_output[1] = 1;
+	constraints.header.max_output[1] = 16384;
 	constraints.header.min_source[0] = mode->hdisplay;
 	constraints.header.max_source[0] = mode->hdisplay;
 	constraints.header.min_source[1] = mode->vdisplay;
