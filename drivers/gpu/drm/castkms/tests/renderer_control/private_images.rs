@@ -7,10 +7,14 @@ use crate::execution::capabilities::{ColorLimits, Format, GeometryLimits, Limits
 use kernel::{dma_buf::DmaBuf, drm::gem::{BaseObject, ExportAccess}, sync::aref::ARef};
 
 pub(crate) fn profile() -> Result<Profile> {
+    profile_for(None)
+}
+
+pub(crate) fn profile_for(modifier: Option<u64>) -> Result<Profile> {
     let mut formats = KVec::new();
     formats.push(Format {
         fourcc: drm::fourcc::XRGB8888,
-        modifier: None,
+        modifier,
         planes: 1,
         native: true,
         imported: true,
