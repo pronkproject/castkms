@@ -919,8 +919,9 @@ interfaces. It CPU-copies a source scene into renderer-private storage, holds
 the resulting private-to-recipient claim while completing another source job,
 copies the private image into the capture destination and checks the delivered
 pixels. It also covers fault-safe descriptor publication, continuous scene
-updates, retained source reads and orderly return to HOST execution. This is a
-system-memory renderer fixture, not physical GPU interoperability evidence.
+updates, cancellation after a recipient claim, retained source reads and
+orderly return to HOST execution. This is a system-memory renderer fixture, not
+physical GPU interoperability evidence.
 
 Building without another display driver
 ---------------------------------------
