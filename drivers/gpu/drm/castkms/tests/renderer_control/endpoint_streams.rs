@@ -14,17 +14,22 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, scanout, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
+            check(!endpoint.source_readable()?)?;
             check(endpoint.begin_source(1).err() == Some(ENODATA))?;
             endpoint.publish(|_| Ok(()))?;
+            check(!endpoint.source_readable()?)?;
             check(endpoint.begin_source(1).err() == Some(ESTALE))?;
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+            check(endpoint.source_readable()?)?;
             let pending = endpoint.begin_source(1)?;
+            check(!endpoint.source_readable()?)?;
             let first = pending.id();
             check(pending.scene_description()?.output == [640, 480])?;
             check(pending.producer_completion()?.is_none())?;
             check(endpoint.begin_source(1).err() == Some(EBUSY))?;
             drop(pending);
+            check(endpoint.source_readable()?)?;
             let retry = endpoint.begin_source(1)?;
             check(retry.id() > first)?;
             let id = retry.id();

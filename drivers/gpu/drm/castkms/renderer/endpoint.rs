@@ -142,6 +142,10 @@ impl Endpoint {
         }
     }
 
+    pub(crate) fn changed(&self) -> &kernel::sync::poll::PollCondVar {
+        &self.access.device().changed
+    }
+
     /// Prepare outside endpoint exclusion, then serialize reply, listing and owner install.
     /// No fallible operation follows successful listing. The reply callback follows Offer's
     /// restrictions; closing concurrently cannot leave a ready unowned native entry.
