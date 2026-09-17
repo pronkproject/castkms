@@ -212,7 +212,11 @@ impl Profile {
         }
         if let Some(color) = &scene.output_color {
             let (degamma, matrix, gamma) = color.description();
-            if (matrix.is_some() && !self.limits.color.output_matrix)
+            let operations = degamma.is_some() as usize
+                + matrix.is_some() as usize
+                + gamma.is_some() as usize;
+            if operations > self.limits.color.operations
+                || (matrix.is_some() && !self.limits.color.output_matrix)
                 || degamma.is_some_and(|lut| lut.len() > self.limits.color.lut_entries)
                 || gamma.is_some_and(|lut| lut.len() > self.limits.color.lut_entries)
             {

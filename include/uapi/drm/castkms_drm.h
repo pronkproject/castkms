@@ -62,6 +62,8 @@
  * express exact geometry, e.g. min_output == max_output for a fixed-size pool.
  * Source bounds describe full framebuffers, not cropped extents; output bounds
  * describe the composed image, not an individual layer's destination rectangle.
+ * max_color_operations applies independently to each plane color pipeline and
+ * to the output color pipeline.
  * Header and 32-byte format-record layouts are fixed within a version;
  * new record fields require a new version.
  */
