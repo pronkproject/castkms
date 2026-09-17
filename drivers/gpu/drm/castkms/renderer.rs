@@ -14,6 +14,7 @@ pub(crate) mod job;
 pub(crate) mod permission;
 pub(crate) mod private_image;
 pub(crate) mod private_pool;
+pub(crate) mod ready;
 mod probe;
 pub(crate) mod proposal;
 pub(crate) mod render_job;

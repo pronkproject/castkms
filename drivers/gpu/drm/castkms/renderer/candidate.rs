@@ -107,6 +107,19 @@ impl Candidate {
         pool.pin_dimensions(&self.proposal_owner, dimensions)
     }
 
+    /// Prepare exact private resources after native probe completion, without publishing an offer.
+    /// The publisher must recheck live authority and candidate ownership at publication.
+    pub(crate) fn prepare_worker(
+        &self,
+        pool: &super::private_pool::Pool,
+        profile: &crate::execution::capabilities::Profile,
+        dimensions: [u32; 2],
+    ) -> Result<super::ready::Owner> {
+        let registrations = self.pin_private_images(pool, dimensions)?;
+        let source = self.with_current_control(|_| self.probe.completed_source())?;
+        super::ready::Owner::new(profile, dimensions, registrations, source)
+    }
+
     /// Register immutable pending capabilities without changing KMS acceptance.
     /// The profile is allocated before entering authority and startup exclusion.
     pub(crate) fn propose_profile(
