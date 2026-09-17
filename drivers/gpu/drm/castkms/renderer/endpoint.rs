@@ -125,6 +125,23 @@ impl Endpoint {
         draft.submit_probe(completion)
     }
 
+    /// Report terminal native failure separately from retryable private preparation.
+    pub(crate) fn check_probe(&self) -> Result {
+        use kernel::dma_fence::Status;
+        let state = self.state.lock();
+        match &*state {
+            State::Draft { draft, .. } => match draft.probe_status()? {
+                Status::Pending => Err(EBUSY),
+                Status::Complete(Err(_)) => Err(EREMOTEIO),
+                Status::Complete(Ok(())) => Ok(()),
+            },
+            State::Empty => Err(ENODATA),
+            State::Publishing => Err(EBUSY),
+            State::Ready { .. } => Err(EALREADY),
+            State::Closed => Err(EKEYREVOKED),
+        }
+    }
+
     /// Prepare outside endpoint exclusion, then serialize reply, listing and owner install.
     /// No fallible operation follows successful listing. The reply callback follows Offer's
     /// restrictions; closing concurrently cannot leave a ready unowned native entry.

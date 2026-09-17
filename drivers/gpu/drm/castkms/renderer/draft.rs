@@ -75,6 +75,10 @@ impl Draft {
         })
     }
 
+    pub(crate) fn probe_status(&self) -> Result<kernel::dma_fence::Status> {
+        self.access.with_output(|| self.probe.status())
+    }
+
     /// Pin only this draft's existing registrations after successful native probe completion.
     /// Endpoint serialization protects the pool; publication must recheck live authority.
     pub(crate) fn prepare_worker(&self, pool: &Pool) -> Result<ready::Owner> {

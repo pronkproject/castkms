@@ -129,19 +129,23 @@ impl Probe {
         )
     }
 
-    /// Return whether submitted work completed, preserving native failure status.
-    pub(super) fn result(&self) -> Result<bool> {
+    /// Distinguish pending work from terminal native errors without interpreting errno.
+    pub(super) fn status(&self) -> Result<FenceStatus> {
         let state = self.state.lock();
         let submission = match &state.submission {
             SubmissionState::Submitted(submission) => submission,
             SubmissionState::Idle | SubmissionState::Publishing => return Err(ENODATA),
         };
-        match &submission.completion {
-            None => Ok(true),
-            Some(fence) => match fence.status() {
-                FenceStatus::Pending => Ok(false),
-                FenceStatus::Complete(result) => result.map(|()| true),
-            },
+        Ok(submission.completion.as_ref().map_or(
+            FenceStatus::Complete(Ok(())), |fence| fence.status(),
+        ))
+    }
+
+    /// Return whether submitted work completed, preserving native failure status.
+    pub(super) fn result(&self) -> Result<bool> {
+        match self.status()? {
+            FenceStatus::Pending => Ok(false),
+            FenceStatus::Complete(result) => result.map(|()| true),
         }
     }
 
