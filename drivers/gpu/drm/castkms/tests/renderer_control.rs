@@ -18,6 +18,7 @@ mod offer_reaping;
 mod offer_publication;
 mod offer_sources;
 mod endpoints;
+mod endpoint_streams;
 
 use super::*;
 use crate::renderer::{
