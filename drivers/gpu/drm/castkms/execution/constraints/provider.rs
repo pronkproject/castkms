@@ -8,7 +8,7 @@ use super::{
     Topology, //
 };
 use crate::{
-    execution::validation::SceneView,
+    execution::{capabilities::Profile, validation::SceneView},
     output::Identity,
     renderer::ready::Worker,
     Driver, //
@@ -74,6 +74,12 @@ impl Provider {
 
     pub(crate) fn initial(&self) -> &OpaqueEntry {
         &self.initial
+    }
+
+    /// Reject declarations with no allocation intersection before private preparation begins.
+    pub(crate) fn check_profile(&self, profile: &Profile) -> Result {
+        drop(super::renderer(profile, self.topology.planes())?);
+        Ok(())
     }
 
     /// Allocate identity and description without listing the worker or changing KMS state.

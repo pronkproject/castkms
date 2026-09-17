@@ -48,7 +48,9 @@ reacquisition may reuse a drained file for a fresh generation. Preparation
 acquires no live source pixels and changes no KMS state.
 
 1. ``PREPARE_OFFER`` supplies bounded renderer constraints and exact private
-   pool width and height. Failure leaves an empty endpoint retryable.
+   pool width and height. A declaration with no allocation intersection with
+   the output's plane topology returns ``EOPNOTSUPP``. Failure leaves an empty
+   endpoint retryable.
 2. ``REGISTER_IMAGE`` supplies increasing positive image names and one to
    four distinct read/write DMA-BUFs each. Dimensions must equal the draft's
    pool dimensions. The trusted worker validates native layouts and imports.
