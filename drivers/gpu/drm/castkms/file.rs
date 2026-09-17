@@ -32,6 +32,7 @@ use kernel::{
 
 pub(crate) struct File {
     grants: Creator,
+    renderer_grants: drm::capture::Creator,
     #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
     audio_grants: drm::capture::Creator,
 }
@@ -43,6 +44,7 @@ impl drm::file::DriverFile for File {
         Ok(KBox::new(
             Self {
                 grants: Creator::new()?,
+                renderer_grants: drm::capture::Creator::new(64)?,
                 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
                 audio_grants: drm::capture::Creator::new(64)?,
             },
@@ -132,7 +134,7 @@ impl File {
             }
             RendererPermission::new(&guard, crtc, connector)?
         };
-        let owner = RendererOwner::new(permission)?;
+        let mut owner = RendererOwner::new(permission)?;
         after_create()?;
         {
             let guard = snapshot.master().lock_current().ok_or(EACCES)?;
@@ -142,6 +144,7 @@ impl File {
             {
                 return Err(EACCES);
             }
+            owner.track_creator(&file.inner().renderer_grants)?;
         }
         owner.access().with_current(|_| Ok(()))?;
         Ok(owner)
