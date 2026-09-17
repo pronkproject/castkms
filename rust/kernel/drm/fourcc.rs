@@ -4,6 +4,10 @@
 //!
 //! C header: [`include/uapi/drm/drm_fourcc.h`](srctree/include/uapi/drm/drm_fourcc.h)
 
+use crate::bindings;
+#[cfg(CONFIG_KUNIT)]
+use crate::prelude::*;
+
 /// Return a fourcc format code.
 const fn fourcc_code(a: u8, b: u8, c: u8, d: u8) -> u32 {
     (a as u32) | (b as u32) << 8 | (c as u32) << 16 | (d as u32) << 24
@@ -22,6 +26,56 @@ pub const FORMAT_MOD_INVALID: u64 = 0xffffffffffffff;
 /// A driver that accepts only linear scanout has to say so through the plane's format-modifier
 /// list, or userspace sees no `IN_FORMATS` property and has to guess what the plane will take.
 pub const FORMAT_MOD_LINEAR: u64 = 0;
+
+/// Return DRM's minimum byte pitch for one memory plane at a first-plane `width`.
+///
+/// Unknown formats and out-of-range memory-plane indices return `None`. The result describes
+/// generic fourcc layout requirements; a modifier or driver may impose stricter alignment and
+/// size rules.
+pub fn minimum_pitch(format: u32, plane: usize, width: u32) -> Option<u64> {
+    let plane_index = i32::try_from(plane).ok()?;
+    // SAFETY: The lookup accepts every fourcc value and returns either a static descriptor or
+    // NULL. A returned descriptor remains valid permanently.
+    let info = unsafe { bindings::__drm_format_info(format) };
+    if info.is_null() {
+        return None;
+    }
+    // SAFETY: The lookup returned a non-null static format descriptor.
+    if plane >= unsafe { (*info).num_planes }.into() {
+        return None;
+    }
+    // Match drm_format_info_plane_width(), which is an inline C helper unavailable to bindgen.
+    // SAFETY: The lookup returned a non-null static format descriptor.
+    let horizontal_subsampling = u64::from(unsafe { (*info).hsub });
+    if horizontal_subsampling == 0 {
+        return None;
+    }
+    let plane_width = if plane == 0 {
+        width
+    } else {
+        u32::try_from(
+            (u64::from(width) + horizontal_subsampling - 1) / horizontal_subsampling,
+        )
+        .ok()?
+    };
+    // SAFETY: The static format descriptor and in-range plane index are valid for this call.
+    Some(unsafe { bindings::drm_format_info_min_pitch(info, plane_index, plane_width) })
+}
+
+#[cfg(CONFIG_KUNIT)]
+#[kunit_tests(rust_drm_fourcc)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn minimum_pitch_accounts_for_memory_plane_subsampling() {
+        assert_eq!(minimum_pitch(XRGB8888, 0, 1920), Some(7680));
+        assert_eq!(minimum_pitch(NV12, 0, 1920), Some(1920));
+        assert_eq!(minimum_pitch(NV12, 1, 1920), Some(1920));
+        assert_eq!(minimum_pitch(NV12, 2, 1920), None);
+        assert_eq!(minimum_pitch(0, 0, 1920), None);
+    }
+}
 
 /// Intel X-tiled layout (`I915_FORMAT_MOD_X_TILED`).
 pub const I915_FORMAT_MOD_X_TILED: u64 = modifier_code(0x01, 1);

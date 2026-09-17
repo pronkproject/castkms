@@ -125,10 +125,26 @@ fn role(plane: &Plane) -> usize {
     }
 }
 
-fn format_supported(plane: &Plane, format: &super::capabilities::Format) -> bool {
+fn format_supported(
+    plane: &Plane,
+    format: &super::capabilities::Format,
+    minimum_width: u32,
+) -> bool {
     potential::FORMATS.contains(&format.fourcc)
         && (plane.kind != Kind::Cursor || format.fourcc == fourcc::ARGB8888)
         && format.planes as usize == potential::plane_count(format.fourcc)
+        && (0..format.planes as usize).all(|memory_plane| {
+            fourcc::minimum_pitch(format.fourcc, memory_plane, minimum_width).is_some_and(
+                |minimum| {
+                    let alignment = u64::from(format.pitch_alignment);
+                    minimum
+                        .max(1)
+                        .checked_add(alignment - 1)
+                        .map(|pitch| pitch & !(alignment - 1))
+                        .is_some_and(|pitch| pitch <= u64::from(format.max_pitch))
+                },
+            )
+        })
 }
 
 fn source_ceiling(plane: &Plane) -> u32 {
@@ -151,7 +167,7 @@ fn plane_supported(profile: &Profile, plane: &Plane) -> bool {
         && profile
             .formats()
             .iter()
-            .any(|format| format_supported(plane, format))
+            .any(|format| format_supported(plane, format, limits.geometry.min_source[0]))
 }
 
 fn enabled_mask<const N: usize>(enabled: &[bool; N], values: [u32; N]) -> u64 {
@@ -197,12 +213,16 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
         let supports_yuv = profile
             .formats()
             .iter()
-            .any(|format| format_supported(plane, format) && crate::formats::is_yuv(format.fourcc));
+            .any(|format| {
+                format_supported(plane, format, limits.geometry.min_source[0])
+                    && crate::formats::is_yuv(format.fourcc)
+            });
         let supports_rgb = profile
             .formats()
             .iter()
             .any(|format| {
-                format_supported(plane, format) && !crate::formats::is_yuv(format.fourcc)
+                format_supported(plane, format, limits.geometry.min_source[0])
+                    && !crate::formats::is_yuv(format.fourcc)
             });
         // Encoding and range are meaningful only for YUV framebuffers, while a generic
         // scalar property rule applies unconditionally to every use of this plane.
@@ -310,7 +330,7 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
             continue;
         };
         for format in profile.formats() {
-            if !format_supported(plane, format) {
+            if !format_supported(plane, format, limits.geometry.min_source[0]) {
                 continue;
             }
             let format = match format.modifier {
@@ -547,6 +567,78 @@ mod tests {
         let description = renderer(&Profile::new(limits, formats)?, &planes())?;
         assert!(description.properties().is_empty());
         assert_eq!(description.formats().len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn formats_require_a_constructible_pitch_at_minimum_width() -> Result {
+        let mut limits = limits();
+        limits.geometry.min_source = [1920, 1080];
+        limits.geometry.source = [1920, 1080];
+        limits.roles = [1, 0, 0];
+        let mut formats = KVec::new();
+        formats.push(
+            RendererFormat {
+                fourcc: fourcc::XRGB8888,
+                modifier: Some(TILED),
+                planes: 1,
+                native: false,
+                imported: true,
+                pitch_alignment: 256,
+                offset_alignment: 4096,
+                max_pitch: 7679,
+            },
+            GFP_KERNEL,
+        )?;
+        let profile = Profile::new(limits, formats)?;
+        assert!(matches!(renderer(&profile, &planes()), Err(EOPNOTSUPP)));
+
+        let mut formats = KVec::new();
+        formats.push(
+            RendererFormat {
+                max_pitch: 7680,
+                ..profile.formats()[0]
+            },
+            GFP_KERNEL,
+        )?;
+        let description = renderer(&Profile::new(limits, formats)?, &planes())?;
+        assert_eq!(description.formats().len(), 1);
+        assert_eq!(description.formats()[0].storage_layout().2, 7680);
+        Ok(())
+    }
+
+    #[test]
+    fn impossible_rgb_tuple_does_not_hide_yuv_property_rules() -> Result {
+        let mut limits = limits();
+        limits.geometry.min_source = [1920, 1080];
+        limits.geometry.source = [1920, 1080];
+        limits.color.yuv_encodings = [false, true, false];
+        limits.color.yuv_ranges = [false, true];
+        limits.roles = [1, 0, 0];
+        let mut formats = KVec::new();
+        for (fourcc, planes, max_pitch) in [
+            (fourcc::XRGB8888, 1, 4096),
+            (fourcc::NV12, 2, 2048),
+        ] {
+            formats.push(
+                RendererFormat {
+                    fourcc,
+                    modifier: Some(TILED),
+                    planes,
+                    native: false,
+                    imported: true,
+                    pitch_alignment: 256,
+                    offset_alignment: 4096,
+                    max_pitch,
+                },
+                GFP_KERNEL,
+            )?;
+        }
+
+        let description = renderer(&Profile::new(limits, formats)?, &planes())?;
+        assert_eq!(description.formats().len(), 1);
+        assert_eq!(description.formats()[0].format(), fourcc::NV12);
+        assert_eq!(description.properties().len(), 2);
         Ok(())
     }
 

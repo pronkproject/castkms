@@ -91,7 +91,10 @@ struct drm_castkms_renderer_constraints {
  * Exact fourcc/modifier/plane-count tuple. Without EXPLICIT_MODIFIER, modifier
  * must be zero and denotes implicit layout, distinct from explicit LINEAR.
  * At least one provenance flag is required. Alignments are positive powers of
- * two and apply to each memory plane. Duplicate tuples are rejected.
+ * two and apply to each memory plane. Only tuples whose max_pitch admits an
+ * aligned pitch at the declared minimum source width under generic DRM fourcc
+ * layout rules can be published. Modifier- and driver-specific rules may be
+ * stricter. Duplicate tuples are rejected.
  */
 struct drm_castkms_renderer_constraints_format {
 	__u32 fourcc;
