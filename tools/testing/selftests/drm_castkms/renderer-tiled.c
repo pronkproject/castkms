@@ -90,6 +90,7 @@ static uint64_t selected(int fd, uint32_t crtc, uint32_t count)
 
 static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 			       uint32_t plane, uint32_t fourcc, uint64_t modifier,
+			       uint32_t plane_count, uint32_t storage_flags,
 			       uint32_t width, uint32_t height)
 {
 	struct drm_mode_list_constraints query = { .crtc_id = crtc };
@@ -142,6 +143,11 @@ static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 				if (format->plane_id == plane && format->format == fourcc &&
 				    format->modifier == modifier) {
 					CHECK(!format->layout_flags);
+					CHECK(format->storage_flags == storage_flags);
+					CHECK(format->plane_count == plane_count);
+					CHECK(format->pitch_alignment == 1);
+					CHECK(format->offset_alignment == 1);
+					CHECK(format->max_pitch == 65536);
 					CHECK(format->min_width == width &&
 					      format->max_width == width);
 					CHECK(format->min_height == height &&
@@ -401,11 +407,18 @@ int main(int argc, char **argv)
 	      !result.reserved[1] && !result.reserved[2]);
 	CHECK(selected(fd, create.crtc_id, 2) == host);
 	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_XRGB8888,
-			   I915_FORMAT_MOD_4_TILED, mode->hdisplay, mode->vdisplay);
+			   I915_FORMAT_MOD_4_TILED, 1,
+			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE |
+			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_IMPORTED,
+			   mode->hdisplay, mode->vdisplay);
 	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_NV12,
-			   I915_FORMAT_MOD_4_TILED, mode->hdisplay, mode->vdisplay);
+			   I915_FORMAT_MOD_4_TILED, 2,
+			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			   mode->hdisplay, mode->vdisplay);
 	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_RGBX8888,
-			   I915_FORMAT_MOD_4_TILED, mode->hdisplay, mode->vdisplay);
+			   I915_FORMAT_MOD_4_TILED, 1,
+			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			   mode->hdisplay, mode->vdisplay);
 	select_framebuffer(fd, create.crtc_id, plane, tiled.fb, worker);
 	CHECK(selected(fd, create.crtc_id, 2) == worker);
 

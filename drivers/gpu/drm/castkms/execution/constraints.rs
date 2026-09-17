@@ -114,7 +114,7 @@ pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Des
 /// Unsupported roles and formats contribute no allocations. An empty intersection fails;
 /// it does not become unrestricted. The caller supplies standard scalar property rules.
 /// Native publication still checks object membership, and the retained profile must validate
-/// complete scenes, layout details, provenance, layer counts and color operations at acceptance.
+/// complete scenes, layer counts and color operations at acceptance.
 /// This operation allocates metadata only; it neither establishes readiness nor grants access.
 pub(crate) fn renderer(
     profile: &Profile,
@@ -152,7 +152,14 @@ pub(crate) fn renderer(
             let format = match format.modifier {
                 Some(modifier) => Format::new(plane.id, format.fourcc, modifier, size),
                 None => Format::implicit(plane.id, format.fourcc, size),
-            };
+            }
+            .with_storage(
+                format.native,
+                format.imported,
+                format.pitch_alignment,
+                format.offset_alignment,
+                format.max_pitch,
+            );
             formats.push(format, GFP_KERNEL)?;
         }
     }
@@ -326,6 +333,9 @@ mod tests {
         assert_eq!(description.formats().len(), 1);
         assert_eq!(description.formats()[0].format(), fourcc::XRGB16161616F);
         assert_eq!(description.formats()[0].modifier(), Some(TILED));
+        assert!(!description.formats()[0].permits_native());
+        assert!(description.formats()[0].permits_imported());
+        assert_eq!(description.formats()[0].storage_layout(), (16, 16, 131072));
         Ok(())
     }
 
@@ -359,6 +369,10 @@ mod tests {
             assert_eq!(pair[0].size().minimum(), (1, 1));
             assert_eq!(pair[0].size().minimum(), pair[1].size().minimum());
             assert_eq!(pair[0].size().maximum(), pair[1].size().maximum());
+            assert!(pair[0].permits_native());
+            assert!(pair[0].permits_imported());
+            assert_eq!(pair[0].storage_layout(), (1, 1, u32::MAX));
+            assert_eq!(pair[0].storage_layout(), pair[1].storage_layout());
             if pair[0].plane_id() == 9 {
                 assert_eq!(pair[0].format(), fourcc::ARGB8888);
                 assert_eq!(pair[0].size().maximum(), (512, 512));
