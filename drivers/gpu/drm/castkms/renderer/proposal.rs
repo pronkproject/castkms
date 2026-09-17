@@ -45,6 +45,16 @@ impl Proposal {
             .register_pending_image(&self.registration, dimensions, buffers)
     }
 
+    /// Retain this proposal's exact private resources after native probe completion.
+    pub(crate) fn prepare_worker(
+        &self,
+        pool: &super::private_pool::Pool,
+        dimensions: [u32; 2],
+    ) -> Result<super::ready::Owner> {
+        self.candidate
+            .prepare_worker(&self.registration, pool, dimensions)
+    }
+
     pub(crate) fn activate(
         &self,
         device: &kernel::drm::Device<crate::Driver, kernel::drm::device::Registered>,

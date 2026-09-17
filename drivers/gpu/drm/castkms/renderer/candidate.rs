@@ -109,14 +109,22 @@ impl Candidate {
 
     /// Prepare exact private resources after native probe completion, without publishing an offer.
     /// The publisher must recheck live authority and candidate ownership at publication.
-    pub(crate) fn prepare_worker(
+    pub(super) fn prepare_worker(
         &self,
+        proposal: &crate::execution::proposal::Registration,
         pool: &super::private_pool::Pool,
-        profile: &crate::execution::capabilities::Profile,
         dimensions: [u32; 2],
     ) -> Result<super::ready::Owner> {
+        let crate::execution::validation::Contract::Renderer(profile) =
+            &proposal.description().profile
+        else {
+            return Err(EOPNOTSUPP);
+        };
         let registrations = self.pin_private_images(pool, dimensions)?;
-        let source = self.with_current_control(|_| self.probe.completed_source())?;
+        let source = self.with_current_control(|_| {
+            proposal.check()?;
+            self.probe.completed_source()
+        })?;
         let mut owner = super::ready::Owner::new(
             self.access.display().output.identity().clone(),
             self.access.interval(),
