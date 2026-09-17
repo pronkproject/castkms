@@ -193,13 +193,31 @@ struct drm_constraints_events *drm_constraints_events_create(struct drm_file *fi
 		output->sent_closed =
 			drm_constraints_list_observe(list, &output->sent_generation) != 0;
 	}
-	spin_lock_irq(&events->lock);
-	events->ready = true;
-	spin_unlock_irq(&events->lock);
-	schedule_events(events);
 	return events;
 }
 EXPORT_SYMBOL_IF_KUNIT(drm_constraints_events_create);
+
+void drm_constraints_events_start(struct drm_constraints_events *events)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&events->lock, flags);
+	events->ready = true;
+	spin_unlock_irqrestore(&events->lock, flags);
+	schedule_events(events);
+}
+EXPORT_SYMBOL_IF_KUNIT(drm_constraints_events_start);
+
+void drm_constraints_events_pause(struct drm_constraints_events *events)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&events->lock, flags);
+	events->ready = false;
+	spin_unlock_irqrestore(&events->lock, flags);
+	cancel_work_sync(&events->work);
+}
+EXPORT_SYMBOL_IF_KUNIT(drm_constraints_events_pause);
 
 void drm_constraints_events_destroy(struct drm_constraints_events *events)
 {

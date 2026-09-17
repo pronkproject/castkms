@@ -112,6 +112,7 @@ static struct event_fixture *new_fixture(struct kunit *test)
 	f->events = drm_constraints_events_create(f->file->private_data);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->events);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, destroy_events, f->events), 0);
+	drm_constraints_events_start(f->events);
 	f->address = kunit_vm_mmap(test, NULL, 0, PAGE_SIZE, PROT_READ | PROT_WRITE,
 				   MAP_PRIVATE | MAP_ANONYMOUS, 0);
 	KUNIT_ASSERT_NE(test, f->address, 0);
@@ -351,6 +352,7 @@ static void lease_revocation_excludes_new_events(struct kunit *test)
 	f->events = drm_constraints_events_create(priv);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->events);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, destroy_events, f->events), 0);
+	drm_constraints_events_start(f->events);
 	suggest(test, f, 0, true);
 	expect_empty(test, f);
 	mutex_lock(&f->dev->mode_config.idr_mutex);

@@ -46,6 +46,7 @@
 #include "drm_atomic_prepare_uapi.h"
 #include "drm_capture_uapi.h"
 #include "drm_constraints_uapi.h"
+#include "drm_constraints_client.h"
 #include "drm_crtc_internal.h"
 #include "drm_internal.h"
 
@@ -348,7 +349,9 @@ drm_setclientcap(struct drm_device *dev, void *data, struct drm_file *file_priv)
 			return -EINVAL;
 		file_priv->universal_planes = req->value;
 		break;
-	case DRM_CLIENT_CAP_ATOMIC:
+	case DRM_CLIENT_CAP_ATOMIC: {
+		guard(mutex)(&file_priv->constraints_lock);
+
 		if (!drm_core_check_feature(dev, DRIVER_ATOMIC))
 			return -EOPNOTSUPP;
 		/* The modesetting DDX has a totally broken idea of atomic. */
@@ -358,6 +361,8 @@ drm_setclientcap(struct drm_device *dev, void *data, struct drm_file *file_priv)
 		}
 		if (req->value > 2)
 			return -EINVAL;
+		if (!req->value && file_priv->kms_constraints)
+			return -EBUSY;
 		file_priv->atomic = req->value;
 		file_priv->universal_planes = req->value;
 		/*
@@ -365,6 +370,9 @@ drm_setclientcap(struct drm_device *dev, void *data, struct drm_file *file_priv)
 		 */
 		file_priv->aspect_ratio_allowed = req->value;
 		break;
+	}
+	case DRM_CLIENT_CAP_KMS_CONSTRAINTS:
+		return drm_constraints_client_cap(file_priv, req->value);
 	case DRM_CLIENT_CAP_ATOMIC_PREPARATION:
 		if (req->value > 1)
 			return -EINVAL;
