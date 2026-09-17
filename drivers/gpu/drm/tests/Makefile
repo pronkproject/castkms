@@ -69,6 +69,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_constraints_list_test.o \
 	drm_constraints_encoding_test.o \
 	drm_constraints_query_test.o \
+	drm_constraints_uapi_test.o \
 	drm_constraints_device_test.o \
 	drm_constraints_auth_test.o \
 	drm_constraints_output_test.o \

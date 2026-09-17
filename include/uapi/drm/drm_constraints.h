@@ -48,6 +48,14 @@ struct drm_mode_list_constraints {
 	__aligned_u64 reserved[2];
 };
 
+/* Read-only discovery for the current modesetting master, within its CRTC
+ * visibility. Discovery does not opt a file into changing constraints or
+ * receiving change notifications. Unsupported outputs return EOPNOTSUPP;
+ * unknown or inaccessible CRTC IDs return ENOENT. This operation never returns
+ * EAGAIN and may be called through libdrm's normal drmIoctl() wrapper.
+ */
+#define DRM_IOCTL_MODE_LIST_CONSTRAINTS DRM_IOWR(0xD5, struct drm_mode_list_constraints)
+
 /**
  * struct drm_mode_constraints_list - One consistent constraints snapshot
  * @version: DRM_MODE_CONSTRAINTS_VERSION.
