@@ -97,6 +97,16 @@ impl Candidate {
         self.execution
     }
 
+    /// Retain this candidate's exact-geometry pool registrations, not live pixel authority.
+    /// The endpoint serializes its table; readiness and revocation still need independent checks.
+    pub(crate) fn pin_private_images(
+        &self,
+        pool: &super::private_pool::Pool,
+        dimensions: [u32; 2],
+    ) -> Result<super::private_pool::RegistrationSet> {
+        pool.pin_dimensions(&self.proposal_owner, dimensions)
+    }
+
     /// Register immutable pending capabilities without changing KMS acceptance.
     /// The profile is allocated before entering authority and startup exclusion.
     pub(crate) fn propose_profile(
