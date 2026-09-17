@@ -16,12 +16,11 @@ activation acknowledgment.
 The implementation provides native atomic helpers and experimental read-only
 listing through ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``. The DRM core also has a
 bounded event producer, an experimental change-event encoding and explicit
-client subscription and persistent ``CONSTRAINTS_ID`` selection. No production
-CastKMS provider is attached to these helpers. The native test provider uses
-framebuffer metadata, not GPU allocation or PRIME import. Those boundaries
-must not be inferred from successful native tests.
-The Rust test provider uses private shmem allocations and CPU sampling; it
-does not establish physical-GPU or cross-device import support.
+client subscription and persistent ``CONSTRAINTS_ID`` selection. CastKMS attaches
+fixed HOST defaults and publishes prepared renderer offers through these helpers;
+its worker protocol is described in :doc:`castkms-renderer`. Native test providers
+use framebuffer metadata or private shmem allocations and CPU sampling. Their
+results do not establish physical-GPU or cross-device import support.
 
 Selecting constraints and updating scenes may include multiple outputs in one
 atomic transaction. Acceptance stabilizes every affected list, validates all
@@ -460,6 +459,11 @@ unchanged list generations during animation, native multi-output shutdown and
 disabled default restoration. A bounded reader worker releases on failure so
 an isolation regression cannot strand fixture teardown.
 The provider has no userspace descriptors, physical GPU or external producer.
+
+Native atomic cohort tests accept multiple selections with one installation
+and verify that a withdrawn final offer or failing final backend leaves every
+selection and generation unchanged. The CastKMS renderer tests accept and
+animate eight workers together through the production driver's callbacks.
 
 Use ``kunit.filter_glob=*constraints*`` for the constraints suites and run the
 atomic property suite separately or with broader DRM tests. Build modular DRM
