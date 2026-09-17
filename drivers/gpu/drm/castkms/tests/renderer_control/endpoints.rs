@@ -104,6 +104,27 @@ mod cases {
     }
 
     #[test]
+    fn closed_selected_endpoint_can_be_disabled() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-disable", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = prepared(device, &owner)?;
+            endpoint.publish(|_| Ok(()))?;
+            let output = device.constraints_output(crtc)?;
+            let entry = output.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+            endpoint.close();
+            check(crtc.display.constraints.as_ref().ok_or(EINVAL)?
+                .resolve(&entry).err() == Some(ESTALE))?;
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            check(output.selected().id() == entry.id())?;
+            output.restore_default()?;
+            output.forget(entry.id())?;
+            Ok(())
+        })
+    }
+
+    #[test]
     fn failed_probe_never_lists_an_offer_and_close_is_terminal() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-probe", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {

@@ -15,7 +15,21 @@ type Binding = kernel::sync::aref::ARef<kernel::drm::constraints::Entry<Backend>
 pub(crate) struct Offer {
     access: Access,
     entry: Binding,
+    list: kernel::sync::aref::ARef<kernel::drm::constraints::List>,
     _owner: ready::Owner,
+}
+
+impl Drop for Offer {
+    fn drop(&mut self) {
+        self._owner.revocation().revoke();
+        // The endpoint is gone, so no new resolution should retain its callback module.
+        // Accepted states and source jobs keep their own exact typed binding.
+        if let Some(provider) = self.access.display().constraints.as_ref() {
+            drop(provider.remove(&self.entry));
+        }
+        // Selected entries remain natively retained until KMS replacement/recovery.
+        let _ = self.list.forget(self.entry.id());
+    }
 }
 
 impl Offer {
@@ -34,7 +48,10 @@ impl Offer {
         let owner = draft.prepare_worker(pool)?;
         let entry = provider.prepare(owner.worker())?;
         access.with_output(|| Ok(()))?;
-        Ok(Self { access: access.clone(), entry, _owner: owner })
+        Ok(Self {
+            access: access.clone(), entry, _owner: owner,
+            list: kernel::sync::aref::ARef::from(output.list()),
+        })
     }
 
     pub(crate) fn entry(&self) -> &Binding {

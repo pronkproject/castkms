@@ -669,6 +669,13 @@ impl KmsDriver for Driver {
         entry: &kernel::drm::constraints::OpaqueEntry,
     ) -> Result {
         let state = crtc::CrtcState::<CrtcState>::from_opaque(state);
+        if !state.enabled() && !state.active() && state.plane_mask() == 0
+            && transaction.get_old_crtc_state(state.crtc())
+                .and_then(|old| old.constraints_entry())
+                .is_some_and(|old| core::ptr::eq(old, entry))
+        {
+            return Ok(());
+        }
         state.crtc().display.constraints.as_ref().ok_or(EOPNOTSUPP)?
             .check(entry, transaction.drm_dev().authority.interval().ok(), state.validation_view()?)
     }
