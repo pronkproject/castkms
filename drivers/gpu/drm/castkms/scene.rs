@@ -15,6 +15,7 @@ use kernel::{
     dma_resv::Reservation,
     drm::{
         auth::MasterRef,
+        constraints::OpaqueEntry,
         gem::BaseObject,
         kms::framebuffer::{
             dependencies::Dependencies,
@@ -54,6 +55,7 @@ pub(super) struct Scene {
     content: Option<ContentSerial>,
     // Historical attribution resolved by the accepted transaction, not live capture authority.
     owner: Option<MasterRef<Driver>>,
+    constraints: Option<ARef<OpaqueEntry>>,
 }
 
 /// The framebuffer reference preserves storage lifetime, not the contents of that storage.
@@ -92,6 +94,15 @@ impl Primary {
 }
 
 impl Scene {
+    /// Retain the exact atomic backend, independently of subsequent offer withdrawal.
+    pub(super) fn set_constraints(&mut self, entry: Option<&OpaqueEntry>) {
+        self.constraints = entry.map(ARef::from);
+    }
+
+    pub(super) fn constraints(&self) -> Option<&OpaqueEntry> {
+        self.constraints.as_deref()
+    }
+
     /// Compare backing reservations without mapping pixels or acquiring a source read.
     pub(super) fn uses_reservation(&self, reservation: &Reservation) -> Result<bool> {
         for primary in self.layers() {
@@ -228,6 +239,7 @@ impl Scene {
             layers: core::array::from_fn(|_| None),
             content: None,
             owner,
+            constraints: None,
         }
     }
 }
