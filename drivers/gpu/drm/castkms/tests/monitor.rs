@@ -11,14 +11,14 @@ mod cases {
     use super::*;
 
     #[test]
-    fn reservation_preserves_fallback_until_publication() -> Result {
+    fn reservation_preserves_disconnection_until_publication() -> Result {
         let driver = CastKms::new(c"castkms-monitor-pending")?;
         let device = driver._display.registration_guard().ok_or(ENODEV)?;
         let pending = device.monitor.reserve(&device)?;
-        check(device.monitor.status() == Status::Connected)?;
+        check(device.monitor.status() == Status::Disconnected)?;
         check(matches!(device.monitor.reserve(&device), Err(EBUSY)))?;
         drop(pending);
-        check(device.monitor.status() == Status::Connected)?;
+        check(device.monitor.status() == Status::Disconnected)?;
         let pending = device.monitor.reserve(&device)?;
         let control = pending.publish()?;
         check(device.monitor.status() == Status::Disconnected)?;
@@ -30,10 +30,10 @@ mod cases {
     }
 
     #[test]
-    fn control_replaces_and_restores_the_fallback() -> Result {
+    fn only_explicit_attachment_connects_the_monitor() -> Result {
         let driver = CastKms::new(c"castkms-monitor-control")?;
         let device = driver._display.registration_guard().ok_or(ENODEV)?;
-        check(device.monitor.status() == Status::Connected)?;
+        check(device.monitor.status() == Status::Disconnected)?;
         let control = device.monitor.acquire(&device)?;
         check(device.monitor.status() == Status::Disconnected)?;
         control.attach(None)?;
@@ -41,7 +41,7 @@ mod cases {
         control.detach()?;
         check(device.monitor.status() == Status::Disconnected)?;
         drop(control);
-        check(device.monitor.status() == Status::Connected)
+        check(device.monitor.status() == Status::Disconnected)
     }
 
     #[test]

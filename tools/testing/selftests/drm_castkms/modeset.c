@@ -37,6 +37,7 @@ int main(int argc, char **argv)
 	drmModeModeInfo *mode;
 	drmModeModeInfo slow_mode;
 	struct buffer a, b;
+	struct monitor_control monitor;
 	uint32_t crtc_id, connector_id, plane_id, mode_id, slow_mode_id;
 	int fd;
 
@@ -56,6 +57,7 @@ int main(int argc, char **argv)
 	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	crtc_id = resources->crtcs[0];
 	connector_id = resources->connectors[0];
+	monitor = attach_fallback_monitor(fd, connector_id);
 	connector = drmModeGetConnector(fd, connector_id);
 	CHECK(connector && connector->connection == DRM_MODE_CONNECTED);
 	CHECK(connector->count_modes > 0);
@@ -201,6 +203,7 @@ int main(int argc, char **argv)
 	CHECK(drmModeDestroyPropertyBlob(fd, slow_mode_id) == 0);
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
+	close_monitor(&monitor);
 	CHECK(close(fd) == 0);
 	puts("PASS: CastKMS allocation, modeset, timed vblank, 50 flips, rejection, disable");
 	if (argc == 3)

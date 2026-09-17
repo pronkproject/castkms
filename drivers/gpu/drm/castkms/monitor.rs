@@ -54,12 +54,13 @@ impl Monitor {
 
     pub(crate) fn status(&self) -> connector::Status {
         match &*self.state.lock() {
-            State::Unmanaged | State::Reserved { .. }
-            | State::Managed {
+            State::Managed {
                 description: Description::Attached { .. },
                 ..
             } => connector::Status::Connected,
-            State::Managed {
+            State::Unmanaged
+            | State::Reserved { .. }
+            | State::Managed {
                 description: Description::Disconnected,
                 ..
             }
@@ -84,8 +85,7 @@ impl Monitor {
                 Ok(_) => Self::add_fallback_modes(connector),
                 Err(_) => 0,
             },
-            State::Unmanaged | State::Reserved { .. }
-            | State::Managed {
+            State::Managed {
                 description: Description::Attached { edid: None, .. },
                 ..
             } => {
@@ -95,7 +95,9 @@ impl Monitor {
                     Self::add_fallback_modes(connector)
                 }
             }
-            State::Managed {
+            State::Unmanaged
+            | State::Reserved { .. }
+            | State::Managed {
                 description: Description::Disconnected,
                 ..
             }
@@ -109,7 +111,7 @@ impl Monitor {
     fn add_fallback_modes(connector: &connector::ConnectorGuard<'_, display::Connector>) -> i32 {
         let count = connector.add_modes_noedid((crate::execution::potential::MAX_DIMENSION,
             crate::execution::potential::MAX_DIMENSION));
-        connector.set_preferred_mode((1024, 768));
+        connector.set_preferred_mode((1920, 1080));
         count
     }
 
@@ -121,7 +123,7 @@ impl Monitor {
         self.reserve(device)?.publish()
     }
 
-    /// Reserve exclusive issuance without changing the visible fallback monitor.
+    /// Reserve exclusive issuance without changing the disconnected connector.
     pub(crate) fn reserve(
         self: &Arc<Self>,
         device: &Device<Driver, Registered>,
@@ -224,7 +226,7 @@ pub(crate) struct Control {
     identity: Arc<()>,
 }
 
-/// Dropping an unpublished reservation preserves fallback state without notification.
+/// Dropping an unpublished reservation preserves disconnected state without notification.
 pub(crate) struct PendingControl {
     control: Control,
 }

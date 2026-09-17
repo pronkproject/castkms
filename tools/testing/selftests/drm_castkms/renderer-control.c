@@ -21,6 +21,9 @@ _Static_assert(sizeof(struct drm_castkms_renderer_publish_offer) == 32, "publish
 _Static_assert(sizeof(struct drm_castkms_renderer_offer_result) == 32, "result layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_withdraw_offer) == 16, "withdraw layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_scene) == 56, "scene layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_dequeue_output) == 32, "output dequeue layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_output) == 72, "output layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_release_output) == 32, "output release layout");
 
 static void expect_error(int fd, unsigned long cmd, void *request, int error)
 {
@@ -157,6 +160,7 @@ int main(int argc, char **argv)
 	drmModeConnector *connector;
 	drmModeModeInfo *mode;
 	struct buffer source[2], private;
+	struct monitor_control monitor;
 	uint64_t host, worker, previous = 0;
 	unsigned int baseline;
 	uint32_t plane;
@@ -172,6 +176,7 @@ int main(int argc, char **argv)
 	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	create.crtc_id = resources->crtcs[0];
 	create.connector_id = resources->connectors[0];
+	monitor = attach_fallback_monitor(fd, create.connector_id);
 	host = selected(fd, create.crtc_id, 1);
 	connector = drmModeGetConnector(fd, create.connector_id);
 	CHECK(connector && connector->count_modes);
@@ -292,6 +297,7 @@ int main(int argc, char **argv)
 	CHECK(munmap(fault, 4096) == 0);
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
+	close_monitor(&monitor);
 	CHECK(close(fd) == 0);
 	puts("PASS: immutable offers, atomic selection, 24 frames and revoked source release");
 	return 0;

@@ -159,6 +159,8 @@ int main(int argc, char **argv)
 {
 	struct display d;
 	struct buffer creator, associated, replacement, retained;
+	struct monitor_control monitor;
+	drmModeRes *resources;
 	drmModeAtomicReq *req;
 	int first, second, peer, successor;
 
@@ -172,6 +174,10 @@ int main(int argc, char **argv)
 	peer = open_client(argv[1]);
 	CHECK(drmIsMaster(first) == 1);
 	CHECK(drmIsMaster(second) == 0 && drmIsMaster(peer) == 0);
+	resources = drmModeGetResources(first);
+	CHECK(resources && resources->count_connectors > 0);
+	monitor = attach_fallback_monitor(first, resources->connectors[0]);
+	drmModeFreeResources(resources);
 	d = discover(first);
 	creator = create_buffer(first, d.mode.hdisplay, d.mode.vdisplay, 0x11);
 	associated = create_buffer(peer, d.mode.hdisplay, d.mode.vdisplay, 0x22);
@@ -228,6 +234,7 @@ int main(int argc, char **argv)
 	expect_gone(successor, retained.fb);
 	disable(successor, &d);
 	expect_gone(successor, retained.fb);
+	close_monitor(&monitor);
 	CHECK(close(successor) == 0);
 	puts("PASS: CastKMS master handoff, unaccepted updates, retained files, RMFB, disable");
 	return 0;

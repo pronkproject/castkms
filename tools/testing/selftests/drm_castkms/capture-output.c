@@ -154,6 +154,7 @@ static void failed_publication(int client)
 
 int main(int argc, char **argv)
 {
+	struct monitor_control monitor;
 	struct drm_mode_create_capture_grant grant = {};
 	struct drm_capture_grant_files files;
 	struct drm_capture_describe description;
@@ -182,6 +183,7 @@ int main(int argc, char **argv)
 	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	grant.crtc_id = resources->crtcs[0];
 	grant.connector_id = resources->connectors[0];
+	monitor = attach_fallback_monitor(master, grant.connector_id);
 	grant.files = (uintptr_t)&files;
 	drmModeFreeResources(resources);
 	plane = primary_plane(master, 0);
@@ -265,6 +267,7 @@ int main(int argc, char **argv)
 	destroy_buffer(master, &changed);
 	destroy_buffer(master, &output);
 	destroy_buffer(master, &replacement);
+	close_monitor(&monitor);
 	CHECK(close(master) == 0);
 	puts("PASS: capture output, retained faults, cancellation and revoked dequeue");
 	return 0;

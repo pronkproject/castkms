@@ -113,14 +113,14 @@ struct drm_castkms_renderer_constraints_format {
  * @reserved: must be zero
  *
  * The calling DRM file must be the current master and hold the connector.
- * Only one monitor-control file may exist for a connector. Creation replaces
- * the standalone fallback monitor with a disconnected managed monitor. Final
- * close of the control file, or close of the revocation file, restores the
- * fallback monitor. The control capability remains valid across DRM master
- * changes and may be transferred like any other file descriptor. The issuer
+ * Only one monitor-control file may exist for a connector. Connectors remain
+ * disconnected until explicitly attached. Final close of the control file,
+ * or close of the revocation file, disconnects the monitor. The control
+ * capability remains valid across DRM master changes and may be transferred
+ * like any other file descriptor. The issuer
  * retains the revocation file.
  * All request fields are input. Failure installs no descriptors and does not
- * replace the fallback monitor; partially copied output must be ignored.
+ * change monitor state; partially copied output must be ignored.
  */
 struct drm_castkms_create_monitor_control {
 	__u32 connector_id;
@@ -152,7 +152,7 @@ struct drm_castkms_monitor_query {
 /**
  * struct drm_castkms_monitor_attach - publish an attached virtual monitor
  * @flags: must be zero
- * @edid_size: complete EDID size, or zero to use fallback modes
+ * @edid_size: complete EDID size, or zero for fallback modes with 1080p preferred
  * @edid_ptr: userspace pointer to @edid_size bytes, or zero without an EDID
  *
  * The driver copies and validates EDID data before changing the monitor.

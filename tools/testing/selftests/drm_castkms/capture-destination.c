@@ -92,6 +92,7 @@ static void malformed_requests(int fd, int control, int read_only,
 
 int main(int argc, char **argv)
 {
+	struct monitor_control monitor;
 	struct drm_mode_create_capture_grant grant = {};
 	struct drm_capture_grant_files files;
 	struct drm_capture_describe description;
@@ -118,6 +119,7 @@ int main(int argc, char **argv)
 	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	grant.crtc_id = resources->crtcs[0];
 	grant.connector_id = resources->connectors[0];
+	monitor = attach_fallback_monitor(master, grant.connector_id);
 	grant.files = (uintptr_t)&files;
 	drmModeFreeResources(resources);
 	connector = drmModeGetConnector(master, grant.connector_id);
@@ -199,6 +201,7 @@ int main(int argc, char **argv)
 	CHECK(drmModeSetCrtc(master, grant.crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
 	destroy_buffer(master, &read_only);
 	destroy_buffer(master, &scanout);
+	close_monitor(&monitor);
 	CHECK(close(master) == 0);
 	puts("PASS: capture destination admission, retained descriptors and revoked cleanup");
 	return 0;
