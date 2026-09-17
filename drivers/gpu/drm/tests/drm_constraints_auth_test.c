@@ -16,9 +16,16 @@ static const struct file_operations test_fops = {
 	.release = drm_release_noglobal,
 };
 
+static void unplug_on_master_loss(struct drm_device *dev, struct drm_file *file)
+{
+	if (dev->dev_private)
+		dev->unplugged = true;
+}
+
 static const struct drm_driver test_driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_ATOMIC,
 	.fops = &test_fops,
+	.master_drop = unplug_on_master_loss,
 };
 
 static void flush_recovery(void *data)
@@ -58,6 +65,7 @@ static struct file *new_file(struct kunit *test, struct drm_device *dev)
 
 static void fail_recovery(struct drm_device *dev)
 {
+	drm_constraints_owner_flush(dev);
 	dev->unplugged = true;
 	mutex_lock(&dev->master_mutex);
 	drm_constraints_owner_lost(dev);
@@ -217,6 +225,44 @@ static void internal_master_preserves_nonparticipating_devices(struct kunit *tes
 		drm_master_internal_release(dev);
 }
 
+static void check_master_loss(struct kunit *test, bool close)
+{
+	struct drm_device *dev = new_device(test, true);
+	struct file *file = new_file(test, dev);
+	struct file *replacement = new_file(test, dev);
+	int ret;
+
+	KUNIT_ASSERT_EQ(test, drm_master_open(file->private_data), 0);
+	/* Fail recovery after ioctl admission, inside the driver's loss callback. */
+	dev->dev_private = dev;
+	if (close)
+		kunit_release_action(test, close_file, file);
+	else
+		KUNIT_EXPECT_EQ(test, drm_ioctl(file, DRM_IOCTL_DROP_MASTER, 0), 0L);
+	drm_constraints_owner_flush(dev);
+	dev->dev_private = NULL;
+	dev->unplugged = false;
+	mutex_lock(&dev->master_mutex);
+	ret = drm_constraints_owner_check(dev);
+	mutex_unlock(&dev->master_mutex);
+	KUNIT_EXPECT_EQ(test, ret, -ENODEV);
+	KUNIT_EXPECT_PTR_EQ(test, dev->master, NULL);
+	KUNIT_EXPECT_EQ(test, drm_master_open(replacement->private_data), -ENODEV);
+	drm_constraints_owner_flush(dev);
+	KUNIT_ASSERT_EQ(test, drm_master_open(replacement->private_data), 0);
+	KUNIT_EXPECT_TRUE(test, drm_is_current_master(replacement->private_data));
+}
+
+static void drop_master_requires_recovery_before_replacement(struct kunit *test)
+{
+	check_master_loss(test, false);
+}
+
+static void close_master_requires_recovery_before_replacement(struct kunit *test)
+{
+	check_master_loss(test, true);
+}
+
 static struct kunit_case drm_constraints_auth_tests[] = {
 	KUNIT_CASE(implicit_master_waits_for_successful_recovery),
 	KUNIT_CASE(implicit_master_cannot_restart_closed_recovery),
@@ -227,6 +273,8 @@ static struct kunit_case drm_constraints_auth_tests[] = {
 	KUNIT_CASE(internal_master_waits_for_successful_recovery),
 	KUNIT_CASE(internal_master_cannot_restart_closed_recovery),
 	KUNIT_CASE(internal_master_preserves_nonparticipating_devices),
+	KUNIT_CASE(drop_master_requires_recovery_before_replacement),
+	KUNIT_CASE(close_master_requires_recovery_before_replacement),
 	{}
 };
 
