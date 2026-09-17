@@ -31,5 +31,6 @@ uint32_t primary_plane(int fd, unsigned int crtc_index);
 void property(int fd, drmModeAtomicReq *req, uint32_t id, uint32_t type,
 	      const char *name, uint64_t value);
 void flip(int fd, uint32_t plane, uint32_t fb);
+void acquire_master(int fd);
 
 #endif

@@ -1,10 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <poll.h>
 #include <string.h>
+#include <time.h>
 #include <sys/mman.h>
 #include <drm_fourcc.h>
 
 #include "fixture.h"
+
+/* Constraints owner recovery drains native reads before admitting a successor. */
+void acquire_master(int fd)
+{
+	for (unsigned int attempt = 0; attempt < 500; attempt++) {
+		struct timespec pause = { .tv_nsec = 10000000 };
+
+		if (drmSetMaster(fd) == 0)
+			return;
+		CHECK(errno == EBUSY);
+		CHECK(nanosleep(&pause, NULL) == 0);
+	}
+	CHECK(0 && "master recovery timed out");
+}
 
 struct buffer create_buffer(int fd, uint32_t width, uint32_t height,
 				   unsigned char pixel)
