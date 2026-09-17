@@ -92,12 +92,14 @@ every role; advertise the intersection of per-role restrictions. Each format
 record names an exact fourcc/modifier/memory-plane-count tuple, native/imported
 provenance, and alignment/pitch bounds. Implicit layout is distinct from
 explicit LINEAR. A declaration proves neither import compatibility nor access.
+When scaling is absent, both source-to-destination ratio bounds are exactly
+1.0 in unsigned 16.16 representation.
 Published generic KMS constraints carry the same per-format allocation limits,
 so a compositor can choose storage before selecting the offer. They also carry
 scalar rules for restricted destination position, source origin, and usable YUV
 encoding and range values. Overlapping active-plane limits express both the
-profile's total layer ceiling and any narrower role ceiling across the actual
-planes for that output. Geometry relationships, fractional-coordinate
+declaration's total layer ceiling and any narrower role ceiling across the
+actual planes for that output. Geometry relationships, fractional-coordinate
 requirements, and color-pipeline contents cannot be represented as independent
 records, so complete atomic validation remains authoritative for the whole
 scene.

@@ -88,6 +88,8 @@ impl Profile {
             })
             || geometry.min_scale == 0
             || geometry.min_scale > geometry.max_scale
+            || (!geometry.scale
+                && (geometry.min_scale != 1 << 16 || geometry.max_scale != 1 << 16))
             || limits.layers == 0
             || limits.layers > crate::scene::MAX_PLANES
             || limits.roles.iter().any(|count| *count > limits.layers)
@@ -404,6 +406,9 @@ mod tests {
         let mut bad = limits();
         bad.geometry.min_scale = 0;
         assert!(matches!(profile(bad, None), Err(EINVAL)));
+        let mut bad = limits();
+        bad.geometry.scale = false;
+        assert!(matches!(profile(bad, None), Err(EINVAL)));
         let valid = profile(limits(), None)?;
         assert_eq!(valid.limits().layers, 24);
         let mut formats = KVec::new();
@@ -506,6 +511,8 @@ mod tests {
             },
             GeometryLimits {
                 scale: false,
+                min_scale: 1 << 16,
+                max_scale: 1 << 16,
                 ..limits.geometry
             },
             GeometryLimits {

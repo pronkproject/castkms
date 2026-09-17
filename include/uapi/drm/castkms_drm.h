@@ -52,7 +52,8 @@
  * RENDERER limits apply to every role; advertise the intersection if roles have
  * different restrictions. Dimensions and scale limits are positive; scales are
  * inclusive unsigned 16.16 source/destination ratios. Roles are primary,
- * overlay and cursor. YUV masks use bit positions from the scene encoding.
+ * overlay and cursor. Without the SCALE flag, both scale limits must equal
+ * 1.0 (1 << 16). YUV masks use bit positions from the scene encoding.
  * Sampling is nearest-neighbor, blending is premultiplied source-over and
  * stacking follows the scene description. Constraints grant no buffer access.
  * min_output/min_source and max_output/max_source bound width and height
@@ -476,7 +477,8 @@ struct drm_castkms_renderer_dequeue_scene {
 
 /* Private storage is readable/writable only by the trusted renderer. Registration
  * retains one to four distinct DMA-BUFs, not their native format interpretation.
- * The renderer validates layout and import compatibility against its own profile.
+ * The renderer validates layout and import compatibility against its declared
+ * constraints.
  * Registration requires a draft and its exact private-pool dimensions. A
  * published offer pins the complete registration set; no further registrations
  * may extend it. Registration alone authorizes no display-source access.
