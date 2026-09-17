@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
+#include <linux/align.h>
 #include <linux/err.h>
 #include <linux/export.h>
 #include <linux/kref.h>
@@ -102,10 +103,16 @@ drm_constraints_description_create_with_geometry(
 		    !formats[i].storage_flags ||
 		    (formats[i].storage_flags & ~(DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE |
 						 DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED)) ||
+		    !is_power_of_2(formats[i].width_alignment) ||
+		    !is_power_of_2(formats[i].height_alignment) ||
 		    !is_power_of_2(formats[i].pitch_alignment) ||
 		    !is_power_of_2(formats[i].offset_alignment) ||
 		    formats[i].max_pitch < formats[i].pitch_alignment ||
-		    !size_valid(&formats[i].size))
+		    !size_valid(&formats[i].size) ||
+		    ALIGN((u64)formats[i].size.min_width, formats[i].width_alignment) >
+			formats[i].size.max_width ||
+		    ALIGN((u64)formats[i].size.min_height, formats[i].height_alignment) >
+			formats[i].size.max_height)
 			return ERR_PTR(-EINVAL);
 		for (j = 0; j < i; j++) {
 			if (formats[i].plane_id == formats[j].plane_id &&
@@ -308,6 +315,8 @@ static bool format_covers(const struct drm_constraints_format *candidate,
 		candidate->flags == required->flags &&
 		size_covers(&candidate->size, &required->size) &&
 		(candidate->storage_flags & required->storage_flags) == required->storage_flags &&
+		!(required->width_alignment % candidate->width_alignment) &&
+		!(required->height_alignment % candidate->height_alignment) &&
 		!(required->pitch_alignment % candidate->pitch_alignment) &&
 		!(required->offset_alignment % candidate->offset_alignment) &&
 		candidate->max_pitch >= required->max_pitch;

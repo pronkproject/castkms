@@ -188,6 +188,7 @@ new_layout_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 m
 		.size = size,
 		.flags = implicit ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+		.width_alignment = 1, .height_alignment = 1,
 		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
@@ -224,6 +225,7 @@ new_mixed_entry(struct kunit *test, struct atomic_fixture *f, unsigned int backe
 			.modifier = I915_FORMAT_MOD_X_TILED,
 			.size = size,
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
 		}, {
 			.plane_id = f->plane->base.id,
@@ -231,6 +233,7 @@ new_mixed_entry(struct kunit *test, struct atomic_fixture *f, unsigned int backe
 			.modifier = DRM_FORMAT_MOD_LINEAR,
 			.size = size,
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
 		},
 	};
@@ -253,13 +256,14 @@ new_mixed_entry(struct kunit *test, struct atomic_fixture *f, unsigned int backe
 static struct drm_constraints_entry *
 new_storage_entry(struct kunit *test, struct atomic_fixture *f, u32 storage_flags)
 {
-	const struct drm_constraints_size size = { 128, 64, 128, 64 };
+	const struct drm_constraints_size size = { 64, 32, 256, 256 };
 	const struct drm_constraints_format allocation = {
 		.plane_id = f->plane->base.id,
 		.format = DRM_FORMAT_ARGB8888,
 		.modifier = I915_FORMAT_MOD_X_TILED,
 		.size = size,
 		.storage_flags = storage_flags,
+		.width_alignment = 64, .height_alignment = 4,
 		.pitch_alignment = 256,
 		.offset_alignment = 4096,
 		.max_pitch = 1024,
@@ -636,6 +640,12 @@ static void source_allocation_respects_storage_requirements(struct kunit *test)
 
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
 	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	f->tiled->width = 130;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	f->tiled->width = 128;
+	f->tiled->height = 65;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	f->tiled->height = 64;
 	f->tiled->pitches[0]++;
 	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
 	f->tiled->pitches[0] = 1280;
@@ -649,6 +659,20 @@ static void source_allocation_respects_storage_requirements(struct kunit *test)
 	state = new_update(test, f, imported, f->tiled);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
 	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+}
+
+static void dimension_alignment_is_rechecked_at_installation(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_constraints_entry *entry =
+		new_storage_entry(test, f, DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE);
+	struct drm_atomic_commit *state = new_update(test, f, entry, f->tiled);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	f->tiled->width = 130;
+	KUNIT_EXPECT_EQ(test, run_update(state, install_update), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
 static void asynchronous_updates_are_not_admitted(struct kunit *test)
@@ -1875,6 +1899,7 @@ static void proposed_scene_obeys_plane_geometry_rules(struct kunit *test)
 		.modifier = I915_FORMAT_MOD_X_TILED,
 		.size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+		.width_alignment = 1, .height_alignment = 1,
 		.pitch_alignment = 1,
 		.offset_alignment = 1,
 		.max_pitch = U32_MAX,
@@ -1955,6 +1980,7 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 			.modifier = I915_FORMAT_MOD_X_TILED,
 			.size = { 128, 64, 128, 64 },
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1,
 			.offset_alignment = 1,
 			.max_pitch = U32_MAX,
@@ -1964,6 +1990,7 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 			.modifier = DRM_FORMAT_MOD_LINEAR,
 			.size = { 128, 64, 128, 64 },
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1,
 			.offset_alignment = 1,
 			.max_pitch = U32_MAX,
@@ -1973,6 +2000,7 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 			.modifier = DRM_FORMAT_MOD_LINEAR,
 			.size = { 64, 64, 64, 64 },
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1,
 			.offset_alignment = 1,
 			.max_pitch = U32_MAX,
@@ -2456,6 +2484,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(selection_requires_modeset_permission),
 	KUNIT_CASE(source_allocation_respects_exact_geometry),
 	KUNIT_CASE(source_allocation_respects_storage_requirements),
+	KUNIT_CASE(dimension_alignment_is_rechecked_at_installation),
 	KUNIT_CASE(asynchronous_updates_are_not_admitted),
 	KUNIT_CASE(transactions_may_include_outputs_without_constraints),
 	KUNIT_CASE(validation_includes_unchanged_active_planes),

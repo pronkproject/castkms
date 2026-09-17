@@ -57,11 +57,13 @@ mod cases {
     fn storage_requirements_are_retained() -> Result {
         let size = Size::exact(256, 128);
         let formats = [Format::new(7, fourcc::NV12, 1, size)
+            .with_dimension_alignment(64, 4)
             .with_storage(false, true, 256, 4096, 65536)];
         let description = Description::new(size, &formats, &[], &[])?;
         let format = &description.formats()[0];
         assert!(!format.permits_native());
         assert!(format.permits_imported());
+        assert_eq!(format.dimension_alignment(), (64, 4));
         assert_eq!(format.storage_layout(), (256, 4096, 65536));
         Ok(())
     }
@@ -70,6 +72,10 @@ mod cases {
     fn malformed_storage_requirements_are_rejected() {
         let size = Size::exact(256, 128);
         for format in [
+            Format::new(7, fourcc::XRGB8888, 0, size).with_dimension_alignment(0, 1),
+            Format::new(7, fourcc::XRGB8888, 0, size).with_dimension_alignment(3, 1),
+            Format::new(7, fourcc::XRGB8888, 0, Size::new(1, 1, 63, 63))
+                .with_dimension_alignment(64, 1),
             Format::new(7, fourcc::XRGB8888, 0, size)
                 .with_storage(false, false, 1, 1, 4),
             Format::new(7, fourcc::XRGB8888, 0, size)

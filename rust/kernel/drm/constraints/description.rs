@@ -73,6 +73,8 @@ impl Format {
             size: size.0,
             flags: 0,
             storage_flags: Self::DEFAULT_STORAGE,
+            width_alignment: 1,
+            height_alignment: 1,
             pitch_alignment: 1,
             offset_alignment: 1,
             max_pitch: u32::MAX,
@@ -88,10 +90,25 @@ impl Format {
             size: size.0,
             flags: bindings::DRM_CONSTRAINTS_FORMAT_IMPLICIT,
             storage_flags: Self::DEFAULT_STORAGE,
+            width_alignment: 1,
+            height_alignment: 1,
             pitch_alignment: 1,
             offset_alignment: 1,
             max_pitch: u32::MAX,
         })
+    }
+
+    /// Restrict framebuffer dimensions to multiples of the supplied pixel alignments.
+    ///
+    /// Both alignments must be nonzero powers of two. [`Description::new`] validates them.
+    pub const fn with_dimension_alignment(
+        mut self,
+        width_alignment: u32,
+        height_alignment: u32,
+    ) -> Self {
+        self.0.width_alignment = width_alignment;
+        self.0.height_alignment = height_alignment;
+        self
     }
 
     /// Restrict storage origin, pitch alignment, offset alignment and maximum pitch.
@@ -162,6 +179,11 @@ impl Format {
             self.0.offset_alignment,
             self.0.max_pitch,
         )
+    }
+
+    /// Required framebuffer width and height alignment in pixels.
+    pub const fn dimension_alignment(&self) -> (u32, u32) {
+        (self.0.width_alignment, self.0.height_alignment)
     }
 }
 
