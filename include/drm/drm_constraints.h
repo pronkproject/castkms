@@ -22,6 +22,8 @@ struct drm_constraints_description;
 #define DRM_CONSTRAINTS_GEOMETRY_FLAGS (DRM_CONSTRAINTS_GEOMETRY_CROP | \
 					DRM_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE | \
 					DRM_CONSTRAINTS_GEOMETRY_POSITION)
+#define DRM_CONSTRAINTS_PROPERTY_PLANE_YUV BIT(0)
+#define DRM_CONSTRAINTS_PROPERTY_FLAGS DRM_CONSTRAINTS_PROPERTY_PLANE_YUV
 
 /**
  * struct drm_constraints_size - inclusive integer pixel dimensions
@@ -75,6 +77,7 @@ struct drm_constraints_format {
  * @object_id: existing CRTC or plane object ID
  * @property_id: property attached to that object
  * @type: DRM_MODE_PROP_RANGE, SIGNED_RANGE, ENUM or BITMASK
+ * @flags: zero, or DRM_CONSTRAINTS_PROPERTY_PLANE_YUV
  * @minimum: inclusive range minimum; zero for enum/bitmask
  * @maximum: inclusive range maximum; zero for enum/bitmask
  * @mask: permitted enum values (bits 0..63) or permitted bitmask bits
@@ -85,12 +88,16 @@ struct drm_constraints_format {
  * object references and interactions between properties remain provider checks.
  * Rules describe standard scalar scene properties, not request-only sentinels
  * or driver-private properties. They apply to enabled CRTCs and used planes,
- * not unused objects. Their type must match the attached property's native type.
+ * not unused objects. PLANE_YUV narrows application to a used plane with a YUV
+ * framebuffer and requires a YUV allocation for that plane in the same
+ * description. It is invalid for CRTC objects. Their type must match the attached
+ * property's native type.
  */
 struct drm_constraints_property {
 	u32 object_id;
 	u32 property_id;
 	u32 type;
+	u32 flags;
 	u64 minimum;
 	u64 maximum;
 	u64 mask;

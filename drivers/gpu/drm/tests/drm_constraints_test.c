@@ -314,6 +314,8 @@ static void drm_constraints_rejects_malformed_property_rules(struct kunit *test)
 		  .minimum = 1 },
 		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_RANGE,
 		  .mask = 1 },
+		{ .object_id = 17, .property_id = 23, .type = DRM_MODE_PROP_RANGE,
+		  .flags = BIT(1) },
 	};
 	struct drm_constraints_property duplicate[] = { rule, rule };
 	unsigned int i;
@@ -492,6 +494,9 @@ static void drm_constraints_description_rejects_incomplete_coverage(struct kunit
 	EXPECT_INCOMPLETE();
 	candidate_property = required_property;
 	candidate_property.property_id++;
+	EXPECT_INCOMPLETE();
+	candidate_property = required_property;
+	candidate_property.flags = DRM_CONSTRAINTS_PROPERTY_PLANE_YUV;
 	EXPECT_INCOMPLETE();
 	candidate_property = required_property;
 	candidate_limit.max_active = 1;

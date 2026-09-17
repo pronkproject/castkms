@@ -58,6 +58,7 @@
 #define DRM_MODE_CONSTRAINTS_GEOMETRY_CROP (1U << 0)
 #define DRM_MODE_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE (1U << 1)
 #define DRM_MODE_CONSTRAINTS_GEOMETRY_POSITION (1U << 2)
+#define DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV (1U << 0)
 
 #define DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED 0x04
 #define DRM_KMS_CONSTRAINTS_LIST_CLOSED (1U << 0)
@@ -335,12 +336,16 @@ struct drm_mode_constraints_plane_geometry {
  * @object_id: Existing CRTC or plane ID on the queried device.
  * @property_id: Standard scalar scene property attached to @object_id.
  * @type: DRM_MODE_PROP_RANGE, SIGNED_RANGE, ENUM or BITMASK; no other bits.
- * @pad: Zero.
+ * @applicability_flags: Zero, or DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV.
  * @minimum: Inclusive range minimum; zero for enum or bitmask.
  * @maximum: Inclusive range maximum; zero for enum or bitmask.
  * @mask: Permitted enum values or bitmask bits; zero for range types.
  *
- * Signed ranges use DRM's two's-complement 64-bit representation. Enum values
+ * PLANE_YUV applies the rule only while the named plane uses a YUV framebuffer;
+ * it is invalid for a CRTC object or a plane without a YUV format record in the
+ * same description. Zero applies the rule to every use of the object. Unknown
+ * applicability flags make the entry unsupported. Signed ranges use DRM's
+ * two's-complement 64-bit representation. Enum values
  * 0 through 63 correspond to their mask bits; an enum mask is nonempty. A
  * bitmask rule may allow only zero. Object/property pairs are unique. Type
  * and permitted values respect the attached property's ordinary semantics.
@@ -352,7 +357,7 @@ struct drm_mode_constraints_property {
 	__u32 object_id;
 	__u32 property_id;
 	__u32 type;
-	__u32 pad;
+	__u32 applicability_flags;
 	__aligned_u64 minimum;
 	__aligned_u64 maximum;
 	__aligned_u64 mask;

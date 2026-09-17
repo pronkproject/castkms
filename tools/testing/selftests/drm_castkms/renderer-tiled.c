@@ -175,6 +175,8 @@ static void check_offer_rules(int fd, uint32_t crtc, uint64_t id, uint32_t plane
 					CHECK(!found[rule]);
 					found[rule] = true;
 					CHECK(property->type == DRM_MODE_PROP_ENUM);
+					CHECK(property->applicability_flags ==
+					      DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV);
 					CHECK(!property->minimum && !property->maximum);
 					CHECK(property->mask == (rule ? 0x3 : 0x7));
 				}

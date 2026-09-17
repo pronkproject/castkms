@@ -71,6 +71,11 @@ rules describe permitted values 0 through 63 by their mask bits; bitmask
 rules describe permitted bits. A zero bitmask allows only zero; an enum mask
 must be nonempty. Unknown rule types, duplicate object/property pairs and
 malformed bounds are rejected, not interpreted as unrestricted support.
+Rules normally apply to every use of their object. A plane-YUV applicability
+flag instead applies a rule only when that used plane has a YUV framebuffer;
+the flag is invalid for CRTC properties and requires a YUV allocation for that
+plane in the same description. This permits conditional encoding and range
+rules without restricting otherwise unrelated RGB plane state.
 
 Output attachment and publication validate object membership, property
 attachment, property type and bounds within existing discovery. Supported
@@ -292,8 +297,8 @@ permission and marks the transaction as needing a modeset.
 Core validation first adds affected plane/color state, including unchanged
 active planes, then checks allocation storage and dimensions, per-plane
 geometry, overlapping active-plane limits, and scalar rules after driver
-checking. Geometry and scalar values come from proposed atomic state, never
-current-state readback.
+checking. Geometry, scalar values and property applicability come from proposed
+atomic state, never current-state readback.
 The provider's full-scene callback is required both during validation and
 immediately before acceptance. All resources required by that callback must
 already be ready. The callback must not mutate the transaction or its proposed
@@ -444,8 +449,9 @@ without requiring property IDs. ``RawPlane::scene_property_id()`` resolves the
 remaining attached standard scalar properties without exposing raw property
 storage or reading live values. Setup and runtime views return the same
 identity; absent properties return ``None``. Rust providers can use those IDs
-to describe stacking, blending and color rules. Native registration still
-verifies geometry and property scope, type and permitted values. The Rust
+to describe stacking, blending and color rules. ``Property::for_yuv_plane()``
+limits a rule to YUV framebuffer uses of its named plane. Native registration
+still verifies geometry and property scope, type and permitted values. The Rust
 property test selects an NV12 scene with BT.709 limited-range color and
 restricted stacking, then rejects incompatible candidate values without
 changing the accepted binding or list generation.

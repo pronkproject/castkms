@@ -62,6 +62,7 @@ static struct encoding_fixture *new_fixture_with_layout(struct kunit *test, bool
 	property.object_id = 7;
 	property.property_id = 11;
 	property.type = DRM_MODE_PROP_SIGNED_RANGE;
+	property.flags = DRM_CONSTRAINTS_PROPERTY_PLANE_YUV;
 	property.minimum = (u64)-10;
 	property.maximum = 20;
 	property.mask = 0;
@@ -173,6 +174,8 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	KUNIT_EXPECT_EQ(test, property->object_id, 7);
 	KUNIT_EXPECT_EQ(test, property->property_id, 11);
 	KUNIT_EXPECT_EQ(test, property->type, DRM_MODE_PROP_SIGNED_RANGE);
+	KUNIT_EXPECT_EQ(test, property->applicability_flags,
+			DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV);
 	KUNIT_EXPECT_EQ(test, property->minimum, (u64)-10);
 	KUNIT_EXPECT_EQ(test, property->maximum, 20);
 	KUNIT_EXPECT_EQ(test, property->mask, 0);
@@ -196,8 +199,8 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	KUNIT_EXPECT_EQ(test, plane_limit->plane_ids[1], 8);
 	KUNIT_EXPECT_EQ(test, plane_limit->plane_ids[2], 9);
 	KUNIT_EXPECT_EQ(test, plane_limit->plane_ids[3], 0);
-	KUNIT_EXPECT_EQ(test, property->pad | property->header.pad |
-			geometry->header.pad | plane_limit->header.pad |
+	KUNIT_EXPECT_EQ(test,
+			property->header.pad | geometry->header.pad | plane_limit->header.pad |
 			format->header.pad | output->header.pad, 0);
 }
 

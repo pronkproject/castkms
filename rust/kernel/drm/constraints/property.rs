@@ -24,6 +24,7 @@ impl Property {
             object_id,
             property_id,
             type_,
+            flags: 0,
             minimum: min,
             maximum: max,
             mask,
@@ -76,6 +77,17 @@ impl Property {
             0,
             bits,
         )
+    }
+
+    /// Apply the rule only while the named plane uses a YUV framebuffer.
+    pub const fn for_yuv_plane(mut self) -> Self {
+        self.0.flags = bindings::DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV;
+        self
+    }
+
+    /// Applicability flags controlling which uses of the object receive the rule.
+    pub const fn applicability_flags(&self) -> u32 {
+        self.0.flags
     }
 
     /// CRTC or plane object ID; the rule itself does not retain the object.

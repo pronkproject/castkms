@@ -9,6 +9,7 @@
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
+#include <drm/drm_fourcc.h>
 #include <drm/drm_property.h>
 
 #include "drm_constraints_internal.h"
@@ -58,6 +59,9 @@ static int validate_property(struct drm_crtc *crtc, const struct drm_constraints
 	unsigned int i;
 
 	if (!object)
+		return -EINVAL;
+	if ((rule->flags & DRM_CONSTRAINTS_PROPERTY_PLANE_YUV) &&
+	    object->type != DRM_MODE_OBJECT_PLANE)
 		return -EINVAL;
 	property = drm_mode_obj_find_prop_id(object, rule->property_id);
 	if (!property || property->dev != crtc->dev ||
@@ -141,6 +145,17 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 		ret = validate_property(crtc, &properties[i]);
 		if (ret)
 			return ret;
+		if (properties[i].flags & DRM_CONSTRAINTS_PROPERTY_PLANE_YUV) {
+			found = false;
+			for (format = 0; format < format_count; format++)
+				if (formats[format].plane_id == properties[i].object_id &&
+				    __drm_format_info(formats[format].format)->is_yuv) {
+					found = true;
+					break;
+				}
+			if (!found)
+				return -EINVAL;
+		}
 	}
 	plane_limits = drm_constraints_description_plane_limits(description, &count);
 	for (i = 0; i < count; i++) {
