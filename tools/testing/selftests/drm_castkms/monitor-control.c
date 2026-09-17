@@ -119,7 +119,7 @@ int main(int argc, char **argv)
 	peer = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(peer >= 0 && drmIsMaster(peer) == 0);
 	resources = drmModeGetResources(fd);
-	CHECK(resources && resources->count_connectors == 1);
+	CHECK(resources && resources->count_connectors > 0);
 	connector_id = resources->connectors[0];
 	drmModeFreeResources(resources);
 

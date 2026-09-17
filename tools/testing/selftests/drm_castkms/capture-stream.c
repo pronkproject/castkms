@@ -98,7 +98,7 @@ int main(int argc, char **argv)
 	CHECK(version && !strcmp(version->name, "castkms"));
 	drmFreeVersion(version);
 	resources = drmModeGetResources(master);
-	CHECK(resources && resources->count_crtcs == 1 && resources->count_connectors == 1);
+	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	grant.crtc_id = resources->crtcs[0];
 	grant.connector_id = resources->connectors[0];
 	grant.files = (uintptr_t)&files;

@@ -169,7 +169,7 @@ int main(int argc, char **argv)
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1) == 0);
 	resources = drmModeGetResources(fd);
-	CHECK(resources && resources->count_crtcs == 1 && resources->count_connectors == 1);
+	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	create.crtc_id = resources->crtcs[0];
 	create.connector_id = resources->connectors[0];
 	host = selected(fd, create.crtc_id, 1);

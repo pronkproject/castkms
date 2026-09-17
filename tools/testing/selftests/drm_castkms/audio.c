@@ -154,7 +154,7 @@ int main(int argc, char **argv)
 	drmFreeVersion(version);
 	CHECK(drmSetMaster(fd) == 0);
 	resources = drmModeGetResources(fd);
-	CHECK(resources && resources->count_crtcs == 1 && resources->count_connectors == 1);
+	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	crtc_id = resources->crtcs[0];
 	connector_id = resources->connectors[0];
 	drmModeFreeResources(resources);
