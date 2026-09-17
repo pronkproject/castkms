@@ -170,9 +170,9 @@ static void put_entry(void *data) { drm_constraints_entry_put(data); }
 static void put_fb(void *data) { drm_framebuffer_put(data); }
 
 static struct drm_constraints_entry *
-new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier,
-	  unsigned int backend, const struct drm_constraints_property *rules,
-	  unsigned int rule_count)
+new_layout_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier,
+		 unsigned int backend, const struct drm_constraints_property *rules,
+		 unsigned int rule_count, bool implicit)
 {
 	const struct drm_constraints_size size = { 128, 64, 128, 64 };
 	const struct drm_constraints_format allocation = {
@@ -180,6 +180,7 @@ new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier
 		.format = format,
 		.modifier = modifier,
 		.size = size,
+		.flags = implicit ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
@@ -194,12 +195,21 @@ new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier
 	return entry;
 }
 
+static struct drm_constraints_entry *
+new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier,
+	  unsigned int backend, const struct drm_constraints_property *rules,
+	  unsigned int rule_count)
+{
+	return new_layout_entry(test, f, format, modifier, backend, rules, rule_count, false);
+}
+
 static struct drm_framebuffer *
-new_fb(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier, u32 width)
+new_layout_fb(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier,
+	      u32 width, bool implicit)
 {
 	struct drm_mode_fb_cmd2 cmd = {
 		.width = width, .height = 64, .pixel_format = format,
-		.flags = DRM_MODE_FB_MODIFIERS,
+		.flags = implicit ? 0 : DRM_MODE_FB_MODIFIERS,
 		.handles = { 1 }, .pitches = { width * 4 }, .modifier = { modifier },
 	};
 	struct drm_framebuffer *fb = drm_internal_framebuffer_create(f->dev, &cmd, NULL);
@@ -207,6 +217,12 @@ new_fb(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier, u
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fb);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_fb, fb), 0);
 	return fb;
+}
+
+static struct drm_framebuffer *
+new_fb(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier, u32 width)
+{
+	return new_layout_fb(test, f, format, modifier, width, false);
 }
 
 static struct atomic_fixture *new_fixture_with_preparation(struct kunit *test, bool preparation)
@@ -439,6 +455,34 @@ static void target_creation_precedes_atomic_selection(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->backends[0].checks, 0);
 	KUNIT_EXPECT_EQ(test, f->backends[1].checks, 1);
 	KUNIT_EXPECT_EQ(test, f->backends[1].checked_id, drm_constraints_entry_id(f->target));
+}
+
+static void atomic_layout_matching_distinguishes_implicit_from_linear(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_constraints_entry *implicit =
+		new_layout_entry(test, f, DRM_FORMAT_XRGB8888, 0, 2, NULL, 0, true);
+	struct drm_framebuffer *fb = new_layout_fb(test, f, DRM_FORMAT_XRGB8888, 0, 128, true);
+	struct drm_atomic_commit *state;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, implicit), 0);
+	state = new_update(test, f, f->initial, fb);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), -EINVAL);
+	drm_atomic_commit_clear(state);
+	state = new_update(test, f, implicit, f->linear);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), -EINVAL);
+	drm_atomic_commit_clear(state);
+	state = new_update(test, f, implicit, fb);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), 0);
+	drm_atomic_commit_clear(state);
+	/* Model a driver's resolved implicit storage before submitting it again. */
+	fb->modifier = I915_FORMAT_MOD_X_TILED;
+	state = new_update(test, f, implicit, fb);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), 0);
 }
 
 static void readiness_loss_after_check_prevents_installation(struct kunit *test)
@@ -1740,6 +1784,7 @@ static void complete_scene_checks_overlay_and_cursor_contracts(struct kunit *tes
 
 static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(target_creation_precedes_atomic_selection),
+	KUNIT_CASE(atomic_layout_matching_distinguishes_implicit_from_linear),
 	KUNIT_CASE(readiness_loss_after_check_prevents_installation),
 	KUNIT_CASE(withdrawal_after_check_prevents_installation),
 	KUNIT_CASE(selection_requires_modeset_permission),

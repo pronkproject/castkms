@@ -22,12 +22,10 @@ fn format_entry(
     let size = Size::exact(640, 480);
     let description = Description::new(
         size,
-        &[Format::new(
-            plane_id,
-            format,
-            fourcc::FORMAT_MOD_LINEAR,
-            size,
-        )],
+        &[
+            Format::new(plane_id, format, fourcc::FORMAT_MOD_LINEAR, size),
+            Format::implicit(plane_id, format, size),
+        ],
         &[],
     )?;
     OpaqueEntry::new_stateless(domain, crtc_id, &description)

@@ -606,9 +606,15 @@ impl KmsDriver for TestDriver {
                 let size = Size::new(1, 1, 640, 480);
                 let description = Description::new(
                     size,
-                    &[Format::new(
-                        plane.object_id(), fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR, size,
-                    )],
+                    &[
+                        Format::new(
+                            plane.object_id(),
+                            fourcc::XRGB8888,
+                            fourcc::FORMAT_MOD_LINEAR,
+                            size,
+                        ),
+                        Format::implicit(plane.object_id(), fourcc::XRGB8888, size),
+                    ],
                     &[],
                 )?;
                 let entry = OpaqueEntry::new_stateless(domain, crtc.object_id(), &description)?;
