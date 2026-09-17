@@ -3,7 +3,7 @@
 use super::*;
 use crate::renderer::job::Completion;
 
-#[kunit_tests(rust_castkms_multi_output_offers)]
+#[kunit_tests(rust_castkms_multi_output_backends)]
 mod cases {
     use super::*;
 
@@ -89,8 +89,8 @@ mod cases {
     }
 
     #[test]
-    fn stale_last_offer_leaves_every_selection_unchanged() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-cohort-reject", 8)?;
+    fn stale_last_backend_leaves_every_selection_unchanged() -> Result {
+        let display = CastKms::new_constraints(c"castkms-publication-cohort-reject", 8)?;
         with_registered_display(&display, |device, _, _, _, file| {
             let mut owners = KVec::new();
             let mut endpoints = KVec::new();

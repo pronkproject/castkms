@@ -3,18 +3,18 @@
 use super::*;
 use crate::renderer::job::Completion;
 
-#[kunit_tests(rust_castkms_offer_sources)]
+#[kunit_tests(rust_castkms_backend_sources)]
 mod cases {
     use super::*;
 
     #[test]
     fn retained_control_cannot_publish_after_endpoint_release() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-source-revoke", 1)?;
+        let display = CastKms::new_constraints(c"castkms-publication-source-revoke", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let (pool, offer) = offer_publication::prepare(device, &owner)?;
-            let control = offer.control();
-            offer.publish(device, |_| Ok(()))?;
+            let (pool, publication) = publication::prepare(device, &owner)?;
+            let control = publication.control();
+            publication.publish(device, |_| Ok(()))?;
             device.atomic_update(|state| {
                 state.add_crtc_state(crtc)?.set_constraints(control.entry())
             })?;
@@ -24,7 +24,7 @@ mod cases {
                 accepted.ok_or(EINVAL)?.source.hold_admission()
             })?;
             check(hold.prepared()?.is_none())?;
-            drop(offer);
+            drop(publication);
             let mut published = false;
             check(control.publish_source(&job, || published = true) == Err(EKEYREVOKED))?;
             check(!published && hold.prepared()?.is_none())?;
@@ -35,12 +35,12 @@ mod cases {
     }
 
     #[test]
-    fn selected_offer_alone_can_publish_its_claimed_scene() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-source-binding", 1)?;
+    fn selected_backend_alone_can_publish_its_claimed_scene() -> Result {
+        let display = CastKms::new_constraints(c"castkms-publication-source-binding", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let (pool, first) = offer_publication::prepare(device, &owner)?;
-            let (_, second) = offer_publication::prepare(device, &owner)?;
+            let (pool, first) = publication::prepare(device, &owner)?;
+            let (_, second) = publication::prepare(device, &owner)?;
             let first_control = first.control();
             let second_control = second.control();
             first.publish(device, |_| Ok(()))?;
@@ -69,14 +69,14 @@ mod cases {
 
     #[test]
     fn issuer_revocation_rejects_installation_without_completing_the_read() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-source-issuer", 1)?;
+        let display = CastKms::new_constraints(c"castkms-publication-source-issuer", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let (pool, offer) = offer_publication::prepare(device, &owner)?;
-            let control = offer.control();
-            offer.publish(device, |_| Ok(()))?;
+            let (pool, publication) = publication::prepare(device, &owner)?;
+            let control = publication.control();
+            publication.publish(device, |_| Ok(()))?;
             device.atomic_update(|state| {
-                state.add_crtc_state(crtc)?.set_constraints(offer.entry())
+                state.add_crtc_state(crtc)?.set_constraints(publication.entry())
             })?;
             let job = control.claim(1, None, pool.image(1)?.prepare(1)?)?;
             let hold = crtc.display.output.with_accepted(|accepted| {

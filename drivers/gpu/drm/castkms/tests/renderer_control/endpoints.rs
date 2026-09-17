@@ -41,7 +41,7 @@ mod cases {
     use super::*;
 
     #[test]
-    fn racing_close_cannot_leave_a_selectable_unowned_offer() -> Result {
+    fn racing_close_cannot_leave_a_selectable_unowned_backend() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-close-race", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
@@ -67,7 +67,7 @@ mod cases {
     }
 
     #[test]
-    fn failed_publication_restores_draft_without_leaking_registration_pins() -> Result {
+    fn failed_publication_restores_configuration_without_leaking_registration_pins() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-retry", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
@@ -122,7 +122,7 @@ mod cases {
     }
 
     #[test]
-    fn failed_readiness_never_lists_an_offer_and_close_is_terminal() -> Result {
+    fn failed_readiness_never_lists_an_backend_and_close_is_terminal() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-readiness", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;

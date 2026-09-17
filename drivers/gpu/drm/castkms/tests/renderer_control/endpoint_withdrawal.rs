@@ -14,7 +14,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            check(endpoint.describe()?.phase == Phase::Draft)?;
+            check(endpoint.describe()?.phase == Phase::Configured)?;
             endpoint.publish(None, |_| Ok(()))?;
             let description = endpoint.describe()?;
             check(description.phase == Phase::Published)?;
@@ -78,8 +78,8 @@ mod cases {
     }
 
     #[test]
-    fn unpublished_drafts_have_no_offer_to_withdraw() -> Result {
-        let display = CastKms::new_constraints(c"castkms-endpoint-withdraw-draft", 1)?;
+    fn unpublished_configurations_have_no_backend_to_withdraw() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-withdraw-configuration", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = Endpoint::new(owner.access(), device.to_registered_ref())?;
@@ -87,7 +87,7 @@ mod cases {
             check(endpoint.withdraw() == Err(ENODATA))?;
             endpoint.declare(private_images::profile()?, [640, 480])?;
             check(endpoint.withdraw() == Err(ENODATA))?;
-            check(endpoint.describe()?.phase == Phase::Draft)?;
+            check(endpoint.describe()?.phase == Phase::Configured)?;
             endpoint.close();
             check(endpoint.describe().err() == Some(EKEYREVOKED))?;
             check(endpoint.withdraw() == Err(EKEYREVOKED))?;

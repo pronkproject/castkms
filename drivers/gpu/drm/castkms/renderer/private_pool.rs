@@ -21,7 +21,7 @@ struct Entry {
 ///
 /// This is not a source claim, a private-image write reservation, or completion of earlier
 /// native work. The endpoint must independently establish authority and readiness before
-/// publishing an offer. Drop outside endpoint and DRM locks; images can own native resources.
+/// publishing an publication. Drop outside endpoint and DRM locks; images can own native resources.
 pub(crate) struct RegistrationSet {
     images: KVec<PinnedImage>,
 }
@@ -112,7 +112,7 @@ impl Pool {
     ///
     /// Namespace serialization excludes concurrent removal while the set is constructed.
     /// Failure rolls back every pin. Additional registrations do not extend an existing set.
-    /// Destroying the endpoint may drop the table after revoking offers; retained sets keep
+    /// Destroying the endpoint may drop the table after revoking backends; retained sets keep
     /// storage alive, but cannot authorize operations through a closed endpoint.
     pub(super) fn pin_dimensions(
         &self,

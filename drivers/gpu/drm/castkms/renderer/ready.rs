@@ -200,7 +200,7 @@ impl Worker {
         Ok(Ready { worker: self, resources })
     }
 
-    /// Exclude installation, mark terminal, then withdraw offers and release private storage.
+    /// Exclude installation, mark terminal, then withdraw backends and release private storage.
     /// Call outside native DRM and provider locks; no native fence is signaled here.
     pub(crate) fn revoke(&self) {
         let retired = {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Private preparation of an immutable renderer offer, independent of active scanout.
+//! Private configuration of an immutable renderer backend, independent of active scanout.
 
 use super::{
     permission::Access,
@@ -18,8 +18,8 @@ use kernel::{
 
 /// One endpoint's immutable declaration and private storage namespace.
 /// Preparation does not reserve the output, require enabled video, or admit source reads.
-/// Multiple drafts may coexist; only ordinary atomic state can select a published entry.
-pub(crate) struct Draft {
+/// Multiple configurations may coexist; only atomic state can select a published entry.
+pub(crate) struct Configuration {
     access: Access,
     interval: crate::authority::Interval,
     owner: Arc<()>,
@@ -27,7 +27,7 @@ pub(crate) struct Draft {
     dimensions: [u32; 2],
 }
 
-impl Draft {
+impl Configuration {
     pub(crate) fn new(access: Access, profile: Profile, dimensions: [u32; 2]) -> Result<Self> {
         let profile = profile.with_exact_output(dimensions)?;
         let constraints = access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
@@ -69,7 +69,7 @@ impl Draft {
         Ok(image)
     }
 
-    /// Pin only this draft's existing registrations after successful private preparation.
+    /// Pin only this configuration's existing registrations after successful private preparation.
     /// Endpoint serialization protects the pool; publication must recheck live authority.
     pub(crate) fn prepare_worker(
         &self,

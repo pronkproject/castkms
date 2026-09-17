@@ -114,7 +114,7 @@ static void check_pixels(const struct output *output, unsigned char value)
 
 static void publish(int fd, struct output *output)
 {
-	struct drm_castkms_create_renderer_control create = {
+	struct drm_castkms_create_renderer create = {
 		.crtc_id = output->crtc, .connector_id = output->connector,
 		.files = (uintptr_t)&output->renderer,
 	};
@@ -137,7 +137,7 @@ static void publish(int fd, struct output *output)
 			.min_pitch = 1, .max_pitch = 65536,
 		},
 	};
-	struct drm_castkms_renderer_prepare_offer prepare = {
+	struct drm_castkms_renderer_configure configure = {
 		.constraints = (uintptr_t)&constraints, .constraints_size = sizeof(constraints),
 		.width = output->mode.hdisplay, .height = output->mode.vdisplay,
 	};
@@ -145,8 +145,8 @@ static void publish(int fd, struct output *output)
 		.image_id = 1, .width = output->mode.hdisplay, .height = output->mode.vdisplay,
 		.num_buffers = 1, .buffers = (uintptr_t)&output->private_fd,
 	};
-	struct drm_castkms_renderer_offer_result result;
-	struct drm_castkms_renderer_publish_offer offer = {
+	struct drm_castkms_renderer_publish_result result;
+	struct drm_castkms_renderer_publish publish = {
 		.result = (uintptr_t)&result,
 		.ready_fence_fd = -1,
 	};
@@ -160,16 +160,16 @@ static void publish(int fd, struct output *output)
 	constraints.header.max_source[0] = width;
 	constraints.header.min_source[1] = height;
 	constraints.header.max_source[1] = height;
-	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create) == 0);
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(fcntl(output->renderer.renderer_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(output->renderer.revoke_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER, &prepare) == 0);
+		    DRM_IOCTL_CASTKMS_RENDERER_CONFIGURE, &configure) == 0);
 	CHECK(ioctl(output->renderer.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE, &image) == 0);
 	memset(&result, 0xa5, sizeof(result));
 	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER, &offer) == 0);
+		    DRM_IOCTL_CASTKMS_RENDERER_PUBLISH, &publish) == 0);
 	output->worker = result.constraints_id;
 	CHECK(output->worker && output->worker != output->host);
 	CHECK(!result.reserved[0] && !result.reserved[1] && !result.reserved[2]);
@@ -211,16 +211,16 @@ static void open_capture(int fd, struct output *output)
 static void deliver(struct output *output, unsigned char value)
 {
 	struct drm_castkms_renderer_scene *scene = calloc(1, DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES);
-	struct drm_castkms_renderer_dequeue_scene dequeue = {
-		.result = (uintptr_t)scene, .image_id = 1,
+	struct drm_castkms_renderer_acquire_job acquire = {
+		.result = (uintptr_t)scene, .target_image_id = 1,
 		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
 	};
 	struct drm_castkms_renderer_layer *layer;
-	struct drm_castkms_renderer_release_source source = {
+	struct drm_castkms_renderer_release_job source = {
 		.completion_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
 	};
 	struct drm_castkms_renderer_output recipient;
-	struct drm_castkms_renderer_dequeue_output take = {
+	struct drm_castkms_renderer_acquire_output take = {
 		.result = (uintptr_t)&recipient, .image_id = 1,
 	};
 	struct drm_castkms_renderer_release_output release = {
@@ -232,7 +232,7 @@ static void deliver(struct output *output, unsigned char value)
 
 	CHECK(scene);
 	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE, &dequeue) == 0);
+		    DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB, &acquire) == 0);
 	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
 	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
 	CHECK(scene->constraints_id == output->worker && scene->layer_count == 1);
@@ -255,10 +255,10 @@ static void deliver(struct output *output, unsigned char value)
 	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 	source.job_id = scene->job_id;
 	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE, &source) == 0);
+		    DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB, &source) == 0);
 	memset(&recipient, 0xa5, sizeof(recipient));
 	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT, &take) == 0);
+		    DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT, &take) == 0);
 	CHECK(recipient.job_id && recipient.image_id == 1 &&
 	      recipient.width == output->mode.hdisplay &&
 	      recipient.height == output->mode.vdisplay);
@@ -287,7 +287,7 @@ static void cleanup(int fd, struct output *output)
 {
 	struct drm_capture_unregister_destination destination = { .id = 1 };
 	struct drm_capture_destroy_stream stream = { .id = 1 };
-	struct drm_castkms_renderer_withdraw_offer withdraw = { 0 };
+	struct drm_castkms_renderer_withdraw withdraw = { 0 };
 	struct drm_castkms_renderer_unregister_image image = { .image_id = 1 };
 
 	CHECK(ioctl(output->capture.capture_fd, DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
@@ -296,7 +296,7 @@ static void cleanup(int fd, struct output *output)
 	CHECK(close(output->capture.control_fd) == 0);
 	CHECK(close(output->capture.capture_fd) == 0);
 	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER, &withdraw) == 0);
+		    DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW, &withdraw) == 0);
 	CHECK(close(output->renderer.revoke_fd) == 0);
 	CHECK(ioctl(output->renderer.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE, &image) == 0);

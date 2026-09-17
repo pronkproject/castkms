@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Revocable renderer control, without source access or execution activation.
+//! Revocable renderer authority, without source access or execution activation.
 
 use crate::{
     authority::Interval,
@@ -143,7 +143,7 @@ impl Drop for Owner {
     }
 }
 
-/// Delegated renderer control with no ability to renew or transfer its issuer lifetime.
+/// Delegated renderer authority with no ability to renew or transfer its issuer lifetime.
 #[derive(Clone)]
 pub(crate) struct Access {
     policy: Arc<Policy>,

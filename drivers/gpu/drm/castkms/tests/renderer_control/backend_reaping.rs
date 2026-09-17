@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use super::*;
-use crate::renderer::{draft::Draft, private_pool::Pool};
+use crate::renderer::{configuration::Configuration, private_pool::Pool};
 use kernel::drm::gem::ExportAccess;
 
-#[kunit_tests(rust_castkms_offer_reaping)]
+#[kunit_tests(rust_castkms_backend_reaping)]
 mod cases {
     use super::*;
 
@@ -13,7 +13,7 @@ mod cases {
         let display = CastKms::new_constraints(c"castkms-reap-selected", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let (_, ready) = offer_lifetimes::prepare(device, &owner)?;
+            let (_, ready) = backend_lifetimes::prepare(device, &owner)?;
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let first = provider.prepare(ready.worker())?;
@@ -43,7 +43,7 @@ mod cases {
         let display = CastKms::new_constraints(c"castkms-reap-shared", 2)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let (_, ready) = offer_lifetimes::prepare(device, &owner)?;
+            let (_, ready) = backend_lifetimes::prepare(device, &owner)?;
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let first = provider.prepare(ready.worker())?;
@@ -68,16 +68,18 @@ mod cases {
         let display = CastKms::new_constraints(c"castkms-reap-capacity", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let draft = Draft::new(owner.access(), private_images::profile()?, [640, 480])?;
+            let configuration = Configuration::new(
+                owner.access(), private_images::profile()?, [640, 480],
+            )?;
             let mut pool = Pool::new()?;
-            pool.insert(1, || draft.register_image(&[
+            pool.insert(1, || configuration.register_image(&[
                 private_images::buffer(device, ExportAccess::ReadWrite)?,
             ]))?;
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let mut last = provider.initial().id();
             for _ in 0..crate::execution::constraints::provider::CAPACITY + 8 {
-                let ready = draft.prepare_worker(&pool, None)?;
+                let ready = configuration.prepare_worker(&pool, None)?;
                 let entry = provider.prepare(ready.worker())?;
                 check(entry.id() > last)?;
                 last = entry.id();
@@ -101,7 +103,7 @@ mod cases {
         let display = CastKms::new_constraints(c"castkms-reap-recovery", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let (_, ready) = offer_lifetimes::prepare(device, &owner)?;
+            let (_, ready) = backend_lifetimes::prepare(device, &owner)?;
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let entry = provider.prepare(ready.worker())?;

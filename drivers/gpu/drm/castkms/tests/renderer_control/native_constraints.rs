@@ -18,17 +18,17 @@ mod cases {
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
             let access = owner.access();
-            let draft = crate::renderer::draft::Draft::new(
+            let configuration = crate::renderer::configuration::Configuration::new(
                 access.clone(), private_images::profile()?, [640, 480],
             )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                draft.register_image(
+                configuration.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            let ready = draft.prepare_worker(&pool, None)?;
-            let other = draft.prepare_worker(&pool, None)?;
+            let ready = configuration.prepare_worker(&pool, None)?;
+            let other = configuration.prepare_worker(&pool, None)?;
             let worker = ready.worker();
             let first = provider.prepare(worker.clone())?;
             let second = provider.prepare(worker.clone())?;
@@ -96,16 +96,16 @@ mod cases {
             let control = device.constraints_output(crtc)?;
             check(core::ptr::eq(&*control.selected(), provider.initial()))?;
             let owner = owner(&file, crtc, connector)?;
-            let draft = crate::renderer::draft::Draft::new(
+            let configuration = crate::renderer::configuration::Configuration::new(
                 owner.access(), private_images::profile()?, [640, 480],
             )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                draft.register_image(
+                configuration.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            let ready = draft.prepare_worker(&pool, None)?;
+            let ready = configuration.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             check(entry.description().output().minimum() == (640, 480))?;
             check(entry.description().output().maximum() == (640, 480))?;
@@ -153,7 +153,7 @@ mod cases {
     }
 
     #[test]
-    fn mixed_format_offer_does_not_apply_yuv_values_to_rgb_scanout() -> Result {
+    fn mixed_format_backend_does_not_apply_yuv_values_to_rgb_scanout() -> Result {
         use crate::execution::capabilities::{Format, Profile};
 
         let display = CastKms::new_constraints(c"castkms-native-mixed-color", 1)?;
@@ -184,16 +184,16 @@ mod cases {
                     GFP_KERNEL,
                 )?;
             }
-            let draft = crate::renderer::draft::Draft::new(
+            let configuration = crate::renderer::configuration::Configuration::new(
                 owner.access(), Profile::new(limits, formats)?, [640, 480],
             )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                draft.register_image(
+                configuration.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            let ready = draft.prepare_worker(&pool, None)?;
+            let ready = configuration.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&control, &entry)?;
 
@@ -222,16 +222,16 @@ mod cases {
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
             let modifier = drm::fourcc::I915_FORMAT_MOD_4_TILED;
-            let draft = crate::renderer::draft::Draft::new(
+            let configuration = crate::renderer::configuration::Configuration::new(
                 owner.access(), private_images::profile_for(Some(modifier))?, [640, 480],
             )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                draft.register_image(
+                configuration.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            let ready = draft.prepare_worker(&pool, None)?;
+            let ready = configuration.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&control, &entry)?;
             let object = shmem::Object::<gem::Object>::new(
@@ -279,16 +279,16 @@ mod cases {
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
-            let draft = crate::renderer::draft::Draft::new(
+            let configuration = crate::renderer::configuration::Configuration::new(
                 owner.access(), private_images::profile()?, [640, 480],
             )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                draft.register_image(
+                configuration.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            let ready = draft.prepare_worker(&pool, None)?;
+            let ready = configuration.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             drop(ready);
             check(provider.publish(&control, &entry) == Err(EKEYREVOKED))?;
@@ -306,16 +306,16 @@ mod cases {
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
-            let draft = crate::renderer::draft::Draft::new(
+            let configuration = crate::renderer::configuration::Configuration::new(
                 owner.access(), private_images::profile()?, [640, 480],
             )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                draft.register_image(
+                configuration.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            let ready = draft.prepare_worker(&pool, None)?;
+            let ready = configuration.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             // Inject native membership without provider membership to force add failure.
             control.add(&entry)?;
@@ -349,16 +349,16 @@ mod cases {
                 .ok_or(EINVAL)?;
             let other = other.constraints.as_ref().ok_or(EINVAL)?;
             let owner = owner(&file, crtc, connector)?;
-            let draft = crate::renderer::draft::Draft::new(
+            let configuration = crate::renderer::configuration::Configuration::new(
                 owner.access(), private_images::profile()?, [640, 480],
             )?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
-                draft.register_image(
+                configuration.register_image(
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            let ready = draft.prepare_worker(&pool, None)?;
+            let ready = configuration.prepare_worker(&pool, None)?;
             check(other.prepare(ready.worker()).err() == Some(EINVAL))?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&device.constraints_output(crtc)?, &entry)?;

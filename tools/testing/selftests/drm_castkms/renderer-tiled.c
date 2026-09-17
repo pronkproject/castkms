@@ -137,7 +137,7 @@ static uint32_t property_id(int fd, uint32_t object, const char *name)
 	return id;
 }
 
-static void check_offer_rules(int fd, uint32_t crtc, uint64_t id, uint32_t plane)
+static void check_backend_rules(int fd, uint32_t crtc, uint64_t id, uint32_t plane)
 {
 	struct drm_mode_list_constraints query = { .crtc_id = crtc };
 	struct drm_mode_constraints_list *list;
@@ -262,8 +262,8 @@ static void check_offer_rules(int fd, uint32_t crtc, uint64_t id, uint32_t plane
 	free(list);
 }
 
-static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
-			       uint32_t plane, uint32_t fourcc, uint64_t modifier,
+static void check_backend_format(int fd, uint32_t crtc, uint64_t id,
+				 uint32_t plane, uint32_t fourcc, uint64_t modifier,
 			       uint32_t plane_count, uint32_t storage_flags,
 			       uint32_t width, uint32_t height)
 {
@@ -439,7 +439,7 @@ static void destroy_multiplane_buffer(int fd, struct multiplane_buffer *buffer)
 int main(int argc, char **argv)
 {
 	struct drm_castkms_renderer_files files = { .renderer_fd = -1, .revoke_fd = -1 };
-	struct drm_castkms_create_renderer_control create = { .files = (uintptr_t)&files };
+	struct drm_castkms_create_renderer create = { .files = (uintptr_t)&files };
 	struct {
 		struct drm_castkms_renderer_constraints header;
 		struct drm_castkms_renderer_constraints_format formats[3];
@@ -505,26 +505,26 @@ int main(int argc, char **argv)
 			},
 		},
 	};
-	struct drm_castkms_renderer_prepare_offer prepare = {
+	struct drm_castkms_renderer_configure configure = {
 		.constraints = (uintptr_t)&constraints,
 		.constraints_size = sizeof(constraints),
 	};
-	struct drm_castkms_renderer_offer_result result;
-	struct drm_castkms_renderer_publish_offer publish = {
+	struct drm_castkms_renderer_publish_result result;
+	struct drm_castkms_renderer_publish publish = {
 		.result = (uintptr_t)&result,
 		.ready_fence_fd = -1,
 	};
 	struct drm_castkms_renderer_register_image image = { .image_id = 1, .num_buffers = 1 };
 	struct drm_castkms_renderer_unregister_image remove = { .image_id = 1 };
-	struct drm_castkms_renderer_dequeue_scene dequeue = {
-		.image_id = 1,
+	struct drm_castkms_renderer_acquire_job acquire = {
+		.target_image_id = 1,
 		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
 	};
-	struct drm_castkms_renderer_release_source release = {
+	struct drm_castkms_renderer_release_job release = {
 		.completion_fd = -1,
 		.kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS,
 	};
-	struct drm_castkms_renderer_withdraw_offer withdraw = { 0 };
+	struct drm_castkms_renderer_withdraw withdraw = { 0 };
 	struct drm_castkms_renderer_scene *scene;
 	struct drm_castkms_renderer_layer *layer;
 	drmModeRes *resources;
@@ -579,7 +579,7 @@ int main(int argc, char **argv)
 	reject_host_framebuffer(fd, plane, tiled.fb);
 	CHECK(selected(fd, create.crtc_id, 1, NULL) == host);
 
-	/* The published offer must narrow broad implementation limits to this pool. */
+	/* The published backend must narrow broad implementation limits to this pool. */
 	constraints.header.min_output[0] = 1;
 	constraints.header.max_output[0] = 16384;
 	constraints.header.min_output[1] = 1;
@@ -588,20 +588,20 @@ int main(int argc, char **argv)
 	constraints.header.max_source[0] = mode->hdisplay;
 	constraints.header.min_source[1] = mode->vdisplay;
 	constraints.header.max_source[1] = mode->vdisplay;
-	prepare.width = mode->hdisplay;
-	prepare.height = mode->vdisplay;
+	configure.width = mode->hdisplay;
+	configure.height = mode->vdisplay;
 	image.width = mode->hdisplay;
 	image.height = mode->vdisplay;
 	image.buffers = (uintptr_t)&private_fd;
-	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create) == 0);
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(fcntl(files.renderer_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(files.revoke_fd, F_GETFD) == FD_CLOEXEC);
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER,
-		    &prepare) == 0);
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_CONFIGURE,
+		    &configure) == 0);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
 		    &image) == 0);
 	memset(&result, 0xa5, sizeof(result));
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER,
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH,
 		    &publish) == 0);
 	worker = result.constraints_id;
 	CHECK(worker && worker != host && !result.reserved[0] &&
@@ -609,30 +609,30 @@ int main(int argc, char **argv)
 	event_generation = constraints_event(fd, create.crtc_id, generation);
 	CHECK(selected(fd, create.crtc_id, 2, &generation) == host);
 	CHECK(generation == event_generation);
-	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_XRGB8888,
-			   I915_FORMAT_MOD_4_TILED, 1,
+	check_backend_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_XRGB8888,
+			     I915_FORMAT_MOD_4_TILED, 1,
 			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE |
 			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_IMPORTED,
 			   mode->hdisplay, mode->vdisplay);
-	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_NV12,
-			   I915_FORMAT_MOD_4_TILED, 2,
+	check_backend_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_NV12,
+			     I915_FORMAT_MOD_4_TILED, 2,
 			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 			   mode->hdisplay, mode->vdisplay);
-	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_RGBX8888,
-			   I915_FORMAT_MOD_4_TILED, 1,
+	check_backend_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_RGBX8888,
+			     I915_FORMAT_MOD_4_TILED, 1,
 			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 			   mode->hdisplay, mode->vdisplay);
-	check_offer_rules(fd, create.crtc_id, worker, plane);
+	check_backend_rules(fd, create.crtc_id, worker, plane);
 	select_framebuffer(fd, create.crtc_id, plane, tiled.fb, worker);
 	event_generation = constraints_event(fd, create.crtc_id, generation);
 	CHECK(selected(fd, create.crtc_id, 2, &generation) == worker);
 	CHECK(generation == event_generation);
 
-	scene = calloc(1, dequeue.capacity);
+	scene = calloc(1, acquire.capacity);
 	CHECK(scene);
-	dequeue.result = (uintptr_t)scene;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
-		    &dequeue) == 0);
+	acquire.result = (uintptr_t)scene;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
+		    &acquire) == 0);
 	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
 	CHECK(scene->constraints_id == worker && scene->layer_count == 1);
 	CHECK(scene->width == mode->hdisplay && scene->height == mode->vdisplay);
@@ -658,14 +658,14 @@ int main(int argc, char **argv)
 	content_serial = scene->content_serial;
 	job_id = scene->job_id;
 	release.job_id = scene->job_id;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 		    &release) == 0);
 	expect_no_constraints_event(fd);
 
 	select_framebuffer(fd, create.crtc_id, plane, nv12.fb, worker);
-	memset(scene, 0, dequeue.capacity);
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
-		    &dequeue) == 0);
+	memset(scene, 0, acquire.capacity);
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
+		    &acquire) == 0);
 	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
 	CHECK(scene->constraints_id == worker && scene->layer_count == 1);
 	CHECK(scene->content_serial > content_serial && scene->job_id != job_id);
@@ -701,13 +701,13 @@ int main(int argc, char **argv)
 	content_serial = scene->content_serial;
 	job_id = scene->job_id;
 	release.job_id = scene->job_id;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 		    &release) == 0);
 
 	select_framebuffer(fd, create.crtc_id, plane, rgbx.fb, worker);
-	memset(scene, 0, dequeue.capacity);
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
-		    &dequeue) == 0);
+	memset(scene, 0, acquire.capacity);
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
+		    &acquire) == 0);
 	layer = (void *)(scene + 1);
 	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
 	CHECK(scene->constraints_id == worker && scene->layer_count == 1);
@@ -734,13 +734,13 @@ int main(int argc, char **argv)
 	content_serial = scene->content_serial;
 	job_id = scene->job_id;
 	release.job_id = scene->job_id;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 		    &release) == 0);
 	if (argc == 3) {
 		select_framebuffer(fd, create.crtc_id, plane, imported.fb, worker);
-		memset(scene, 0, dequeue.capacity);
-		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
-			    &dequeue) == 0);
+		memset(scene, 0, acquire.capacity);
+		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
+			    &acquire) == 0);
 		layer = (void *)(scene + 1);
 		CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
 		CHECK(scene->constraints_id == worker && scene->layer_count == 1);
@@ -766,7 +766,7 @@ int main(int argc, char **argv)
 		CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
 		CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 		release.job_id = scene->job_id;
-		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 			    &release) == 0);
 	}
 
@@ -774,7 +774,7 @@ int main(int argc, char **argv)
 	event_generation = constraints_event(fd, create.crtc_id, generation);
 	CHECK(selected(fd, create.crtc_id, 2, &generation) == host);
 	CHECK(generation == event_generation);
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER,
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW,
 		    &withdraw) == 0);
 	event_generation = constraints_event(fd, create.crtc_id, generation);
 	CHECK(selected(fd, create.crtc_id, 2, &generation) == host);

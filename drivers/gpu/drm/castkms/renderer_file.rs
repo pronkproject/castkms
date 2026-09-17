@@ -25,7 +25,7 @@ unsafe impl AsBytes for RendererFiles {}
 pub(crate) fn create(
     dev: &Device<Driver, Registered>,
     _: &(),
-    request: &mut uapi::drm_castkms_create_renderer_control,
+    request: &mut uapi::drm_castkms_create_renderer,
     file: &DrmFile<DriverFile>,
 ) -> Result<u32> {
     const {

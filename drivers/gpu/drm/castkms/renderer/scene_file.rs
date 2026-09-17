@@ -40,7 +40,7 @@ const _: () = {
 #[repr(C)]
 struct Request {
     result: u64,
-    image_id: u64,
+    target_image_id: u64,
     capacity: u32,
     flags: u32,
     reserved: u64,
@@ -136,11 +136,11 @@ fn reserve(
     Ok(fd)
 }
 
-pub(super) fn dequeue(endpoint: &Endpoint, arg: usize) -> Result {
+pub(super) fn acquire(endpoint: &Endpoint, arg: usize) -> Result {
     const {
         assert!(
             core::mem::size_of::<Request>()
-                == core::mem::size_of::<uapi::drm_castkms_renderer_dequeue_scene>()
+                == core::mem::size_of::<uapi::drm_castkms_renderer_acquire_job>()
         );
         assert!(core::mem::size_of::<uapi::drm_castkms_renderer_scene>() == 56);
         assert!(core::mem::size_of::<uapi::drm_castkms_renderer_layer>() == 144);
@@ -149,7 +149,7 @@ pub(super) fn dequeue(endpoint: &Endpoint, arg: usize) -> Result {
         .reader()
         .read::<Request>()?;
     if request.result == 0
-        || request.image_id == 0
+        || request.target_image_id == 0
         || request.flags != 0
         || request.reserved != 0
         || request.capacity as usize > MAX_BYTES
@@ -157,7 +157,7 @@ pub(super) fn dequeue(endpoint: &Endpoint, arg: usize) -> Result {
         return Err(EINVAL);
     }
     let address = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
-    let mut pending = endpoint.begin_source(request.image_id)?;
+    let mut pending = endpoint.begin_source(request.target_image_id)?;
     let producer = pending.producer_completion()?;
     let scene = pending.scene_description()?;
     let mut encoded = Encoding::new()?;

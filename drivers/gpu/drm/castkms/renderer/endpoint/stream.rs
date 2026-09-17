@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! One bounded source stream tied to the endpoint's immutable accepted offer.
+//! One bounded source stream tied to the endpoint's immutable accepted publication.
 
 use super::{Endpoint, State};
 use crate::renderer::{
     job::Completion,
-    offer::Control,
+    publication::Control,
     render_job::{RenderJob, Rendered},
 };
 use core::mem::MaybeUninit;
@@ -55,20 +55,20 @@ impl Stream {
 }
 
 impl Endpoint {
-    /// Advisory source availability. An unselected offer is idle, not revoked.
+    /// Advisory source availability. An unselected publication is idle, not revoked.
     pub(crate) fn source_readable(&self) -> Result<bool> {
         self.refresh_generation()?;
         let state = self.state.lock();
         match &*state {
             State::Closed => Err(EKEYREVOKED),
-            State::Ready { offer, source, .. } => {
-                if !offer.is_live() {
+            State::Ready { publication, source, .. } => {
+                if !publication.is_live() {
                     return Err(EKEYREVOKED);
                 }
                 if !matches!(source.slot, Slot::Ready) {
                     return Ok(false);
                 }
-                match offer.control().with_current(|current| {
+                match publication.control().with_current(|current| {
                     current.changed_content(source.last_serial).map(|_| true)
                 }) {
                     Err(ESTALE | EAGAIN | ENODATA | ENODEV) => Ok(false),
@@ -79,18 +79,18 @@ impl Endpoint {
         }
     }
 
-    /// Reserve independent private storage, then claim only the selected live offer's scene.
+    /// Reserve independent private storage, then claim only the selected live publication's scene.
     /// All fallible encoding and descriptor preparation must finish before Pending::publish.
     pub(crate) fn begin_source(&self, image_id: u64) -> Result<Pending<'_>> {
         self.refresh_generation()?;
         let mut state = self.state.lock();
-        let State::Ready { offer, pool, source, .. } = &mut *state else {
+        let State::Ready { publication, pool, source, .. } = &mut *state else {
             return Err(if matches!(&*state, State::Closed) { EKEYREVOKED } else { ENODATA });
         };
         if !matches!(source.slot, Slot::Ready) {
             return Err(EBUSY);
         }
-        let control = offer.control();
+        let control = publication.control();
         control.with_current(|current| current.changed_content(source.last_serial).map(|_| ()))?;
         let image = pool.image(image_id)?;
         let id = source.next_id;
@@ -173,15 +173,15 @@ impl Endpoint {
         Ok(())
     }
 
-    /// Borrow completed content with live offer admission; a recipient needs its own grant.
+    /// Borrow completed content with live publication admission; a recipient needs its own grant.
     pub(crate) fn completed_image(&self, id: u64) -> Result<Arc<Rendered>> {
         self.refresh_generation()?;
         let state = self.state.lock();
-        let State::Ready { offer, pool, .. } = &*state else {
+        let State::Ready { publication, pool, .. } = &*state else {
             return Err(if matches!(&*state, State::Closed) { EKEYREVOKED } else { ENODATA });
         };
         let rendered = pool.completed(id)?;
-        offer.control().check_completed(&rendered)?;
+        publication.control().check_completed(&rendered)?;
         Ok(rendered)
     }
 }

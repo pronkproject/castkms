@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Endpoint-owned native renderer offers, published only after reply preparation.
+//! Endpoint-owned native renderer backends, listed only after reply preparation.
 
-use super::{draft::Draft, permission::Access, private_pool::Pool, ready};
+use super::{configuration::Configuration, permission::Access, private_pool::Pool, ready};
 use crate::{execution::constraints::backend::Backend, Driver};
 use kernel::{dma_fence::Fence, drm::{device::Registered, Device}, prelude::*};
 
@@ -12,14 +12,14 @@ type Binding = kernel::sync::aref::ARef<kernel::drm::constraints::Entry<Backend>
 /// Retaining an entry alone cannot keep its worker ready after this owner is dropped.
 /// Construct and drop outside DRM and provider locks; endpoint serialization must exclude
 /// close throughout publication and install the owner without a later fallible operation.
-pub(crate) struct Offer {
+pub(crate) struct Publication {
     access: Access,
     entry: Binding,
     list: kernel::sync::aref::ARef<kernel::drm::constraints::List>,
     _owner: ready::Owner,
 }
 
-impl Drop for Offer {
+impl Drop for Publication {
     fn drop(&mut self) {
         self._owner.revocation().revoke();
         // The endpoint is gone, so no new resolution should retain its callback module.
@@ -32,23 +32,23 @@ impl Drop for Offer {
     }
 }
 
-impl Offer {
+impl Publication {
     /// Prepare without listing, selecting, or requiring an enabled output.
     pub(crate) fn new(
         registered: &Device<Driver, Registered>,
-        draft: &Draft,
+        configuration: &Configuration,
         pool: &Pool,
         completion: Option<&Fence>,
     ) -> Result<Self> {
-        let access = draft.access();
-        access.with_output_interval(draft.interval(), || Ok(()))?;
+        let access = configuration.access();
+        access.with_output_interval(configuration.interval(), || Ok(()))?;
         let output = access.constraints_output(registered)?;
         let provider = access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
         // Cleanup can drop backend/device references, so it precedes all authority locks.
         provider.reap(&output)?;
-        let owner = draft.prepare_worker(pool, completion)?;
+        let owner = configuration.prepare_worker(pool, completion)?;
         let entry = provider.prepare(owner.worker())?;
-        access.with_output_interval(draft.interval(), || Ok(()))?;
+        access.with_output_interval(configuration.interval(), || Ok(()))?;
         Ok(Self {
             access: access.clone(), entry, _owner: owner,
             list: kernel::sync::aref::ARef::from(output.list()),
@@ -81,7 +81,7 @@ impl Offer {
 
     /// Copy the reply before native publication while issuer authority is stable.
     /// On any error callers ignore the copied identity. The callback must not publish files,
-    /// select this entry, revoke its owner, or reenter authority. Success lists a ready offer
+    /// select this entry, revoke its owner, or reenter authority. Success lists a ready backend
     /// but does not change accepted state; the endpoint must retain this owner before unlock.
     pub(crate) fn publish(
         &self,
@@ -97,7 +97,7 @@ impl Offer {
     }
 }
 
-/// Exact offer admission, revocable independently of every retained clone.
+/// Exact backend admission, revocable independently of every retained clone.
 #[derive(Clone)]
 pub(crate) struct Control {
     access: Access,

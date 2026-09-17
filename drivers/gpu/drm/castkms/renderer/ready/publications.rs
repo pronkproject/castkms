@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Bounded native offer withdrawal, independent of retained KMS object lifetimes.
+//! Bounded native publication withdrawal, independent of retained KMS object lifetimes.
 
 use kernel::{
     drm::{

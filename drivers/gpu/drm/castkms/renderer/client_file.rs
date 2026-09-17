@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Anonymous renderer transport over a kernel-callable immutable offer endpoint.
+//! Anonymous transport for a kernel-callable immutable renderer endpoint.
 
 use super::{
     endpoint::{Endpoint, Phase},
@@ -32,7 +32,7 @@ struct Query {
 unsafe impl AsBytes for Query {}
 
 #[repr(C)]
-struct Prepare {
+struct Configure {
     constraints: u64,
     constraints_size: u32,
     flags: u32,
@@ -41,7 +41,7 @@ struct Prepare {
     reserved: [u64; 3],
 }
 // SAFETY: All fields are integers accepting every bit pattern.
-unsafe impl FromBytes for Prepare {}
+unsafe impl FromBytes for Configure {}
 
 #[repr(C)]
 struct Publish {
@@ -70,8 +70,7 @@ struct Withdraw {
 unsafe impl FromBytes for Withdraw {}
 
 #[repr(C)]
-#[repr(C)]
-struct ReleaseSource {
+struct ReleaseJob {
     job_id: u64,
     completion_fd: i32,
     kind: u32,
@@ -89,15 +88,15 @@ struct ReleaseOutput {
 }
 unsafe impl FromBytes for ReleaseOutput {}
 // SAFETY: All fields are integers accepting every bit pattern.
-unsafe impl FromBytes for ReleaseSource {}
+unsafe impl FromBytes for ReleaseJob {}
 
 const _: () = {
     assert!(size_of::<Query>() == size_of::<uapi::drm_castkms_renderer_query>());
-    assert!(size_of::<Prepare>() == size_of::<uapi::drm_castkms_renderer_prepare_offer>());
-    assert!(size_of::<Publish>() == size_of::<uapi::drm_castkms_renderer_publish_offer>());
-    assert!(size_of::<Published>() == size_of::<uapi::drm_castkms_renderer_offer_result>());
-    assert!(size_of::<Withdraw>() == size_of::<uapi::drm_castkms_renderer_withdraw_offer>());
-    assert!(size_of::<ReleaseSource>() == size_of::<uapi::drm_castkms_renderer_release_source>());
+    assert!(size_of::<Configure>() == size_of::<uapi::drm_castkms_renderer_configure>());
+    assert!(size_of::<Publish>() == size_of::<uapi::drm_castkms_renderer_publish>());
+    assert!(size_of::<Published>() == size_of::<uapi::drm_castkms_renderer_publish_result>());
+    assert!(size_of::<Withdraw>() == size_of::<uapi::drm_castkms_renderer_withdraw>());
+    assert!(size_of::<ReleaseJob>() == size_of::<uapi::drm_castkms_renderer_release_job>());
     assert!(size_of::<ReleaseOutput>() == size_of::<uapi::drm_castkms_renderer_release_output>());
 };
 
@@ -193,9 +192,9 @@ impl ClientFile {
     fn dispatch(&self, cmd: u32, arg: usize) -> Result {
         match cmd {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_QUERY => self.query(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER => self.prepare(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER => self.publish(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER => {
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_CONFIGURE => self.configure(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_PUBLISH => self.publish(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW => {
                 let request = read::<Withdraw>(arg)?;
                 if request.flags != 0 || request.reserved != [0; 3] {
                     return Err(EINVAL);
@@ -208,12 +207,12 @@ impl ClientFile {
             uapi::DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE => {
                 super::image_file::unregister(&self.endpoint, arg)
             }
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE => {
-                super::scene_file::dequeue(&self.endpoint, arg)
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB => {
+                super::scene_file::acquire(&self.endpoint, arg)
             }
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE => self.release_source(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT => {
-                super::output_file::dequeue(&self.endpoint, arg)
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB => self.release_job(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT => {
+                super::output_file::acquire(&self.endpoint, arg)
             }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT => self.release_output(arg),
             _ => Err(ENOTTY),
@@ -226,7 +225,7 @@ impl ClientFile {
             version: uapi::DRM_CASTKMS_RENDERER_VERSION,
             state: match description.phase {
                 Phase::Empty => uapi::DRM_CASTKMS_RENDERER_STATE_EMPTY,
-                Phase::Draft => uapi::DRM_CASTKMS_RENDERER_STATE_DRAFT,
+                Phase::Configured => uapi::DRM_CASTKMS_RENDERER_STATE_CONFIGURED,
                 Phase::Publishing => uapi::DRM_CASTKMS_RENDERER_STATE_PUBLISHING,
                 Phase::Published => uapi::DRM_CASTKMS_RENDERER_STATE_PUBLISHED,
                 Phase::Withdrawn => uapi::DRM_CASTKMS_RENDERER_STATE_WITHDRAWN,
@@ -239,8 +238,8 @@ impl ClientFile {
             .write(&query)
     }
 
-    fn prepare(&self, arg: usize) -> Result {
-        let request = read::<Prepare>(arg)?;
+    fn configure(&self, arg: usize) -> Result {
+        let request = read::<Configure>(arg)?;
         if request.constraints == 0 || request.flags != 0 || request.reserved != [0; 3] {
             return Err(EINVAL);
         }
@@ -283,8 +282,8 @@ impl ClientFile {
         })
     }
 
-    fn release_source(&self, arg: usize) -> Result {
-        let request = read::<ReleaseSource>(arg)?;
+    fn release_job(&self, arg: usize) -> Result {
+        let request = read::<ReleaseJob>(arg)?;
         if request.job_id == 0 || request.flags != 0 || request.reserved != [0; 3] {
             return Err(EINVAL);
         }

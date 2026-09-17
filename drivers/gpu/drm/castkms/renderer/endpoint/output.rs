@@ -36,8 +36,8 @@ impl Endpoint {
         self.refresh_generation()?;
         let (broker, image) = {
             let state = self.state.lock();
-            let State::Ready { offer, pool, output, .. } = &*state else {
-                // Empty, draft and publishing endpoints are idle, not terminal.
+            let State::Ready { publication, pool, output, .. } = &*state else {
+                // Empty, configuration and publishing endpoints are idle, not terminal.
                 return if matches!(&*state, State::Closed) {
                     Err(EKEYREVOKED)
                 } else {
@@ -45,7 +45,7 @@ impl Endpoint {
                 };
             };
             if !matches!(output.slot, Slot::Ready) { return Ok(false); }
-            (offer.control().worker()?.outputs().clone(), pool.first_completed())
+            (publication.control().worker()?.outputs().clone(), pool.first_completed())
         };
         Ok(image.is_some_and(|image| broker.can_claim(&image)))
     }
@@ -53,15 +53,15 @@ impl Endpoint {
     pub(crate) fn begin_output(&self, image_id: u64) -> Result<Pending<'_>> {
         self.refresh_generation()?;
         let mut state = self.state.lock();
-        let State::Ready { offer, pool, output, .. } = &mut *state else {
+        let State::Ready { publication, pool, output, .. } = &mut *state else {
             return Err(if matches!(&*state, State::Closed) { EKEYREVOKED } else { ENODATA });
         };
         if !matches!(output.slot, Slot::Ready) {
             return Err(EBUSY);
         }
         let image = pool.completed(image_id)?;
-        offer.control().check_completed(&image)?;
-        let broker = offer.control().worker()?.outputs().clone();
+        publication.control().check_completed(&image)?;
+        let broker = publication.control().worker()?.outputs().clone();
         let id = output.next_id;
         output.next_id = id.checked_add(1).ok_or(EOVERFLOW)?;
         output.slot = Slot::Publishing { id };

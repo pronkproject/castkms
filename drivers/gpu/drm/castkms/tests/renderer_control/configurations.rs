@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use super::*;
-use crate::renderer::{draft::Draft, private_pool::Pool};
+use crate::renderer::{configuration::Configuration, private_pool::Pool};
 use kernel::drm::gem::{BaseObject, ExportAccess};
 
-#[kunit_tests(rust_castkms_offer_drafts)]
+#[kunit_tests(rust_castkms_configurations)]
 mod cases {
     use super::*;
 
     #[test]
-    fn disabled_output_accepts_independent_ready_drafts() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-drafts", 1)?;
+    fn disabled_output_accepts_independent_ready_configurations() -> Result {
+        let display = CastKms::new_constraints(c"castkms-publication-configurations", 1)?;
         let device = display._display.registration_guard().ok_or(ENODEV)?;
         let file = RegisteredMasterFile::new(&device)?;
         let crtc = file.crtc()?.to_owned_ref();
         let crtc = crtc.crtc();
         let connector = file.connector()?;
         let owner = owner(&file, crtc, &connector)?;
-        let first = Draft::new(owner.access(), private_images::profile()?, [640, 480])?;
-        let second = Draft::new(owner.access(), private_images::profile()?, [800, 600])?;
+        let first = Configuration::new(owner.access(), private_images::profile()?, [640, 480])?;
+        let second = Configuration::new(owner.access(), private_images::profile()?, [800, 600])?;
         check(first.dimensions() == [640, 480] && second.dimensions() == [800, 600])?;
         check(first.access().with_current(|_| Ok(())) == Err(ENODEV))?;
         let mut first_pool = Pool::new()?;
@@ -61,55 +61,59 @@ mod cases {
 
     #[test]
     fn pending_and_failed_readiness_leave_pool_names_unpinned() -> Result {
-        let display = CastKms::new_constraints(c"castkms-draft-readiness", 1)?;
+        let display = CastKms::new_constraints(c"castkms-configuration-readiness", 1)?;
         let device = display._display.registration_guard().ok_or(ENODEV)?;
         let file = RegisteredMasterFile::new(&device)?;
         let crtc = file.crtc()?;
         let connector = file.connector()?;
         let owner = owner(&file, crtc, &connector)?;
-        let draft = Draft::new(owner.access(), private_images::profile()?, [640, 480])?;
+        let configuration = Configuration::new(
+            owner.access(), private_images::profile()?, [640, 480],
+        )?;
         let mut pool = Pool::new()?;
-        let image = draft.register_image(&[
+        let image = configuration.register_image(&[
             private_images::buffer(&device, ExportAccess::ReadWrite)?,
         ])?;
         pool.insert(1, || Ok(image.clone()))?;
         let mut completion = kernel::dma_fence::testing::ManualFence::new()?;
         let fence = completion.fence();
-        check(draft.prepare_worker(&pool, Some(&fence)).err() == Some(EBUSY))?;
+        check(configuration.prepare_worker(&pool, Some(&fence)).err() == Some(EBUSY))?;
         drop(pool.remove(1)?);
         pool.insert(2, || Ok(image))?;
         completion.complete(Err(EIO))?;
-        check(draft.prepare_worker(&pool, Some(&fence)).err() == Some(EREMOTEIO))?;
+        check(configuration.prepare_worker(&pool, Some(&fence)).err() == Some(EREMOTEIO))?;
         drop(pool.remove(2)?);
         Ok(())
     }
 
     #[test]
     fn preparation_checks_geometry_source_aliases_and_revocation() -> Result {
-        let display = CastKms::new_constraints(c"castkms-draft-authority", 1)?;
+        let display = CastKms::new_constraints(c"castkms-configuration-authority", 1)?;
         with_registered_display(&display, |device, crtc, connector, scanout, file| {
             let owner = owner(&file, crtc, connector)?;
-            // Exercise the source-admission lock order alongside disabled draft checks.
+            // Exercise the source-admission lock order alongside disabled configuration checks.
             owner.access().with_current(|_| Ok(()))?;
-            check(Draft::new(owner.access(), private_images::profile()?, [0, 480]).err()
+            check(Configuration::new(owner.access(), private_images::profile()?, [0, 480]).err()
                 == Some(EOPNOTSUPP))?;
-            let draft = Draft::new(owner.access(), private_images::profile()?, [800, 600])?;
+            let configuration = Configuration::new(
+                owner.access(), private_images::profile()?, [800, 600],
+            )?;
             let source = scanout.framebuffer.object_at(0)?
                 .export_dma_buf(ExportAccess::ReadWrite)?;
-            check(draft.register_image(&[source]).err() == Some(EINVAL))?;
+            check(configuration.register_image(&[source]).err() == Some(EINVAL))?;
             let storage = shmem::Object::<gem::Object>::new(
                 device, (800usize * 600 * 4).next_multiple_of(kernel::page::PAGE_SIZE),
                 Default::default(), Default::default(),
             )?.export_dma_buf(ExportAccess::ReadWrite)?;
             let mut pool = Pool::new()?;
-            pool.insert(1, || draft.register_image(&[storage.clone()]))?;
-            let ready = draft.prepare_worker(&pool, None)?;
+            pool.insert(1, || configuration.register_image(&[storage.clone()]))?;
+            let ready = configuration.prepare_worker(&pool, None)?;
             check(ready.worker().profile().limits().geometry.min_output == [800, 600])?;
             check(ready.worker().profile().limits().geometry.output == [800, 600])?;
             owner.revoke();
             check(ready.worker().hold_ready().err() == Some(EKEYREVOKED))?;
-            check(draft.prepare_worker(&pool, None).err() == Some(EKEYREVOKED))?;
-            check(draft.register_image(&[storage]).err() == Some(EKEYREVOKED))?;
+            check(configuration.prepare_worker(&pool, None).err() == Some(EKEYREVOKED))?;
+            check(configuration.register_image(&[storage]).err() == Some(EKEYREVOKED))?;
             drop(pool.remove(1)?);
             Ok(())
         })
@@ -117,7 +121,7 @@ mod cases {
 
     #[test]
     fn preparation_rejects_unusable_allocation_tuples() -> Result {
-        let display = CastKms::new_constraints(c"castkms-draft-allocations", 1)?;
+        let display = CastKms::new_constraints(c"castkms-configuration-allocations", 1)?;
         let device = display._display.registration_guard().ok_or(ENODEV)?;
         let file = RegisteredMasterFile::new(&device)?;
         let crtc = file.crtc()?;

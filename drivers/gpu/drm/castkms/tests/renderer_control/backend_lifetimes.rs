@@ -1,34 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use super::*;
-use crate::renderer::{draft::Draft, private_pool::Pool, ready};
+use crate::renderer::{configuration::Configuration, private_pool::Pool, ready};
 use kernel::drm::gem::ExportAccess;
 
 pub(super) fn prepare(
     device: &Device<Driver, Registered>,
     owner: &Owner,
 ) -> Result<(Pool, ready::Owner)> {
-    let draft = Draft::new(owner.access(), private_images::profile()?, [640, 480])?;
+    let configuration = Configuration::new(owner.access(), private_images::profile()?, [640, 480])?;
     let mut pool = Pool::new()?;
-    pool.insert(1, || draft.register_image(&[
+    pool.insert(1, || configuration.register_image(&[
         private_images::buffer(device, ExportAccess::ReadWrite)?,
     ]))?;
-    let ready = draft.prepare_worker(&pool, None)?;
+    let ready = configuration.prepare_worker(&pool, None)?;
     Ok((pool, ready))
 }
 
 fn selectable(snapshot: &kernel::drm::constraints::Snapshot, id: u64) -> Result<bool> {
-    snapshot.entries().find(|offer| offer.entry.id() == id)
-        .map(|offer| offer.selectable).ok_or(ENOENT)
+    snapshot.entries().find(|publication| publication.entry.id() == id)
+        .map(|publication| publication.selectable).ok_or(ENOENT)
 }
 
-#[kunit_tests(rust_castkms_offer_lifetimes)]
+#[kunit_tests(rust_castkms_backend_lifetimes)]
 mod cases {
     use super::*;
 
     #[test]
-    fn revocation_withdraws_every_offer_without_rebinding_accepted_state() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-withdraw", 1)?;
+    fn revocation_withdraws_every_backend_without_rebinding_accepted_state() -> Result {
+        let display = CastKms::new_constraints(c"castkms-publication-withdraw", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let (mut pool, ready) = prepare(device, &owner)?;
@@ -67,7 +67,7 @@ mod cases {
 
     #[test]
     fn failed_publication_does_not_acquire_withdrawal_ownership() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-rollback", 1)?;
+        let display = CastKms::new_constraints(c"castkms-publication-rollback", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let (mut pool, ready) = prepare(device, &owner)?;
@@ -95,7 +95,7 @@ mod cases {
 
     #[test]
     fn withdrawal_records_are_bounded_without_partial_publication() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-bound", 1)?;
+        let display = CastKms::new_constraints(c"castkms-publication-bound", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let (mut pool, ready) = prepare(device, &owner)?;
@@ -121,7 +121,7 @@ mod cases {
 
     #[test]
     fn another_workers_guard_cannot_own_publication() -> Result {
-        let display = CastKms::new_constraints(c"castkms-offer-guard", 1)?;
+        let display = CastKms::new_constraints(c"castkms-publication-guard", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let (_, first) = prepare(device, &owner)?;

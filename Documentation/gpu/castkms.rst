@@ -18,7 +18,7 @@ monochrome and YUV framebuffers, including CPU-mappable PRIME imports for HOST
 composition. Tiled storage is not supported by the in-kernel compositor.
 HOST modes and framebuffer sizes are supported through 8192 by 8192.
 Negotiated GPU execution has a static envelope through 16384 by 16384;
-the accepted renderer constraints offer determines actual acceptance. Neither
+the accepted renderer constraints entry determines actual acceptance. Neither
 bound is a receiver or transport policy. Cursor planes, eight
 shared overlays and per-plane color pipelines are enabled by default. Their
 module parameters allow disabling them for focused testing.
@@ -63,7 +63,7 @@ Audio capture requires its own explicit capability. The current top-level DRM
 master calls ``DRM_IOCTL_CASTKMS_CREATE_AUDIO_CAPTURE`` with the exact CRTC and
 connector it controls. The request points to an output structure containing
 two close-on-exec descriptors: a read-only audio stream and a revocation file.
-Neither image capture nor monitor or renderer control implicitly authorizes
+Neither image capture nor monitor control or a renderer endpoint implicitly authorizes
 audio. The service can transfer the audio file while retaining the revocation
 file. Closing the issuing DRM file or the last revocation-file reference ends
 the stream, even if another process still holds an audio-file reference.
@@ -142,7 +142,7 @@ operations. Attach accepts either a complete validated EDID or no EDID, in
 which case the driver publishes fallback modes with 1920 by 1080 preferred.
 Each successful change emits a normal DRM hotplug event. The capability does
 not expose DRM objects,
-framebuffers, capture images, modesetting, or renderer control. A second
+framebuffers, capture images, modesetting, or renderer authority. A second
 close-on-exec file lets the issuer revoke the capability without retaining its
 control endpoint.
 
@@ -157,15 +157,15 @@ Accepted constraints
 --------------------
 
 Each output exposes persistent atomic ``CONSTRAINTS_ID`` state. Generic KMS
-listing describes its fixed default and any published renderer offers.
+listing describes its fixed default and any published renderer backends.
 Discovery requires current modesetting authority, but grants no pixels or
-renderer control. A changed selection requires an ordinary compatible atomic
+renderer authority. A changed selection requires an ordinary compatible atomic
 update with ALLOW_MODESET; omission retains accepted state.
 
 The fixed HOST contract accepts CPU-readable linear formats through 8192 by
 8192 with checked allocation/layout bounds. Its per-plane records permit
 cropping, fractional source coordinates, positioning, and scale ratios from
-1:16 through 16:1. Renderer offers describe independent whole-scene
+1:16 through 16:1. Renderer configurations describe independent whole-scene
 restrictions, including exact private-pool dimensions and supported
 format/modifier/storage tuples, per-plane geometry and YUV restrictions, and
 overlapping total-layer and per-role plane limits. The vendor-neutral static
@@ -229,10 +229,10 @@ execution activation. Revocation waits for authorization callbacks to leave;
 owners of individual operations remain responsible for their resource cleanup.
 There is no conversion from a final-image capture grant to renderer permission.
 
-``renderer/endpoint.rs`` serializes one immutable native constraints offer per
-master interval and its private image namespace. A completed private probe
-makes the worker ready before publication; ordinary KMS ``CONSTRAINTS_ID``
-state selects it. The
+``renderer/endpoint.rs`` serializes one immutable configuration and published
+native constraints entry per master interval, together with its private image
+namespace. Publication checks the optional preparation fence before listing
+the backend; ordinary KMS ``CONSTRAINTS_ID`` state selects it. The
 accepted native entry, rather than a mutable driver-side route, identifies the
 worker for source and capture admission. Endpoint withdrawal prevents new
 selection without inventing completion for accepted work.
@@ -241,12 +241,12 @@ The selected endpoint claims changed scenes and may retry a scene after
 releasing it without access, while source admission remains open.
 Each kernel job owns both retained scene metadata and its preparation read
 claim; the framebuffer reference alone does not delay source reuse.
-The renderer registers its independent private-image backing before dequeue.
+The renderer registers its independent private-image backing before job acquisition.
 The selected image is reserved before the source read is admitted, and the
 release report covers both source reads and private-image writes. Released
 content remains in the registered pool without retaining a source read.
 
-The renderer dequeue ioctl prepares ordinary source DMA-BUFs and reserves every
+The renderer job-acquisition ioctl prepares ordinary source DMA-BUFs and reserves every
 descriptor before copying bounded scene metadata. Only the final, infallible
 publication step installs close-on-exec descriptors and makes the job require a
 userspace release. Failure before publication reports that no access occurred
@@ -259,8 +259,8 @@ and seals still reject new reads.
 Complete-scene renderer descriptions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``RENDERER_DEQUEUE_SCENE`` is the only scene dequeue operation and uses
-``RENDERER_RELEASE_SOURCE`` to resolve the source-to-private job. Dequeue names
+``RENDERER_ACQUIRE_JOB`` is the only source-job acquisition operation and uses
+``RENDERER_RELEASE_JOB`` to resolve the source-to-private job. Acquisition names
 an image retained by ``RENDERER_REGISTER_IMAGE``. A renderer should allocate
 the advertised maximum of 64 KiB for the result. Insufficient capacity returns
 ``ENOSPC``; failure does not consume the scene or install any descriptors, even
@@ -278,18 +278,18 @@ neighbor, and output color operations follow layer composition.
 
 Metadata is bounded to 24 layers, four memory planes per layer, sixteen plane
 color operations and 256 entries per output lookup table. These transport
-bounds do not advertise additional KMS planes or enable new renderer offers.
+bounds do not advertise additional KMS planes or enable new renderer backends.
 All buffer descriptors and the combined producer fence remain tied to one
 source-read claim. The renderer must check producer success before reading,
 then release with no access, completed CPU access or a submitted native fence
 covering source reads and private-image writes. Renderer protocol version 1
-publishes version 1 constraints offers for KMS selection. See
+publishes version 1 constraints entries for KMS selection. See
 :doc:`castkms-renderer` for private-image registration and the independent
 private-image-to-recipient output jobs.
 
 The job also exports a sync-file wait for the exact producer dependencies
 captured when KMS accepted the scene. An already failed producer rejects
-dequeue with its completion error; pending producer work remains represented by
+acquisition with its completion error; pending producer work remains represented by
 the retained native fence and does not make descriptor preparation wait.
 
 Release distinguishes no access, completed synchronous CPU access and submitted
@@ -932,7 +932,7 @@ qualify a physical GPU's buffers or a userspace compositor's submission path.
 Checking the renderer contract
 ------------------------------
 
-The native constraints and endpoint KUnit suites exercise immutable offer
+The native constraints and endpoint KUnit suites exercise immutable backend
 publication, ordinary atomic selection, source release, delegated recipient
 claims, renderer replacement and HOST selection. These checks use the kernel's
 display locks and publication paths; they do not establish physical GPU

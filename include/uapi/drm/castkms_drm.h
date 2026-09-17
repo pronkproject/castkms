@@ -202,7 +202,7 @@ struct drm_castkms_monitor_detach {
  * @revoke_fd: close-on-exec revocation file descriptor
  *
  * Final revoker close stops new admission through every duplicate renderer
- * descriptor. RELEASE_SOURCE and UNREGISTER_IMAGE remain available for cleanup
+ * descriptor. RELEASE_JOB and UNREGISTER_IMAGE remain available for cleanup
  * until final renderer-file close, which ends the reporting channel. Closing
  * one duplicated renderer descriptor releases only that file reference.
  */
@@ -212,7 +212,7 @@ struct drm_castkms_renderer_files {
 };
 
 /**
- * struct drm_castkms_create_renderer_control - create renderer control
+ * struct drm_castkms_create_renderer - create a renderer endpoint
  * @crtc_id: DRM object ID of the controlled CRTC
  * @connector_id: DRM object ID of the controlled connector
  * @files: pointer to writable struct drm_castkms_renderer_files output storage
@@ -232,7 +232,8 @@ struct drm_castkms_renderer_files {
  * Its operations authorize delegated rendering for this output and bound
  * drm_master identity. While that master is not current, control operations
  * fail with EACCES. Reacquiring the same master reactivates the descriptor,
- * but work and offers from the previous uninterrupted interval stay invalid.
+ * but work and renderer configurations from the previous uninterrupted interval
+ * stay invalid.
  * An administratively issued descriptor is instead permanently stale after
  * its bound owner interval ends; the helper must issue a new descriptor.
  *
@@ -241,7 +242,7 @@ struct drm_castkms_renderer_files {
  * is installed; output memory may have been partially written and must not be
  * used. No fallible operation remains after descriptor installation.
  */
-struct drm_castkms_create_renderer_control {
+struct drm_castkms_create_renderer {
 	__u32 crtc_id;
 	__u32 connector_id;
 	__u64 files;
@@ -250,34 +251,34 @@ struct drm_castkms_create_renderer_control {
 };
 
 /*
- * Each renderer file owns one immutable draft and at most one published offer
+ * Each renderer file owns one immutable configuration and at most one published backend
  * per uninterrupted master interval.
- * The file identifies its draft; constraints_id identifies the generic native
- * offer. Preparation works with disabled video and changes no KMS state.
+ * The file identifies its configuration; constraints_id identifies the generic
+ * constraints entry. Configuration works with disabled video and changes no KMS state.
  * Replacement within an interval uses an independent renderer file. After the
- * bound master is reacquired, a drained endpoint becomes empty and may prepare
+ * bound master is reacquired, a drained endpoint becomes empty and may configure
  * a fresh generation. Publication requires a runnable worker, completed
  * private preparation and registered private images.
  * Only ordinary atomic CONSTRAINTS_ID selection changes the accepted backend.
  *
  * No renderer ioctl returns EAGAIN for readiness. ENODATA means missing
  * required storage or changed scene; EBUSY means retry is caller-driven.
- * poll prompts source dequeue, never carries descriptors or proves GPU work
+ * poll prompts job acquisition, never carries descriptors or proves GPU work
  * complete. Readability does not reserve a scene or a particular private image.
  * Withdrawal reports POLLHUP|POLLERR but leaves release/cleanup operations usable.
  */
 #define DRM_CASTKMS_RENDERER_STATE_EMPTY 0
-#define DRM_CASTKMS_RENDERER_STATE_DRAFT 1
+#define DRM_CASTKMS_RENDERER_STATE_CONFIGURED 1
 #define DRM_CASTKMS_RENDERER_STATE_PUBLISHING 2
 #define DRM_CASTKMS_RENDERER_STATE_PUBLISHED 3
 #define DRM_CASTKMS_RENDERER_STATE_WITHDRAWN 4
 
 /*
  * Advisory endpoint state under live issuer authority. PUBLISHED means a ready
- * offer was listed, not that KMS selected it. constraints_id is zero until
+ * backend was listed, not that KMS selected it. constraints_id is zero until
  * publication, and retained after withdrawal. Reserved output is zero.
  * Query reconciles a lost successful publication reply without creating another
- * offer. Revoked issuer authority returns an error; cleanup remains available.
+ * backend. Revoked issuer authority returns an error; cleanup remains available.
  */
 struct drm_castkms_renderer_query {
 	__u32 version;
@@ -287,15 +288,16 @@ struct drm_castkms_renderer_query {
 };
 
 /*
- * Prepare exactly one immutable whole-scene declaration on an empty endpoint.
+ * Configure exactly one immutable whole-scene declaration on an empty endpoint.
  * constraints points to constraints_size bytes. width/height are the exact
  * private-pool target within the declared output bounds; they need not match
- * the current mode. Flags/reserved must be zero. Success changes only the draft.
+ * the current mode. Flags/reserved must be zero. Success changes only the
+ * configuration.
  * A declaration without a usable allocation intersection with the output's
  * plane topology is EOPNOTSUPP. Failure leaves an empty endpoint retryable; a
  * second declaration is EALREADY.
  */
-struct drm_castkms_renderer_prepare_offer {
+struct drm_castkms_renderer_configure {
 	__u64 constraints;
 	__u32 constraints_size;
 	__u32 flags;
@@ -305,37 +307,37 @@ struct drm_castkms_renderer_prepare_offer {
 };
 
 /*
- * result points to drm_castkms_renderer_offer_result. Flags and reserved must
+ * result points to drm_castkms_renderer_publish_result. Flags and reserved must
  * be zero. ready_fence_fd is an already-materialized sync_file
  * covering all private preparation and coherency work, or -1 when that work
  * has already completed. The complete result is copied before native listing;
- * any failure leaves no new selectable offer and copied output must be ignored.
- * Success publishes the draft for the current master interval; repeating
+ * any failure leaves no new selectable backend and copied output must be ignored.
+ * Success publishes the configuration for the current master interval; repeating
  * publication in that interval is EALREADY. QUERY returns its identity without
  * publishing again. A pending readiness fence returns EBUSY; a failed fence
  * returns EREMOTEIO, with native status retained on the sync_file. Publication
- * never selects an offer or acknowledges a modeset.
+ * never selects a backend or acknowledges a modeset.
  */
-struct drm_castkms_renderer_publish_offer {
+struct drm_castkms_renderer_publish {
 	__u64 result;
 	__s32 ready_fence_fd;
 	__u32 flags;
 	__u64 reserved[2];
 };
 
-struct drm_castkms_renderer_offer_result {
+struct drm_castkms_renderer_publish_result {
 	__u64 constraints_id;
 	__u64 reserved[3];
 };
 
 /*
  * Idempotently stop selection and new admission for the endpoint's published
- * offer. Flags/reserved must be zero. Accepted state remains retained, and
- * outstanding reads still require RELEASE_SOURCE. Unpublished drafts return
+ * backend. Flags/reserved must be zero. Accepted state remains retained, and
+ * outstanding reads still require RELEASE_JOB. Unpublished configurations return
  * ENODATA. Withdrawal neither restores default KMS state nor completes native
  * accesses. Closing the renderer file instead ends the reporting channel.
  */
-struct drm_castkms_renderer_withdraw_offer {
+struct drm_castkms_renderer_withdraw {
 	__u32 flags;
 	__u32 reserved[3];
 };
@@ -356,8 +358,8 @@ struct drm_castkms_renderer_source_plane {
 
 
 /**
- * struct drm_castkms_renderer_release_source - resolve a source-to-private job
- * @job_id: job returned by RENDERER_DEQUEUE_SCENE
+ * struct drm_castkms_renderer_release_job - resolve a source-to-private job
+ * @job_id: job returned by RENDERER_ACQUIRE_JOB
  * @completion_fd: sync_file descriptor for SUBMITTED, otherwise -1
  * @kind: one DRM_CASTKMS_RENDERER_RELEASE_* value
  * @flags: must be zero
@@ -368,11 +370,11 @@ struct drm_castkms_renderer_source_plane {
  * a native fence covering every submitted source read and private-image write
  * and promises no later submission under this job. Repeating the accepted
  * release for the latest job succeeds. NO_ACCESS produces no private image
- * and leaves the scene eligible for another dequeue under a new job ID.
+ * and leaves the scene eligible for another acquisition under a new job ID.
  * That retry still requires current authority and open source-read admission;
  * it cannot reopen a source sealed or held by display preparation.
  */
-struct drm_castkms_renderer_release_source {
+struct drm_castkms_renderer_release_job {
 	__u64 job_id;
 	__s32 completion_fd;
 	__u32 kind;
@@ -381,7 +383,7 @@ struct drm_castkms_renderer_release_source {
 };
 
 /**
- * struct drm_castkms_renderer_dequeue_output - claim recipient output for a private image
+ * struct drm_castkms_renderer_acquire_output - claim recipient output for a private image
  * @result: pointer to writable struct drm_castkms_renderer_output
  * @image_id: completed renderer-private image to copy from
  * @flags: must be zero
@@ -389,12 +391,12 @@ struct drm_castkms_renderer_release_source {
  * @padding: must be zero
  *
  * Claims one ready capture destination for an independent private-to-recipient
- * stage. The private image must have completed RELEASE_SOURCE successfully.
+ * stage. The private image must have completed RELEASE_JOB successfully.
  * This operation acquires no compositor source read. ENODATA means no recipient
  * is ready for this image; EBUSY means another output claim is outstanding.
  * No descriptor is installed on failure. On success RELEASE_OUTPUT is required.
  */
-struct drm_castkms_renderer_dequeue_output {
+struct drm_castkms_renderer_acquire_output {
 	__u64 result;
 	__u64 image_id;
 	__u32 flags;
@@ -405,7 +407,7 @@ struct drm_castkms_renderer_dequeue_output {
 /**
  * struct drm_castkms_renderer_output - exact claimed recipient image
  * @job_id: endpoint-local output job identity
- * @image_id: private source image named by dequeue
+ * @image_id: private source image named by ACQUIRE_OUTPUT
  * @width: visible destination width
  * @height: visible destination height
  * @format: DRM fourcc destination format
@@ -432,7 +434,7 @@ struct drm_castkms_renderer_output {
 
 /**
  * struct drm_castkms_renderer_release_output - resolve private-to-recipient access
- * @job_id: job returned by RENDERER_DEQUEUE_OUTPUT
+ * @job_id: job returned by RENDERER_ACQUIRE_OUTPUT
  * @completion_fd: sync_file descriptor for SUBMITTED, otherwise -1
  * @kind: one DRM_CASTKMS_RENDERER_RELEASE_* value
  * @flags: must be zero
@@ -451,14 +453,14 @@ struct drm_castkms_renderer_release_output {
 };
 
 /* Complete-scene stream, native byte order. All records are eight-byte aligned.
- * DEQUEUE_SCENE binds one complete scene to a registered private image until
- * RELEASE_SOURCE. image_id names renderer-private storage registered on this
+ * ACQUIRE_JOB binds one complete scene to a registered private image until
+ * RELEASE_JOB. target_image_id names renderer-private storage registered on this
  * endpoint. It must not alias any source or recipient allocation. The worker
  * must isolate native source queues and mappings from downstream output waits.
  * A busy private image returns EBUSY without admitting source access. A new
- * dequeue withdraws retained content from the selected image before attempting
+ * acquisition withdraws retained content from the selected image before attempting
  * reuse; it never ends outstanding native access. Failed descriptor publication
- * admits no userspace access and permits retry with the same image_id.
+ * admits no userspace access and permits retry with the same target_image_id.
  * The result consists of a scene header, layer records with their color records,
  * then output color records. Layer order is back-to-front, with zpos ties in
  * KMS plane creation order. Source rectangles use unsigned 16.16 pixels;
@@ -466,13 +468,13 @@ struct drm_castkms_renderer_release_output {
  * Layers use premultiplied pixel alpha (opaque for formats without alpha), source
  * over an opaque black background. Plane color precedes blending; output color
  * follows blending. All unused memory-plane records contain fd -1 and zeros.
- * A producer already completed with an error makes dequeue return EREMOTEIO;
+ * A producer already completed with an error makes acquisition return EREMOTEIO;
  * its native errno is never interpreted as queue readiness. No files or source
  * claim are published on that failure. The failed scene is discarded; another
- * dequeue returns ENODATA until a new scene is accepted.
+ * acquisition returns ENODATA until a new scene is accepted.
  * The producer fd covers all layers and must complete successfully before any
  * source read; -1 denotes no outstanding producer fence. Retaining ordinary
- * DMA-BUF fds does not authorize reads after RELEASE_SOURCE.
+ * DMA-BUF fds does not authorize reads after RELEASE_JOB.
  * No descriptor is installed on failure, even after a partial metadata copy.
  * Allocate SCENE_MAX_BYTES for the result; a smaller capacity may return
  * ENOSPC without consuming the scene. Flags and reserved fields must be zero.
@@ -491,9 +493,9 @@ struct drm_castkms_renderer_release_output {
 #define DRM_CASTKMS_RENDERER_COLOR_MATRIX 3
 #define DRM_CASTKMS_RENDERER_COLOR_LUT 4
 
-struct drm_castkms_renderer_dequeue_scene {
+struct drm_castkms_renderer_acquire_job {
 	__u64 result;
-	__u64 image_id;
+	__u64 target_image_id;
 	__u32 capacity;
 	__u32 flags;
 	__u64 reserved;
@@ -503,8 +505,8 @@ struct drm_castkms_renderer_dequeue_scene {
  * retains one to four distinct DMA-BUFs, not their native format interpretation.
  * The renderer validates layout and import compatibility against its declared
  * constraints.
- * Registration requires a draft and its exact private-pool dimensions. A
- * published offer pins the complete registration set; no further registrations
+ * Registration requires a configuration and its exact private-pool dimensions. A
+ * published backend pins the complete registration set; no further registrations
  * may extend it. Registration alone authorizes no display-source access.
  * New names are positive and increasing;
  * rejected registration does not consume a name. Flags/reserved must be zero.
@@ -521,7 +523,7 @@ struct drm_castkms_renderer_register_image {
 	__u64 reserved[2];
 };
 
-/* Remove a name, not native work. A live offer pins its registrations. After
+/* Remove a name, not native work. A published backend pins its registrations. After
  * withdrawal/revocation, publishing or claimed source jobs still return EBUSY.
  * Once released, submitted native work independently retains storage and its
  * accounting. Successful removal is not a reuse or completion signal. Cleanup
@@ -658,41 +660,41 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_CREATE_AUDIO_CAPTURE 0x02
 #define DRM_CASTKMS_AUDIO_QUERY 0x01
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
-#define DRM_CASTKMS_CREATE_RENDERER_CONTROL 0x01
+#define DRM_CASTKMS_CREATE_RENDERER 0x01
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
 #define DRM_CASTKMS_MONITOR_ATTACH 0x02
 #define DRM_CASTKMS_MONITOR_DETACH 0x03
 #define DRM_CASTKMS_RENDERER_QUERY 0x00
-#define DRM_CASTKMS_RENDERER_PREPARE_OFFER 0x01
-#define DRM_CASTKMS_RENDERER_PUBLISH_OFFER 0x02
-#define DRM_CASTKMS_RENDERER_WITHDRAW_OFFER 0x03
+#define DRM_CASTKMS_RENDERER_CONFIGURE 0x01
+#define DRM_CASTKMS_RENDERER_PUBLISH 0x02
+#define DRM_CASTKMS_RENDERER_WITHDRAW 0x03
 #define DRM_CASTKMS_RENDERER_REGISTER_IMAGE 0x04
 #define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x05
-#define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x06
-#define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x07
-#define DRM_CASTKMS_RENDERER_DEQUEUE_OUTPUT 0x08
+#define DRM_CASTKMS_RENDERER_ACQUIRE_JOB 0x06
+#define DRM_CASTKMS_RENDERER_RELEASE_JOB 0x07
+#define DRM_CASTKMS_RENDERER_ACQUIRE_OUTPUT 0x08
 #define DRM_CASTKMS_RENDERER_RELEASE_OUTPUT 0x09
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
-	DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_PREPARE_OFFER,
-			struct drm_castkms_renderer_prepare_offer),
-	DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_PUBLISH_OFFER,
-			struct drm_castkms_renderer_publish_offer),
-	DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_WITHDRAW_OFFER,
-			struct drm_castkms_renderer_withdraw_offer),
+	DRM_IOCTL_CASTKMS_RENDERER_CONFIGURE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_CONFIGURE,
+			struct drm_castkms_renderer_configure),
+	DRM_IOCTL_CASTKMS_RENDERER_PUBLISH =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_PUBLISH,
+			struct drm_castkms_renderer_publish),
+	DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_WITHDRAW,
+			struct drm_castkms_renderer_withdraw),
 	DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_IMAGE,
 			struct drm_castkms_renderer_register_image),
 	DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE,
 			struct drm_castkms_renderer_unregister_image),
-	DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_DEQUEUE_SCENE,
-			struct drm_castkms_renderer_dequeue_scene),
+	DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_ACQUIRE_JOB,
+			struct drm_castkms_renderer_acquire_job),
 	DRM_IOCTL_CASTKMS_CREATE_AUDIO_CAPTURE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_AUDIO_CAPTURE,
 			struct drm_castkms_create_audio_capture),
@@ -702,9 +704,9 @@ enum {
 	DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_MONITOR_CONTROL,
 			 struct drm_castkms_create_monitor_control),
-	DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_RENDERER_CONTROL,
-			 struct drm_castkms_create_renderer_control),
+	DRM_IOCTL_CASTKMS_CREATE_RENDERER =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_RENDERER,
+			struct drm_castkms_create_renderer),
 	DRM_IOCTL_CASTKMS_MONITOR_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_QUERY,
 			struct drm_castkms_monitor_query),
@@ -717,12 +719,12 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY,
 			struct drm_castkms_renderer_query),
-	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_SOURCE,
-			 struct drm_castkms_renderer_release_source),
-	DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
-			struct drm_castkms_renderer_dequeue_output),
+	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_JOB,
+			struct drm_castkms_renderer_release_job),
+	DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_ACQUIRE_OUTPUT,
+			struct drm_castkms_renderer_acquire_output),
 	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_OUTPUT,
 			struct drm_castkms_renderer_release_output),

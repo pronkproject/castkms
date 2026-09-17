@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Renderer control on registered displays, with real master and atomic callbacks.
+//! Renderer endpoints on registered displays, with real master and atomic callbacks.
 
 mod native_constraints;
-mod offer_drafts;
-mod offer_lifetimes;
-mod offer_reaping;
-mod offer_publication;
-mod offer_sources;
+mod configurations;
+mod backend_lifetimes;
+mod backend_reaping;
+mod publication;
+mod backend_sources;
 mod endpoints;
 mod endpoint_streams;
 mod endpoint_withdrawal;
 mod endpoint_outputs;
 mod native_host_images;
 mod issuer_lifetime;
-mod multi_output_offers;
+mod multi_output_backends;
 pub(super) mod private_images;
 
 use super::*;

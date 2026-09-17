@@ -39,12 +39,12 @@ unsafe impl AsBytes for ResultRecord {}
 
 const _: () = {
     assert!(core::mem::size_of::<Request>()
-        == core::mem::size_of::<uapi::drm_castkms_renderer_dequeue_output>());
+        == core::mem::size_of::<uapi::drm_castkms_renderer_acquire_output>());
     assert!(core::mem::size_of::<ResultRecord>()
         == core::mem::size_of::<uapi::drm_castkms_renderer_output>());
 };
 
-pub(super) fn dequeue(endpoint: &Endpoint, arg: usize) -> Result {
+pub(super) fn acquire(endpoint: &Endpoint, arg: usize) -> Result {
     let request = UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Request>())
         .reader().read::<Request>()?;
     if request.result == 0 || request.image_id == 0 || request.flags != 0

@@ -5,7 +5,10 @@
 mod stream;
 mod output;
 
-use super::{draft::Draft, offer::Offer, permission::Access, private_pool::Pool};
+use super::{
+    configuration::Configuration, permission::Access, private_pool::Pool,
+    publication::Publication,
+};
 use crate::{execution::capabilities::Profile, Driver};
 use kernel::{
     dma_buf::DmaBuf,
@@ -17,9 +20,9 @@ use kernel::{
 
 enum State {
     Empty,
-    Draft { draft: Arc<Draft>, pool: Pool },
+    Configured { configuration: Arc<Configuration>, pool: Pool },
     Publishing,
-    Ready { offer: Offer, pool: Pool, source: stream::Stream, output: output::Stream },
+    Ready { publication: Publication, pool: Pool, source: stream::Stream, output: output::Stream },
     Closed,
 }
 
@@ -27,7 +30,7 @@ enum State {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Phase {
     Empty,
-    Draft,
+    Configured,
     Publishing,
     Published,
     Withdrawn,
@@ -38,7 +41,7 @@ pub(crate) struct Description {
     pub(crate) constraints_id: u64,
 }
 
-/// One worker generation at a time. A same-master reacquisition can prepare a fresh one.
+/// One worker generation at a time. A same-master reacquisition can configure a fresh one.
 #[pin_data(PinnedDrop)]
 pub(crate) struct Endpoint {
     access: Access,
@@ -63,14 +66,16 @@ impl Endpoint {
         let (retired, revocation, stale_id) = {
             let mut state = self.state.lock();
             match &*state {
-                State::Draft { draft, .. } if draft.interval() != interval => (
+                State::Configured { configuration, .. } if configuration.interval() != interval => (
                     Some(core::mem::replace(&mut *state, State::Empty)),
                     None,
                     None,
                 ),
-                State::Ready { offer, source, output, .. } if offer.interval() != interval => {
-                    let id = offer.entry().id();
-                    let revocation = Some(offer.revocation());
+                State::Ready { publication, source, output, .. }
+                    if publication.interval() != interval =>
+                {
+                    let id = publication.entry().id();
+                    let revocation = Some(publication.revocation());
                     let retired = if source.idle() && output.idle() {
                         Some(core::mem::replace(&mut *state, State::Empty))
                     } else {
@@ -91,8 +96,8 @@ impl Endpoint {
         if let Some(id) = stale_id {
             let retired = {
                 let mut state = self.state.lock();
-                if matches!(&*state, State::Ready { offer, source, output, .. }
-                    if offer.entry().id() == id && offer.interval() != interval
+                if matches!(&*state, State::Ready { publication, source, output, .. }
+                    if publication.entry().id() == id && publication.interval() != interval
                         && source.idle() && output.idle())
                 {
                     Some(core::mem::replace(&mut *state, State::Empty))
@@ -109,7 +114,10 @@ impl Endpoint {
     /// Failed preparation leaves an empty endpoint available for retry.
     pub(crate) fn declare(&self, profile: Profile, dimensions: [u32; 2]) -> Result {
         self.refresh_generation()?;
-        let draft = Arc::new(Draft::new(self.access.clone(), profile, dimensions)?, GFP_KERNEL)?;
+        let configuration = Arc::new(
+            Configuration::new(self.access.clone(), profile, dimensions)?,
+            GFP_KERNEL,
+        )?;
         let pool = Pool::new()?;
         let mut state = self.state.lock();
         match &*state {
@@ -117,9 +125,9 @@ impl Endpoint {
             State::Closed => return Err(EKEYREVOKED),
             _ => return Err(EALREADY),
         }
-        let interval = draft.interval();
+        let interval = configuration.interval();
         self.access.with_output_interval(interval, || {
-            *state = State::Draft { draft, pool };
+            *state = State::Configured { configuration, pool };
             Ok(())
         })
     }
@@ -133,11 +141,11 @@ impl Endpoint {
         self.refresh_generation()?;
         let mut state = self.state.lock();
         match &mut *state {
-            State::Draft { draft, pool } => {
-                if dimensions != draft.dimensions() {
+            State::Configured { configuration, pool } => {
+                if dimensions != configuration.dimensions() {
                     return Err(EINVAL);
                 }
-                pool.insert(id, || draft.register_image(buffers))
+                pool.insert(id, || configuration.register_image(buffers))
             }
             State::Closed => Err(EKEYREVOKED),
             State::Empty => Err(ENODATA),
@@ -149,7 +157,7 @@ impl Endpoint {
         let retired = {
             let mut state = self.state.lock();
             match &mut *state {
-                State::Draft { pool, .. } => pool.remove(id)?,
+                State::Configured { pool, .. } => pool.remove(id)?,
                 State::Ready { pool, source, .. } => {
                     if source.references(id) {
                         return Err(EBUSY);
@@ -170,7 +178,7 @@ impl Endpoint {
     }
 
     /// Prepare outside endpoint exclusion, then serialize reply, listing and owner install.
-    /// No fallible operation follows successful listing. The reply callback follows Offer's
+    /// No fallible operation follows successful listing. The reply callback follows Publication's
     /// restrictions; closing concurrently cannot leave a ready unowned native entry.
     pub(crate) fn publish(
         &self,
@@ -181,7 +189,7 @@ impl Endpoint {
         let resources = {
             let mut state = self.state.lock();
             match &*state {
-                State::Draft { .. } => (),
+                State::Configured { .. } => (),
                 State::Closed => return Err(EKEYREVOKED),
                 State::Empty => return Err(ENODATA),
                 State::Publishing => return Err(EBUSY),
@@ -191,11 +199,12 @@ impl Endpoint {
         };
         let mut pending = Pending { endpoint: self, resources: Some(resources) };
         let registered = self.device.registration_guard().ok_or(ENODEV)?;
-        let Some(State::Draft { draft, pool }) = &pending.resources else {
+        let Some(State::Configured { configuration, pool }) = &pending.resources else {
             return Err(EIO);
         };
         // This owner is declared before the lock, so errors revoke it after lock release.
-        let offer = Offer::new(&registered, draft, pool, completion.as_deref())?;
+        let publication =
+            Publication::new(&registered, configuration, pool, completion.as_deref())?;
         let mut state = self.state.lock();
         if matches!(&*state, State::Closed) {
             return Err(EKEYREVOKED);
@@ -203,26 +212,26 @@ impl Endpoint {
         if !matches!(&*state, State::Publishing) {
             return Err(ECANCELED);
         }
-        // Extract all fallible bookkeeping before making the offer selectable.
-        let Some(State::Draft { draft, pool }) = pending.resources.take() else {
+        // Extract all fallible bookkeeping before making the publication selectable.
+        let Some(State::Configured { configuration, pool }) = pending.resources.take() else {
             return Err(EIO);
         };
-        let result = offer.publish(&registered, reply);
+        let result = publication.publish(&registered, reply);
         match result {
             Ok(()) => *state = State::Ready {
-                offer,
+                publication,
                 pool,
                 source: stream::Stream::new(),
                 output: output::Stream::new(),
             },
             Err(error) => {
                 drop(state);
-                pending.resources = Some(State::Draft { draft, pool });
+                pending.resources = Some(State::Configured { configuration, pool });
                 return Err(error);
             }
         }
         drop(state);
-        drop(draft);
+        drop(configuration);
         Ok(())
     }
 
@@ -237,11 +246,11 @@ impl Endpoint {
         let (phase, constraints_id) = match &*state {
             State::Closed => return Err(EKEYREVOKED),
             State::Empty => (Phase::Empty, 0),
-            State::Draft { .. } => (Phase::Draft, 0),
+            State::Configured { .. } => (Phase::Configured, 0),
             State::Publishing => (Phase::Publishing, 0),
-            State::Ready { offer, .. } => (
-                if offer.is_live() { Phase::Published } else { Phase::Withdrawn },
-                offer.entry().id(),
+            State::Ready { publication, .. } => (
+                if publication.is_live() { Phase::Published } else { Phase::Withdrawn },
+                publication.entry().id(),
             ),
         };
         Ok(Description { phase, constraints_id })
@@ -254,7 +263,7 @@ impl Endpoint {
         let revocation = {
             let state = self.state.lock();
             match &*state {
-                State::Ready { offer, .. } => offer.revocation(),
+                State::Ready { publication, .. } => publication.revocation(),
                 State::Closed => return Err(EKEYREVOKED),
                 State::Publishing => return Err(EBUSY),
                 _ => return Err(ENODATA),

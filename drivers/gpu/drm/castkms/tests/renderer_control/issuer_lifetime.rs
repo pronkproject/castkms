@@ -8,7 +8,7 @@ mod cases {
     use super::*;
 
     #[test]
-    fn disabled_outputs_can_issue_private_drafts() -> Result {
+    fn disabled_outputs_can_issue_private_configurations() -> Result {
         let display = CastKms::new_constraints(c"castkms-renderer-disabled-issuer", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
@@ -49,7 +49,7 @@ mod cases {
             check(endpoint.unregister_image(1) == Err(EBUSY))?;
             endpoint.release_source(id, Completion::WithoutAccess)?;
             check(hold.prepared()?.is_some())?;
-            // Releasing the job alone does not remove offer pins; issuer cleanup must
+            // Releasing the job alone does not remove publication pins; issuer cleanup must
             // have revoked the worker even while its renderer endpoint remains open.
             endpoint.unregister_image(1)?;
             owner.revoke();

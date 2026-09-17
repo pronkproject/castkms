@@ -29,8 +29,9 @@ The descriptor is bound to that ``drm_master`` identity, not permanently to
 the uninterrupted interval in which it was issued. While the bound master is
 absent or another master is current, control operations fail with ``EACCES``.
 If the same master becomes current again, the descriptor resumes with an empty
-generation after outstanding old jobs have been released. Drafts, offers,
-private registrations and jobs from the earlier interval never reactivate.
+generation after outstanding old jobs have been released. Configurations,
+published backends, private registrations and jobs from the earlier interval
+never reactivate.
 An administratively issued descriptor is narrower: owner-interval loss makes
 it permanently stale, including if the same ``drm_master`` later returns. The
 helper must issue a fresh endpoint for the new interval.
@@ -49,21 +50,22 @@ wrappers may be used. Never echo that request-only property's readback.
 Private preparation
 ===================
 
-Each renderer file owns one immutable draft and at most one published offer per
-uninterrupted master interval. The file identifies the draft; there is no
-separate draft handle. Independent files can prepare replacement workers
-concurrently within an interval, including with disabled video. A same-master
+Each renderer file owns one immutable configuration and at most one published
+backend per uninterrupted master interval. The file identifies the
+configuration; there is no separate configuration handle. Independent files
+can configure replacement workers concurrently within an interval, including
+with disabled video. A same-master
 reacquisition may reuse a drained file for a fresh generation. Preparation
 acquires no live source pixels and changes no KMS state.
 
-1. ``PREPARE_OFFER`` supplies bounded renderer constraints and exact private
+1. ``CONFIGURE`` supplies bounded renderer constraints and exact private
    pool width and height. A declaration with no allocation intersection with
    the output's plane topology returns ``EOPNOTSUPP``. Failure leaves an empty
    endpoint retryable.
 2. ``REGISTER_IMAGE`` supplies increasing positive image names and one to
-   four distinct read/write DMA-BUFs each. Dimensions must equal the draft's
+   four distinct read/write DMA-BUFs each. Dimensions must equal the configuration's
    pool dimensions. The trusted worker validates native layouts and imports.
-3. ``PUBLISH_OFFER`` closes configuration and supplies a materialized native
+3. ``PUBLISH`` closes configuration and supplies a materialized native
    sync_file covering private preparation, or fd -1 after all preparation and
    coherency work has completed. Pending work returns ``EBUSY``; terminal
    failure returns ``EREMOTEIO``, with native status retained on the sync_file.
@@ -79,7 +81,7 @@ leaves no new selectable entry; ignore partial output. Successful publication
 pins the complete private registration set and cannot be extended.
 Repeating publication returns ``EALREADY``; ``QUERY`` reconciles its identity
 without publishing again. Query state is advisory and requires live issuer
-authority. A published offer need not be selected.
+authority. A published backend need not be selected.
 
 Whole-scene declarations
 ========================
@@ -93,7 +95,7 @@ Unknown flags and reserved fields must be zero.
 Inclusive minimum and maximum dimensions describe full source framebuffers
 and composed output images independently. Equal bounds express exact size.
 The declared output interval must contain the private pool dimensions;
-the published offer is narrowed to that exact target. Changing dimensions
+the published backend is narrowed to that exact target. Changing dimensions
 requires a separately prepared endpoint.
 
 The constraints bound crop, fractional coordinates, positioning, scale ratios,
@@ -107,12 +109,12 @@ and byte alignment/minimum/maximum pitch bounds. Implicit layout is distinct
 from explicit LINEAR. A declaration proves neither import compatibility nor
 access. Tuples without an
 aligned size in the source bounds, or which cannot fit DRM's generic minimum
-pitch at their smallest aligned source width, are omitted; an offer with no
+pitch at their smallest aligned source width, are omitted; a configuration with no
 usable tuple is rejected before private preparation.
 When scaling is absent, both source-to-destination ratio bounds are exactly
 1.0 in unsigned 16.16 representation.
 Published generic KMS constraints carry the same per-format allocation limits,
-so a compositor can choose storage before selecting the offer. Per-plane
+so a compositor can choose storage before selecting the backend. Per-plane
 geometry records expose cropping, fractional source coordinates, destination
 position and scale ratios for every plane with allocation choices. Scalar
 rules expose usable YUV encoding and range values with YUV-plane applicability,
@@ -134,7 +136,7 @@ HOST requires checked CPU-readable linear storage, at most 8192 per axis.
 Source jobs
 ===========
 
-``DEQUEUE_SCENE`` names a registered private image and provides
+``ACQUIRE_JOB`` names a registered private image and provides
 ``DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES`` writable bytes. It reserves one
 source-to-private job, retaining the exact accepted constraints ID, content
 serial, buffers and producer completion. Only the selected live worker can
@@ -143,20 +145,20 @@ acquire source access. There is one outstanding job per endpoint.
 The scene includes primary, overlays and cursor in stable back-to-front order,
 source crop, destination geometry and ordered plane/output color operations.
 Sampling is nearest-neighbor; blending is premultiplied source-over against
-opaque black. A producer already completed with an error makes dequeue return
+opaque black. A producer already completed with an error makes acquisition return
 ``EREMOTEIO`` without publishing files or a source claim; its native error is
 not a queue-readiness result. The failed scene is discarded, so polling becomes
-idle and dequeue returns ``ENODATA`` until a new scene is accepted. The producer
+idle and acquisition returns ``ENODATA`` until a new scene is accepted. The producer
 fence covers all layers and must complete successfully before reading. Each
 exported descriptor is close-on-exec.
 Failed metadata copy or admission installs no descriptors and permits retry.
 
-``poll`` is an advisory dequeue prompt, not a reservation or completion
-signal. An unselected offer is idle. An outstanding job or busy private image
+``poll`` is an advisory acquisition prompt, not a reservation or completion
+signal. An unselected backend is idle. An outstanding job or busy private image
 returns ``EBUSY``; no changed scene returns ``ENODATA``. Withdrawal reports
 ``POLLHUP|POLLERR`` without resolving outstanding access.
 
-``RELEASE_SOURCE`` reports one of:
+``RELEASE_JOB`` reports one of:
 
 * ``NO_ACCESS``: neither source nor private-image access occurred. The same
   scene can be retried with a new job ID if authority and admission remain live.
@@ -184,8 +186,8 @@ accepted, ``DESCRIBE`` returns that exact worker's output configuration,
 ``QUEUE_OUTPUT`` supplies recipient-owned storage plus its reuse fence. A
 stream never grants access to the KMS source planes or renderer-private image.
 
-After ``RELEASE_SOURCE`` has produced a valid private image, the renderer calls
-``DEQUEUE_OUTPUT`` with its private image name. Success returns one writable
+After ``RELEASE_JOB`` has produced a valid private image, the renderer calls
+``ACQUIRE_OUTPUT`` with its private image name. Success returns one writable
 recipient DMA-BUF and checked layout under a new output job ID. Version 1
 destinations are single-plane linear XRGB8888. A destination allocation and
 its described image span may each be at most 512 MiB, and all endpoints share
@@ -205,19 +207,19 @@ a ready recipient claim; it remains advisory and never reserves the job.
 Withdrawal and replacement
 ==========================
 
-``WITHDRAW_OFFER`` idempotently stops selection and new admission. It does
+``WITHDRAW`` idempotently stops selection and new admission. It does
 not change accepted KMS state, restore HOST, or complete native accesses.
 Revoker close and issuer close revoke admission while the renderer file still
 accepts outstanding release and private-name cleanup. Final renderer-file close
 ends that reporting channel; unreported access is not fabricated as complete.
 
-A live offer pins its registered images. After withdrawal, unregister still
+A published backend pins its registered images. After withdrawal, unregister still
 returns ``EBUSY`` for a publishing, claimed or releasing job. Submitted
 native work retains storage independently after namespace removal.
 Successful unregister is not permission to reuse storage before completion.
 
 To return to HOST, the KMS client selects the listed fixed default with a
-compatible complete atomic scene. To replace a worker, prepare and publish
+compatible complete atomic scene. To replace a worker, configure and publish
 another endpoint, then select it atomically. Keep old reporting channels until
 their admitted work is resolved. Multi-output atomic selection uses ordinary
 KMS transaction semantics, with independent endpoint read accounting.
@@ -230,7 +232,7 @@ Unexpected worker loss is not transparent migration. A withdrawn selected
 binding remains retained; its buffers must not be reinterpreted as HOST.
 Master loss withdraws the old worker generation. Release its outstanding source
 and recipient jobs; once drained, the retained endpoint reports ``EMPTY`` when
-the same master returns and can prepare a new generation. A list-change event
+the same master returns and can configure a new generation. A list-change event
 only prompts re-query; it grants no authority.
 
 Remaining integration

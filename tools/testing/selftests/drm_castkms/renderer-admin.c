@@ -30,7 +30,7 @@ int main(int argc, char **argv)
 		.renderer_fd = -1,
 		.revoke_fd = -1,
 	};
-	struct drm_castkms_create_renderer_control create = {
+	struct drm_castkms_create_renderer create = {
 		.files = (uintptr_t)&files,
 	};
 	struct drm_castkms_renderer_query query = { 0 };
@@ -47,12 +47,12 @@ int main(int argc, char **argv)
 	create.crtc_id = resources->crtcs[0];
 	create.connector_id = resources->connectors[0];
 
-	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create, EACCES);
+	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EACCES);
 	create.flags = 2;
-	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create, EINVAL);
+	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EINVAL);
 	create.flags = DRM_CASTKMS_RENDERER_CREATE_ADMIN;
-	expect_error(master, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create, EBUSY);
-	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create) == 0);
+	expect_error(master, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EBUSY);
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(fcntl(files.renderer_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(files.revoke_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(close(helper) == 0);
@@ -62,7 +62,7 @@ int main(int argc, char **argv)
 
 	helper = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(helper >= 0 && !drmIsMaster(helper));
-	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create) == 0);
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query) == 0);
 	CHECK(query.version == DRM_CASTKMS_RENDERER_VERSION);
 	CHECK(drmDropMaster(master) == 0);
