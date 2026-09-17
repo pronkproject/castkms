@@ -71,6 +71,54 @@ pub const RGB888: u32 = fourcc_code(b'R', b'G', b'2', b'4');
 /// `[23:0]` B:G:R little endian.
 pub const BGR888: u32 = fourcc_code(b'B', b'G', b'2', b'4');
 
+/// `[15:0]` x:R:G:B 4:4:4:4 little endian.
+pub const XRGB4444: u32 = fourcc_code(b'X', b'R', b'1', b'2');
+/// `[15:0]` x:B:G:R 4:4:4:4 little endian.
+pub const XBGR4444: u32 = fourcc_code(b'X', b'B', b'1', b'2');
+/// `[15:0]` R:G:B:x 4:4:4:4 little endian.
+pub const RGBX4444: u32 = fourcc_code(b'R', b'X', b'1', b'2');
+/// `[15:0]` B:G:R:x 4:4:4:4 little endian.
+pub const BGRX4444: u32 = fourcc_code(b'B', b'X', b'1', b'2');
+/// `[15:0]` A:R:G:B 4:4:4:4 little endian.
+pub const ARGB4444: u32 = fourcc_code(b'A', b'R', b'1', b'2');
+/// `[15:0]` A:B:G:R 4:4:4:4 little endian.
+pub const ABGR4444: u32 = fourcc_code(b'A', b'B', b'1', b'2');
+/// `[15:0]` R:G:B:A 4:4:4:4 little endian.
+pub const RGBA4444: u32 = fourcc_code(b'R', b'A', b'1', b'2');
+/// `[15:0]` B:G:R:A 4:4:4:4 little endian.
+pub const BGRA4444: u32 = fourcc_code(b'B', b'A', b'1', b'2');
+
+/// `[15:0]` x:R:G:B 1:5:5:5 little endian.
+pub const XRGB1555: u32 = fourcc_code(b'X', b'R', b'1', b'5');
+/// `[15:0]` x:B:G:R 1:5:5:5 little endian.
+pub const XBGR1555: u32 = fourcc_code(b'X', b'B', b'1', b'5');
+/// `[15:0]` R:G:B:x 5:5:5:1 little endian.
+pub const RGBX5551: u32 = fourcc_code(b'R', b'X', b'1', b'5');
+/// `[15:0]` B:G:R:x 5:5:5:1 little endian.
+pub const BGRX5551: u32 = fourcc_code(b'B', b'X', b'1', b'5');
+/// `[15:0]` A:R:G:B 1:5:5:5 little endian.
+pub const ARGB1555: u32 = fourcc_code(b'A', b'R', b'1', b'5');
+/// `[15:0]` A:B:G:R 1:5:5:5 little endian.
+pub const ABGR1555: u32 = fourcc_code(b'A', b'B', b'1', b'5');
+/// `[15:0]` R:G:B:A 5:5:5:1 little endian.
+pub const RGBA5551: u32 = fourcc_code(b'R', b'A', b'1', b'5');
+/// `[15:0]` B:G:R:A 5:5:5:1 little endian.
+pub const BGRA5551: u32 = fourcc_code(b'B', b'A', b'1', b'5');
+
+/// `[31:0]` R:G:B:x 8:8:8:8 little endian.
+pub const RGBX8888: u32 = fourcc_code(b'R', b'X', b'2', b'4');
+/// `[31:0]` B:G:R:x 8:8:8:8 little endian.
+pub const BGRX8888: u32 = fourcc_code(b'B', b'X', b'2', b'4');
+
+/// `[31:0]` R:G:B:x 10:10:10:2 little endian.
+pub const RGBX1010102: u32 = fourcc_code(b'R', b'X', b'3', b'0');
+/// `[31:0]` B:G:R:x 10:10:10:2 little endian.
+pub const BGRX1010102: u32 = fourcc_code(b'B', b'X', b'3', b'0');
+/// `[31:0]` R:G:B:A 10:10:10:2 little endian.
+pub const RGBA1010102: u32 = fourcc_code(b'R', b'A', b'3', b'0');
+/// `[31:0]` B:G:R:A 10:10:10:2 little endian.
+pub const BGRA1010102: u32 = fourcc_code(b'B', b'A', b'3', b'0');
+
 /// `[63:0]` x:R:G:B 16:16:16:16 little endian.
 pub const XRGB16161616: u32 = fourcc_code(b'X', b'R', b'4', b'8');
 

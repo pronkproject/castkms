@@ -145,7 +145,7 @@ pub(crate) fn renderer(
         for format in profile.formats() {
             if !potential::FORMATS.contains(&format.fourcc)
                 || (plane.kind == Kind::Cursor && format.fourcc != fourcc::ARGB8888)
-                || format.planes as usize != crate::formats::plane_count(format.fourcc)
+                || format.planes as usize != potential::plane_count(format.fourcc)
             {
                 continue;
             }
