@@ -1,8 +1,8 @@
 .. SPDX-License-Identifier: GPL-2.0-only
 
-=====================================
-CastKMS renderer constraints protocol
-=====================================
+===================================
+CastKMS userspace renderer protocol
+===================================
 
 Integration boundary
 ====================

@@ -495,6 +495,17 @@ struct drm_castkms_renderer_release_output {
 #define DRM_CASTKMS_RENDERER_COLOR_OP_MATRIX 3
 #define DRM_CASTKMS_RENDERER_COLOR_OP_LUT 4
 
+/**
+ * struct drm_castkms_renderer_acquire_job - acquire one source-to-private job
+ * @result: pointer to writable struct drm_castkms_renderer_job storage
+ * @target_image_id: registered private image to receive the rendered result
+ * @capacity: writable bytes at @result, at most DRM_CASTKMS_RENDERER_JOB_MAX_BYTES
+ * @flags: must be zero
+ * @reserved: must be zero
+ *
+ * ENOSPC leaves the job available for retry and installs no descriptors.
+ * Success requires a matching RENDERER_RELEASE_JOB.
+ */
 struct drm_castkms_renderer_acquire_job {
 	__u64 result;
 	__u64 target_image_id;
@@ -538,6 +549,20 @@ struct drm_castkms_renderer_unregister_image {
 	__u32 reserved;
 };
 
+/**
+ * struct drm_castkms_renderer_job - accepted KMS state for one rendering job
+ * @version: DRM_CASTKMS_RENDERER_JOB_VERSION
+ * @bytes: complete job packet size, including plane and color-op records
+ * @job_id: endpoint-local identity required by RENDERER_RELEASE_JOB
+ * @constraints_id: exact accepted renderer constraints entry
+ * @content_serial: output content identity used to suppress unchanged jobs
+ * @width: composed private-target width
+ * @height: composed private-target height
+ * @plane_count: number of following struct drm_castkms_renderer_plane records
+ * @acquire_fence_fd: close-on-exec source dependency sync_file, or -1
+ * @output_color_op_count: color-op records following all plane records
+ * @reserved: returned as zero
+ */
 struct drm_castkms_renderer_job {
 	__u32 version;
 	__u32 bytes;
@@ -552,6 +577,29 @@ struct drm_castkms_renderer_job {
 	__u32 reserved;
 };
 
+/**
+ * struct drm_castkms_renderer_plane - one accepted KMS plane
+ * @bytes: this record plus its following color-op records
+ * @role: one DRM_CASTKMS_RENDERER_PLANE_* value
+ * @zpos: accepted stacking position
+ * @format: source framebuffer DRM fourcc
+ * @modifier: source framebuffer DRM format modifier
+ * @width: full source framebuffer width
+ * @height: full source framebuffer height
+ * @src_x: unsigned 16.16 source x coordinate
+ * @src_y: unsigned 16.16 source y coordinate
+ * @src_w: unsigned 16.16 source width
+ * @src_h: unsigned 16.16 source height
+ * @crtc_x: signed destination x coordinate
+ * @crtc_y: signed destination y coordinate
+ * @crtc_w: destination width
+ * @crtc_h: destination height
+ * @color_encoding: one DRM_CASTKMS_YUV_ENCODING_* value
+ * @color_range: one DRM_CASTKMS_YUV_RANGE_* value
+ * @memory_plane_count: valid entries in @memory_planes
+ * @color_op_count: color-op records immediately following this plane
+ * @memory_planes: source-image memory planes; unused entries contain fd -1
+ */
 struct drm_castkms_renderer_plane {
 	__u32 bytes; /* Includes following color-op records. */
 	__u32 role;
@@ -584,6 +632,11 @@ struct drm_castkms_renderer_plane {
  * curves and the pipeline output clamp to 0..65535. Matrix offsets use the
  * same channel units, not normalized 0..1 units. Output operations are applied
  * in degamma-LUT, matrix, gamma-LUT order, omitting absent operations.
+ */
+/**
+ * struct drm_castkms_renderer_color_op - one ordered color operation
+ * @kind: one DRM_CASTKMS_RENDERER_COLOR_OP_* value
+ * @payload_bytes: bytes following this header for the operation payload
  */
 struct drm_castkms_renderer_color_op {
 	__u32 kind;
