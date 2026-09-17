@@ -14,6 +14,7 @@
 struct drm_constraints_list {
 	struct kref ref;
 	struct mutex lock;
+	wait_queue_head_t changes;
 	struct drm_constraints_domain *domain;
 	u32 crtc_id;
 	unsigned int limit;
@@ -41,6 +42,7 @@ drm_constraints_list_create(struct drm_constraints_domain *domain,
 		return ERR_PTR(-ENOMEM);
 	kref_init(&list->ref);
 	mutex_init(&list->lock);
+	init_waitqueue_head(&list->changes);
 	list->domain = drm_constraints_domain_get(domain);
 	list->crtc_id = drm_constraints_entry_crtc(initial);
 	list->limit = limit;
@@ -79,10 +81,33 @@ void drm_constraints_list_put(struct drm_constraints_list *list)
 }
 EXPORT_SYMBOL_GPL(drm_constraints_list_put);
 
+wait_queue_head_t *drm_constraints_list_waitqueue(struct drm_constraints_list *list)
+{
+	return &list->changes;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_list_waitqueue);
+
+int drm_constraints_list_observe(struct drm_constraints_list *list, u64 *generation)
+{
+	int ret = 0;
+
+	mutex_lock(&list->lock);
+	if (list->closed)
+		ret = -ESTALE;
+	else
+		*generation = list->info.generation;
+	mutex_unlock(&list->lock);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_list_observe);
+
 void drm_constraints_list_close(struct drm_constraints_list *list)
 {
 	mutex_lock(&list->lock);
-	list->closed = true;
+	if (!list->closed) {
+		list->closed = true;
+		wake_up_all(&list->changes);
+	}
 	mutex_unlock(&list->lock);
 }
 EXPORT_SYMBOL_GPL(drm_constraints_list_close);
@@ -103,6 +128,7 @@ static void advance_generation(struct drm_constraints_list *list)
 {
 	lockdep_assert_held(&list->lock);
 	list->info.generation++;
+	wake_up_all(&list->changes);
 }
 
 struct drm_constraints_entry *
