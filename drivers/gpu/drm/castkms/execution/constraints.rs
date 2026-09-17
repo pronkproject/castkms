@@ -27,6 +27,22 @@ pub(crate) struct Plane {
     pub(crate) kind: Kind,
 }
 
+fn check_planes(planes: &[Plane]) -> Result {
+    if planes.is_empty() || planes.len() > crate::scene::MAX_PLANES {
+        return Err(EINVAL);
+    }
+    for (index, plane) in planes.iter().enumerate() {
+        if plane.id == 0
+            || planes[..index]
+                .iter()
+                .any(|previous| previous.id == plane.id)
+        {
+            return Err(EINVAL);
+        }
+    }
+    Ok(())
+}
+
 fn bounds(minimum: [u32; 2], maximum: [u32; 2], ceiling: u32) -> Option<Size> {
     let maximum = [maximum[0].min(ceiling), maximum[1].min(ceiling)];
     if minimum[0] > maximum[0] || minimum[1] > maximum[1] {
@@ -48,18 +64,7 @@ pub(crate) fn renderer(
     planes: &[Plane],
     properties: &[Property],
 ) -> Result<ARef<Description>> {
-    if planes.is_empty() || planes.len() > crate::scene::MAX_PLANES {
-        return Err(EINVAL);
-    }
-    for (index, plane) in planes.iter().enumerate() {
-        if plane.id == 0
-            || planes[..index]
-                .iter()
-                .any(|previous| previous.id == plane.id)
-        {
-            return Err(EINVAL);
-        }
-    }
+    check_planes(planes)?;
     let limits = profile.limits();
     let output = bounds(
         limits.geometry.min_output,
