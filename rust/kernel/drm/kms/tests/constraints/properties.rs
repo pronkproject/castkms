@@ -44,12 +44,7 @@ mod cases {
         let size = Size::exact(640, 480);
         let description = Description::new(
             size,
-            &[Format::new(
-                id,
-                fourcc::NV12,
-                fourcc::FORMAT_MOD_LINEAR,
-                size,
-            )],
+            &[Format::implicit(id, fourcc::NV12, size)],
             &[
                 Property::unsigned_range(id, zpos, 2, 3),
                 Property::enum_values(

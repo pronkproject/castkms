@@ -231,15 +231,18 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 	formats = drm_constraints_description_formats(description, &count);
 	for_each_new_plane_in_state(update->state, plane, plane_state, i) {
 		struct drm_framebuffer *fb = plane_state->fb;
+		bool implicit;
 
 		if (plane_state->crtc != update->crtc->crtc)
 			continue;
 		if (!fb)
 			return -EINVAL;
+		implicit = !(fb->flags & DRM_MODE_FB_MODIFIERS);
 		for (j = 0; j < count; j++) {
-			if (!formats[j].flags && formats[j].plane_id == plane->base.id &&
+			if (implicit == !!(formats[j].flags & DRM_CONSTRAINTS_FORMAT_IMPLICIT) &&
+			    formats[j].plane_id == plane->base.id &&
 			    formats[j].format == fb->format->format &&
-			    formats[j].modifier == fb->modifier &&
+			    (implicit || formats[j].modifier == fb->modifier) &&
 			    size_matches(&formats[j].size, fb->width, fb->height))
 				break;
 		}
