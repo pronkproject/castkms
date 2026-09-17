@@ -685,6 +685,26 @@ mod tests {
     }
 
     #[test]
+    fn real_descriptions_preserve_directional_contract_coverage() -> Result {
+        let mut restricted = limits();
+        restricted.geometry.source = [1920, 1080];
+        restricted.geometry.crop = false;
+        restricted.geometry.position = false;
+        restricted.layers = 1;
+        restricted.roles = [1, 1, 0];
+
+        let broad = renderer(&profile(limits())?, &planes())?;
+        let narrow = renderer(&profile(restricted)?, &planes())?;
+        let host = host(&planes(), &[])?;
+
+        assert!(broad.covers(&narrow));
+        assert!(!narrow.covers(&broad));
+        assert!(!host.covers(&narrow));
+        assert!(host.covers(&host));
+        Ok(())
+    }
+
+    #[test]
     fn unsupported_roles_do_not_advertise_allocations() -> Result {
         let mut limits = limits();
         limits.roles = [1, 0, 0];
