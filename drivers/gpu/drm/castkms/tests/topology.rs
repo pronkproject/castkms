@@ -7,6 +7,59 @@ use super::*;
 #[kunit_tests(rust_castkms_topology)]
 mod cases {
     use super::*;
+    use kernel::drm::kms::plane::RawPlane;
+
+    #[test]
+    fn allocation_descriptions_use_each_outputs_actual_planes() -> Result {
+        for (count, cursor, overlay) in [
+            (1, false, false),
+            (2, true, false),
+            (2, false, true),
+            (8, true, true),
+        ] {
+            let fixture =
+                Fixture::new_features(c"castkms-allocation-topology", count, cursor, overlay)?;
+            let stride = 1 + usize::from(cursor);
+            for index in 0..count as usize {
+                let crtc = fixture.drm.crtc_at(index)?;
+                let topology = crtc.allocation_topology()?;
+                let planes = topology.planes();
+                check(planes.len() == stride + if overlay { 8 } else { 0 })?;
+                check(planes[0].id == fixture.drm.plane_at(index * stride)?.object_id())?;
+                check(planes[0].kind == scene::Kind::Primary)?;
+                if cursor {
+                    check(planes[1].id == fixture.drm.plane_at(index * stride + 1)?.object_id())?;
+                    check(planes[1].kind == scene::Kind::Cursor)?;
+                }
+                if overlay {
+                    for offset in 0..8 {
+                        check(
+                            planes[stride + offset].id
+                                == fixture
+                                    .drm
+                                    .plane_at(count as usize * stride + offset)?
+                                    .object_id(),
+                        )?;
+                        check(planes[stride + offset].kind == scene::Kind::Overlay)?;
+                    }
+                }
+                let description = execution::constraints::host(planes, &[])?;
+                check(
+                    description
+                        .formats()
+                        .iter()
+                        .all(|format| planes.iter().any(|plane| plane.id == format.plane_id())),
+                )?;
+                for other in 0..count as usize {
+                    if other != index {
+                        let other_primary = fixture.drm.plane_at(other * stride)?.object_id();
+                        check(!planes.iter().any(|plane| plane.id == other_primary))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn one_through_eight_outputs_construct() -> Result {

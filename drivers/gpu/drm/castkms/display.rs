@@ -26,7 +26,10 @@ use kernel::{
         Device, //
     },
     prelude::*,
-    sync::Arc, //
+    sync::{
+        Arc,
+        SetOnce, //
+    }, //
 };
 use plane::{RawPlane, RawPlaneState};
 
@@ -38,6 +41,7 @@ pub(super) struct Plane {
 pub(super) struct Crtc {
     pub(super) display: Arc<super::device::Display>,
     transition_property: AtomicU32,
+    allocation_topology: SetOnce<super::execution::constraints::Topology>,
 }
 #[pin_data]
 pub(super) struct Encoder {}
@@ -420,6 +424,7 @@ impl crtc::DriverCrtc for Crtc {
         try_pin_init!(Self {
             display: display.clone(),
             transition_property: AtomicU32::new(0),
+            allocation_topology: SetOnce::new(),
         })
     }
 
@@ -491,6 +496,11 @@ impl crtc::DriverCrtc for Crtc {
 }
 
 impl Crtc {
+    #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+    pub(crate) fn allocation_topology(&self) -> Result<&super::execution::constraints::Topology> {
+        self.allocation_topology.as_ref().ok_or(ENODEV)
+    }
+
     fn publish_scene(commit: &crtc::CrtcAtomicCommit<'_, Self>) {
         let Some(source) = commit.preparation_source() else {
             commit.crtc().display.output.close();
@@ -624,7 +634,9 @@ impl KmsDriver for Driver {
 
     fn create_objects(dev: &UnregisteredKmsDevice<'_, Self>) -> Result {
         dev.enable_preparation(8)?;
+        let mut allocations = KVec::with_capacity(dev.displays.len(), GFP_KERNEL)?;
         for (index, display) in dev.displays.iter().enumerate() {
+            let mut allocation_planes = KVec::new();
             let plane = plane::UnregisteredPlane::<Plane>::new(
                 dev,
                 0,
@@ -664,6 +676,23 @@ impl KmsDriver for Driver {
             };
             let crtc =
                 crtc::UnregisteredCrtc::<Crtc>::new(dev, plane, cursor, None, display.clone())?;
+            allocation_planes.push(
+                super::execution::constraints::Plane {
+                    id: plane.object_id(),
+                    kind: scene::Kind::Primary,
+                },
+                GFP_KERNEL,
+            )?;
+            if let Some(cursor) = cursor {
+                allocation_planes.push(
+                    super::execution::constraints::Plane {
+                        id: cursor.object_id(),
+                        kind: scene::Kind::Cursor,
+                    },
+                    GFP_KERNEL,
+                )?;
+            }
+            allocations.push((crtc, allocation_planes), GFP_KERNEL)?;
             let transition = crtc.attach_replayable_range_property(
                 c"CASTKMS_TRANSITION", 0, u64::MAX, 0,
             )?;
@@ -705,6 +734,21 @@ impl KmsDriver for Driver {
                     plane.create_srgb_matrix_pipeline()?;
                 }
                 plane.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
+                for (_, allocation_planes) in &mut allocations {
+                    allocation_planes.push(
+                        super::execution::constraints::Plane {
+                            id: plane.object_id(),
+                            kind: scene::Kind::Overlay,
+                        },
+                        GFP_KERNEL,
+                    )?;
+                }
+            }
+        }
+        for (crtc, planes) in allocations {
+            let topology = super::execution::constraints::Topology::new(planes)?;
+            if !crtc.allocation_topology.populate(topology) {
+                return Err(EEXIST);
             }
         }
         Ok(())
