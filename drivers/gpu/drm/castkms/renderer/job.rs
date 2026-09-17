@@ -122,10 +122,12 @@ impl SourceJob {
     /// Retain the producer wait captured when KMS accepted this scene.
     pub(crate) fn producer_completion(&self) -> Result<Option<ARef<Fence>>> {
         let completion = self.scene.producer_completion()?;
-        match self.scene.producer_result() {
-            Ok(()) => Ok(None),
-            Err(EAGAIN) => Ok(completion),
-            Err(error) => Err(error),
+        match self.scene.producer_state() {
+            kernel::dma_fence::Status::Complete(Ok(())) => Ok(None),
+            kernel::dma_fence::Status::Pending => Ok(completion),
+            // Native status remains on the producer fence. Do not expose its errno
+            // as protocol readiness (for example EAGAIN, EBUSY or ENODATA).
+            kernel::dma_fence::Status::Complete(Err(_)) => Err(EREMOTEIO),
         }
     }
 

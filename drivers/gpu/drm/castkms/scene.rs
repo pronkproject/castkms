@@ -166,20 +166,31 @@ impl Scene {
         }
     }
 
-    pub(super) fn producer_result(&self) -> Result {
+    /// Keep terminal native errors distinct from unfinished producer work.
+    pub(super) fn producer_state(&self) -> kernel::dma_fence::Status {
+        use kernel::dma_fence::Status;
+
         let mut pending = false;
         for records in self.layers().filter_map(|layer| layer.producer.as_ref()) {
             for fence in records.iter() {
                 match fence.status() {
-                    kernel::dma_fence::Status::Pending => pending = true,
-                    kernel::dma_fence::Status::Complete(result) => result?,
+                    Status::Pending => pending = true,
+                    Status::Complete(Err(error)) => return Status::Complete(Err(error)),
+                    Status::Complete(Ok(())) => (),
                 }
             }
         }
         if pending {
-            Err(EAGAIN)
+            Status::Pending
         } else {
-            Ok(())
+            Status::Complete(Ok(()))
+        }
+    }
+
+    pub(super) fn producer_result(&self) -> Result {
+        match self.producer_state() {
+            kernel::dma_fence::Status::Pending => Err(EAGAIN),
+            kernel::dma_fence::Status::Complete(result) => result,
         }
     }
 

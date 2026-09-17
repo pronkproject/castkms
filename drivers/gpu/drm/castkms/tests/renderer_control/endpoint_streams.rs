@@ -22,7 +22,7 @@ mod cases {
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
             check(endpoint.source_readable()?)?;
-            let pending = endpoint.begin_source(1)?;
+            let mut pending = endpoint.begin_source(1)?;
             check(pending.constraints_id() == entry.id())?;
             check(!endpoint.source_readable()?)?;
             let first = pending.id();
@@ -53,6 +53,38 @@ mod cases {
                 check(endpoint.begin_source(1).err() == Some(ENODATA))?;
                 device.atomic_update(|state| state.set_crtc_config(crtc, Some(scanout)))?;
             }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn terminal_producer_errors_never_become_source_readiness() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-producer-error", 1)?;
+        with_registered_display(&display, |device, crtc, connector, scanout, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.publish(|_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            for error in [EAGAIN, EBUSY, ENODATA, EIO] {
+                let mut producer = ManualFence::new()?;
+                producer.complete(Err(error))?;
+                device.atomic_update(|mut state| {
+                    state.as_mut().set_crtc_config(crtc, Some(scanout))?;
+                    state.add_crtc_state(crtc)?.set_constraints(&entry)?;
+                    state.add_plane_state(crtc.primary_plane())?
+                        .set_producer_fence(Some(producer.fence()));
+                    Ok(())
+                })?;
+                let mut pending = endpoint.begin_source(1)?;
+                check(pending.producer_completion().err() == Some(EREMOTEIO))?;
+                let mut installed = false;
+                check(pending.publish(|| installed = true) == Err(EREMOTEIO))?;
+                check(!installed && !endpoint.source_readable()?)?;
+                check(endpoint.begin_source(1).err() == Some(ENODATA))?;
+                check(producer.fence().status() == Status::Complete(Err(error)))?;
+            }
+            device.atomic_update(|state| state.set_crtc_config(crtc, Some(scanout)))?;
+            check(endpoint.begin_source(1)?.producer_completion()?.is_none())?;
             Ok(())
         })
     }

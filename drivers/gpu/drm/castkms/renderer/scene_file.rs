@@ -157,11 +157,12 @@ pub(super) fn dequeue(endpoint: &Endpoint, arg: usize) -> Result {
         return Err(EINVAL);
     }
     let address = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
-    let pending = endpoint.begin_source(request.image_id)?;
+    let mut pending = endpoint.begin_source(request.image_id)?;
+    let producer = pending.producer_completion()?;
     let scene = pending.scene_description()?;
     let mut encoded = Encoding::new()?;
     let mut outputs = KVec::with_capacity(scene.layers.len() * 4 + 1, GFP_KERNEL)?;
-    let producer = match pending.producer_completion()? {
+    let producer = match producer {
         Some(fence) => reserve(&mut outputs, fence.create_sync_file()?)?,
         None => -1,
     };

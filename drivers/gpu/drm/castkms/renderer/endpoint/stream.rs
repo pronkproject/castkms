@@ -100,6 +100,7 @@ impl Endpoint {
             id,
             image: image_id,
             serial: 0,
+            failed_producer: false,
             job: None,
             completed: None,
         };
@@ -187,6 +188,7 @@ pub(crate) struct Pending<'a> {
     id: u64,
     image: u64,
     serial: u64,
+    failed_producer: bool,
     job: Option<RenderJob>,
     completed: Option<UniqueArc<MaybeUninit<Rendered>>>,
 }
@@ -208,13 +210,20 @@ impl Pending<'_> {
         )
     }
 
-    pub(crate) fn producer_completion(&self) -> Result<Option<ARef<Fence>>> {
-        self.job.as_ref().ok_or(EINVAL)?.source().producer_completion()
+    /// A terminal producer error discards this serial when the unpublished claim
+    /// is dropped, so polling cannot repeatedly report the same unusable scene.
+    pub(crate) fn producer_completion(&mut self) -> Result<Option<ARef<Fence>>> {
+        let result = self.job.as_ref().ok_or(EINVAL)?.source().producer_completion();
+        self.failed_producer |= result.as_ref().err() == Some(&EREMOTEIO);
+        result
     }
 
     /// Install prepared files only while the exact entry and worker remain admitted.
     /// The transport finishes all fallible copyout first and supplies an infallible installer.
     pub(crate) fn publish(mut self, publish: impl FnOnce()) -> Result {
+        if self.failed_producer {
+            return Err(EREMOTEIO);
+        }
         let completed = self.completed.take().ok_or(EIO)?;
         let job = self.job.take().ok_or(EINVAL)?;
         let mut state = self.endpoint.state.lock();
@@ -253,6 +262,9 @@ impl Drop for Pending<'_> {
         let mut state = self.endpoint.state.lock();
         if let State::Ready { source, .. } = &mut *state {
             if matches!(source.slot, Slot::Publishing { id, .. } if id == self.id) {
+                if self.failed_producer {
+                    source.last_serial = Some(self.serial);
+                }
                 source.slot = Slot::Ready;
             }
         }
