@@ -4,6 +4,7 @@
 
 #include <linux/file.h>
 #include <linux/mman.h>
+#include <linux/mempool.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <drm/drm_drv.h>
@@ -28,10 +29,13 @@ struct space_fixture {
 	struct file *file;
 	wait_queue_entry_t wait;
 	atomic_t wakes;
+	atomic_t releases;
 };
 
 struct test_event {
 	struct drm_pending_event pending;
+	struct space_fixture *fixture;
+	struct mempool *pool;
 	struct drm_event payload;
 };
 
@@ -91,7 +95,19 @@ static void cancel_event(void *data)
 	}
 }
 
-static struct event_owner *new_event(struct kunit *test, struct space_fixture *f, u32 length)
+static void observe_release(struct drm_pending_event *pending)
+{
+	struct test_event *event = container_of(pending, struct test_event, pending);
+
+	atomic_inc(&event->fixture->releases);
+	if (event->pool)
+		mempool_free(event, event->pool);
+	else
+		kfree(event);
+}
+
+static struct event_owner *new_event_with_release(struct kunit *test, struct space_fixture *f,
+						 u32 length, bool notify)
 {
 	struct event_owner *owner = kunit_kzalloc(test, sizeof(*owner), GFP_KERNEL);
 	struct drm_file *priv = f->file->private_data;
@@ -104,7 +120,12 @@ static struct event_owner *new_event(struct kunit *test, struct space_fixture *f
 	KUNIT_ASSERT_NOT_NULL(test, event);
 	event->payload.type = DRM_EVENT_VBLANK;
 	event->payload.length = length;
-	ret = drm_event_reserve_init(f->dev, priv, &event->pending, &event->payload);
+	event->fixture = f;
+	if (notify)
+		ret = drm_event_reserve_init_with_release(f->dev, priv, &event->pending,
+							  &event->payload, observe_release);
+	else
+		ret = drm_event_reserve_init(f->dev, priv, &event->pending, &event->payload);
 	if (ret)
 		kfree(event);
 	KUNIT_ASSERT_EQ(test, ret, 0);
@@ -112,6 +133,11 @@ static struct event_owner *new_event(struct kunit *test, struct space_fixture *f
 	owner->event = event;
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, cancel_event, owner), 0);
 	return owner;
+}
+
+static struct event_owner *new_event(struct kunit *test, struct space_fixture *f, u32 length)
+{
+	return new_event_with_release(test, f, length, false);
 }
 
 static void publish_event(struct event_owner *owner)
@@ -232,6 +258,165 @@ static struct kunit_suite event_space_suite = {
 	.name = "drm_event_space",
 	.test_cases = event_space_cases,
 };
-kunit_test_suite(event_space_suite);
+
+static void consumption_notifies_disposal_once(struct kunit *test)
+{
+	struct space_fixture *f = new_fixture(test);
+	unsigned long address = user_page(test);
+	struct event_owner *owner = new_event_with_release(test, f, sizeof(struct drm_event), true);
+	loff_t offset = 0;
+
+	publish_event(owner);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 0);
+	KUNIT_EXPECT_EQ(test, drm_read(f->file, (char __user *)address,
+				      sizeof(struct drm_event) - 1, &offset), 0);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 0);
+	KUNIT_EXPECT_EQ(test, drm_read(f->file, (char __user *)1,
+				      sizeof(struct drm_event), &offset), -EFAULT);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 0);
+	KUNIT_EXPECT_EQ(test, drm_read(f->file, (char __user *)address,
+				      sizeof(struct drm_event), &offset), sizeof(struct drm_event));
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 1);
+	KUNIT_EXPECT_EQ(test, drm_read(f->file, (char __user *)address,
+				      sizeof(struct drm_event), &offset), -EAGAIN);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 1);
+}
+
+static void cancellation_notifies_disposal_once(struct kunit *test)
+{
+	struct space_fixture *f = new_fixture(test);
+	struct event_owner *owner = new_event_with_release(test, f, sizeof(struct drm_event), true);
+
+	cancel_event(owner);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 1);
+	cancel_event(owner);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 1);
+}
+
+static void queued_event_is_disposed_at_file_close(struct kunit *test)
+{
+	struct space_fixture *f = new_fixture(test);
+	struct event_owner *owner = new_event_with_release(test, f, sizeof(struct drm_event), true);
+
+	publish_event(owner);
+	kunit_release_action(test, detach_waiter, f);
+	kunit_release_action(test, close_file, f->file);
+	f->file = NULL;
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 1);
+}
+
+static void pending_events_remain_owned_after_file_close(struct kunit *test)
+{
+	struct space_fixture *f = new_fixture(test);
+	struct event_owner *cancelled =
+		new_event_with_release(test, f, sizeof(struct drm_event), true);
+	struct event_owner *sent = new_event_with_release(test, f, sizeof(struct drm_event), true);
+
+	kunit_release_action(test, detach_waiter, f);
+	kunit_release_action(test, close_file, f->file);
+	f->file = NULL;
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 0);
+	cancel_event(cancelled);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 1);
+	publish_event(sent);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 2);
+}
+
+static void failed_reservation_does_not_notify_disposal(struct kunit *test)
+{
+	struct space_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	struct event_owner *full = new_event(test, f, priv->event_space);
+	struct test_event *event = kzalloc_obj(*event);
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, event);
+	event->fixture = f;
+	event->payload.length = sizeof(event->payload);
+	ret = drm_event_reserve_init_with_release(f->dev, priv, &event->pending,
+							  &event->payload, observe_release);
+	KUNIT_EXPECT_EQ(test, ret, -ENOMEM);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 0);
+	if (!ret)
+		drm_event_cancel_free(f->dev, &event->pending);
+	else
+		kfree(event);
+	cancel_event(full);
+}
+
+static void ordinary_reservation_clears_disposal_callback(struct kunit *test)
+{
+	struct space_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	struct test_event *event = kzalloc_obj(*event);
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, event);
+	event->fixture = f;
+	event->payload.length = sizeof(event->payload);
+	event->pending.release = observe_release;
+	ret = drm_event_reserve_init(f->dev, priv, &event->pending, &event->payload);
+	if (ret)
+		kfree(event);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_PTR_EQ(test, event->pending.release, NULL);
+	drm_event_cancel_free(f->dev, &event->pending);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 0);
+}
+
+static void destroy_pool(void *data) { mempool_destroy(data); }
+
+static void disposal_returns_preallocated_storage(struct kunit *test)
+{
+	struct mempool *pool = mempool_create_kmalloc_pool(1, sizeof(struct test_event));
+	struct space_fixture *f;
+	struct test_event *event, *recycled;
+	unsigned long address;
+	loff_t offset = 0;
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, pool);
+	/* Keep the pool alive through file teardown if a read expectation fails. */
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, destroy_pool, pool), 0);
+	f = new_fixture(test);
+	address = user_page(test);
+	event = mempool_alloc_preallocated(pool);
+	KUNIT_ASSERT_NOT_NULL(test, event);
+	memset(event, 0, sizeof(*event));
+	event->fixture = f;
+	event->pool = pool;
+	event->payload.type = DRM_EVENT_VBLANK;
+	event->payload.length = sizeof(event->payload);
+	ret = drm_event_reserve_init_with_release(f->dev, f->file->private_data,
+						&event->pending, &event->payload, observe_release);
+	if (ret)
+		mempool_free(event, pool);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	drm_send_event(f->dev, &event->pending);
+	KUNIT_EXPECT_EQ(test, drm_read(f->file, (char __user *)address,
+				      sizeof(struct drm_event), &offset), sizeof(struct drm_event));
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->releases), 1);
+	recycled = mempool_alloc_preallocated(pool);
+	KUNIT_EXPECT_PTR_EQ(test, recycled, event);
+	if (recycled)
+		mempool_free(recycled, pool);
+}
+
+static struct kunit_case event_lifetime_cases[] = {
+	KUNIT_CASE(consumption_notifies_disposal_once),
+	KUNIT_CASE(cancellation_notifies_disposal_once),
+	KUNIT_CASE(queued_event_is_disposed_at_file_close),
+	KUNIT_CASE(pending_events_remain_owned_after_file_close),
+	KUNIT_CASE(failed_reservation_does_not_notify_disposal),
+	KUNIT_CASE(ordinary_reservation_clears_disposal_callback),
+	KUNIT_CASE(disposal_returns_preallocated_storage),
+	{}
+};
+
+static struct kunit_suite event_lifetime_suite = {
+	.name = "drm_event_lifetime",
+	.test_cases = event_lifetime_cases,
+};
+kunit_test_suites(&event_space_suite, &event_lifetime_suite);
 
 MODULE_LICENSE("GPL and additional rights");
