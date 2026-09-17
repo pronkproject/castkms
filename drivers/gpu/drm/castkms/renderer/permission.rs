@@ -38,6 +38,7 @@ use kernel::{
 /// Retained DRM objects must be released outside native master and modeset locks.
 pub(crate) struct Permission {
     target: Target,
+    interval: Option<Interval>,
 }
 
 impl Permission {
@@ -46,7 +47,23 @@ impl Permission {
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
     ) -> Result<Self> {
-        Ok(Self { target: Target::new(guard, crtc, connector)? })
+        Ok(Self {
+            target: Target::new(guard, crtc, connector)?,
+            interval: None,
+        })
+    }
+
+    /// Bind administrative issuance to exactly one uninterrupted owner interval.
+    pub(crate) fn administrative(
+        guard: &CurrentMasterGuard<'_, Driver>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+        interval: Interval,
+    ) -> Result<Self> {
+        Ok(Self {
+            target: Target::new(guard, crtc, connector)?,
+            interval: Some(interval),
+        })
     }
 }
 
@@ -141,9 +158,11 @@ pub(crate) struct WorkerRegistration {
 impl Access {
     /// Observe the current work generation while the bound master is current.
     pub(crate) fn current_interval(&self) -> Result<Interval> {
-        self.policy.permission.target.with_output_objects(|| {
-            self.authorize_output(|| self.device().authority.interval())
-        })
+        self.precheck_administrative_interval()?;
+        self.policy
+            .permission
+            .target
+            .with_output_objects(|| self.authorize_output(|| self.checked_interval()))
     }
 
     /// Track worker cleanup without granting pixels or extending the issuer lifetime.
@@ -155,7 +174,10 @@ impl Access {
         let permission = self.policy.workers.register(revocation)?;
         let device = self.device().renderer_workers.register(revocation)?;
         self.with_output(|| Ok(()))?;
-        Ok(WorkerRegistration { _permission: permission, _device: device })
+        Ok(WorkerRegistration {
+            _permission: permission,
+            _device: device,
+        })
     }
 
     /// Borrow the allocation device without authorizing access to display pixels.
@@ -181,6 +203,7 @@ impl Access {
     /// The callback follows Target::with_current's restrictions and must not revoke or
     /// release its owner. No returned observation authorizes a later unchecked operation.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce(Current<'_>) -> Result<R>) -> Result<R> {
+        self.precheck_administrative_interval()?;
         self.policy
             .permission
             .target
@@ -189,7 +212,11 @@ impl Access {
 
     /// Authorize output-scoped metadata without requiring enabled video or a scene.
     pub(crate) fn with_output<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        self.policy.permission.target.with_output_objects(|| self.authorize_output(f))
+        self.precheck_administrative_interval()?;
+        self.policy
+            .permission
+            .target
+            .with_output_objects(|| self.authorize_output(f))
     }
 
     /// Authorize work for one exact uninterrupted master interval.
@@ -198,9 +225,10 @@ impl Access {
         interval: Interval,
         f: impl FnOnce() -> Result<R>,
     ) -> Result<R> {
+        self.precheck_administrative_interval()?;
         self.policy.permission.target.with_output_objects(|| {
             self.authorize_output(|| {
-                if self.device().authority.interval()? != interval {
+                if self.checked_interval()? != interval {
                     return Err(ESTALE);
                 }
                 f()
@@ -209,12 +237,31 @@ impl Access {
     }
 
     fn authorize_output<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        let _ = self.device().authority.interval()?;
+        let _ = self.checked_interval()?;
         let revoked = self.policy.revoked.lock();
         if *revoked {
             return Err(EKEYREVOKED);
         }
         f()
+    }
+
+    fn checked_interval(&self) -> Result<Interval> {
+        let current = self.device().authority.interval();
+        let Some(expected) = self.policy.permission.interval else {
+            return current;
+        };
+        match current {
+            Ok(current) if current == expected => Ok(current),
+            Err(error) if error == ENODEV => Err(error),
+            _ => Err(ESTALE),
+        }
+    }
+
+    fn precheck_administrative_interval(&self) -> Result {
+        if self.policy.permission.interval.is_some() {
+            self.checked_interval()?;
+        }
+        Ok(())
     }
 
     /// Reject current source aliases without requiring enabled video or claiming pixels.
@@ -225,10 +272,11 @@ impl Access {
         interval: Interval,
         buffers: &[kernel::sync::aref::ARef<kernel::dma_buf::DmaBuf>],
     ) -> Result {
+        self.precheck_administrative_interval()?;
         self.policy.permission.target.with_output_objects(|| {
             self.display().output.with_accepted(|accepted| {
                 self.authorize_output(|| {
-                    if self.device().authority.interval()? != interval {
+                    if self.checked_interval()? != interval {
                         return Err(ESTALE);
                     }
                     if let Some(scene) = accepted.and_then(|accepted| accepted.scene) {
@@ -253,6 +301,7 @@ impl Access {
         registered: &Device<Driver, Registered>,
         f: impl FnOnce(Current<'_>, &LockedState<'_, Driver>) -> Result<R>,
     ) -> Result<R> {
+        self.precheck_administrative_interval()?;
         self.policy
             .permission
             .target
@@ -266,7 +315,7 @@ impl Access {
         current: Current<'_>,
         f: impl FnOnce(Current<'_>) -> Result<R>,
     ) -> Result<R> {
-        let _ = self.device().authority.interval()?;
+        let _ = self.checked_interval()?;
         let revoked = self.policy.revoked.lock();
         if *revoked {
             return Err(EKEYREVOKED);

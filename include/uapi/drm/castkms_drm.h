@@ -44,6 +44,8 @@
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_LIMITED (1U << DRM_CASTKMS_YUV_RANGE_LIMITED)
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_FULL (1U << DRM_CASTKMS_YUV_RANGE_FULL)
 
+#define DRM_CASTKMS_RENDERER_CREATE_ADMIN (1U << 0)
+
 /*
  * Native-endian immutable whole-scene contract. Exactly format_count records
  * follow this 128-byte header. Unknown flags and reserved fields must be zero.
@@ -199,15 +201,25 @@ struct drm_castkms_renderer_files {
  * @crtc_id: DRM object ID of the controlled CRTC
  * @connector_id: DRM object ID of the controlled connector
  * @files: pointer to writable struct drm_castkms_renderer_files output storage
- * @flags: must be zero
+ * @flags: zero, or DRM_CASTKMS_RENDERER_CREATE_ADMIN
  * @reserved: must be zero
  *
- * The calling DRM file must be the exact current master and hold both display
- * objects. The renderer descriptor grants no modesetting or capture access.
+ * With zero flags, the calling DRM file must be the exact current master and
+ * hold both display objects. DRM_CASTKMS_RENDERER_CREATE_ADMIN explicitly asks
+ * for administrative issuance and requires CAP_SYS_ADMIN in the initial user
+ * namespace. It binds to the independently observed current top-level owner
+ * interval, not the calling file's DRM master association. A caller which is
+ * itself current master must drop that incidental role before administrative
+ * issuance; absence of a distinct current owner returns EAGAIN. A target
+ * delegated through a DRM lease returns EBUSY.
+ *
+ * The renderer descriptor grants no modesetting or capture access.
  * Its operations authorize delegated rendering for this output and bound
  * drm_master identity. While that master is not current, control operations
  * fail with EACCES. Reacquiring the same master reactivates the descriptor,
  * but work and offers from the previous uninterrupted interval stay invalid.
+ * An administratively issued descriptor is instead permanently stale after
+ * its bound owner interval ends; the helper must issue a new descriptor.
  *
  * All request fields are input. Success returns zero after copying both output
  * descriptor numbers and installing their files. On failure neither descriptor

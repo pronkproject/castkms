@@ -137,6 +137,29 @@ static bool _drm_has_leased(struct drm_master *master, int id)
 	return false;
 }
 
+/**
+ * drm_master_holds_object_exclusively_locked - check unleased owner access
+ * @master: retained top-level master passed to drm_master_lock_current()
+ * @object: live mode object on the same device
+ *
+ * Checks that @master is the current top-level owner, that @object remains
+ * registered, and that no descendant lease contains it. This is intended for
+ * authority which must not overlap a lessee's independent display control.
+ *
+ * Context: The caller must hold the locks acquired by
+ * drm_master_lock_current(). The object must remain alive during the check.
+ *
+ * Returns: Whether the top-level master exclusively controls the object.
+ */
+bool drm_master_holds_object_exclusively_locked(struct drm_master *master,
+						const struct drm_mode_object *object)
+{
+	if (master->lessor || !drm_master_holds_object_locked(master, object))
+		return false;
+	return !_drm_has_leased(master, object->id);
+}
+EXPORT_SYMBOL_GPL(drm_master_holds_object_exclusively_locked);
+
 /* Called with idr_mutex held */
 bool _drm_lease_held(struct drm_file *file_priv, int id)
 {
