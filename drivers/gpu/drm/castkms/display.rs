@@ -342,7 +342,7 @@ impl CrtcState {
         }
         scene.finalize(state.content);
         scene.output_color = state.output_color.clone();
-        scene.set_binding(state.binding.as_deref());
+        scene.set_binding(state.binding.as_ref());
         state.checked_scene = Some(scene);
         Ok(())
     }
@@ -459,7 +459,7 @@ impl crtc::DriverCrtc for Crtc {
         if let Some(provider) = state.crtc().display.constraints.as_ref() {
             let entry = state.constraints_entry().ok_or(EINVAL)?;
             state.binding = if old.binding.as_ref().is_some_and(|binding|
-                core::ptr::eq(&***binding, entry))
+                core::ptr::eq(&**binding, entry))
             {
                 old.binding.clone()
             } else if !state.enabled() && !state.active() && state.plane_mask() == 0
@@ -534,7 +534,7 @@ impl Crtc {
         } else if !state.visible {
             let mut scene = scene::Scene::blank(state.blank_owner.clone());
             scene.output_color = state.output_color.clone();
-            scene.set_binding(state.binding.as_deref());
+            scene.set_binding(state.binding.as_ref());
             SceneUpdate::Replace(Some(scene))
         } else if old.visible && state.content == old.content
             && old.constraints_entry().map(core::ptr::from_ref)
@@ -559,7 +559,7 @@ impl Crtc {
             });
             scene.finalize(state.content);
             scene.output_color = state.output_color.clone();
-            scene.set_binding(state.binding.as_deref());
+            scene.set_binding(state.binding.as_ref());
             SceneUpdate::Replace(Some(scene))
         };
         commit.crtc().display.output.publish_with_configuration(

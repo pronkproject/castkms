@@ -17,7 +17,8 @@ use crate::{
 use kernel::{
     drm::constraints::{
         Domain,
-        Entry, //
+        Entry,
+        OpaqueEntry, //
     },
     prelude::*,
     sync::{
@@ -32,7 +33,49 @@ pub(crate) enum Backend {
     Renderer(Arc<Worker>),
 }
 
-pub(crate) type Binding = ARef<Entry<Backend>>;
+/// Accepted HOST state needs no provider-owned destructor in its native entry.
+/// Renderer entries independently retain their module and private worker resources.
+#[derive(Clone)]
+pub(crate) enum Binding {
+    Host(ARef<OpaqueEntry>),
+    Renderer(ARef<Entry<Backend>>),
+}
+
+impl Binding {
+    pub(crate) fn backend(&self) -> BackendRef<'_> {
+        match self {
+            Self::Host(_) => BackendRef::Host,
+            Self::Renderer(entry) => BackendRef::Renderer(entry.backend()),
+        }
+    }
+}
+
+pub(crate) enum BackendRef<'a> {
+    Host,
+    Renderer(kernel::sync::ArcBorrow<'a, Backend>),
+}
+
+impl core::ops::Deref for BackendRef<'_> {
+    type Target = Backend;
+
+    fn deref(&self) -> &Backend {
+        match self {
+            Self::Host => &Backend::Host,
+            Self::Renderer(backend) => backend,
+        }
+    }
+}
+
+impl core::ops::Deref for Binding {
+    type Target = OpaqueEntry;
+
+    fn deref(&self) -> &OpaqueEntry {
+        match self {
+            Self::Host(entry) => entry,
+            Self::Renderer(entry) => entry,
+        }
+    }
+}
 
 // SAFETY: The CastKMS module retains the enum's code and every owned resource destructor.
 #[vtable]

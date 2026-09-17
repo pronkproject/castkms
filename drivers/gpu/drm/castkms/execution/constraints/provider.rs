@@ -3,7 +3,7 @@
 //! Per-output native entry publication and exact backend resolution.
 
 use super::{
-    backend::Backend,
+    backend::{Backend, Binding},
     bindings::Bindings,
     Topology, //
 };
@@ -41,7 +41,7 @@ pub(crate) struct Provider {
     crtc: u32,
     output: Identity,
     topology: Arc<Topology>,
-    initial: ARef<Entry<Backend>>,
+    initial: ARef<OpaqueEntry>,
     bindings: Arc<Bindings<Backend>>,
     #[pin]
     closed: Mutex<bool>,
@@ -55,9 +55,9 @@ impl Provider {
         output: Identity,
         topology: Arc<Topology>,
     ) -> Result<Arc<Self>> {
-        let initial = Backend::Host.entry(&domain, crtc, &output, &topology)?;
+        let description = super::host(topology.planes(), &[])?;
+        let initial = OpaqueEntry::new_stateless(&domain, crtc, &description)?;
         let bindings = Arc::pin_init(Bindings::new(domain.clone(), crtc, CAPACITY), GFP_KERNEL)?;
-        bindings.insert(&initial)?;
         Arc::pin_init(
             pin_init!(Self {
                 domain,
@@ -72,7 +72,7 @@ impl Provider {
         )
     }
 
-    pub(crate) fn initial(&self) -> &Entry<Backend> {
+    pub(crate) fn initial(&self) -> &OpaqueEntry {
         &self.initial
     }
 
@@ -88,7 +88,7 @@ impl Provider {
     /// The caller stabilizes renderer authority and performs any fallible reply copy first.
     /// A failed native add rolls back index membership; neither path selects an entry.
     pub(crate) fn publish(&self, output: &Output<'_, Driver>, entry: &Entry<Backend>) -> Result {
-        if !core::ptr::eq(&**self.initial, output.default_entry()) {
+        if !core::ptr::eq(&*self.initial, output.default_entry()) {
             return Err(EINVAL);
         }
         let closed = self.closed.lock();
@@ -113,8 +113,11 @@ impl Provider {
     }
 
     /// Exact entry identity, never a cast from arbitrary native provider data.
-    pub(crate) fn resolve(&self, entry: &OpaqueEntry) -> Result<ARef<Entry<Backend>>> {
-        self.bindings.resolve(entry)
+    pub(crate) fn resolve(&self, entry: &OpaqueEntry) -> Result<Binding> {
+        if core::ptr::eq(&*self.initial, entry) {
+            return Ok(Binding::Host(self.initial.clone()));
+        }
+        self.bindings.resolve(entry).map(Binding::Renderer)
     }
 
     /// Reclaim unselected withdrawn listings and index ownership forgotten by native recovery.
@@ -122,7 +125,7 @@ impl Provider {
     /// neither revokes workers nor destroys independently retained accepted states or jobs.
     /// A failed cleanup may have forgotten earlier retired listings, never live selections.
     pub(crate) fn reap(&self, output: &Output<'_, Driver>) -> Result<usize> {
-        if !core::ptr::eq(&**self.initial, output.default_entry()) {
+        if !core::ptr::eq(&*self.initial, output.default_entry()) {
             return Err(EINVAL);
         }
         // These owners have function scope so every error releases the publication mutex
@@ -136,12 +139,12 @@ impl Provider {
                 return Err(ESHUTDOWN);
             }
             observed = output.snapshot(0)?;
-            if !observed.entries().any(|offer| core::ptr::eq(offer.entry, &**self.initial)) {
+            if !observed.entries().any(|offer| core::ptr::eq(offer.entry, &*self.initial)) {
                 return Err(ESTALE);
             }
             for offer in observed.entries() {
                 if offer.selectable || offer.entry.id() == observed.info().selected_id
-                    || core::ptr::eq(offer.entry, &**self.initial)
+                    || core::ptr::eq(offer.entry, &*self.initial)
                 {
                     continue;
                 }
