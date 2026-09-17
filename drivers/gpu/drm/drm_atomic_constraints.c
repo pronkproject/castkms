@@ -12,6 +12,7 @@
 #include <drm/drm_constraints_output.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_framebuffer.h>
+#include <drm/drm_gem.h>
 #include <drm/drm_fourcc.h>
 
 #include "drm_constraints_internal.h"
@@ -179,6 +180,25 @@ static bool size_matches(const struct drm_constraints_size *size, u32 width, u32
 		height >= size->min_height && height <= size->max_height;
 }
 
+static bool storage_matches(const struct drm_constraints_format *format,
+			    const struct drm_framebuffer *fb)
+{
+	unsigned int i;
+
+	for (i = 0; i < fb->format->num_planes; i++) {
+		bool imported = fb->obj[i] && drm_gem_is_imported(fb->obj[i]);
+		u32 origin = imported ? DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED :
+					DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE;
+
+		if (!(format->storage_flags & origin) ||
+		    !IS_ALIGNED(fb->pitches[i], format->pitch_alignment) ||
+		    !IS_ALIGNED(fb->offsets[i], format->offset_alignment) ||
+		    fb->pitches[i] > format->max_pitch)
+			return false;
+	}
+	return true;
+}
+
 struct constraints_update {
 	struct drm_atomic_commit *state;
 	struct drm_crtc_state *crtc;
@@ -292,7 +312,8 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 			    formats[j].plane_id == plane->base.id &&
 			    formats[j].format == fb->format->format &&
 			    (implicit || formats[j].modifier == fb->modifier) &&
-			    size_matches(&formats[j].size, fb->width, fb->height))
+			    size_matches(&formats[j].size, fb->width, fb->height) &&
+			    storage_matches(&formats[j], fb))
 				break;
 		}
 		if (j == count)

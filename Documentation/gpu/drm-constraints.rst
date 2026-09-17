@@ -53,7 +53,9 @@ origin. A memory plane's pitch and offset must satisfy the stated byte
 alignments, and its pitch must not exceed the advertised maximum. The record
 includes the format's memory-plane count so an allocator can size the complete
 framebuffer. Tiled layouts are not restricted to software-compositor
-capabilities.
+capabilities. Common atomic validation checks these requirements on every
+framebuffer memory plane; a missing optional GEM object is native storage, while
+an attached imported GEM object is imported storage.
 
 Scalar rules use the native DRM range, signed-range, enum or bitmask type.
 Signed bounds retain DRM's two's-complement unsigned representation. Enum

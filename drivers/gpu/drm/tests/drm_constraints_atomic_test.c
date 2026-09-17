@@ -211,6 +211,34 @@ new_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier
 	return new_layout_entry(test, f, format, modifier, backend, rules, rule_count, false);
 }
 
+static struct drm_constraints_entry *
+new_storage_entry(struct kunit *test, struct atomic_fixture *f, u32 storage_flags)
+{
+	const struct drm_constraints_size size = { 128, 64, 128, 64 };
+	const struct drm_constraints_format allocation = {
+		.plane_id = f->plane->base.id,
+		.format = DRM_FORMAT_ARGB8888,
+		.modifier = I915_FORMAT_MOD_X_TILED,
+		.size = size,
+		.storage_flags = storage_flags,
+		.pitch_alignment = 256,
+		.offset_alignment = 4096,
+		.max_pitch = 1024,
+	};
+	struct drm_constraints_description *description;
+	struct drm_constraints_entry *entry;
+
+	description = drm_constraints_description_create(&size, &allocation, 1, NULL, 0);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
+	entry = drm_constraints_entry_create(drm_constraints_device_domain(f->dev),
+		f->crtc->base.id, description, &entry_ops, &f->backends[2]);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, entry), 0);
+	return entry;
+}
+
 static struct drm_framebuffer *
 new_layout_fb(struct kunit *test, struct atomic_fixture *f, u32 format, u64 modifier,
 	      u32 width, bool implicit)
@@ -539,6 +567,32 @@ static void source_allocation_respects_exact_geometry(struct kunit *test)
 
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
 	KUNIT_EXPECT_EQ(test, run_update(state, check_update), -EINVAL);
+}
+
+static void source_allocation_respects_storage_requirements(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_constraints_entry *native = new_storage_entry(
+		test, f, DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE);
+	struct drm_constraints_entry *imported = new_storage_entry(
+		test, f, DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED);
+	struct drm_atomic_commit *state = new_update(test, f, native, f->tiled);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	f->tiled->pitches[0]++;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	f->tiled->pitches[0] = 1280;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	f->tiled->pitches[0] = 512;
+	f->tiled->offsets[0] = 1;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	f->tiled->offsets[0] = 0;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	drm_atomic_commit_clear(state);
+	state = new_update(test, f, imported, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
 }
 
 static void asynchronous_updates_are_not_admitted(struct kunit *test)
@@ -2191,6 +2245,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(withdrawal_after_check_prevents_installation),
 	KUNIT_CASE(selection_requires_modeset_permission),
 	KUNIT_CASE(source_allocation_respects_exact_geometry),
+	KUNIT_CASE(source_allocation_respects_storage_requirements),
 	KUNIT_CASE(asynchronous_updates_are_not_admitted),
 	KUNIT_CASE(transactions_may_include_outputs_without_constraints),
 	KUNIT_CASE(validation_includes_unchanged_active_planes),
