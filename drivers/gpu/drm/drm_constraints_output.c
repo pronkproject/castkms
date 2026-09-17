@@ -111,6 +111,7 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 	struct drm_constraints_description *description;
 	const struct drm_constraints_format *formats;
 	const struct drm_constraints_property *properties;
+	const struct drm_constraints_plane_geometry *plane_geometries;
 	const struct drm_constraints_plane_limit *plane_limits;
 	struct drm_plane *plane;
 	unsigned int count, format_count, format, i, j;
@@ -159,6 +160,23 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 			if (!found)
 				return -EINVAL;
 		}
+	}
+	plane_geometries = drm_constraints_description_plane_geometries(description, &count);
+	for (i = 0; i < count; i++) {
+		found = false;
+		drm_for_each_plane(plane, crtc->dev) {
+			if (plane->base.id != plane_geometries[i].plane_id ||
+			    !(plane->possible_crtcs & drm_crtc_mask(crtc)))
+				continue;
+			for (format = 0; format < format_count; format++)
+				if (formats[format].plane_id == plane->base.id) {
+					found = true;
+					break;
+				}
+			break;
+		}
+		if (!found)
+			return -EINVAL;
 	}
 	return 0;
 }

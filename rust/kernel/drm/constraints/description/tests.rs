@@ -221,4 +221,46 @@ mod cases {
         }
         Ok(())
     }
+
+    #[test]
+    fn plane_geometry_is_owned_bounded_and_compared() -> Result {
+        let size = Size::exact(128, 64);
+        let formats = [Format::new(7, fourcc::XRGB8888, 0, size)];
+        let broad = PlaneGeometry::new(7, true, true, true, 1 << 12, 1 << 20);
+        let narrow = PlaneGeometry::new(7, false, false, false, 1 << 16, 1 << 16);
+        let description = Description::new_with_geometry(size, &formats, &[], &[], &[narrow])?;
+        let geometries = description.plane_geometries();
+        assert_eq!(geometries.len(), 1);
+        assert_eq!(geometries[0].plane_id(), 7);
+        assert_eq!(geometries[0].operations(), (false, false, false));
+        assert_eq!(geometries[0].scale(), (1 << 16, 1 << 16));
+
+        let broad = Description::new_with_geometry(size, &formats, &[], &[], &[broad])?;
+        assert!(broad.covers(&description));
+        assert!(!description.covers(&broad));
+        assert!(Description::new(size, &formats, &[], &[])?.covers(&broad));
+        Ok(())
+    }
+
+    #[test]
+    fn native_validation_rejects_invalid_plane_geometry() -> Result {
+        let size = Size::exact(128, 64);
+        let formats = [Format::new(7, fourcc::XRGB8888, 0, size)];
+        for geometry in [
+            PlaneGeometry::new(0, true, true, true, 1, 2),
+            PlaneGeometry::new(7, true, true, true, 0, 2),
+            PlaneGeometry::new(7, true, true, true, 2, 1),
+        ] {
+            assert!(matches!(
+                Description::new_with_geometry(size, &formats, &[], &[], &[geometry]),
+                Err(EINVAL)
+            ));
+        }
+        let duplicate = PlaneGeometry::new(7, false, false, false, 1 << 16, 1 << 16);
+        assert!(matches!(
+            Description::new_with_geometry(size, &formats, &[], &[], &[duplicate; 2]),
+            Err(EEXIST)
+        ));
+        Ok(())
+    }
 }

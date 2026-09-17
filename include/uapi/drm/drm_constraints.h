@@ -43,6 +43,7 @@
 #define DRM_MODE_CONSTRAINTS_MAX_PROPERTIES 64U
 #define DRM_MODE_CONSTRAINTS_MAX_PLANE_LIMITS 64U
 #define DRM_MODE_CONSTRAINTS_MAX_PLANES_PER_LIMIT 64U
+#define DRM_MODE_CONSTRAINTS_MAX_PLANE_GEOMETRIES 64U
 
 #define DRM_MODE_CONSTRAINTS_SELECTABLE (1U << 0)
 #define DRM_MODE_CONSTRAINTS_RECORD_REQUIRED (1U << 0)
@@ -50,9 +51,13 @@
 #define DRM_MODE_CONSTRAINTS_RECORD_PLANE_FORMAT 2U
 #define DRM_MODE_CONSTRAINTS_RECORD_PROPERTY 3U
 #define DRM_MODE_CONSTRAINTS_RECORD_PLANE_LIMIT 4U
+#define DRM_MODE_CONSTRAINTS_RECORD_PLANE_GEOMETRY 5U
 #define DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT (1U << 0)
 #define DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE (1U << 0)
 #define DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_IMPORTED (1U << 1)
+#define DRM_MODE_CONSTRAINTS_GEOMETRY_CROP (1U << 0)
+#define DRM_MODE_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE (1U << 1)
+#define DRM_MODE_CONSTRAINTS_GEOMETRY_POSITION (1U << 2)
 
 #define DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED 0x04
 #define DRM_KMS_CONSTRAINTS_LIST_CLOSED (1U << 0)
@@ -198,7 +203,8 @@ struct drm_mode_constraints {
  * DRM_MODE_CONSTRAINTS_MAX_FORMATS format records and
  * DRM_MODE_CONSTRAINTS_MAX_PROPERTIES property records and
  * DRM_MODE_CONSTRAINTS_MAX_PLANE_LIMITS active-plane-limit records per
- * description.
+ * description. There are at most DRM_MODE_CONSTRAINTS_MAX_PLANE_GEOMETRIES
+ * plane-geometry records.
  * Property records all apply, but only to enabled CRTCs and used planes.
  * Absence of a property record preserves ordinary KMS property semantics.
  * Geometry relationships, blob contents and other full-scene restrictions
@@ -298,6 +304,29 @@ struct drm_mode_constraints_plane_format {
 	__u32 pitch_alignment;
 	__u32 offset_alignment;
 	__u32 max_pitch;
+};
+
+/**
+ * struct drm_mode_constraints_plane_geometry - Sampling limits for one plane
+ * @header: PLANE_GEOMETRY record header.
+ * @plane_id: Existing plane object ID on the queried DRM device.
+ * @flags: Permitted DRM_MODE_CONSTRAINTS_GEOMETRY_* operations.
+ * @min_scale: Minimum source extent / destination extent, unsigned 16.16.
+ * @max_scale: Maximum source extent / destination extent, unsigned 16.16.
+ *
+ * The record applies whenever the named plane is used. Without CROP, its source
+ * rectangle covers the complete framebuffer. Without FRACTIONAL_SOURCE, all
+ * source coordinates and extents are integral. Without POSITION, CRTC_X and
+ * CRTC_Y are zero. Scale bounds are inclusive and nonzero; equal 1.0 bounds
+ * require identity scaling. Source rectangles remain subject to framebuffer
+ * bounds and ordinary KMS validation.
+ */
+struct drm_mode_constraints_plane_geometry {
+	struct drm_mode_constraints_record header;
+	__u32 plane_id;
+	__u32 flags;
+	__u32 min_scale;
+	__u32 max_scale;
 };
 
 /**

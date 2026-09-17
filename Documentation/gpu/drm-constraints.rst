@@ -42,9 +42,10 @@ possible.
 Descriptions and identities
 ===========================
 
-``drm_constraints_description_create()`` copies immutable allocation and
-scalar property records. Inclusive nonzero output and framebuffer dimension
-bounds may describe exact sizes by making each minimum equal its maximum.
+``drm_constraints_description_create()`` copies immutable allocation,
+plane-geometry and scalar-property records. Inclusive nonzero output and
+framebuffer dimension bounds may describe exact sizes by making each minimum
+equal its maximum.
 Framebuffer bounds concern allocation, not the fractional source rectangle.
 Each allocation record names an existing plane and a standard DRM
 format/modifier pair. It also states whether framebuffer memory may originate
@@ -57,6 +58,13 @@ capabilities. Common atomic validation checks these requirements on every
 framebuffer memory plane; a missing optional GEM object is native storage, while
 an attached imported GEM object is imported storage.
 
+Plane-geometry rules state whether each plane permits cropping, fractional
+source coordinates and nonzero destination positions. They also bound the
+inclusive source-to-destination scale ratio independently on both axes in
+unsigned 16.16 form. A plane without a geometry rule retains ordinary KMS
+geometry semantics. Common atomic validation applies a present rule whenever
+the plane is used and always keeps the source rectangle within its framebuffer.
+
 Scalar rules use the native DRM range, signed-range, enum or bitmask type.
 Signed bounds retain DRM's two's-complement unsigned representation. Enum
 rules describe permitted values 0 through 63 by their mask bits; bitmask
@@ -66,8 +74,8 @@ malformed bounds are rejected, not interpreted as unrestricted support.
 
 Output attachment and publication validate object membership, property
 attachment, property type and bounds within existing discovery. Supported
-scalar scene properties cover plane geometry, alpha, blending, rotation,
-stacking, YUV encoding/range, scaling filters and cursor hotspots, together
+scalar scene properties cover alpha, blending, rotation, stacking, YUV
+encoding/range, scaling filters and cursor hotspots, together
 with CRTC VRR, background color, scaling filter and sharpness. Read-only and
 request-only properties, object IDs, blob contents and driver-private
 properties are not scalar rules. Rules constrain enabled outputs and the
@@ -92,10 +100,10 @@ needed for final release. Availability never changes an ID's meaning. The
 domain's quota includes entries retained by snapshots, accepted state and
 retiring work, not just currently offered entries.
 
-The current native bounds are 4096 format records, 64 scalar property records,
-64 active-plane-limit records and 64 plane IDs per limit, and at most 64 entries
-per output list. Providers choose their retained-entry quota and may choose a
-smaller list limit.
+The current native bounds are 6144 format records, 64 plane-geometry records,
+64 scalar-property records, 64 active-plane-limit records and 64 plane IDs per
+limit, and at most 64 entries per output list. Providers choose their
+retained-entry quota and may choose a smaller list limit.
 The experimental UAPI declares corresponding bounds in
 ``include/uapi/drm/drm_constraints.h``.
 Format capacity accounts for per-plane expansion: the same format/modifier
@@ -135,10 +143,12 @@ Kernel snapshot encoding
 a kernel buffer. The native-endian prototype layout uses fixed-width fields,
 explicit padding and aligned 64-bit values. List and description headers are
 versioned; entries have a stride, and descriptions contain length-delimited
-output-dimension, per-plane format/modifier and scalar-property records.
+output-dimension, per-plane format/modifier, plane-geometry and scalar-property
+records.
 Every offset is relative to the start of the complete snapshot. Per-plane
-format records are alternatives; scalar rules and active-plane limits apply
-together. Unknown required records make an entry unusable, not unrestricted.
+format records are alternatives; geometry rules, scalar rules and active-plane
+limits apply together. Unknown required records make an entry unusable, not
+unrestricted.
 
 The encoding is bounded to 32 MiB, including a maximum-size native list.
 All padding and reserved output fields are zero. A null buffer with zero
@@ -280,9 +290,10 @@ does not request another transition. A changed binding requires modeset
 permission and marks the transaction as needing a modeset.
 
 Core validation first adds affected plane/color state, including unchanged
-active planes, then checks allocation storage and dimensions, overlapping
-active-plane limits, and scalar rules after driver checking. Scalar values come
-from proposed atomic state, never current-state readback.
+active planes, then checks allocation storage and dimensions, per-plane
+geometry, overlapping active-plane limits, and scalar rules after driver
+checking. Geometry and scalar values come from proposed atomic state, never
+current-state readback.
 The provider's full-scene callback is required both during validation and
 immediately before acceptance. All resources required by that callback must
 already be ready. The callback must not mutate the transaction or its proposed
@@ -386,11 +397,12 @@ does not itself revoke source grants; loss notification follows that revocation.
 Rust access and tests
 =====================
 
-``kernel::drm::constraints`` wraps descriptions, property records, domains,
-typed and opaque backend entries, lists, snapshots and encoded bytes. Native C code owns
-validation, identity allocation and serialization. Rust views borrow their owning
-description or snapshot; entries retain typed provider resources and their
-callback module. Construction and final release require sleepable context.
+``kernel::drm::constraints`` wraps descriptions, per-plane geometry, property
+records, domains, typed and opaque backend entries, lists, snapshots and
+encoded bytes. Native C code owns validation, identity allocation and
+serialization. Rust views borrow their owning description or snapshot; entries
+retain typed provider resources and their callback module. Construction and
+final release require sleepable context.
 
 During exclusive KMS setup, ``UnregisteredKmsDevice::enable_constraints()``
 creates the device namespace before CRTC construction. After creating all
@@ -427,14 +439,16 @@ NV12 shmem framebuffers while an enabled XRGB-only entry remains selected,
 then atomically switch the entry and scene and observe the target in the
 commit tail. Repeated or omitted selection preserves the list generation.
 
-``RawPlane::scene_property_id()`` resolves attached standard scalar properties
-without exposing raw property storage or reading live values. Setup and runtime
-views return the same identity; absent properties return ``None``. Rust
-providers can use those IDs to describe geometry, stacking, blending and color
-rules. Native registration still verifies property scope, type and permitted
-values. The Rust property test selects an NV12 scene with BT.709 limited-range
-color and restricted stacking, then rejects incompatible candidate values
-without changing the accepted binding or list generation.
+``PlaneGeometry`` describes crop, fractional-source, position and scale rules
+without requiring property IDs. ``RawPlane::scene_property_id()`` resolves the
+remaining attached standard scalar properties without exposing raw property
+storage or reading live values. Setup and runtime views return the same
+identity; absent properties return ``None``. Rust providers can use those IDs
+to describe stacking, blending and color rules. Native registration still
+verifies geometry and property scope, type and permitted values. The Rust
+property test selects an NV12 scene with BT.709 limited-range color and
+restricted stacking, then rejects incompatible candidate values without
+changing the accepted binding or list generation.
 
 ``OpaqueEntry::new_stateless()`` uses common DRM destruction for backends
 without private per-entry resources. It avoids a permanent default retaining

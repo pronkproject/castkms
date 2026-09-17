@@ -127,6 +127,35 @@ new_entry_with_plane_limit(struct kunit *test, struct output_fixture *fixture,
 	return entry;
 }
 
+static struct drm_constraints_entry *
+new_entry_with_plane_geometry(struct kunit *test, struct output_fixture *fixture,
+			      u32 format_plane_id, u32 geometry_plane_id)
+{
+	const struct drm_constraints_size size = { 64, 32, 64, 32 };
+	const struct drm_constraints_format format = {
+		.plane_id = format_plane_id, .format = DRM_FORMAT_XRGB8888,
+		.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
+		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+	};
+	const struct drm_constraints_plane_geometry geometry = {
+		.plane_id = geometry_plane_id,
+		.min_scale = 1 << 16, .max_scale = 1 << 16,
+	};
+	struct drm_constraints_description *description;
+	struct drm_constraints_entry *entry;
+
+	description = drm_constraints_description_create_with_geometry(
+		&size, &format, 1, NULL, 0, NULL, 0, &geometry, 1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
+	entry = drm_constraints_entry_create(drm_constraints_device_domain(&fixture->drm),
+		fixture->crtc->base.id, description, &entry_ops, fixture);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+	return entry;
+}
+
 static void reset_and_pristine_state_retain_accepted_binding(struct kunit *test)
 {
 	struct output_fixture *fixture = new_fixture(test, "constraints-output");
@@ -223,6 +252,18 @@ static void plane_limits_require_advertised_output_planes(struct kunit *test)
 	struct drm_constraints_entry *initial = new_entry_with_plane_limit(
 		test, fixture, fixture->plane->base.id, fixture->plane->base.id);
 	struct drm_constraints_entry *unknown = new_entry_with_plane_limit(
+		test, fixture, fixture->plane->base.id, U32_MAX);
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, initial, 4, &output_ops), 0);
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, unknown), -EINVAL);
+}
+
+static void plane_geometry_requires_advertised_output_planes(struct kunit *test)
+{
+	struct output_fixture *fixture = new_fixture(test, "constraints-plane-geometry");
+	struct drm_constraints_entry *initial = new_entry_with_plane_geometry(
+		test, fixture, fixture->plane->base.id, fixture->plane->base.id);
+	struct drm_constraints_entry *unknown = new_entry_with_plane_geometry(
 		test, fixture, fixture->plane->base.id, U32_MAX);
 
 	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, initial, 4, &output_ops), 0);
@@ -454,6 +495,7 @@ static struct kunit_case drm_constraints_output_tests[] = {
 	KUNIT_CASE(implicit_offer_requires_format_not_linear_modifier),
 	KUNIT_CASE(property_rules_require_attached_supported_domains),
 	KUNIT_CASE(plane_limits_require_advertised_output_planes),
+	KUNIT_CASE(plane_geometry_requires_advertised_output_planes),
 	{}
 };
 

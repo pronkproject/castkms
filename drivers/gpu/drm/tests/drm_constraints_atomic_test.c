@@ -1776,6 +1776,63 @@ static void installation_rechecks_proposed_property_values(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
 }
 
+static void proposed_scene_obeys_plane_geometry_rules(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	const struct drm_constraints_size size = { 128, 64, 128, 64 };
+	const struct drm_constraints_format allocation = {
+		.plane_id = f->plane->base.id,
+		.format = DRM_FORMAT_ARGB8888,
+		.modifier = I915_FORMAT_MOD_X_TILED,
+		.size = size,
+		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+		.pitch_alignment = 1,
+		.offset_alignment = 1,
+		.max_pitch = U32_MAX,
+	};
+	const struct drm_constraints_plane_geometry geometry = {
+		.plane_id = f->plane->base.id,
+		.min_scale = 1 << 15,
+		.max_scale = 1 << 17,
+	};
+	struct drm_constraints_description *description;
+	struct drm_constraints_entry *entry;
+	struct drm_atomic_commit *state;
+	struct drm_plane_state *plane;
+
+	description = drm_constraints_description_create_with_geometry(
+		&size, &allocation, 1, NULL, 0, NULL, 0, &geometry, 1);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test,
+		kunit_add_action_or_reset(test, put_description, description), 0);
+	entry = drm_constraints_entry_create(drm_constraints_device_domain(f->dev),
+		f->crtc->base.id, description, &entry_ops, &f->backends[1]);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(f->crtc, entry), 0);
+	state = new_update(test, f, entry, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	plane = drm_atomic_get_new_plane_state(state, f->plane);
+
+	plane->crtc_x = 1;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->crtc_x = 0;
+	plane->src_x = 1 << 15;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->src_x = 0;
+	plane->src_w = 64 << 16;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->src_w = 128 << 16;
+	plane->crtc_w = 63;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	plane->crtc_w = 64;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	/* Acceptance must reject geometry changed after the ordinary check. */
+	plane->crtc_w = 63;
+	KUNIT_EXPECT_EQ(test, run_update(state, swap_update), -EINVAL);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+}
+
 static struct drm_plane *new_scene_plane(struct kunit *test, struct atomic_fixture *f,
 					enum drm_plane_type type, unsigned int zpos)
 {
@@ -2345,6 +2402,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(prepared_shutdown_retains_pending_native_reads),
 	KUNIT_CASE(proposed_scene_obeys_scalar_property_rules),
 	KUNIT_CASE(installation_rechecks_proposed_property_values),
+	KUNIT_CASE(proposed_scene_obeys_plane_geometry_rules),
 	KUNIT_CASE(complete_scene_checks_overlay_and_cursor_contracts),
 	KUNIT_CASE(proposed_scene_obeys_overlapping_plane_limits),
 	{}
