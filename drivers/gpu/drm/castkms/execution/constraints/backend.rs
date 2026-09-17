@@ -91,7 +91,7 @@ impl Backend {
                 if worker.output() != output {
                     return Err(EINVAL);
                 }
-                super::renderer(worker.profile(), topology.planes(), &[])?
+                super::renderer(worker.profile(), topology.planes())?
             }
         };
         Entry::new(domain, crtc, &description, Arc::new(self, GFP_KERNEL)?)

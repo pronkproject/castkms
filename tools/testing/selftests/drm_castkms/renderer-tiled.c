@@ -88,6 +88,111 @@ static uint64_t selected(int fd, uint32_t crtc, uint32_t count)
 	return id;
 }
 
+static uint32_t property_id(int fd, uint32_t object, const char *name)
+{
+	drmModeObjectProperties *properties;
+	uint32_t id = 0;
+
+	properties = drmModeObjectGetProperties(fd, object, DRM_MODE_OBJECT_PLANE);
+	CHECK(properties);
+	for (uint32_t i = 0; i < properties->count_props; i++) {
+		drmModePropertyRes *property = drmModeGetProperty(fd, properties->props[i]);
+
+		CHECK(property);
+		if (!strcmp(property->name, name))
+			id = property->prop_id;
+		drmModeFreeProperty(property);
+	}
+	drmModeFreeObjectProperties(properties);
+	CHECK(id);
+	return id;
+}
+
+static void check_offer_properties(int fd, uint32_t crtc, uint64_t id, uint32_t plane)
+{
+	struct drm_mode_list_constraints query = { .crtc_id = crtc };
+	struct drm_mode_constraints_list *list;
+	struct drm_mode_constraints *entries;
+	static const char * const names[] = {
+		"CRTC_X", "CRTC_Y", "SRC_X", "SRC_Y", "COLOR_ENCODING", "COLOR_RANGE",
+	};
+	uint32_t ids[6];
+	bool found[6] = { 0 };
+	unsigned int count = 0;
+
+	for (unsigned int i = 0; i < 6; i++)
+		ids[i] = property_id(fd, plane, names[i]);
+	CHECK(ioctl(fd, DRM_IOCTL_MODE_LIST_CONSTRAINTS, &query) == 0);
+	list = calloc(1, query.size);
+	CHECK(list);
+	query.data = (uintptr_t)list;
+	CHECK(ioctl(fd, DRM_IOCTL_MODE_LIST_CONSTRAINTS, &query) == 0);
+	CHECK(list->version == DRM_MODE_CONSTRAINTS_VERSION);
+	CHECK(list->length == query.size);
+	CHECK(list->entry_size == sizeof(*entries));
+	CHECK(list->entries_offset <= list->length);
+	CHECK(list->count_entries <=
+	      (list->length - list->entries_offset) / sizeof(*entries));
+	entries = (void *)((char *)list + list->entries_offset);
+	for (uint32_t i = 0; i < list->count_entries; i++) {
+		struct drm_mode_constraints_description *description;
+		char *cursor, *end;
+
+		if (entries[i].id != id)
+			continue;
+		CHECK(entries[i].description_offset <= list->length);
+		CHECK(entries[i].description_length <=
+		      list->length - entries[i].description_offset);
+		description = (void *)((char *)list + entries[i].description_offset);
+		CHECK(entries[i].description_length >= sizeof(*description));
+		CHECK(description->length == entries[i].description_length);
+		CHECK(description->records_offset >= entries[i].description_offset +
+		      sizeof(*description));
+		CHECK(description->records_offset <= list->length);
+		cursor = (char *)list + description->records_offset;
+		end = (char *)description + description->length;
+		CHECK(cursor <= end);
+		for (uint32_t record = 0; record < description->record_count; record++) {
+			struct drm_mode_constraints_record *header = (void *)cursor;
+
+			CHECK((size_t)(end - cursor) >= sizeof(*header));
+			CHECK(header->length >= sizeof(*header));
+			CHECK(header->length <= (size_t)(end - cursor));
+			if (header->type == DRM_MODE_CONSTRAINTS_RECORD_PROPERTY) {
+				struct drm_mode_constraints_property *property = (void *)header;
+
+				CHECK(header->length == sizeof(*property));
+				count++;
+				CHECK(property->object_id == plane);
+				for (unsigned int rule = 0; rule < 6; rule++) {
+					if (property->property_id != ids[rule])
+						continue;
+					CHECK(!found[rule]);
+					found[rule] = true;
+					if (rule < 4) {
+						uint32_t type = rule < 2 ? DRM_MODE_PROP_SIGNED_RANGE :
+									 DRM_MODE_PROP_RANGE;
+
+						CHECK(property->type == type);
+						CHECK(!property->minimum && !property->maximum &&
+						      !property->mask);
+					} else {
+						CHECK(property->type == DRM_MODE_PROP_ENUM);
+						CHECK(!property->minimum && !property->maximum);
+						CHECK(property->mask == (rule == 4 ? 0x7 : 0x3));
+					}
+				}
+			}
+			cursor += header->length;
+		}
+		CHECK(cursor == end);
+	}
+	CHECK(count == 6);
+	for (unsigned int i = 0; i < 6; i++)
+		CHECK(found[i]);
+	free(list);
+}
+
 static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 			       uint32_t plane, uint32_t fourcc, uint64_t modifier,
 			       uint32_t plane_count, uint32_t storage_flags,
@@ -419,6 +524,7 @@ int main(int argc, char **argv)
 			   I915_FORMAT_MOD_4_TILED, 1,
 			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 			   mode->hdisplay, mode->vdisplay);
+	check_offer_properties(fd, create.crtc_id, worker, plane);
 	select_framebuffer(fd, create.crtc_id, plane, tiled.fb, worker);
 	CHECK(selected(fd, create.crtc_id, 2) == worker);
 

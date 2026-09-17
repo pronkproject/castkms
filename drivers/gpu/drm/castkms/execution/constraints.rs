@@ -12,6 +12,7 @@ use super::{
 };
 use crate::scene::Kind;
 use kernel::{
+    bindings as kernel_bindings,
     drm::{
         constraints::{
             Description,
@@ -30,7 +31,30 @@ use kernel::{
 pub(crate) struct Plane {
     pub(crate) id: u32,
     pub(crate) kind: Kind,
-    properties: [u32; 6],
+    properties: PlaneProperties,
+}
+
+#[derive(Clone, Copy)]
+struct PlaneProperties {
+    crtc_x: u32,
+    crtc_y: u32,
+    source_x: u32,
+    source_y: u32,
+    color_encoding: u32,
+    color_range: u32,
+}
+
+impl PlaneProperties {
+    fn ids(self) -> [u32; 6] {
+        [
+            self.crtc_x,
+            self.crtc_y,
+            self.source_x,
+            self.source_y,
+            self.color_encoding,
+            self.color_range,
+        ]
+    }
 }
 
 impl Plane {
@@ -39,14 +63,14 @@ impl Plane {
         Ok(Self {
             id: plane.object_id(),
             kind,
-            properties: [
-                required(SceneProperty::CrtcX)?,
-                required(SceneProperty::CrtcY)?,
-                required(SceneProperty::SourceX)?,
-                required(SceneProperty::SourceY)?,
-                required(SceneProperty::ColorEncoding)?,
-                required(SceneProperty::ColorRange)?,
-            ],
+            properties: PlaneProperties {
+                crtc_x: required(SceneProperty::CrtcX)?,
+                crtc_y: required(SceneProperty::CrtcY)?,
+                source_x: required(SceneProperty::SourceX)?,
+                source_y: required(SceneProperty::SourceY)?,
+                color_encoding: required(SceneProperty::ColorEncoding)?,
+                color_range: required(SceneProperty::ColorRange)?,
+            },
         })
     }
 }
@@ -75,13 +99,13 @@ fn check_planes(planes: &[Plane]) -> Result {
         return Err(EINVAL);
     }
     for (index, plane) in planes.iter().enumerate() {
+        let properties = plane.properties.ids();
         if plane.id == 0
-            || plane.properties.contains(&0)
-            || plane
-                .properties
+            || properties.contains(&0)
+            || properties
                 .iter()
                 .enumerate()
-                .any(|(property, id)| plane.properties[..property].contains(id))
+                .any(|(property, id)| properties[..property].contains(id))
             || planes[..index]
                 .iter()
                 .any(|previous| previous.id == plane.id)
@@ -90,6 +114,97 @@ fn check_planes(planes: &[Plane]) -> Result {
         }
     }
     Ok(())
+}
+
+fn role(plane: &Plane) -> usize {
+    match plane.kind {
+        Kind::Primary => 0,
+        Kind::Overlay => 1,
+        Kind::Cursor => 2,
+    }
+}
+
+fn format_supported(plane: &Plane, format: &super::capabilities::Format) -> bool {
+    potential::FORMATS.contains(&format.fourcc)
+        && (plane.kind != Kind::Cursor || format.fourcc == fourcc::ARGB8888)
+        && format.planes as usize == potential::plane_count(format.fourcc)
+}
+
+fn source_ceiling(plane: &Plane) -> u32 {
+    if plane.kind == Kind::Cursor {
+        potential::MAX_CURSOR_DIMENSION
+    } else {
+        potential::MAX_DIMENSION
+    }
+}
+
+fn enabled_mask<const N: usize>(enabled: &[bool; N], values: [u32; N]) -> u64 {
+    enabled
+        .iter()
+        .zip(values)
+        .fold(0, |mask, (enabled, value)| {
+            mask | if *enabled { 1 << value } else { 0 }
+        })
+}
+
+fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Property>> {
+    let limits = profile.limits();
+    let encoding_mask = enabled_mask(
+        &limits.color.yuv_encodings,
+        [
+            kernel_bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT601,
+            kernel_bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT709,
+            kernel_bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT2020,
+        ],
+    );
+    let range_mask = enabled_mask(
+        &limits.color.yuv_ranges,
+        [
+            kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_LIMITED_RANGE,
+            kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE,
+        ],
+    );
+    let mut properties = KVec::new();
+    for plane in planes {
+        if limits.roles[role(plane)] == 0
+            || bounds(
+                limits.geometry.min_source,
+                limits.geometry.source,
+                source_ceiling(plane),
+            )
+            .is_none()
+            || !profile
+                .formats()
+                .iter()
+                .any(|format| format_supported(plane, format))
+        {
+            continue;
+        }
+        let ids = plane.properties;
+        if !limits.geometry.position {
+            properties.push(Property::signed_range(plane.id, ids.crtc_x, 0, 0), GFP_KERNEL)?;
+            properties.push(Property::signed_range(plane.id, ids.crtc_y, 0, 0), GFP_KERNEL)?;
+        }
+        if !limits.geometry.crop {
+            properties.push(Property::unsigned_range(plane.id, ids.source_x, 0, 0), GFP_KERNEL)?;
+            properties.push(Property::unsigned_range(plane.id, ids.source_y, 0, 0), GFP_KERNEL)?;
+        }
+        if profile
+            .formats()
+            .iter()
+            .any(|format| format_supported(plane, format) && crate::formats::is_yuv(format.fourcc))
+        {
+            properties.push(
+                Property::enum_values(plane.id, ids.color_encoding, encoding_mask),
+                GFP_KERNEL,
+            )?;
+            properties.push(
+                Property::enum_values(plane.id, ids.color_range, range_mask),
+                GFP_KERNEL,
+            )?;
+        }
+    }
+    Ok(properties)
 }
 
 fn bounds(minimum: [u32; 2], maximum: [u32; 2], ceiling: u32) -> Option<Size> {
@@ -138,15 +253,13 @@ pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Des
 ///
 /// Geometry is intersected with native allocation limits, including the cursor limit.
 /// Unsupported roles and formats contribute no allocations. An empty intersection fails;
-/// it does not become unrestricted. The caller supplies standard scalar property rules.
+/// it does not become unrestricted. Representable scalar restrictions are derived from the
+/// profile; relational geometry, color pipelines and other whole-scene limits remain subject to
+/// final validation.
 /// Native publication still checks object membership, and the retained profile must validate
 /// complete scenes, layer counts and color operations at acceptance.
 /// This operation allocates metadata only; it neither establishes readiness nor grants access.
-pub(crate) fn renderer(
-    profile: &Profile,
-    planes: &[Plane],
-    properties: &[Property],
-) -> Result<ARef<Description>> {
+pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Description>> {
     check_planes(planes)?;
     let limits = profile.limits();
     let output = bounds(
@@ -157,22 +270,19 @@ pub(crate) fn renderer(
     .ok_or(EOPNOTSUPP)?;
     let mut formats = KVec::new();
     for plane in planes {
-        let (role, ceiling) = match plane.kind {
-            Kind::Primary => (0, potential::MAX_DIMENSION),
-            Kind::Overlay => (1, potential::MAX_DIMENSION),
-            Kind::Cursor => (2, potential::MAX_CURSOR_DIMENSION),
-        };
+        let role = role(plane);
         if limits.roles[role] == 0 {
             continue;
         }
-        let Some(size) = bounds(limits.geometry.min_source, limits.geometry.source, ceiling) else {
+        let Some(size) = bounds(
+            limits.geometry.min_source,
+            limits.geometry.source,
+            source_ceiling(plane),
+        ) else {
             continue;
         };
         for format in profile.formats() {
-            if !potential::FORMATS.contains(&format.fourcc)
-                || (plane.kind == Kind::Cursor && format.fourcc != fourcc::ARGB8888)
-                || format.planes as usize != potential::plane_count(format.fourcc)
-            {
+            if !format_supported(plane, format) {
                 continue;
             }
             let format = match format.modifier {
@@ -192,7 +302,7 @@ pub(crate) fn renderer(
     if formats.is_empty() {
         return Err(EOPNOTSUPP);
     }
-    Description::new(output, &formats, properties)
+    Description::new(output, &formats, &renderer_properties(profile, planes)?)
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
@@ -265,17 +375,38 @@ mod tests {
             Plane {
                 id: 7,
                 kind: Kind::Primary,
-                properties: [17, 18, 19, 20, 21, 22],
+                properties: PlaneProperties {
+                    crtc_x: 17,
+                    crtc_y: 18,
+                    source_x: 19,
+                    source_y: 20,
+                    color_encoding: 21,
+                    color_range: 22,
+                },
             },
             Plane {
                 id: 8,
                 kind: Kind::Overlay,
-                properties: [17, 18, 19, 20, 23, 24],
+                properties: PlaneProperties {
+                    crtc_x: 17,
+                    crtc_y: 18,
+                    source_x: 19,
+                    source_y: 20,
+                    color_encoding: 23,
+                    color_range: 24,
+                },
             },
             Plane {
                 id: 9,
                 kind: Kind::Cursor,
-                properties: [17, 18, 19, 20, 25, 26],
+                properties: PlaneProperties {
+                    crtc_x: 17,
+                    crtc_y: 18,
+                    source_x: 19,
+                    source_y: 20,
+                    color_encoding: 25,
+                    color_range: 26,
+                },
             },
         ]
     }
@@ -283,8 +414,7 @@ mod tests {
     #[test]
     fn exact_output_retains_tiled_and_implicit_source_choices() -> Result {
         let profile = profile(limits())?;
-        let rules = [Property::unsigned_range(8, 17, 1, 3)];
-        let description = renderer(&profile, &planes(), &rules)?;
+        let description = renderer(&profile, &planes())?;
         assert_eq!(description.output().minimum(), (1920, 1080));
         assert_eq!(description.output().maximum(), (1920, 1080));
         let formats = description.formats();
@@ -297,7 +427,53 @@ mod tests {
         assert_eq!(formats[6].plane_id(), 9);
         assert_eq!(formats[6].format(), fourcc::ARGB8888);
         assert_eq!(formats[6].size().maximum(), (512, 512));
-        assert_eq!(description.properties()[0].bounds(), (1, 3));
+        assert!(description.properties().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn profile_restrictions_become_plane_property_rules() -> Result {
+        let mut limits = limits();
+        limits.geometry.position = false;
+        limits.geometry.crop = false;
+        limits.color.yuv_encodings = [false, true, false];
+        limits.color.yuv_ranges = [false, true];
+        limits.roles = [1, 0, 0];
+        let mut formats = KVec::new();
+        formats.push(
+            RendererFormat {
+                fourcc: fourcc::NV12,
+                modifier: Some(TILED),
+                planes: 2,
+                native: false,
+                imported: true,
+                pitch_alignment: 16,
+                offset_alignment: 4096,
+                max_pitch: 65536,
+            },
+            GFP_KERNEL,
+        )?;
+        let profile = Profile::new(limits, formats)?;
+        let description = renderer(&profile, &planes())?;
+        let properties = description.properties();
+        assert_eq!(properties.len(), 6);
+        assert!(properties.iter().all(|property| property.object_id() == 7));
+        for (property, expected) in properties.iter().zip([17, 18, 19, 20, 21, 22]) {
+            assert_eq!(property.property_id(), expected);
+        }
+        for property in &properties[..4] {
+            assert_eq!(property.bounds(), (0, 0));
+            assert!(property.matches(0));
+            assert!(!property.matches(1));
+        }
+        assert_eq!(
+            properties[4].mask(),
+            1 << kernel_bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT709
+        );
+        assert_eq!(
+            properties[5].mask(),
+            1 << kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE
+        );
         Ok(())
     }
 
@@ -305,7 +481,7 @@ mod tests {
     fn unsupported_roles_do_not_advertise_allocations() -> Result {
         let mut limits = limits();
         limits.roles = [1, 0, 0];
-        let description = renderer(&profile(limits)?, &planes(), &[])?;
+        let description = renderer(&profile(limits)?, &planes())?;
         assert_eq!(description.formats().len(), 3);
         assert!(description
             .formats()
@@ -314,7 +490,7 @@ mod tests {
         limits.roles = [0, 0, 1];
         limits.geometry.min_source = [1024; 2];
         assert!(matches!(
-            renderer(&profile(limits)?, &planes(), &[]),
+            renderer(&profile(limits)?, &planes()),
             Err(EOPNOTSUPP)
         ));
         Ok(())
@@ -324,11 +500,11 @@ mod tests {
     fn allocation_intersection_never_widens_exact_geometry() -> Result {
         let mut limits = limits();
         limits.geometry.output = [32768; 2];
-        let description = renderer(&profile(limits)?, &planes(), &[])?;
+        let description = renderer(&profile(limits)?, &planes())?;
         assert_eq!(description.output().maximum(), (16384, 16384));
         limits.geometry.min_output = [32768; 2];
         assert!(matches!(
-            renderer(&profile(limits)?, &planes(), &[]),
+            renderer(&profile(limits)?, &planes()),
             Err(EOPNOTSUPP)
         ));
         Ok(())
@@ -356,7 +532,7 @@ mod tests {
         limits.geometry.min_output = [5120, 2880];
         limits.geometry.output = [5120, 2880];
         let profile = Profile::new(limits, formats)?;
-        let description = renderer(&profile, &planes()[..1], &[])?;
+        let description = renderer(&profile, &planes()[..1])?;
         assert_eq!(description.output().minimum(), (5120, 2880));
         assert_eq!(description.output().maximum(), (5120, 2880));
         assert_eq!(description.formats().len(), 1);
@@ -372,16 +548,16 @@ mod tests {
     fn ambiguous_topology_identity_is_rejected() -> Result {
         let profile = profile(limits())?;
         let mut planes = planes();
-        assert!(matches!(renderer(&profile, &[], &[]), Err(EINVAL)));
+        assert!(matches!(renderer(&profile, &[]), Err(EINVAL)));
         planes[1].id = planes[0].id;
-        assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
+        assert!(matches!(renderer(&profile, &planes), Err(EINVAL)));
         planes[1].id = 0;
-        assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
+        assert!(matches!(renderer(&profile, &planes), Err(EINVAL)));
         planes[1].id = 8;
-        planes[1].properties[1] = planes[1].properties[0];
-        assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
-        planes[1].properties[1] = 0;
-        assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
+        planes[1].properties.crtc_y = planes[1].properties.crtc_x;
+        assert!(matches!(renderer(&profile, &planes), Err(EINVAL)));
+        planes[1].properties.crtc_y = 0;
+        assert!(matches!(renderer(&profile, &planes), Err(EINVAL)));
         Ok(())
     }
 
