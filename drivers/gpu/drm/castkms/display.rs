@@ -618,7 +618,9 @@ impl connector::DriverConnector for Connector {
 fn install_constraints<'a>(
     install: atomic::Install<'a, Driver>,
 ) -> atomic::InstallResult<'a, Driver> {
-    let mut selected = None;
+    let mut selected: [Option<Arc<super::renderer::ready::Worker>>;
+        super::device::MAX_OUTPUTS as usize] = core::array::from_fn(|_| None);
+    let mut count = 0;
     let mut result = Ok(());
     install.state().for_each_new_crtc_state(|crtc, opaque| {
         if result.is_err() {
@@ -635,13 +637,13 @@ fn install_constraints<'a>(
             }
             let entry = crtc.display.constraints.as_ref().ok_or(EOPNOTSUPP)?
                 .resolve(state.constraints_entry().ok_or(EINVAL)?)?;
-            let renderer = matches!(&*entry.backend(),
-                super::execution::constraints::backend::Backend::Renderer(_));
-            if renderer {
-                if selected.is_some() {
-                    return Err(EOPNOTSUPP);
+            let backend = entry.backend();
+            if let super::execution::constraints::backend::Backend::Renderer(worker) = &*backend {
+                if count == selected.len() {
+                    return Err(E2BIG);
                 }
-                selected = Some(entry);
+                selected[count] = Some(worker.clone());
+                count += 1;
             }
             Ok(())
         })();
@@ -649,16 +651,17 @@ fn install_constraints<'a>(
     if let Err(error) = result {
         return install.reject(error);
     }
-    if let Some(entry) = selected {
-        let backend = entry.backend();
-        let _ready = match backend.hold_ready() {
-            Ok(guard) => guard,
+    // Acquire in deterministic CRTC order without waiting while another guard is held.
+    // Every guard survives the one native swap. Failure accepts no member of the cohort.
+    let mut guards: [Option<super::renderer::ready::Ready<'_>>;
+        super::device::MAX_OUTPUTS as usize] = core::array::from_fn(|_| None);
+    for (slot, worker) in guards.iter_mut().zip(selected.iter().flatten()) {
+        *slot = Some(match worker.try_hold_ready() {
+            Ok(ready) => ready,
             Err(error) => return install.reject(error),
-        };
-        install.install()
-    } else {
-        install.install()
+        });
     }
+    install.install()
 }
 
 #[vtable]
