@@ -181,7 +181,7 @@ impl Drop for Snapshot {
 impl Snapshot {
     /// Encode the retained snapshot into independently owned kernel bytes.
     ///
-    /// The bounded, versioned prototype uses native DRM meanings and contains no pointers or
+    /// The common UAPI description records use native DRM meanings and contain no pointers or
     /// retained resources. These bytes do not implement a userspace ioctl or confer authority.
     /// Allocation may use virtual memory for large lists and requires sleepable context.
     pub fn encode(&self) -> Result<KVVec<u8>> {
