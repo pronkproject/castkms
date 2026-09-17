@@ -21,7 +21,7 @@ mod cases {
                 let connector = file.connector_at(index)?;
                 let owner = owner(&file, crtc.crtc(), &connector)?;
                 let endpoint = endpoints::prepared(device, &owner)?;
-                endpoint.publish(|_| Ok(()))?;
+                endpoint.publish(None, |_| Ok(()))?;
                 let entry = device.constraints_output(crtc.crtc())?
                     .lookup(endpoint.constraints_id()?)?;
                 owners.push(owner, GFP_KERNEL)?;
@@ -101,7 +101,7 @@ mod cases {
                 let connector = file.connector_at(index)?;
                 let owner = owner(&file, crtc.crtc(), &connector)?;
                 let endpoint = endpoints::prepared(device, &owner)?;
-                endpoint.publish(|_| Ok(()))?;
+                endpoint.publish(None, |_| Ok(()))?;
                 entries.push(device.constraints_output(crtc.crtc())?
                     .lookup(endpoint.constraints_id()?)?, GFP_KERNEL)?;
                 owners.push(owner, GFP_KERNEL)?;

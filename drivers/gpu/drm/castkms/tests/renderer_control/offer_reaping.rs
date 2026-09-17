@@ -73,12 +73,11 @@ mod cases {
             pool.insert(1, || draft.register_image(&[
                 private_images::buffer(device, ExportAccess::ReadWrite)?,
             ]))?;
-            draft.submit_probe(None)?;
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
             let mut last = provider.initial().id();
             for _ in 0..crate::execution::constraints::provider::CAPACITY + 8 {
-                let ready = draft.prepare_worker(&pool)?;
+                let ready = draft.prepare_worker(&pool, None)?;
                 let entry = provider.prepare(ready.worker())?;
                 check(entry.id() > last)?;
                 last = entry.id();

@@ -33,7 +33,6 @@ pub(super) fn prepared(
     endpoint.register_image(1, [640, 480], &[
         private_images::buffer(device, ExportAccess::ReadWrite)?,
     ])?;
-    endpoint.submit_probe(None)?;
     Ok(endpoint)
 }
 
@@ -55,7 +54,7 @@ mod cases {
                     work <- new_work!("castkms-endpoint-close-test"),
                 }), GFP_KERNEL)?;
                 let queued = workqueue::system_dfl().enqueue(closer.clone()).is_ok();
-                let result = endpoint.publish(|_| Ok(()));
+                let result = endpoint.publish(None, |_| Ok(()));
                 closer.work.flush();
                 check(queued && (result.is_ok() || result == Err(EKEYREVOKED)))?;
                 check(endpoint.constraints_id() == Err(EKEYREVOKED))?;
@@ -74,26 +73,24 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = Endpoint::new(owner.access(), device.to_registered_ref())?;
             check(endpoint.constraints_id()? == 0)?;
-            check(endpoint.publish(|_| Ok(())) == Err(ENODATA))?;
+            check(endpoint.publish(None, |_| Ok(())) == Err(ENODATA))?;
             endpoint.declare(private_images::profile()?, [640, 480])?;
-            check(endpoint.publish(|_| Ok(())) == Err(ENODATA))?;
+            check(endpoint.publish(None, |_| Ok(())) == Err(ENODATA))?;
             let buffer = private_images::buffer(device, ExportAccess::ReadWrite)?;
             endpoint.register_image(1, [640, 480], &[buffer.clone()])?;
-            check(endpoint.publish(|_| Ok(())) == Err(ENODATA))?;
-            endpoint.submit_probe(None)?;
             let output = device.constraints_output(crtc)?;
             let generation = output.snapshot(0)?.info().generation;
-            check(endpoint.publish(|_| Err(EFAULT)) == Err(EFAULT))?;
+            check(endpoint.publish(None, |_| Err(EFAULT)) == Err(EFAULT))?;
             check(output.snapshot(0)?.info().generation == generation)?;
             check(endpoint.constraints_id()? == 0)?;
             endpoint.unregister_image(1)?;
             endpoint.register_image(2, [640, 480], &[buffer.clone()])?;
             let mut id = 0;
-            endpoint.publish(|value| { id = value; Ok(()) })?;
+            endpoint.publish(None, |value| { id = value; Ok(()) })?;
             check(id != 0 && endpoint.constraints_id()? == id)?;
             check(endpoint.unregister_image(2) == Err(EBUSY))?;
             check(endpoint.register_image(3, [640, 480], &[buffer]) == Err(EBUSY))?;
-            check(endpoint.publish(|_| Ok(())) == Err(EALREADY))?;
+            check(endpoint.publish(None, |_| Ok(())) == Err(EALREADY))?;
             check(endpoint.declare(private_images::profile()?, [640, 480]) == Err(EALREADY))?;
             check(output.lookup(id).is_ok())?;
             drop(endpoint);
@@ -109,7 +106,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
             let entry = output.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
@@ -125,8 +122,8 @@ mod cases {
     }
 
     #[test]
-    fn failed_probe_never_lists_an_offer_and_close_is_terminal() -> Result {
-        let display = CastKms::new_constraints(c"castkms-endpoint-probe", 1)?;
+    fn failed_readiness_never_lists_an_offer_and_close_is_terminal() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-readiness", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = Endpoint::new(owner.access(), device.to_registered_ref())?;
@@ -135,20 +132,16 @@ mod cases {
                 private_images::buffer(device, ExportAccess::ReadWrite)?,
             ])?;
             let mut fence = kernel::dma_fence::testing::ManualFence::new()?;
-            endpoint.submit_probe(Some(fence.fence()))?;
-            check(endpoint.check_probe() == Err(EBUSY))?;
-            check(endpoint.publish(|_| Ok(())) == Err(EAGAIN))?;
+            check(endpoint.publish(Some(fence.fence()), |_| Ok(())) == Err(EBUSY))?;
             fence.complete(Err(EAGAIN))?;
-            check(endpoint.check_probe() == Err(EREMOTEIO))?;
-            check(endpoint.publish(|_| Ok(())) == Err(EAGAIN))?;
+            check(endpoint.publish(Some(fence.fence()), |_| Ok(())) == Err(EREMOTEIO))?;
             endpoint.unregister_image(1)?;
             check(device.constraints_output(crtc)?.snapshot(0)?.info().count == 1)?;
             endpoint.close();
             check(endpoint.constraints_id() == Err(EKEYREVOKED))?;
-            check(endpoint.publish(|_| Ok(())) == Err(EKEYREVOKED))?;
+            check(endpoint.publish(None, |_| Ok(())) == Err(EKEYREVOKED))?;
             check(endpoint.declare(private_images::profile()?, [640, 480]) == Err(EKEYREVOKED))?;
             check(endpoint.unregister_image(1) == Err(EKEYREVOKED))?;
-            check(endpoint.submit_probe(None) == Err(EKEYREVOKED))?;
             endpoint.close();
             Ok(())
         })
@@ -161,8 +154,8 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let first = prepared(device, &owner)?;
             let second = prepared(device, &owner)?;
-            first.publish(|_| Ok(()))?;
-            second.publish(|_| Ok(()))?;
+            first.publish(None, |_| Ok(()))?;
+            second.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
             let entry = output.lookup(first.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
@@ -186,7 +179,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let old = endpoint.constraints_id()?;
             let master = file.file().master_snapshot().ok_or(EINVAL)?;
 
@@ -203,8 +196,7 @@ mod cases {
             endpoint.register_image(2, [640, 480], &[
                 private_images::buffer(device, ExportAccess::ReadWrite)?,
             ])?;
-            endpoint.submit_probe(None)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             check(endpoint.constraints_id()? != old)
         })
     }

@@ -64,7 +64,7 @@ unsafe impl kernel::drm::capture::Policy for Worker {
 }
 
 impl Owner {
-    /// Preparation supplies owned registrations and a successfully completed native probe.
+    /// Publication supplies owned registrations after private readiness completes.
     pub(super) fn new(
         output: crate::output::Identity,
         interval: crate::authority::Interval,

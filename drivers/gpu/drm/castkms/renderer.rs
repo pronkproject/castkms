@@ -17,7 +17,6 @@ pub(crate) mod permission;
 pub(crate) mod private_image;
 pub(crate) mod private_pool;
 pub(crate) mod ready;
-mod probe;
 pub(crate) mod render_job;
 pub(crate) mod output_broker;
 mod revoker_file;

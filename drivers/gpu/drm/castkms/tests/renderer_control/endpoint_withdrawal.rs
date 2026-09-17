@@ -15,7 +15,7 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
             check(endpoint.describe()?.phase == Phase::Draft)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let description = endpoint.describe()?;
             check(description.phase == Phase::Published)?;
             let output = device.constraints_output(crtc)?;
@@ -45,7 +45,7 @@ mod cases {
             check(completion.status() == Status::Pending)?;
             native.complete(Ok(()))?;
             check(completion.status() == Status::Complete(Ok(())))?;
-            check(endpoint.publish(|_| Ok(())) == Err(EALREADY))?;
+            check(endpoint.publish(None, |_| Ok(())) == Err(EALREADY))?;
             check(endpoint.declare(private_images::profile()?, [640, 480]) == Err(EALREADY))?;
             Ok(())
         })
@@ -58,8 +58,8 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let first = endpoints::prepared(device, &owner)?;
             let second = endpoints::prepared(device, &owner)?;
-            first.publish(|_| Ok(()))?;
-            second.publish(|_| Ok(()))?;
+            first.publish(None, |_| Ok(()))?;
+            second.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
             let entry = output.lookup(first.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;

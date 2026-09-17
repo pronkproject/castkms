@@ -23,7 +23,7 @@ mod cases {
                 image_access::Current::new(current)?.check_image(&image)
             })?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
             let entry = output.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;

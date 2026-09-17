@@ -4,7 +4,7 @@
 
 use super::{draft::Draft, permission::Access, private_pool::Pool, ready};
 use crate::{execution::constraints::backend::Backend, Driver};
-use kernel::{drm::{device::Registered, Device}, prelude::*};
+use kernel::{dma_fence::Fence, drm::{device::Registered, Device}, prelude::*};
 
 type Binding = kernel::sync::aref::ARef<kernel::drm::constraints::Entry<Backend>>;
 
@@ -38,6 +38,7 @@ impl Offer {
         registered: &Device<Driver, Registered>,
         draft: &Draft,
         pool: &Pool,
+        completion: Option<&Fence>,
     ) -> Result<Self> {
         let access = draft.access();
         access.with_output_interval(draft.interval(), || Ok(()))?;
@@ -45,7 +46,7 @@ impl Offer {
         let provider = access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
         // Cleanup can drop backend/device references, so it precedes all authority locks.
         provider.reap(&output)?;
-        let owner = draft.prepare_worker(pool)?;
+        let owner = draft.prepare_worker(pool, completion)?;
         let entry = provider.prepare(owner.worker())?;
         access.with_output_interval(draft.interval(), || Ok(()))?;
         Ok(Self {

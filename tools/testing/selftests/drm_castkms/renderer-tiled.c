@@ -509,9 +509,11 @@ int main(int argc, char **argv)
 		.constraints = (uintptr_t)&constraints,
 		.constraints_size = sizeof(constraints),
 	};
-	struct drm_castkms_renderer_submit_probe probe = { .completion_fd = -1 };
 	struct drm_castkms_renderer_offer_result result;
-	struct drm_castkms_renderer_publish_offer publish = { .result = (uintptr_t)&result };
+	struct drm_castkms_renderer_publish_offer publish = {
+		.result = (uintptr_t)&result,
+		.ready_fence_fd = -1,
+	};
 	struct drm_castkms_renderer_register_image image = { .image_id = 1, .num_buffers = 1 };
 	struct drm_castkms_renderer_unregister_image remove = { .image_id = 1 };
 	struct drm_castkms_renderer_dequeue_scene dequeue = {
@@ -598,8 +600,6 @@ int main(int argc, char **argv)
 		    &prepare) == 0);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
 		    &image) == 0);
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE,
-		    &probe) == 0);
 	memset(&result, 0xa5, sizeof(result));
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER,
 		    &publish) == 0);

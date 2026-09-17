@@ -46,9 +46,9 @@ unsafe impl FromBytes for Prepare {}
 #[repr(C)]
 struct Publish {
     result: u64,
+    ready_fence_fd: i32,
     flags: u32,
-    reserved: u32,
-    padding: [u64; 2],
+    reserved: [u64; 2],
 }
 // SAFETY: All fields are integers accepting every bit pattern.
 unsafe impl FromBytes for Publish {}
@@ -70,14 +70,6 @@ struct Withdraw {
 unsafe impl FromBytes for Withdraw {}
 
 #[repr(C)]
-struct SubmitProbe {
-    completion_fd: i32,
-    flags: u32,
-    reserved: [u64; 3],
-}
-// SAFETY: All fields are integers accepting every bit pattern.
-unsafe impl FromBytes for SubmitProbe {}
-
 #[repr(C)]
 struct ReleaseSource {
     job_id: u64,
@@ -105,7 +97,6 @@ const _: () = {
     assert!(size_of::<Publish>() == size_of::<uapi::drm_castkms_renderer_publish_offer>());
     assert!(size_of::<Published>() == size_of::<uapi::drm_castkms_renderer_offer_result>());
     assert!(size_of::<Withdraw>() == size_of::<uapi::drm_castkms_renderer_withdraw_offer>());
-    assert!(size_of::<SubmitProbe>() == size_of::<uapi::drm_castkms_renderer_submit_probe>());
     assert!(size_of::<ReleaseSource>() == size_of::<uapi::drm_castkms_renderer_release_source>());
     assert!(size_of::<ReleaseOutput>() == size_of::<uapi::drm_castkms_renderer_release_output>());
 };
@@ -211,18 +202,6 @@ impl ClientFile {
                 }
                 self.endpoint.withdraw()
             }
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE => {
-                let request = read::<SubmitProbe>(arg)?;
-                if request.flags != 0 || request.reserved != [0; 3] {
-                    return Err(EINVAL);
-                }
-                let completion = if request.completion_fd == -1 {
-                    None
-                } else {
-                    Some(fence(request.completion_fd)?)
-                };
-                self.endpoint.submit_probe(completion)
-            }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE => {
                 super::image_file::register(&self.endpoint, arg)
             }
@@ -283,14 +262,17 @@ impl ClientFile {
         let request = read::<Publish>(arg)?;
         if request.result == 0
             || request.flags != 0
-            || request.reserved != 0
-            || request.padding != [0; 2]
+            || request.reserved != [0; 2]
         {
             return Err(EINVAL);
         }
         let pointer = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
-        self.endpoint.check_probe()?;
-        self.endpoint.publish(|constraints_id| {
+        let completion = if request.ready_fence_fd == -1 {
+            None
+        } else {
+            Some(fence(request.ready_fence_fd)?)
+        };
+        self.endpoint.publish(completion, |constraints_id| {
             let reply = Published {
                 constraints_id,
                 reserved: [0; 3],

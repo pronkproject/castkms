@@ -27,9 +27,8 @@ mod cases {
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
-            let other = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
+            let other = draft.prepare_worker(&pool, None)?;
             let worker = ready.worker();
             let first = provider.prepare(worker.clone())?;
             let second = provider.prepare(worker.clone())?;
@@ -106,8 +105,7 @@ mod cases {
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             check(entry.description().output().minimum() == (640, 480))?;
             check(entry.description().output().maximum() == (640, 480))?;
@@ -195,8 +193,7 @@ mod cases {
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&control, &entry)?;
 
@@ -234,8 +231,7 @@ mod cases {
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&control, &entry)?;
             let object = shmem::Object::<gem::Object>::new(
@@ -292,8 +288,7 @@ mod cases {
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             drop(ready);
             check(provider.publish(&control, &entry) == Err(EKEYREVOKED))?;
@@ -320,8 +315,7 @@ mod cases {
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
             let entry = provider.prepare(ready.worker())?;
             // Inject native membership without provider membership to force add failure.
             control.add(&entry)?;
@@ -364,8 +358,7 @@ mod cases {
                     &[private_images::buffer(device, ExportAccess::ReadWrite)?],
                 )
             })?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
             check(other.prepare(ready.worker()).err() == Some(EINVAL))?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&device.constraints_output(crtc)?, &entry)?;

@@ -274,9 +274,11 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_prepare_offer prepare = {
 		.constraints = (uintptr_t)&constraints, .constraints_size = sizeof(constraints),
 	};
-	struct drm_castkms_renderer_submit_probe probe = { .completion_fd = -1 };
 	struct drm_castkms_renderer_offer_result result;
-	struct drm_castkms_renderer_publish_offer publish = { .result = (uintptr_t)&result };
+	struct drm_castkms_renderer_publish_offer publish = {
+		.result = (uintptr_t)&result,
+		.ready_fence_fd = -1,
+	};
 	struct drm_castkms_renderer_withdraw_offer withdraw = { 0 };
 	struct drm_castkms_renderer_register_image image = { .image_id = 1, .num_buffers = 1 };
 	struct drm_castkms_renderer_unregister_image remove = { .image_id = 1 };
@@ -375,7 +377,6 @@ int main(int argc, char **argv)
 		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
 			&image) == 0);
 	}
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE, &probe) == 0);
 	publish.result = (uintptr_t)fault;
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER, &publish, EFAULT);
 	CHECK(selected(fd, create.crtc_id, 1) == host);

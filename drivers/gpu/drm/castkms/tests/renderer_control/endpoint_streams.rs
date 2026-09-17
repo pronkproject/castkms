@@ -16,7 +16,7 @@ mod cases {
             let endpoint = endpoints::prepared(device, &owner)?;
             check(!endpoint.source_readable()?)?;
             check(endpoint.begin_source(1).err() == Some(ENODATA))?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             check(!endpoint.source_readable()?)?;
             check(endpoint.begin_source(1).err() == Some(ESTALE))?;
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
@@ -63,7 +63,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, scanout, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
             for error in [EAGAIN, EBUSY, ENODATA, EIO] {
                 let mut producer = ManualFence::new()?;
@@ -95,7 +95,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
             let pending = endpoint.begin_source(1)?;
@@ -127,7 +127,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
             let pending = endpoint.begin_source(1)?;
@@ -150,7 +150,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
             let pending = endpoint.begin_source(1)?;
@@ -172,7 +172,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
             let pending = endpoint.begin_source(1)?;

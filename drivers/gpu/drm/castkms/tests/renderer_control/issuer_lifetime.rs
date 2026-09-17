@@ -14,7 +14,7 @@ mod cases {
             device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
             let owner = crate::File::issue_renderer_control(file.file(), crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
             let id = endpoint.constraints_id()?;
             check(output.lookup(id).is_ok())?;
@@ -33,7 +33,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = crate::File::issue_renderer_control(file.file(), crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            endpoint.publish(|_| Ok(()))?;
+            endpoint.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
             let entry = output.lookup(endpoint.constraints_id()?)?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;

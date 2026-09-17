@@ -145,9 +145,11 @@ static void publish(int fd, struct output *output)
 		.image_id = 1, .width = output->mode.hdisplay, .height = output->mode.vdisplay,
 		.num_buffers = 1, .buffers = (uintptr_t)&output->private_fd,
 	};
-	struct drm_castkms_renderer_submit_probe probe = { .completion_fd = -1 };
 	struct drm_castkms_renderer_offer_result result;
-	struct drm_castkms_renderer_publish_offer offer = { .result = (uintptr_t)&result };
+	struct drm_castkms_renderer_publish_offer offer = {
+		.result = (uintptr_t)&result,
+		.ready_fence_fd = -1,
+	};
 	uint32_t width = output->mode.hdisplay, height = output->mode.vdisplay;
 
 	constraints.header.min_output[0] = width;
@@ -165,8 +167,6 @@ static void publish(int fd, struct output *output)
 		    DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER, &prepare) == 0);
 	CHECK(ioctl(output->renderer.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE, &image) == 0);
-	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE, &probe) == 0);
 	memset(&result, 0xa5, sizeof(result));
 	CHECK(ioctl(output->renderer.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER, &offer) == 0);

@@ -20,7 +20,7 @@ struct Entry {
 /// Registration names and storage retained for an exact output geometry.
 ///
 /// This is not a source claim, a private-image write reservation, or completion of earlier
-/// native work. The endpoint must independently establish authority and probe readiness before
+/// native work. The endpoint must independently establish authority and readiness before
 /// publishing an offer. Drop outside endpoint and DRM locks; images can own native resources.
 pub(crate) struct RegistrationSet {
     images: KVec<PinnedImage>,

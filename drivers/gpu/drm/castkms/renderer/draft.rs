@@ -6,7 +6,6 @@ use super::{
     permission::Access,
     private_image::Image,
     private_pool::Pool,
-    probe::Probe,
     ready,
 };
 use crate::execution::capabilities::Profile;
@@ -26,7 +25,6 @@ pub(crate) struct Draft {
     owner: Arc<()>,
     profile: Profile,
     dimensions: [u32; 2],
-    probe: Arc<Probe>,
 }
 
 impl Draft {
@@ -41,7 +39,6 @@ impl Draft {
             owner: Arc::new((), GFP_KERNEL)?,
             profile,
             dimensions,
-            probe: Arc::pin_init(Probe::new(), GFP_KERNEL)?,
         })
     }
 
@@ -72,23 +69,20 @@ impl Draft {
         Ok(image)
     }
 
-    /// Report private compatibility work without borrowing display pixels or selecting this draft.
-    pub(crate) fn submit_probe(&self, completion: Option<ARef<Fence>>) -> Result {
-        self.access.with_output_interval(self.interval, || Ok(()))?;
-        self.probe.submit_then(completion, || {
-            self.access.with_output_interval(self.interval, || Ok(()))
-        })
-    }
-
-    pub(crate) fn probe_status(&self) -> Result<kernel::dma_fence::Status> {
-        self.access.with_output_interval(self.interval, || self.probe.status())
-    }
-
-    /// Pin only this draft's existing registrations after successful native probe completion.
+    /// Pin only this draft's existing registrations after successful private preparation.
     /// Endpoint serialization protects the pool; publication must recheck live authority.
-    pub(crate) fn prepare_worker(&self, pool: &Pool) -> Result<ready::Owner> {
+    pub(crate) fn prepare_worker(
+        &self,
+        pool: &Pool,
+        completion: Option<&Fence>,
+    ) -> Result<ready::Owner> {
+        match completion.map_or(kernel::dma_fence::Status::Complete(Ok(())), Fence::status) {
+            kernel::dma_fence::Status::Pending => return Err(EBUSY),
+            kernel::dma_fence::Status::Complete(Err(_)) => return Err(EREMOTEIO),
+            kernel::dma_fence::Status::Complete(Ok(())) => (),
+        }
         let registrations = pool.pin_dimensions(&self.owner, self.dimensions)?;
-        self.access.with_output_interval(self.interval, || self.probe.completed())?;
+        self.access.with_output_interval(self.interval, || Ok(()))?;
         let mut owner = ready::Owner::new(
             self.access.display().output.identity().clone(),
             self.interval,

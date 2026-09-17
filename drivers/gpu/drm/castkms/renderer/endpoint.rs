@@ -165,38 +165,6 @@ impl Endpoint {
         Ok(())
     }
 
-    pub(crate) fn submit_probe(&self, completion: Option<ARef<Fence>>) -> Result {
-        self.refresh_generation()?;
-        let draft = {
-            let state = self.state.lock();
-            match &*state {
-                State::Draft { draft, .. } => draft.clone(),
-                State::Closed => return Err(EKEYREVOKED),
-                State::Empty => return Err(ENODATA),
-                State::Publishing | State::Ready { .. } => return Err(EBUSY),
-            }
-        };
-        draft.submit_probe(completion)
-    }
-
-    /// Report terminal native failure separately from retryable private preparation.
-    pub(crate) fn check_probe(&self) -> Result {
-        self.refresh_generation()?;
-        use kernel::dma_fence::Status;
-        let state = self.state.lock();
-        match &*state {
-            State::Draft { draft, .. } => match draft.probe_status()? {
-                Status::Pending => Err(EBUSY),
-                Status::Complete(Err(_)) => Err(EREMOTEIO),
-                Status::Complete(Ok(())) => Ok(()),
-            },
-            State::Empty => Err(ENODATA),
-            State::Publishing => Err(EBUSY),
-            State::Ready { .. } => Err(EALREADY),
-            State::Closed => Err(EKEYREVOKED),
-        }
-    }
-
     pub(crate) fn changed(&self) -> &kernel::sync::poll::PollCondVar {
         &self.access.device().changed
     }
@@ -204,7 +172,11 @@ impl Endpoint {
     /// Prepare outside endpoint exclusion, then serialize reply, listing and owner install.
     /// No fallible operation follows successful listing. The reply callback follows Offer's
     /// restrictions; closing concurrently cannot leave a ready unowned native entry.
-    pub(crate) fn publish(&self, reply: impl FnOnce(u64) -> Result) -> Result {
+    pub(crate) fn publish(
+        &self,
+        completion: Option<ARef<Fence>>,
+        reply: impl FnOnce(u64) -> Result,
+    ) -> Result {
         self.refresh_generation()?;
         let resources = {
             let mut state = self.state.lock();
@@ -223,7 +195,7 @@ impl Endpoint {
             return Err(EIO);
         };
         // This owner is declared before the lock, so errors revoke it after lock release.
-        let offer = Offer::new(&registered, draft, pool)?;
+        let offer = Offer::new(&registered, draft, pool, completion.as_deref())?;
         let mut state = self.state.lock();
         if matches!(&*state, State::Closed) {
             return Err(EKEYREVOKED);

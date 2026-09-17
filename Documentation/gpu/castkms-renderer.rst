@@ -63,15 +63,14 @@ acquires no live source pixels and changes no KMS state.
 2. ``REGISTER_IMAGE`` supplies increasing positive image names and one to
    four distinct read/write DMA-BUFs each. Dimensions must equal the draft's
    pool dimensions. The trusted worker validates native layouts and imports.
-3. ``SUBMIT_PROBE`` reports completed CPU-only private work with fd -1, or
-   supplies a materialized native sync_file for independently submitted work.
-   The probe carries no display content and must not depend on future
+3. ``PUBLISH_OFFER`` closes configuration and supplies a materialized native
+   sync_file covering private preparation, or fd -1 after all preparation and
+   coherency work has completed. Pending work returns ``EBUSY``; terminal
+   failure returns ``EREMOTEIO``, with native status retained on the sync_file.
+   The dependency carries no display content and must not depend on future
    userspace submissions or recipient release.
-4. ``PUBLISH_OFFER`` requires registered storage and successful probe
-   completion. Pending work returns ``EBUSY``; terminal probe failure
-   returns ``EREMOTEIO``, with the native status retained on the sync_file.
    The result contains the positive native constraints ID.
-5. The KMS client selects that ID alongside compatible buffers, geometry,
+4. The KMS client selects that ID alongside compatible buffers, geometry,
    color and synchronization state, with ``DRM_MODE_ATOMIC_ALLOW_MODESET``.
    ``TEST_ONLY`` neither reserves readiness nor selects the worker.
 

@@ -33,11 +33,9 @@ mod cases {
         second_pool.insert(1, || second.register_image(&[
             buffer.export_dma_buf(ExportAccess::ReadWrite)?,
         ]))?;
-        first.submit_probe(None)?;
-        second.submit_probe(None)?;
-        check(first.prepare_worker(&second_pool).err() == Some(ENODATA))?;
-        let first_ready = first.prepare_worker(&first_pool)?;
-        let second_ready = second.prepare_worker(&second_pool)?;
+        check(first.prepare_worker(&second_pool, None).err() == Some(ENODATA))?;
+        let first_ready = first.prepare_worker(&first_pool, None)?;
+        let second_ready = second.prepare_worker(&second_pool, None)?;
         let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
         let control = device.constraints_output(crtc)?;
         let first_entry = provider.prepare(first_ready.worker())?;
@@ -62,8 +60,8 @@ mod cases {
     }
 
     #[test]
-    fn missing_pending_and_failed_probes_leave_pool_names_unpinned() -> Result {
-        let display = CastKms::new_constraints(c"castkms-draft-probe", 1)?;
+    fn pending_and_failed_readiness_leave_pool_names_unpinned() -> Result {
+        let display = CastKms::new_constraints(c"castkms-draft-readiness", 1)?;
         let device = display._display.registration_guard().ok_or(ENODEV)?;
         let file = RegisteredMasterFile::new(&device)?;
         let crtc = file.crtc()?;
@@ -75,17 +73,14 @@ mod cases {
             private_images::buffer(&device, ExportAccess::ReadWrite)?,
         ])?;
         pool.insert(1, || Ok(image.clone()))?;
-        check(draft.prepare_worker(&pool).err() == Some(ENODATA))?;
-        drop(pool.remove(1)?);
-        pool.insert(2, || Ok(image.clone()))?;
         let mut completion = kernel::dma_fence::testing::ManualFence::new()?;
-        draft.submit_probe(Some(completion.fence()))?;
-        check(draft.prepare_worker(&pool).err() == Some(EAGAIN))?;
-        drop(pool.remove(2)?);
-        pool.insert(3, || Ok(image))?;
+        let fence = completion.fence();
+        check(draft.prepare_worker(&pool, Some(&fence)).err() == Some(EBUSY))?;
+        drop(pool.remove(1)?);
+        pool.insert(2, || Ok(image))?;
         completion.complete(Err(EIO))?;
-        check(draft.prepare_worker(&pool).err() == Some(EIO))?;
-        drop(pool.remove(3)?);
+        check(draft.prepare_worker(&pool, Some(&fence)).err() == Some(EREMOTEIO))?;
+        drop(pool.remove(2)?);
         Ok(())
     }
 
@@ -108,13 +103,12 @@ mod cases {
             )?.export_dma_buf(ExportAccess::ReadWrite)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || draft.register_image(&[storage.clone()]))?;
-            draft.submit_probe(None)?;
-            let ready = draft.prepare_worker(&pool)?;
+            let ready = draft.prepare_worker(&pool, None)?;
             check(ready.worker().profile().limits().geometry.min_output == [800, 600])?;
             check(ready.worker().profile().limits().geometry.output == [800, 600])?;
             owner.revoke();
             check(ready.worker().hold_ready().err() == Some(EKEYREVOKED))?;
-            check(draft.prepare_worker(&pool).err() == Some(EKEYREVOKED))?;
+            check(draft.prepare_worker(&pool, None).err() == Some(EKEYREVOKED))?;
             check(draft.register_image(&[storage]).err() == Some(EKEYREVOKED))?;
             drop(pool.remove(1)?);
             Ok(())

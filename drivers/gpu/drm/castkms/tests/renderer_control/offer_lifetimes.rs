@@ -13,8 +13,7 @@ pub(super) fn prepare(
     pool.insert(1, || draft.register_image(&[
         private_images::buffer(device, ExportAccess::ReadWrite)?,
     ]))?;
-    draft.submit_probe(None)?;
-    let ready = draft.prepare_worker(&pool)?;
+    let ready = draft.prepare_worker(&pool, None)?;
     Ok((pool, ready))
 }
 

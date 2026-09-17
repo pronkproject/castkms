@@ -13,8 +13,7 @@ pub(super) fn prepare(
     pool.insert(1, || draft.register_image(&[
         private_images::buffer(device, ExportAccess::ReadWrite)?,
     ]))?;
-    draft.submit_probe(None)?;
-    let offer = Offer::new(device, &draft, &pool)?;
+    let offer = Offer::new(device, &draft, &pool, None)?;
     Ok((pool, offer))
 }
 

@@ -257,11 +257,11 @@ struct drm_castkms_create_renderer_control {
  * Replacement within an interval uses an independent renderer file. After the
  * bound master is reacquired, a drained endpoint becomes empty and may prepare
  * a fresh generation. Publication requires a runnable worker, completed
- * private probe and registered private images.
+ * private preparation and registered private images.
  * Only ordinary atomic CONSTRAINTS_ID selection changes the accepted backend.
  *
- * No renderer ioctl returns EAGAIN for readiness. ENODATA means no submitted
- * probe, required storage, or changed scene; EBUSY means retry is caller-driven.
+ * No renderer ioctl returns EAGAIN for readiness. ENODATA means missing
+ * required storage or changed scene; EBUSY means retry is caller-driven.
  * poll prompts source dequeue, never carries descriptors or proves GPU work
  * complete. Readability does not reserve a scene or a particular private image.
  * Withdrawal reports POLLHUP|POLLERR but leaves release/cleanup operations usable.
@@ -305,32 +305,22 @@ struct drm_castkms_renderer_prepare_offer {
 };
 
 /*
- * Submit one private probe, never display-source work. completion_fd is an
- * already-materialized native sync_file whose submitted work runs independently
- * of userspace, or -1 after all CPU access and coherency operations ended.
- * Flags/reserved must be zero. A probe is not display content or KMS activation.
- */
-struct drm_castkms_renderer_submit_probe {
-	__s32 completion_fd;
-	__u32 flags;
-	__u64 reserved[3];
-};
-
-/*
- * result points to drm_castkms_renderer_offer_result. Flags, reserved and
- * padding must be zero. The complete result is copied before native listing;
+ * result points to drm_castkms_renderer_offer_result. Flags and reserved must
+ * be zero. ready_fence_fd is an already-materialized sync_file
+ * covering all private preparation and coherency work, or -1 when that work
+ * has already completed. The complete result is copied before native listing;
  * any failure leaves no new selectable offer and copied output must be ignored.
  * Success publishes the draft for the current master interval; repeating
  * publication in that interval is EALREADY. QUERY returns its identity without
- * publishing again. Pending probes return
- * EBUSY; failed probes return EREMOTEIO (native status remains on the submitted
- * sync_file). Publication never selects an offer or acknowledges a modeset.
+ * publishing again. A pending readiness fence returns EBUSY; a failed fence
+ * returns EREMOTEIO, with native status retained on the sync_file. Publication
+ * never selects an offer or acknowledges a modeset.
  */
 struct drm_castkms_renderer_publish_offer {
 	__u64 result;
+	__s32 ready_fence_fd;
 	__u32 flags;
-	__u32 reserved;
-	__u64 padding[2];
+	__u64 reserved[2];
 };
 
 struct drm_castkms_renderer_offer_result {
@@ -674,15 +664,14 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_MONITOR_DETACH 0x03
 #define DRM_CASTKMS_RENDERER_QUERY 0x00
 #define DRM_CASTKMS_RENDERER_PREPARE_OFFER 0x01
-#define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x02
-#define DRM_CASTKMS_RENDERER_PUBLISH_OFFER 0x03
-#define DRM_CASTKMS_RENDERER_WITHDRAW_OFFER 0x04
-#define DRM_CASTKMS_RENDERER_REGISTER_IMAGE 0x05
-#define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x06
-#define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x07
-#define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x08
-#define DRM_CASTKMS_RENDERER_DEQUEUE_OUTPUT 0x09
-#define DRM_CASTKMS_RENDERER_RELEASE_OUTPUT 0x0a
+#define DRM_CASTKMS_RENDERER_PUBLISH_OFFER 0x02
+#define DRM_CASTKMS_RENDERER_WITHDRAW_OFFER 0x03
+#define DRM_CASTKMS_RENDERER_REGISTER_IMAGE 0x04
+#define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x05
+#define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x06
+#define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x07
+#define DRM_CASTKMS_RENDERER_DEQUEUE_OUTPUT 0x08
+#define DRM_CASTKMS_RENDERER_RELEASE_OUTPUT 0x09
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
@@ -728,9 +717,6 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY,
 			struct drm_castkms_renderer_query),
-	DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_SUBMIT_PROBE,
-			 struct drm_castkms_renderer_submit_probe),
 	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_SOURCE,
 			 struct drm_castkms_renderer_release_source),
