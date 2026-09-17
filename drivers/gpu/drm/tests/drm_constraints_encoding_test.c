@@ -79,9 +79,9 @@ static struct drm_constraints_snapshot *snapshot(struct kunit *test,
 	return snapshot;
 }
 
-static void encoding_preserves_native_metadata_without_padding(struct kunit *test)
+static void check_encoded_layout(struct kunit *test, bool implicit)
 {
-	struct encoding_fixture *f = new_fixture(test);
+	struct encoding_fixture *f = new_fixture_with_layout(test, implicit);
 	struct drm_constraints_snapshot *view = snapshot(test, f->list);
 	struct drm_constraints_encoded_list *header;
 	struct drm_constraints_encoded_entry *entry;
@@ -93,7 +93,7 @@ static void encoding_preserves_native_metadata_without_padding(struct kunit *tes
 	u8 *buffer;
 
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
-	KUNIT_ASSERT_EQ(test, required, 256);
+	KUNIT_ASSERT_EQ(test, required, 264);
 	buffer = kunit_kmalloc(test, required, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, buffer);
 	memset(buffer, 0xa5, required);
@@ -134,7 +134,8 @@ static void encoding_preserves_native_metadata_without_padding(struct kunit *tes
 	KUNIT_EXPECT_EQ(test, format->header.flags, DRM_CONSTRAINTS_RECORD_REQUIRED);
 	KUNIT_EXPECT_EQ(test, format->plane_id, 7);
 	KUNIT_EXPECT_EQ(test, format->format, DRM_FORMAT_XRGB8888);
-	KUNIT_EXPECT_EQ(test, format->modifier, I915_FORMAT_MOD_X_TILED);
+	KUNIT_EXPECT_EQ(test, format->modifier, implicit ? 0 : I915_FORMAT_MOD_X_TILED);
+	KUNIT_EXPECT_EQ(test, format->layout_flags, implicit ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0);
 	KUNIT_EXPECT_EQ(test, format->min_width, 64);
 	KUNIT_EXPECT_EQ(test, format->min_height, 32);
 	KUNIT_EXPECT_EQ(test, format->max_width, 3840);
@@ -150,47 +151,51 @@ static void encoding_preserves_native_metadata_without_padding(struct kunit *tes
 	KUNIT_EXPECT_EQ(test, property->maximum, 20);
 	KUNIT_EXPECT_EQ(test, property->mask, 0);
 	KUNIT_EXPECT_EQ(test, property->pad | property->header.pad |
-			format->header.pad | output->header.pad, 0);
+			format->header.pad | format->pad | output->header.pad, 0);
+}
+
+static void encoding_preserves_native_metadata_without_padding(struct kunit *test)
+{
+	check_encoded_layout(test, false);
 }
 
 static void size_discovery_and_short_buffers_write_no_partial_payload(struct kunit *test)
 {
+	enum { bytes = sizeof(struct drm_constraints_encoded_list) +
+		       sizeof(struct drm_constraints_encoded_entry) +
+		       sizeof(struct drm_constraints_encoded_description) +
+		       sizeof(struct drm_constraints_encoded_output) +
+		       sizeof(struct drm_constraints_encoded_format) +
+		       sizeof(struct drm_constraints_encoded_property) };
 	struct encoding_fixture *f = new_fixture(test);
 	struct drm_constraints_snapshot *view = snapshot(test, f->list);
-	u8 buffer[257], before[257];
+	u8 buffer[bytes + 1], before[bytes + 1];
 	size_t required = 123;
 
 	memset(buffer, 0xa5, sizeof(buffer));
 	memcpy(before, buffer, sizeof(buffer));
-	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(NULL, buffer, 256, &required), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(NULL, buffer, bytes, &required),
+			-EINVAL);
 	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 1, &required), -EINVAL);
-	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, 256, NULL), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, bytes, NULL), -EINVAL);
 	KUNIT_EXPECT_EQ(test, required, 123);
 	KUNIT_EXPECT_MEMEQ(test, buffer, before, sizeof(buffer));
-	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, 255, &required), -ENOSPC);
-	KUNIT_EXPECT_EQ(test, required, 256);
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, bytes - 1, &required),
+			-ENOSPC);
+	KUNIT_EXPECT_EQ(test, required, bytes);
 	KUNIT_EXPECT_MEMEQ(test, buffer, before, sizeof(buffer));
-	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, buffer, 256, &required), 0);
-	KUNIT_EXPECT_EQ(test, buffer[256], 0xa5);
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, buffer, bytes, &required), 0);
+	KUNIT_EXPECT_EQ(test, buffer[bytes], 0xa5);
 	/* Byte copies also support a deliberately unaligned kernel output buffer. */
-	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, before + 1, 256, &required), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, before + 1, bytes, &required),
+			0);
 	KUNIT_EXPECT_EQ(test, before[0], 0xa5);
-	KUNIT_EXPECT_MEMEQ(test, before + 1, buffer, 256);
+	KUNIT_EXPECT_MEMEQ(test, before + 1, buffer, bytes);
 }
 
 static void implicit_layout_is_not_encoded_as_explicit_linear(struct kunit *test)
 {
-	struct encoding_fixture *f = new_fixture_with_layout(test, true);
-	struct drm_constraints_snapshot *view = snapshot(test, f->list);
-	u8 buffer[32], before[32];
-	size_t required = 123;
-
-	memset(buffer, 0xa5, sizeof(buffer));
-	memcpy(before, buffer, sizeof(buffer));
-	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, sizeof(buffer),
-							     &required), -EOPNOTSUPP);
-	KUNIT_EXPECT_EQ(test, required, 123);
-	KUNIT_EXPECT_MEMEQ(test, buffer, before, sizeof(buffer));
+	check_encoded_layout(test, true);
 }
 
 static void encoded_snapshot_remains_coherent_after_list_closure(struct kunit *test)
