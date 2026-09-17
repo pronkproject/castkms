@@ -26,7 +26,7 @@ mod cases {
             check(provider.reap(&control)? == 1)?;
             check(control.snapshot(0)?.info().count == 2)?;
             check(provider.resolve(&second).err() == Some(ESTALE))?;
-            check(core::ptr::eq(&**provider.resolve(&first)?, &**first))?;
+            check(core::ptr::eq(&*provider.resolve(&first)?, &**first))?;
             device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
             control.restore_default()?;
             check(provider.reap(&control)? == 1)?;
@@ -57,7 +57,7 @@ mod cases {
             check(provider.reap(&control)? == 1)?;
             check(provider.resolve(&first).err() == Some(ESTALE))?;
             drop(ready.worker().hold_ready()?);
-            check(core::ptr::eq(&**provider.resolve(&second)?, &**second))?;
+            check(core::ptr::eq(&*provider.resolve(&second)?, &**second))?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&second))?;
             Ok(())
         })

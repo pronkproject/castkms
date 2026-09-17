@@ -48,7 +48,7 @@ mod cases {
         })?;
         check(first_entry.description().output().minimum() == (640, 480))?;
         check(second_entry.description().output().minimum() == (800, 600))?;
-        check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
+        check(core::ptr::eq(&*control.selected(), provider.initial()))?;
         device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&second_entry))?;
         check(core::ptr::eq(&*control.selected(), &**second_entry))?;
         drop(first_ready);

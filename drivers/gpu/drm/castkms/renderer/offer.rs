@@ -3,8 +3,10 @@
 //! Endpoint-owned native renderer offers, published only after reply preparation.
 
 use super::{draft::Draft, permission::Access, private_pool::Pool, ready};
-use crate::{execution::constraints::backend::Binding, Driver};
+use crate::{execution::constraints::backend::Backend, Driver};
 use kernel::{drm::{device::Registered, Device}, prelude::*};
+
+type Binding = kernel::sync::aref::ARef<kernel::drm::constraints::Entry<Backend>>;
 
 /// A unique endpoint lifetime with an immutable native identity and pinned private pool.
 /// Retaining an entry alone cannot keep its worker ready after this owner is dropped.

@@ -10,7 +10,7 @@ pub(super) use geometry::Geometry;
 pub(crate) use configuration::Configuration;
 
 use super::Driver;
-use crate::execution::constraints::backend::Backend;
+use crate::execution::constraints::backend::Binding;
 use core::num::NonZeroU64;
 use kernel::{
     dma_resv::Reservation,
@@ -104,10 +104,10 @@ impl Scene {
     }
 
     pub(super) fn set_binding(&mut self,
-        entry: Option<&kernel::drm::constraints::Entry<Backend>>,
+        entry: Option<&Binding>,
     ) {
         self.constraints = entry.map(|entry| ARef::from(&**entry));
-        self.binding = entry.map(ARef::from);
+        self.binding = entry.cloned();
     }
 
     /// Unknown or delegated native bindings are never permission for a HOST fallback.

@@ -95,7 +95,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
             let control = device.constraints_output(crtc)?;
-            check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
+            check(core::ptr::eq(&*control.selected(), provider.initial()))?;
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
@@ -113,7 +113,7 @@ mod cases {
             check(entry.description().output().maximum() == (640, 480))?;
             check(control.lookup(entry.id()).err() == Some(ESTALE))?;
             provider.publish(&control, &entry)?;
-            check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
+            check(core::ptr::eq(&*control.selected(), provider.initial()))?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
             check(core::ptr::eq(&*control.selected(), &**entry))?;
             let scene = crtc
@@ -143,7 +143,7 @@ mod cases {
             device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
             check(core::ptr::eq(&*control.selected(), &**entry))?;
             control.restore_default()?;
-            check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
+            check(core::ptr::eq(&*control.selected(), provider.initial()))?;
             // A retained old scene remains attributed to the old worker, never HOST.
             check(!scene.host_binding())?;
             control.withdraw(entry.id())?;
@@ -211,7 +211,7 @@ mod cases {
             let next = provider.prepare(ready.worker())?;
             provider.publish(&control, &next)?;
             check(provider.publish(&control, &next) == Err(EEXIST))?;
-            check(core::ptr::eq(&**provider.resolve(&next)?, &**next))?;
+            check(core::ptr::eq(&*provider.resolve(&next)?, &**next))?;
             let pending = provider.prepare(ready.worker())?;
             provider.close();
             check(provider.publish(&control, &pending) == Err(ESHUTDOWN))?;
