@@ -92,6 +92,9 @@ every role; advertise the intersection of per-role restrictions. Each format
 record names an exact fourcc/modifier/memory-plane-count tuple, native/imported
 provenance, and alignment/pitch bounds. Implicit layout is distinct from
 explicit LINEAR. A declaration proves neither import compatibility nor access.
+Published generic KMS constraints carry the same per-format allocation limits,
+so a compositor can choose storage before selecting the offer. Complete atomic
+validation remains authoritative for the whole scene.
 
 The static KMS envelope is 16384 by 16384 with primary/overlay formats
 including binary16 RGB. Cursor remains ARGB8888, at most 512 by 512.
