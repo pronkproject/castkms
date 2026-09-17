@@ -54,6 +54,7 @@ struct drm_constraints_size {
  * @height_alignment: required framebuffer-height alignment in pixels
  * @pitch_alignment: required byte alignment of every plane pitch
  * @offset_alignment: required byte alignment of every plane offset
+ * @min_pitch: minimum pitch in bytes for every plane
  * @max_pitch: maximum pitch in bytes for every plane
  *
  * Implicit layout does not promise linear storage. A zero modifier with zero
@@ -73,6 +74,7 @@ struct drm_constraints_format {
 	u32 height_alignment;
 	u32 pitch_alignment;
 	u32 offset_alignment;
+	u32 min_pitch;
 	u32 max_pitch;
 };
 

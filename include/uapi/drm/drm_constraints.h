@@ -37,7 +37,7 @@
  */
 
 #define DRM_MODE_CONSTRAINTS_VERSION 1
-#define DRM_MODE_CONSTRAINTS_MAX_BYTES (32U * 1024U * 1024U)
+#define DRM_MODE_CONSTRAINTS_MAX_BYTES (40U * 1024U * 1024U)
 #define DRM_MODE_CONSTRAINTS_MAX_ENTRIES 64U
 #define DRM_MODE_CONSTRAINTS_MAX_FORMATS 6144U
 #define DRM_MODE_CONSTRAINTS_MAX_PROPERTIES 64U
@@ -274,7 +274,9 @@ struct drm_mode_constraints_output_size {
  * @height_alignment: Required framebuffer-height alignment in pixels.
  * @pitch_alignment: Required byte alignment of every plane pitch.
  * @offset_alignment: Required byte alignment of every plane offset.
+ * @min_pitch: Minimum pitch in bytes for every plane.
  * @max_pitch: Maximum pitch in bytes for every plane.
+ * @reserved: Zero.
  *
  * Dimensions describe framebuffer allocation, not the fractional source
  * rectangle or scaled destination. LAYOUT_IMPLICIT means framebuffer creation
@@ -285,7 +287,8 @@ struct drm_mode_constraints_output_size {
  * the queried DRM device, while IMPORTED means a PRIME-imported DMA-BUF. The
  * flags apply independently to every memory plane, so both flags also permit
  * framebuffers whose planes have mixed origins. Dimension and byte alignments
- * are positive powers of two, and max_pitch is at least pitch_alignment.
+ * are positive powers of two. The inclusive pitch bounds contain at least one
+ * aligned value.
  * Tuples of plane, format, modifier and layout flags are unique within a
  * description.
  *
@@ -309,7 +312,9 @@ struct drm_mode_constraints_plane_format {
 	__u32 height_alignment;
 	__u32 pitch_alignment;
 	__u32 offset_alignment;
+	__u32 min_pitch;
 	__u32 max_pitch;
+	__u32 reserved;
 };
 
 /**

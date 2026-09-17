@@ -18,7 +18,7 @@ static_assert(sizeof(struct drm_mode_constraints) == 40);
 static_assert(sizeof(struct drm_mode_constraints_description) == 16);
 static_assert(sizeof(struct drm_mode_constraints_record) == 16);
 static_assert(sizeof(struct drm_mode_constraints_output_size) == 32);
-static_assert(sizeof(struct drm_mode_constraints_plane_format) == 80);
+static_assert(sizeof(struct drm_mode_constraints_plane_format) == 88);
 static_assert(sizeof(struct drm_mode_constraints_plane_geometry) == 32);
 static_assert(sizeof(struct drm_mode_constraints_property) == 56);
 static_assert(sizeof(struct drm_mode_constraints_plane_limit) == 24);
@@ -27,7 +27,8 @@ static_assert(offsetof(struct drm_mode_constraints_list, reserved) == 48);
 static_assert(offsetof(struct drm_mode_constraints, reserved) == 24);
 static_assert(offsetof(struct drm_mode_constraints_plane_format, modifier) == 24);
 static_assert(offsetof(struct drm_mode_constraints_plane_format, layout_flags) == 48);
-static_assert(offsetof(struct drm_mode_constraints_plane_format, max_pitch) == 76);
+static_assert(offsetof(struct drm_mode_constraints_plane_format, min_pitch) == 76);
+static_assert(offsetof(struct drm_mode_constraints_plane_format, reserved) == 84);
 static_assert(offsetof(struct drm_mode_constraints_property, minimum) == 32);
 static_assert(DRM_CONSTRAINTS_MAX_ENTRIES <= DRM_MODE_CONSTRAINTS_MAX_ENTRIES);
 static_assert(DRM_CONSTRAINTS_MAX_FORMATS <= DRM_MODE_CONSTRAINTS_MAX_FORMATS);
@@ -141,6 +142,7 @@ static size_t encode_description(struct drm_constraints_description *description
 			.height_alignment = formats[i].height_alignment,
 			.pitch_alignment = formats[i].pitch_alignment,
 			.offset_alignment = formats[i].offset_alignment,
+			.min_pitch = formats[i].min_pitch,
 			.max_pitch = formats[i].max_pitch,
 		};
 

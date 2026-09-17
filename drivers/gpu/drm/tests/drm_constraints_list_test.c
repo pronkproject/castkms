@@ -61,7 +61,7 @@ static struct list_fixture *new_fixture(struct kunit *test, unsigned int limit)
 		.size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	struct list_fixture *fixture = kunit_kzalloc(test, sizeof(*fixture), GFP_KERNEL);
 

@@ -107,7 +107,9 @@ drm_constraints_description_create_with_geometry(
 		    !is_power_of_2(formats[i].height_alignment) ||
 		    !is_power_of_2(formats[i].pitch_alignment) ||
 		    !is_power_of_2(formats[i].offset_alignment) ||
-		    formats[i].max_pitch < formats[i].pitch_alignment ||
+		    !formats[i].min_pitch ||
+		    ALIGN((u64)formats[i].min_pitch, formats[i].pitch_alignment) >
+			formats[i].max_pitch ||
 		    !size_valid(&formats[i].size) ||
 		    ALIGN((u64)formats[i].size.min_width, formats[i].width_alignment) >
 			formats[i].size.max_width ||
@@ -319,6 +321,7 @@ static bool format_covers(const struct drm_constraints_format *candidate,
 		!(required->height_alignment % candidate->height_alignment) &&
 		!(required->pitch_alignment % candidate->pitch_alignment) &&
 		!(required->offset_alignment % candidate->offset_alignment) &&
+		candidate->min_pitch <= required->min_pitch &&
 		candidate->max_pitch >= required->max_pitch;
 }
 

@@ -85,7 +85,7 @@ new_entry(struct kunit *test, struct output_fixture *fixture, u32 crtc_id, u32 p
 		.size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
@@ -110,7 +110,7 @@ new_entry_with_plane_limit(struct kunit *test, struct output_fixture *fixture,
 		.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	const struct drm_constraints_plane_limit limit = {
 		.max_active = 1, .count = 1, .plane_ids = &limit_plane_id,
@@ -139,7 +139,7 @@ new_entry_with_plane_geometry(struct kunit *test, struct output_fixture *fixture
 		.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	const struct drm_constraints_plane_geometry geometry = {
 		.plane_id = geometry_plane_id,
@@ -317,7 +317,7 @@ static void offers_require_advertised_plane_allocations(struct kunit *test)
 		.size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_entry *initial = new_entry(test, fixture,
 					fixture->crtc->base.id, fixture->plane->base.id);
@@ -352,7 +352,7 @@ new_property_entry(struct kunit *test, struct output_fixture *fixture,
 		.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
@@ -379,7 +379,7 @@ static void implicit_offer_requires_format_not_linear_modifier(struct kunit *tes
 		.size = size, .flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;

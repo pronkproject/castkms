@@ -52,8 +52,8 @@ format/modifier pair. It also states whether framebuffer memory may originate
 on the queried DRM device, arrive through PRIME DMA-BUF import, or use either
 origin. Framebuffer width and height must satisfy the stated pixel alignments.
 A memory plane's pitch and offset must satisfy the stated byte alignments, and
-its pitch must not exceed the advertised maximum. The record includes the
-format's memory-plane count so an allocator can size the complete framebuffer.
+its pitch must fall within the advertised inclusive bounds. The record includes
+the format's memory-plane count so an allocator can size the complete framebuffer.
 Tiled layouts are not restricted to software-compositor capabilities. Common
 atomic validation checks dimension rules once per framebuffer and storage rules
 on every memory plane; a missing optional GEM object is native storage, while an
@@ -156,7 +156,7 @@ format records are alternatives; geometry rules, scalar rules and active-plane
 limits apply together. Unknown required records make an entry unusable, not
 unrestricted.
 
-The encoding is bounded to 32 MiB, including a maximum-size native list.
+The encoding is bounded to 40 MiB, including a maximum-size native list.
 All padding and reserved output fields are zero. A null buffer with zero
 capacity discovers the required size. An undersized buffer returns
 ``-ENOSPC`` and the required size without modifying any payload. Other errors

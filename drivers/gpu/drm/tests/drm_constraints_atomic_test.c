@@ -189,7 +189,7 @@ new_layout_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 m
 		.flags = implicit ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
@@ -226,7 +226,8 @@ new_mixed_entry(struct kunit *test, struct atomic_fixture *f, unsigned int backe
 			.size = size,
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 			.width_alignment = 1, .height_alignment = 1,
-			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+			.pitch_alignment = 1, .offset_alignment = 1,
+			.min_pitch = 1, .max_pitch = U32_MAX,
 		}, {
 			.plane_id = f->plane->base.id,
 			.format = DRM_FORMAT_NV12,
@@ -234,7 +235,8 @@ new_mixed_entry(struct kunit *test, struct atomic_fixture *f, unsigned int backe
 			.size = size,
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 			.width_alignment = 1, .height_alignment = 1,
-			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+			.pitch_alignment = 1, .offset_alignment = 1,
+			.min_pitch = 1, .max_pitch = U32_MAX,
 		},
 	};
 	struct drm_constraints_description *description;
@@ -266,6 +268,7 @@ new_storage_entry(struct kunit *test, struct atomic_fixture *f, u32 storage_flag
 		.width_alignment = 64, .height_alignment = 4,
 		.pitch_alignment = 256,
 		.offset_alignment = 4096,
+		.min_pitch = 512,
 		.max_pitch = 1024,
 	};
 	struct drm_constraints_description *description;
@@ -648,6 +651,8 @@ static void source_allocation_respects_storage_requirements(struct kunit *test)
 	f->tiled->height = 64;
 	f->tiled->pitches[0]++;
 	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	f->tiled->pitches[0] = 256;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
 	f->tiled->pitches[0] = 1280;
 	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
 	f->tiled->pitches[0] = 512;
@@ -671,6 +676,20 @@ static void dimension_alignment_is_rechecked_at_installation(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
 	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
 	f->tiled->width = 130;
+	KUNIT_EXPECT_EQ(test, run_update(state, install_update), -EINVAL);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+}
+
+static void minimum_pitch_is_rechecked_at_installation(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_constraints_entry *entry =
+		new_storage_entry(test, f, DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE);
+	struct drm_atomic_commit *state = new_update(test, f, entry, f->tiled);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	f->tiled->pitches[0] = 256;
 	KUNIT_EXPECT_EQ(test, run_update(state, install_update), -EINVAL);
 	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
@@ -1902,6 +1921,7 @@ static void proposed_scene_obeys_plane_geometry_rules(struct kunit *test)
 		.width_alignment = 1, .height_alignment = 1,
 		.pitch_alignment = 1,
 		.offset_alignment = 1,
+		.min_pitch = 1,
 		.max_pitch = U32_MAX,
 	};
 	const struct drm_constraints_plane_geometry geometry = {
@@ -1983,6 +2003,7 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1,
 			.offset_alignment = 1,
+			.min_pitch = 1,
 			.max_pitch = U32_MAX,
 		}, {
 			.plane_id = overlay->base.id,
@@ -1993,6 +2014,7 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1,
 			.offset_alignment = 1,
+			.min_pitch = 1,
 			.max_pitch = U32_MAX,
 		}, {
 			.plane_id = cursor->base.id,
@@ -2003,6 +2025,7 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1,
 			.offset_alignment = 1,
+			.min_pitch = 1,
 			.max_pitch = U32_MAX,
 		},
 	};
@@ -2485,6 +2508,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(source_allocation_respects_exact_geometry),
 	KUNIT_CASE(source_allocation_respects_storage_requirements),
 	KUNIT_CASE(dimension_alignment_is_rechecked_at_installation),
+	KUNIT_CASE(minimum_pitch_is_rechecked_at_installation),
 	KUNIT_CASE(asynchronous_updates_are_not_admitted),
 	KUNIT_CASE(transactions_may_include_outputs_without_constraints),
 	KUNIT_CASE(validation_includes_unchanged_active_planes),

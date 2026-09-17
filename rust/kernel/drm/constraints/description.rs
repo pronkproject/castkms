@@ -77,6 +77,7 @@ impl Format {
             height_alignment: 1,
             pitch_alignment: 1,
             offset_alignment: 1,
+            min_pitch: 1,
             max_pitch: u32::MAX,
         })
     }
@@ -94,6 +95,7 @@ impl Format {
             height_alignment: 1,
             pitch_alignment: 1,
             offset_alignment: 1,
+            min_pitch: 1,
             max_pitch: u32::MAX,
         })
     }
@@ -111,7 +113,7 @@ impl Format {
         self
     }
 
-    /// Restrict storage origin, pitch alignment, offset alignment and maximum pitch.
+    /// Restrict storage origin, byte alignments and maximum pitch.
     ///
     /// At least one origin must be allowed. Alignments apply to every framebuffer memory plane
     /// and must be nonzero powers of two. [`Description::new`] validates these requirements.
@@ -135,6 +137,12 @@ impl Format {
         self.0.pitch_alignment = pitch_alignment;
         self.0.offset_alignment = offset_alignment;
         self.0.max_pitch = max_pitch;
+        self
+    }
+
+    /// Restrict the minimum pitch in bytes for every framebuffer memory plane.
+    pub const fn with_minimum_pitch(mut self, min_pitch: u32) -> Self {
+        self.0.min_pitch = min_pitch;
         self
     }
 
@@ -172,11 +180,12 @@ impl Format {
         self.0.storage_flags & bindings::DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED != 0
     }
 
-    /// Required pitch alignment, required offset alignment and maximum pitch in bytes.
-    pub const fn storage_layout(&self) -> (u32, u32, u32) {
+    /// Required pitch/offset alignments and inclusive pitch bounds in bytes.
+    pub const fn storage_layout(&self) -> (u32, u32, u32, u32) {
         (
             self.0.pitch_alignment,
             self.0.offset_alignment,
+            self.0.min_pitch,
             self.0.max_pitch,
         )
     }

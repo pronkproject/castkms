@@ -42,6 +42,7 @@ static struct encoding_fixture *new_fixture_with_layout(struct kunit *test, bool
 		.height_alignment = 4,
 		.pitch_alignment = 256,
 		.offset_alignment = 4096,
+		.min_pitch = 1024,
 		.max_pitch = 65536,
 	};
 	struct drm_constraints_property property;
@@ -175,7 +176,9 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	KUNIT_EXPECT_EQ(test, format->height_alignment, 4);
 	KUNIT_EXPECT_EQ(test, format->pitch_alignment, 256);
 	KUNIT_EXPECT_EQ(test, format->offset_alignment, 4096);
+	KUNIT_EXPECT_EQ(test, format->min_pitch, 1024);
 	KUNIT_EXPECT_EQ(test, format->max_pitch, 65536);
+	KUNIT_EXPECT_EQ(test, format->reserved, 0);
 	KUNIT_EXPECT_EQ(test, format->min_width, 64);
 	KUNIT_EXPECT_EQ(test, format->min_height, 32);
 	KUNIT_EXPECT_EQ(test, format->max_width, 3840);
@@ -345,7 +348,8 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 			.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 			.width_alignment = 1, .height_alignment = 1,
-			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+			.pitch_alignment = 1, .offset_alignment = 1,
+			.min_pitch = 1, .max_pitch = U32_MAX,
 		};
 	for (i = 0; i < DRM_CONSTRAINTS_MAX_PROPERTIES; i++)
 		properties[i] = (struct drm_constraints_property) {

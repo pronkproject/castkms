@@ -19,6 +19,7 @@ static const struct drm_constraints_format linear = {
 	.height_alignment = 1,
 	.pitch_alignment = 1,
 	.offset_alignment = 1,
+	.min_pitch = 1,
 	.max_pitch = U32_MAX,
 };
 
@@ -269,6 +270,20 @@ static void drm_constraints_rejects_invalid_storage_rules(struct kunit *test)
 							       NULL, 0),
 			    ERR_PTR(-EINVAL));
 	format = linear;
+	format.min_pitch = 0;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size,
+							       &format, 1, NULL, 0, NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
+	format.pitch_alignment = 256;
+	format.min_pitch = 257;
+	format.max_pitch = 511;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size,
+							       &format, 1, NULL, 0, NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
 	format.pitch_alignment = 256;
 	format.max_pitch = 128;
 	KUNIT_EXPECT_PTR_EQ(test,
@@ -454,12 +469,14 @@ static void drm_constraints_description_recognizes_structural_coverage(struct ku
 	required_format.height_alignment = 8;
 	required_format.pitch_alignment = 256;
 	required_format.offset_alignment = 4096;
+	required_format.min_pitch = 1024;
 	required_format.max_pitch = 8192;
 	candidate_formats[0].size = (struct drm_constraints_size) { 1, 1, 8192, 8192 };
 	candidate_formats[0].width_alignment = 64;
 	candidate_formats[0].height_alignment = 4;
 	candidate_formats[0].pitch_alignment = 64;
 	candidate_formats[0].offset_alignment = 1024;
+	candidate_formats[0].min_pitch = 256;
 	candidate_formats[0].max_pitch = 16384;
 	candidate_formats[1].plane_id = 18;
 
@@ -501,6 +518,7 @@ static void drm_constraints_description_rejects_incomplete_coverage(struct kunit
 	required_format.height_alignment = 8;
 	required_format.pitch_alignment = 256;
 	required_format.offset_alignment = 4096;
+	required_format.min_pitch = 1024;
 	required_format.max_pitch = 8192;
 	required = create_complete_description(test, &output_size, &required_format, 1,
 					       &required_property, 1, &required_limit, 1);
@@ -521,6 +539,9 @@ static void drm_constraints_description_rejects_incomplete_coverage(struct kunit
 	EXPECT_INCOMPLETE();
 	candidate_format = required_format;
 	candidate_format.pitch_alignment = 512;
+	EXPECT_INCOMPLETE();
+	candidate_format = required_format;
+	candidate_format.min_pitch = 2048;
 	EXPECT_INCOMPLETE();
 	candidate_format = required_format;
 	candidate_property.maximum = 7;

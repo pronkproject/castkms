@@ -193,6 +193,7 @@ static bool storage_matches(const struct drm_constraints_format *format,
 		if (!(format->storage_flags & origin) ||
 		    !IS_ALIGNED(fb->pitches[i], format->pitch_alignment) ||
 		    !IS_ALIGNED(fb->offsets[i], format->offset_alignment) ||
+		    fb->pitches[i] < format->min_pitch ||
 		    fb->pitches[i] > format->max_pitch)
 			return false;
 	}

@@ -39,7 +39,7 @@ static void duplicate_retains_the_exact_backend(struct kunit *test)
 		.size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
 		.width_alignment = 1, .height_alignment = 1,
-		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
+		.pitch_alignment = 1, .offset_alignment = 1, .min_pitch = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_domain *domain;
