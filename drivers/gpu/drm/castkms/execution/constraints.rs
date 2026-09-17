@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Generic allocation descriptions derived from renderer capability profiles.
+//! Generic allocation descriptions derived from renderer constraints.
 
 pub(crate) mod bindings;
 pub(crate) mod backend;

@@ -122,23 +122,23 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_files files = { .renderer_fd = -1, .revoke_fd = -1 };
 	struct drm_castkms_create_renderer_control create = { .files = (uintptr_t)&files };
 	struct {
-		struct drm_castkms_capability_profile header;
-		struct drm_castkms_capability_format format;
-	} profile = {
+		struct drm_castkms_renderer_constraints header;
+		struct drm_castkms_renderer_constraints_format format;
+	} constraints = {
 		.header = {
-			.version = DRM_CASTKMS_CAPABILITY_VERSION,
-			.kind = DRM_CASTKMS_CAPABILITY_KIND_RENDERER, .format_count = 1,
+			.version = DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION,
+			.kind = DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND, .format_count = 1,
 			.min_scale = 1U << 16, .max_scale = 1U << 16,
 			.max_layers = 1, .max_roles = { 1, 0, 0 },
 		},
 		.format = {
 			.fourcc = DRM_FORMAT_XRGB8888, .plane_count = 1,
-			.flags = DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE,
+			.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE,
 			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = 65536,
 		},
 	};
 	struct drm_castkms_renderer_prepare_offer prepare = {
-		.profile = (uintptr_t)&profile, .profile_size = sizeof(profile),
+		.constraints = (uintptr_t)&constraints, .constraints_size = sizeof(constraints),
 	};
 	struct drm_castkms_renderer_submit_probe probe = { .completion_fd = -1 };
 	struct drm_castkms_renderer_offer_result result;
@@ -192,12 +192,12 @@ int main(int argc, char **argv)
 	expect_error(files.renderer_fd, DRM_IOCTL_VERSION, &result, ENOTTY);
 	prepare.width = image.width = mode->hdisplay;
 	prepare.height = image.height = mode->vdisplay;
-	profile.header.min_output[0] = profile.header.max_output[0] = mode->hdisplay;
-	profile.header.min_output[1] = profile.header.max_output[1] = mode->vdisplay;
-	memcpy(profile.header.min_source, profile.header.min_output,
-		sizeof(profile.header.min_source));
-	memcpy(profile.header.max_source, profile.header.max_output,
-		sizeof(profile.header.max_source));
+	constraints.header.min_output[0] = constraints.header.max_output[0] = mode->hdisplay;
+	constraints.header.min_output[1] = constraints.header.max_output[1] = mode->vdisplay;
+	memcpy(constraints.header.min_source, constraints.header.min_output,
+		sizeof(constraints.header.min_source));
+	memcpy(constraints.header.max_source, constraints.header.max_output,
+		sizeof(constraints.header.max_source));
 	prepare.reserved[0] = 1;
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER, &prepare, EINVAL);
 	prepare.reserved[0] = 0;
