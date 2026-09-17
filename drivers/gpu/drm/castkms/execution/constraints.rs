@@ -2,6 +2,8 @@
 
 //! Generic allocation descriptions derived from renderer capability profiles.
 
+pub(crate) mod bindings;
+
 use super::{
     capabilities::Profile,
     potential, //
