@@ -95,10 +95,12 @@ explicit LINEAR. A declaration proves neither import compatibility nor access.
 Published generic KMS constraints carry the same per-format allocation limits,
 so a compositor can choose storage before selecting the offer. They also carry
 scalar rules for restricted destination position, source origin, and usable YUV
-encoding and range values. Geometry relationships, fractional-coordinate
+encoding and range values. Overlapping active-plane limits express both the
+profile's total layer ceiling and any narrower role ceiling across the actual
+planes for that output. Geometry relationships, fractional-coordinate
 requirements, and color-pipeline contents cannot be represented as independent
-property ranges, so complete atomic validation remains authoritative for the
-whole scene.
+records, so complete atomic validation remains authoritative for the whole
+scene.
 
 The static KMS envelope is 16384 by 16384 with primary/overlay formats
 including binary16 RGB. Cursor remains ARGB8888, at most 512 by 512.
