@@ -2,6 +2,7 @@
 
 #include <linux/completion.h>
 #include <linux/dma-fence.h>
+#include <linux/file.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
 #include <drm/drm_atomic.h>
@@ -13,6 +14,7 @@
 #include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
 #include <drm/drm_atomic_uapi.h>
+#include <drm/drm_auth.h>
 #include <drm/drm_blend.h>
 #include <drm/drm_color_mgmt.h>
 #include <drm/drm_constraints.h>
@@ -22,13 +24,36 @@
 #include <drm/drm_constraints_output.h>
 #include <drm/drm_constraints_owner.h>
 #include <drm/drm_fourcc.h>
+#include <drm/drm_file.h>
 #include <drm/drm_framebuffer.h>
+#include <drm/drm_ioctl.h>
 #include <drm/drm_kunit_helpers.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_plane_helper.h>
 #include <kunit/test.h>
 
 #include "../drm_crtc_internal.h"
+#include "../drm_internal.h"
+
+static const struct file_operations test_fops = {
+	.owner = THIS_MODULE,
+	.release = drm_release_noglobal,
+};
+
+static const struct drm_driver test_driver = {
+	.driver_features = DRIVER_MODESET | DRIVER_ATOMIC,
+	.fops = &test_fops,
+};
+
+static void flush_owner_recovery(void *data)
+{
+	drm_constraints_owner_flush(data);
+}
+
+static void close_master_file(void *data)
+{
+	__fput_sync(data);
+}
 
 /* Metadata-only provider: framebuffer creation performs no GPU allocation. */
 struct test_backend {
@@ -196,8 +221,8 @@ static struct atomic_fixture *new_fixture_with_preparation(struct kunit *test, b
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	parent = drm_kunit_helper_alloc_device(test);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
-	f->dev = __drm_kunit_helper_alloc_drm_device(test, parent, sizeof(*f->dev), 0,
-						    DRIVER_MODESET | DRIVER_ATOMIC);
+	f->dev = __drm_kunit_helper_alloc_drm_device_with_driver(test, parent,
+							      sizeof(*f->dev), 0, &test_driver);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->dev);
 	f->dev->dev_private = f;
 	f->dev->mode_config.funcs = &mode_ops;
@@ -206,6 +231,7 @@ static struct atomic_fixture *new_fixture_with_preparation(struct kunit *test, b
 	if (preparation)
 		KUNIT_ASSERT_EQ(test, drm_atomic_prepare_display_init(f->dev, 8), 0);
 	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(f->dev, 8), 0);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, flush_owner_recovery, f->dev), 0);
 	f->plane = drm_kunit_helper_create_primary_plane(test, f->dev, NULL, NULL,
 							 formats, ARRAY_SIZE(formats), modifiers);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->plane);
@@ -1437,6 +1463,55 @@ static void recovery_retains_pending_native_reads(struct kunit *test)
 	check_prepared_shutdown(test, true);
 }
 
+static void master_replacement_waits_for_native_source_retirement(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture_with_preparation(test, true);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+	struct drm_prepare_source *source;
+	struct drm_prepare_read_claim *read;
+	struct dma_fence *fence;
+	struct file *file;
+	bool acquired;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, commit_prepared_update), 0);
+	drm_atomic_commit_clear(state);
+	fence = kzalloc_obj(*fence);
+	KUNIT_ASSERT_NOT_NULL(test, fence);
+	dma_fence_init(fence, &read_fence_ops, NULL, dma_fence_context_alloc(1), 1);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, finish_read, fence), 0);
+	KUNIT_ASSERT_EQ(test, drm_modeset_lock(&f->crtc->mutex, NULL), 0);
+	source = drm_atomic_prepare_crtc_source(f->crtc);
+	if (!IS_ERR(source))
+		drm_prepare_source_get(source);
+	drm_modeset_unlock(&f->crtc->mutex);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, source);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_source, source), 0);
+	read = drm_prepare_source_claim(source);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, read);
+	drm_prepare_read_release(read, fence);
+
+	file = mock_drm_getfile(f->dev->primary, O_RDWR);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, file);
+	atomic_inc(&f->dev->open_count);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, close_master_file, file), 0);
+	KUNIT_ASSERT_EQ(test, drm_master_open(file->private_data), 0);
+	KUNIT_ASSERT_EQ(test, drm_ioctl(file, DRM_IOCTL_DROP_MASTER, 0), 0L);
+	KUNIT_EXPECT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_MASTER, 0), -EBUSY);
+	acquired = drm_master_internal_acquire(f->dev);
+	KUNIT_EXPECT_FALSE(test, acquired);
+	if (acquired)
+		drm_master_internal_release(f->dev);
+	KUNIT_EXPECT_FALSE(test, dma_fence_is_signaled(fence));
+
+	dma_fence_signal(fence);
+	drm_constraints_owner_flush(f->dev);
+	KUNIT_EXPECT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_MASTER, 0), 0L);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->enable);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+}
+
 static void proposed_scene_obeys_scalar_property_rules(struct kunit *test)
 {
 	struct atomic_fixture *f = new_fixture(test);
@@ -1687,6 +1762,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(recovery_restores_all_defaults_before_retiring_offers),
 	KUNIT_CASE(recovery_does_not_reopen_closed_lists),
 	KUNIT_CASE(recovery_retains_pending_native_reads),
+	KUNIT_CASE(master_replacement_waits_for_native_source_retirement),
 	KUNIT_CASE(owner_recovery_excludes_replacement_until_success),
 	KUNIT_CASE(owner_recovery_stops_after_unplug_or_cleanup),
 	KUNIT_CASE(closure_rejects_checked_activation),
