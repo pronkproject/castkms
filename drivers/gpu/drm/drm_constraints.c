@@ -237,3 +237,111 @@ drm_constraints_description_plane_limits(const struct drm_constraints_descriptio
 	return description->plane_limits;
 }
 EXPORT_SYMBOL_GPL(drm_constraints_description_plane_limits);
+
+static bool size_covers(const struct drm_constraints_size *candidate,
+			const struct drm_constraints_size *required)
+{
+	return candidate->min_width <= required->min_width &&
+		candidate->min_height <= required->min_height &&
+		candidate->max_width >= required->max_width &&
+		candidate->max_height >= required->max_height;
+}
+
+static bool format_covers(const struct drm_constraints_format *candidate,
+			  const struct drm_constraints_format *required)
+{
+	return candidate->plane_id == required->plane_id &&
+		candidate->format == required->format &&
+		candidate->modifier == required->modifier &&
+		candidate->flags == required->flags &&
+		size_covers(&candidate->size, &required->size) &&
+		(candidate->storage_flags & required->storage_flags) == required->storage_flags &&
+		!(required->pitch_alignment % candidate->pitch_alignment) &&
+		!(required->offset_alignment % candidate->offset_alignment) &&
+		candidate->max_pitch >= required->max_pitch;
+}
+
+static bool property_covers(const struct drm_constraints_property *candidate,
+			    const struct drm_constraints_property *required)
+{
+	if (candidate->object_id != required->object_id ||
+	    candidate->property_id != required->property_id ||
+	    candidate->type != required->type)
+		return false;
+
+	switch (candidate->type) {
+	case DRM_MODE_PROP_RANGE:
+		return candidate->minimum <= required->minimum &&
+			candidate->maximum >= required->maximum;
+	case DRM_MODE_PROP_SIGNED_RANGE:
+		return (s64)candidate->minimum <= (s64)required->minimum &&
+			(s64)candidate->maximum >= (s64)required->maximum;
+	case DRM_MODE_PROP_ENUM:
+	case DRM_MODE_PROP_BITMASK:
+		return !(required->mask & ~candidate->mask);
+	default:
+		return false;
+	}
+}
+
+static bool plane_sets_equal(const struct drm_constraints_plane_limit *left,
+			     const struct drm_constraints_plane_limit *right)
+{
+	unsigned int i, j;
+
+	if (left->count != right->count)
+		return false;
+	for (i = 0; i < left->count; i++) {
+		for (j = 0; j < right->count; j++)
+			if (left->plane_ids[i] == right->plane_ids[j])
+				break;
+		if (j == right->count)
+			return false;
+	}
+	return true;
+}
+
+bool drm_constraints_description_covers(const struct drm_constraints_description *candidate,
+					const struct drm_constraints_description *required)
+{
+	unsigned int i, j;
+
+	if (!candidate || !required || !size_covers(&candidate->output, &required->output))
+		return false;
+
+	for (i = 0; i < required->count; i++) {
+		for (j = 0; j < candidate->count; j++)
+			if (format_covers(&candidate->formats[j], &required->formats[i]))
+				break;
+		if (j == candidate->count)
+			return false;
+	}
+
+	/* A missing candidate rule leaves the ordinary property domain unrestricted. */
+	for (i = 0; i < candidate->property_count; i++) {
+		for (j = 0; j < required->property_count; j++)
+			if (property_covers(&candidate->properties[i], &required->properties[j]))
+				break;
+		if (j == required->property_count)
+			return false;
+	}
+
+	for (i = 0; i < candidate->plane_limit_count; i++) {
+		const struct drm_constraints_plane_limit *limit = &candidate->plane_limits[i];
+
+		if (limit->max_active == limit->count)
+			continue;
+		for (j = 0; j < required->plane_limit_count; j++) {
+			const struct drm_constraints_plane_limit *required_limit =
+				&required->plane_limits[j];
+
+			if (limit->max_active >= required_limit->max_active &&
+			    plane_sets_equal(limit, required_limit))
+				break;
+		}
+		if (j == required->plane_limit_count)
+			return false;
+	}
+	return true;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_description_covers);
