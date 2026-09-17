@@ -44,9 +44,9 @@ int drm_atomic_constraints_restore_default(struct drm_crtc *crtc);
 /*
  * Common atomic validation. Prepare adds the complete affected plane/color
  * state before driver checks and marks changed constraints as a modeset.
- * Check validates allocation limits, scalar property rules and overlapping
- * active-plane ceilings from proposed state, then calls the provider's
- * full-scene check.
+ * Check validates format, dimensions, memory origin/layout, scalar property
+ * rules and overlapping active-plane ceilings from proposed state, then calls
+ * the provider's full-scene check.
  * Selecting or updating scenes may include multiple outputs in one transaction.
  * Asynchronous plane updates are not supported.
  * Outstanding leases retain an output's fixed default contract. Nondefault
