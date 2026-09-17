@@ -14,6 +14,7 @@ mod ready_worker;
 mod native_constraints;
 mod offer_drafts;
 mod offer_lifetimes;
+mod offer_reaping;
 
 use super::*;
 use crate::renderer::{
