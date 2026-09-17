@@ -3,6 +3,8 @@
 //! Separately authorized delegated rendering, independent of capture grant transport.
 
 pub(crate) mod candidate;
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+pub(crate) mod draft;
 pub(crate) mod content;
 mod capability_description;
 mod capability_file;

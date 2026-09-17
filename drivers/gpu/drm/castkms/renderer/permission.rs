@@ -163,15 +163,38 @@ impl Access {
 
     /// Authorize output-scoped metadata without requiring enabled video or a scene.
     pub(crate) fn with_output<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.policy.permission.target.with_output_objects(|| self.authorize_output(f))
+    }
+
+    fn authorize_output<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        if self.device().authority.interval()? != self.policy.permission.interval {
+            return Err(ESTALE);
+        }
+        let revoked = self.policy.revoked.lock();
+        if *revoked {
+            return Err(EKEYREVOKED);
+        }
+        f()
+    }
+
+    /// Reject current source aliases without requiring enabled video or claiming pixels.
+    /// Native master/object locks precede output publication, then permission revocation,
+    /// matching source admission even when no scene is currently published.
+    pub(super) fn check_private_storage(
+        &self,
+        buffers: &[kernel::sync::aref::ARef<kernel::dma_buf::DmaBuf>],
+    ) -> Result {
         self.policy.permission.target.with_output_objects(|| {
-            if self.device().authority.interval()? != self.policy.permission.interval {
-                return Err(ESTALE);
-            }
-            let revoked = self.policy.revoked.lock();
-            if *revoked {
-                return Err(EKEYREVOKED);
-            }
-            f()
+            self.display().output.with_accepted(|accepted| self.authorize_output(|| {
+                if let Some(scene) = accepted.and_then(|accepted| accepted.scene) {
+                    for buffer in buffers {
+                        if scene.uses_reservation(buffer.reservation())? {
+                            return Err(EINVAL);
+                        }
+                    }
+                }
+                Ok(())
+            }))
         })
     }
 
