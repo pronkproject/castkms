@@ -12,6 +12,64 @@
 #include "../../../../include/uapi/drm/castkms_drm.h"
 #include "../../../../include/uapi/drm/drm_constraints.h"
 
+static void check_static_envelope(int fd, uint32_t plane)
+{
+	drmModeObjectProperties *properties;
+	drmModePropertyBlobRes *blob = NULL;
+	struct drm_format_modifier_blob *header;
+	struct drm_format_modifier *modifiers;
+	uint32_t *formats;
+	uint32_t xrgb = UINT32_MAX, rgbx = UINT32_MAX;
+	bool xrgb_linear = false, rgbx_linear = false;
+
+	properties = drmModeObjectGetProperties(fd, plane, DRM_MODE_OBJECT_PLANE);
+	CHECK(properties);
+	for (uint32_t i = 0; i < properties->count_props; i++) {
+		drmModePropertyRes *property = drmModeGetProperty(fd, properties->props[i]);
+
+		CHECK(property);
+		if (!strcmp(property->name, "IN_FORMATS")) {
+			CHECK(property->flags & DRM_MODE_PROP_BLOB);
+			CHECK(properties->prop_values[i]);
+			blob = drmModeGetPropertyBlob(fd, properties->prop_values[i]);
+		}
+		drmModeFreeProperty(property);
+	}
+	drmModeFreeObjectProperties(properties);
+	CHECK(blob && blob->length >= sizeof(*header));
+	header = blob->data;
+	CHECK(header->version == FORMAT_BLOB_CURRENT);
+	CHECK(header->formats_offset <= blob->length);
+	CHECK(header->count_formats <=
+	      (blob->length - header->formats_offset) / sizeof(*formats));
+	CHECK(header->modifiers_offset <= blob->length);
+	CHECK(header->count_modifiers <=
+	      (blob->length - header->modifiers_offset) / sizeof(*modifiers));
+	formats = (void *)((char *)blob->data + header->formats_offset);
+	modifiers = (void *)((char *)blob->data + header->modifiers_offset);
+	for (uint32_t i = 0; i < header->count_formats; i++) {
+		if (formats[i] == DRM_FORMAT_XRGB8888)
+			xrgb = i;
+		if (formats[i] == DRM_FORMAT_RGBX8888)
+			rgbx = i;
+	}
+	CHECK(xrgb != UINT32_MAX && rgbx != UINT32_MAX);
+	for (uint32_t i = 0; i < header->count_modifiers; i++) {
+		struct drm_format_modifier *modifier = &modifiers[i];
+
+		CHECK(modifier->modifier != I915_FORMAT_MOD_4_TILED);
+		CHECK(modifier->modifier == DRM_FORMAT_MOD_LINEAR);
+		if (xrgb >= modifier->offset && xrgb - modifier->offset < 64 &&
+		    modifier->formats & (1ULL << (xrgb - modifier->offset)))
+			xrgb_linear = true;
+		if (rgbx >= modifier->offset && rgbx - modifier->offset < 64 &&
+		    modifier->formats & (1ULL << (rgbx - modifier->offset)))
+			rgbx_linear = true;
+	}
+	CHECK(xrgb_linear && rgbx_linear);
+	drmModeFreePropertyBlob(blob);
+}
+
 static uint64_t selected(int fd, uint32_t crtc, uint32_t count)
 {
 	struct drm_mode_list_constraints query = { .crtc_id = crtc };
@@ -294,6 +352,7 @@ int main(int argc, char **argv)
 		    connector->modes[i].vdisplay == 480)
 			mode = &connector->modes[i];
 	plane = primary_plane(fd, 0);
+	check_static_envelope(fd, plane);
 	linear = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0);
 	tiled = create_tiled_buffer(fd, mode->hdisplay, mode->vdisplay,
 				    DRM_FORMAT_XRGB8888);
