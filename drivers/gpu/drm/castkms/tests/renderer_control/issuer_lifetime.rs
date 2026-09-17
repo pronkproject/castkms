@@ -8,6 +8,26 @@ mod cases {
     use super::*;
 
     #[test]
+    fn disabled_outputs_can_issue_private_drafts() -> Result {
+        let display = CastKms::new_constraints(c"castkms-renderer-disabled-issuer", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            let owner = crate::File::issue_renderer_control(file.file(), crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.publish(|_| Ok(()))?;
+            let output = device.constraints_output(crtc)?;
+            let id = endpoint.constraints_id()?;
+            check(output.lookup(id).is_ok())?;
+            check(output.snapshot(0)?.info().selected_id == output.default_entry().id())?;
+            drop(file);
+            check(output.lookup(id).err() == Some(ESTALE))?;
+            endpoint.unregister_image(1)?;
+            check(endpoint.begin_source(1).is_err())?;
+            Ok(())
+        })
+    }
+
+    #[test]
     fn issuer_close_unpins_ready_storage_without_completing_reads() -> Result {
         let display = CastKms::new_constraints(c"castkms-renderer-issuer-close", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {

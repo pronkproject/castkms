@@ -146,7 +146,7 @@ impl File {
             }
             owner.track_creator(&file.inner().renderer_grants)?;
         }
-        owner.access().with_current(|_| Ok(()))?;
+        owner.access().with_output(|| Ok(()))?;
         Ok(owner)
     }
 
