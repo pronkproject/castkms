@@ -104,6 +104,15 @@ static void readable(int fd, int expected)
 	CHECK(!!(pollfd.revents & POLLIN) == expected);
 }
 
+static void hung_up(int fd)
+{
+	struct pollfd pollfd = { .fd = fd, .events = POLLIN };
+
+	CHECK(poll(&pollfd, 1, 0) == 1);
+	CHECK((pollfd.revents & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR));
+	CHECK(!(pollfd.revents & POLLNVAL));
+}
+
 static void close_scene(struct drm_castkms_renderer_scene *scene)
 {
 	char *cursor = (char *)(scene + 1);
@@ -492,13 +501,8 @@ int main(int argc, char **argv)
 	CHECK(!capture_result.completed_at_ns && !capture_result.reserved);
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
 		&take_output, ENODATA);
-
-	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
-		&remove_destination) == 0);
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM,
 		&destroy_stream) == 0);
-	CHECK(close(capture_files.control_fd) == 0);
-	CHECK(close(capture_files.capture_fd) == 0);
 
 	for (unsigned int frame = 2; frame < 24; frame++) {
 		flip(fd, plane, source[frame % 2].fb);
@@ -508,15 +512,46 @@ int main(int argc, char **argv)
 		expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
 			&dequeue, ENODATA);
 	}
+	stream.id = 2;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CREATE_STREAM, &stream) == 0);
+	queue.stream = 2;
+	queue.use_id = 1;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
 	flip(fd, plane, source[0].fb);
 	dequeue.image_id = 1;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE, &dequeue) == 0);
 	release.job_id = scene->job_id;
 	close_scene(scene);
+	take_output.image_id = 2;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
+		&take_output) == 0);
+	CHECK(renderer_output.image_id == 2 && renderer_output.dma_buf_fd >= 0);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER, &withdraw) == 0);
 	CHECK(query_endpoint(files.renderer_fd).state == DRM_CASTKMS_RENDERER_STATE_WITHDRAWN);
+	hung_up(files.renderer_fd);
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE,
 		&remove, EBUSY);
+	copy_linear(private_fd[1], private[1].dumb.size, private[1].dumb.pitch, 0,
+		    renderer_output.dma_buf_fd, output.dumb.size, renderer_output.pitch,
+		    renderer_output.offset, mode->hdisplay, mode->vdisplay);
+	release_output.job_id = renderer_output.job_id;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT,
+		&release_output) == 0);
+	CHECK(close(renderer_output.dma_buf_fd) == 0);
+	wait_capture(capture_files.capture_fd);
+	take_capture.stream = 2;
+	memset(&capture_result, 0xa5, sizeof(capture_result));
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE, &take_capture) == 0);
+	CHECK(capture_result.use_id == 1 && capture_result.status == -ECANCELED);
+	CHECK(!capture_result.completed_at_ns && !capture_result.reserved);
+	remove_destination.id = 1;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
+		&remove_destination) == 0);
+	destroy_stream.id = 2;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM,
+		&destroy_stream) == 0);
+	CHECK(close(capture_files.control_fd) == 0);
+	CHECK(close(capture_files.capture_fd) == 0);
 	CHECK(close(files.revoke_fd) == 0);
 	release.kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE, &release) == 0);
