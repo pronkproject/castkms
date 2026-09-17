@@ -196,6 +196,10 @@ impl Pending<'_> {
         self.id
     }
 
+    pub(crate) fn constraints_id(&self) -> u64 {
+        self.control.entry().id()
+    }
+
     pub(crate) fn scene_description(
         &self,
     ) -> Result<crate::renderer::description::Description<'_>> {

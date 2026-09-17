@@ -2,7 +2,7 @@
 
 //! Bounded complete-scene encoding and transactional descriptor publication.
 
-use super::{job::Plane, session::Session};
+use super::{job::Plane, endpoint::Endpoint};
 use crate::scene::Kind;
 use kernel::{
     drm::{
@@ -24,7 +24,7 @@ const MAX_BYTES: usize = uapi::DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES as usize;
 
 const _: () = {
     assert!(
-        48 + super::description::MAX_LAYERS
+        56 + super::description::MAX_LAYERS
             * (144 + super::description::MAX_COLOR_OPERATIONS * 104)
             + 2 * (8 + 256 * 8)
             + 104
@@ -136,13 +136,13 @@ fn reserve(
     Ok(fd)
 }
 
-pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
+pub(super) fn dequeue(endpoint: &Endpoint, arg: usize) -> Result {
     const {
         assert!(
             core::mem::size_of::<Request>()
                 == core::mem::size_of::<uapi::drm_castkms_renderer_dequeue_scene>()
         );
-        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_scene>() == 48);
+        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_scene>() == 56);
         assert!(core::mem::size_of::<uapi::drm_castkms_renderer_layer>() == 144);
     }
     let request = UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Request>())
@@ -157,7 +157,7 @@ pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
         return Err(EINVAL);
     }
     let address = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
-    let pending = session.begin_source(request.image_id)?;
+    let pending = endpoint.begin_source(request.image_id)?;
     let scene = pending.scene_description()?;
     let mut encoded = Encoding::new()?;
     let mut outputs = KVec::with_capacity(scene.layers.len() * 4 + 1, GFP_KERNEL)?;
@@ -168,6 +168,7 @@ pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
     encoded.word(uapi::DRM_CASTKMS_RENDERER_SCENE_VERSION)?;
     encoded.word(0)?;
     encoded.wide(pending.id())?;
+    encoded.wide(pending.constraints_id())?;
     encoded.wide(scene.content_serial)?;
     for dimension in scene.output {
         encoded.word(dimension)?;
@@ -262,7 +263,7 @@ pub(super) fn dequeue(session: &Session, arg: usize) -> Result {
             output_count += 1;
         }
     }
-    encoded.patch(40, output_count)?;
+    encoded.patch(48, output_count)?;
     encoded.patch(4, encoded.bytes.len())?;
     if encoded.bytes.len() > request.capacity as usize {
         return Err(ENOSPC);

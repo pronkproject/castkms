@@ -151,7 +151,9 @@ impl Fixture {
             None,
             kernel::dma::DmaMask::new::<64>(),
         )?;
-        let state = device::Owner::new_features(count, cursor, overlay, cursor || overlay)?;
+        let state = device::Owner::new_configuration(
+            count, cursor, overlay, cursor || overlay, false,
+        )?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
         let drm = TestDevice::new(drm)?;

@@ -23,6 +23,7 @@ mod cases {
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
             check(endpoint.source_readable()?)?;
             let pending = endpoint.begin_source(1)?;
+            check(pending.constraints_id() == entry.id())?;
             check(!endpoint.source_readable()?)?;
             let first = pending.id();
             check(pending.scene_description()?.output == [640, 480])?;

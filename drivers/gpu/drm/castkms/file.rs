@@ -117,7 +117,9 @@ impl File {
     ) -> Result<crate::renderer::files::Files> {
         let crtc = dev.lookup_crtc(file, crtc_id)?;
         let connector = dev.lookup_connector(file, connector_id)?;
-        Self::issue_renderer_control(file, crtc.crtc(), &connector)?.into_files(dev)
+        crate::renderer::files::Files::new(
+            Self::issue_renderer_control(file, crtc.crtc(), &connector)?, dev,
+        )
     }
 
     fn issue_renderer_control_then(

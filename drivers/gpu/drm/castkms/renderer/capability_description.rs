@@ -4,7 +4,6 @@
 
 use crate::execution::{
     capabilities::{ColorLimits, Format, GeometryLimits, Limits, Profile},
-    validation::Contract,
 };
 use kernel::{
     prelude::*,
@@ -93,8 +92,8 @@ const YUV_ENCODINGS: u32 = uapi::DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT601
 const YUV_RANGES: u32 = uapi::DRM_CASTKMS_CAPABILITY_YUV_RANGE_LIMITED
     | uapi::DRM_CASTKMS_CAPABILITY_YUV_RANGE_FULL;
 
-/// None denotes the fixed HOST contract; renderer profiles remain owned values.
-pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
+/// Decode the worker-owned whole-scene declaration.
+pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
     if bytes.len() > MAX_BYTES {
         return Err(E2BIG);
     }
@@ -110,12 +109,6 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
         || formats.len() != header.format_count as usize * core::mem::size_of::<Storage>()
     {
         return Err(EINVAL);
-    }
-    if header.kind == uapi::DRM_CASTKMS_CAPABILITY_KIND_HOST {
-        if bytes[8..].iter().any(|byte| *byte != 0) {
-            return Err(EINVAL);
-        }
-        return Ok(None);
     }
     if header.kind != uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER {
         return Err(EINVAL);
@@ -173,17 +166,17 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<Profile>> {
         },
         tuples,
     )
-    .map(Some)
 }
 
-pub(super) fn encode(contract: &Contract) -> Result<KVec<u8>> {
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+fn encode(profile: &Profile) -> Result<KVec<u8>> {
     let mut header = Header {
         version: uapi::DRM_CASTKMS_CAPABILITY_VERSION,
-        kind: uapi::DRM_CASTKMS_CAPABILITY_KIND_HOST,
+        kind: uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER,
         ..Default::default()
     };
     let mut bytes = KVec::with_capacity(MAX_BYTES, GFP_KERNEL)?;
-    if let Contract::Renderer(profile) = contract {
+    {
         let limits = profile.limits();
         let geometry = limits.geometry;
         let color = limits.color;
@@ -230,7 +223,7 @@ pub(super) fn encode(contract: &Contract) -> Result<KVec<u8>> {
         }
     }
     bytes.extend_from_slice(header.as_bytes(), GFP_KERNEL)?;
-    if let Contract::Renderer(profile) = contract {
+    {
         for format in profile.formats() {
             let storage = Storage {
                 fourcc: format.fourcc,
@@ -254,7 +247,6 @@ pub(super) fn encode(contract: &Contract) -> Result<KVec<u8>> {
 #[kunit_tests(rust_castkms_capability_encoding)]
 mod tests {
     use super::*;
-    use kernel::sync::Arc;
 
     fn profile() -> Result<Profile> {
         let mut formats = KVec::new();
@@ -304,26 +296,24 @@ mod tests {
     #[test]
     fn renderer_roundtrip_preserves_tiled_whole_scene_limits() -> Result {
         let profile = profile()?;
-        let bytes = encode(&Contract::Renderer(Arc::new(profile, GFP_KERNEL)?))?;
-        let decoded = decode(&bytes)?.ok_or(EINVAL)?;
+        let bytes = encode(&profile)?;
+        let decoded = decode(&bytes)?;
         assert_eq!(decoded.limits().geometry.output, [16384; 2]);
         assert_eq!(decoded.limits().geometry.min_output, [1920, 1080]);
         assert_eq!(decoded.limits().geometry.min_source, [64, 32]);
         assert_eq!(decoded.formats()[0].modifier, Some(0x0100_0000_0000_0001));
-        let again = encode(&Contract::Renderer(Arc::new(decoded, GFP_KERNEL)?))?;
+        let again = encode(&decoded)?;
         assert_eq!(&*bytes, &*again);
         Ok(())
     }
 
     #[test]
-    fn host_is_a_canonical_fixed_contract() -> Result {
-        let mut bytes = encode(&Contract::Host)?;
-        assert_eq!(bytes.len(), 128);
-        assert!(decode(&bytes)?.is_none());
-        bytes[8] = 1;
+    fn unknown_contract_kind_is_rejected() -> Result {
+        let mut bytes = encode(&profile()?)?;
+        bytes[4..8].copy_from_slice(&0u32.to_ne_bytes());
         assert!(matches!(decode(&bytes), Err(EINVAL)));
-        bytes[8] = 0;
-        bytes[0..4].copy_from_slice(&1u32.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER.to_ne_bytes());
+        bytes[0..4].copy_from_slice(&0u32.to_ne_bytes());
         assert!(matches!(decode(&bytes), Err(EOPNOTSUPP)));
         Ok(())
     }
@@ -331,7 +321,7 @@ mod tests {
     #[test]
     fn parser_rejects_unknown_bits_reserved_words_and_partial_records() -> Result {
         let profile = profile()?;
-        let original = encode(&Contract::Renderer(Arc::new(profile, GFP_KERNEL)?))?;
+        let original = encode(&profile)?;
         for offset in [8, 64, 68, 72, 124, 144] {
             let mut bytes = KVec::new();
             bytes.extend_from_slice(&original, GFP_KERNEL)?;
@@ -354,9 +344,9 @@ mod tests {
             formats.push(format, GFP_KERNEL)?;
         }
         let profile = Profile::new(*reference.limits(), formats)?;
-        let mut bytes = encode(&Contract::Renderer(Arc::new(profile, GFP_KERNEL)?))?;
+        let mut bytes = encode(&profile)?;
         assert_eq!(bytes.len(), MAX_BYTES);
-        assert_eq!(decode(&bytes)?.ok_or(EINVAL)?.formats().len(), 256);
+        assert_eq!(decode(&bytes)?.formats().len(), 256);
         let first = Storage::from_bytes_copy(&bytes[128..160]).ok_or(EINVAL)?;
         bytes[160..192].copy_from_slice(first.as_bytes());
         assert!(matches!(decode(&bytes), Err(EINVAL)));

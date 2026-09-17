@@ -83,9 +83,13 @@ impl Drop for CastKms {
 
 impl kernel::Module for CastKms {
     fn init(_: &'static ThisModule) -> Result<Self> {
-        Self::new_features(c"castkms", module_parameters::max_outputs.value(),
-            module_parameters::enable_cursor.value(), module_parameters::enable_overlay.value(),
-            module_parameters::enable_plane_pipeline.value())
+        let state = device::Owner::new_features(
+            module_parameters::max_outputs.value(),
+            module_parameters::enable_cursor.value(),
+            module_parameters::enable_overlay.value(),
+            module_parameters::enable_plane_pipeline.value(),
+        )?;
+        Self::new_with_state(c"castkms", state)
     }
 }
 
@@ -100,9 +104,10 @@ impl CastKms {
         Self::new_features(name, output_count, true, false, false)
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     fn new_features(name: &CStr, output_count: u32, enable_cursor: bool, enable_overlay: bool, enable_plane_pipeline: bool) -> Result<Self> {
-        let state = device::Owner::new_features(
-            output_count, enable_cursor, enable_overlay, enable_plane_pipeline,
+        let state = device::Owner::new_configuration(
+            output_count, enable_cursor, enable_overlay, enable_plane_pipeline, false,
         )?;
         Self::new_with_state(name, state)
     }
