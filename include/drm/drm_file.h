@@ -113,6 +113,21 @@ struct drm_pending_event {
 	void (*completion_release)(struct completion *completion);
 
 	/**
+	 * @release:
+	 *
+	 * Optional destructor after consumption, cancellation or disposal during
+	 * file teardown. Installed by drm_event_reserve_init_with_release(). The
+	 * callback releases the event storage in place of the core's kfree(). It
+	 * must not sleep or reenter event operations: it may run with
+	 * &drm_device.event_lock or &drm_file.event_read_lock held. Its code and
+	 * data must remain valid until disposal. Use independently retained
+	 * private context, not @file_priv, @completion or @fence, whose lifetimes
+	 * may already have ended. This is not a presentation or GPU completion
+	 * notification.
+	 */
+	void (*release)(struct drm_pending_event *event);
+
+	/**
 	 * @event:
 	 *
 	 * Pointer to the actual event that should be sent to userspace to be
@@ -496,6 +511,11 @@ int drm_event_reserve_init_locked(struct drm_device *dev,
 				  struct drm_file *file_priv,
 				  struct drm_pending_event *p,
 				  struct drm_event *e);
+int drm_event_reserve_init_with_release(struct drm_device *dev,
+					struct drm_file *file_priv,
+					struct drm_pending_event *p,
+					struct drm_event *e,
+					void (*release)(struct drm_pending_event *));
 int drm_event_reserve_init(struct drm_device *dev,
 			   struct drm_file *file_priv,
 			   struct drm_pending_event *p,

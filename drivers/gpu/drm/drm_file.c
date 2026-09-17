@@ -198,6 +198,14 @@ out_prime_destroy:
 	return ERR_PTR(ret);
 }
 
+static void drm_event_free(struct drm_pending_event *event)
+{
+	if (event->release)
+		event->release(event);
+	else
+		kfree(event);
+}
+
 static void drm_events_release(struct drm_file *file_priv)
 {
 	struct drm_device *dev = file_priv->minor->dev;
@@ -216,7 +224,7 @@ static void drm_events_release(struct drm_file *file_priv)
 	/* Remove unconsumed events */
 	list_for_each_entry_safe(e, et, &file_priv->event_list, link) {
 		list_del(&e->link);
-		kfree(e);
+		drm_event_free(e);
 	}
 
 	spin_unlock_irqrestore(&dev->event_lock, flags);
@@ -602,7 +610,7 @@ put_back_event:
 
 			ret += length;
 			wake_up_all(&file_priv->event_space_wait);
-			kfree(e);
+			drm_event_free(e);
 		}
 	}
 	mutex_unlock(&file_priv->event_read_lock);
@@ -674,6 +682,7 @@ int drm_event_reserve_init_locked(struct drm_device *dev,
 	file_priv->event_space -= e->length;
 
 	p->event = e;
+	p->release = NULL;
 	list_add(&p->pending_link, &file_priv->pending_event_list);
 	p->file_priv = file_priv;
 
@@ -721,6 +730,40 @@ int drm_event_reserve_init(struct drm_device *dev,
 EXPORT_SYMBOL(drm_event_reserve_init);
 
 /**
+ * drm_event_reserve_init_with_release - reserve an event with a custom destructor
+ * @dev: DRM device
+ * @file_priv: DRM file private data
+ * @p: tracking structure for the pending event
+ * @e: actual event data to deliver to userspace
+ * @release: optional destructor which releases @p instead of the core's kfree()
+ *
+ * Like drm_event_reserve_init(), with an optional custom disposal callback. The
+ * callback follows the restrictions documented in &drm_pending_event.release.
+ * The caller retains ownership until it sends or cancels the initialized event
+ * and must not publish @p to another context before this function returns.
+ * Closing the file only detaches a pending event; its producer must still send
+ * or cancel it. Failed reservation neither invokes @release nor frees @p.
+ * A non-NULL @release permits embedding @p at any offset in producer-owned
+ * storage or using a different allocator. Keep @p valid until disposal and
+ * release its storage without sleeping.
+ *
+ * Returns: 0 on success or a negative error code on failure.
+ */
+int drm_event_reserve_init_with_release(struct drm_device *dev,
+					struct drm_file *file_priv,
+					struct drm_pending_event *p,
+					struct drm_event *e,
+					void (*release)(struct drm_pending_event *))
+{
+	int ret = drm_event_reserve_init(dev, file_priv, p, e);
+
+	if (!ret)
+		p->release = release;
+	return ret;
+}
+EXPORT_SYMBOL(drm_event_reserve_init_with_release);
+
+/**
  * drm_event_cancel_free - free a DRM event and release its space
  * @dev: DRM device
  * @p: tracking structure for the pending event
@@ -745,7 +788,7 @@ void drm_event_cancel_free(struct drm_device *dev,
 	if (p->fence)
 		dma_fence_put(p->fence);
 
-	kfree(p);
+	drm_event_free(p);
 }
 EXPORT_SYMBOL(drm_event_cancel_free);
 
@@ -769,7 +812,7 @@ static void drm_send_event_helper(struct drm_device *dev,
 	}
 
 	if (!e->file_priv) {
-		kfree(e);
+		drm_event_free(e);
 		return;
 	}
 
