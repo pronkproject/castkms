@@ -41,7 +41,7 @@ pub(super) struct Plane {
 pub(super) struct Crtc {
     pub(super) display: Arc<super::device::Display>,
     transition_property: AtomicU32,
-    allocation_topology: SetOnce<super::execution::constraints::Topology>,
+    allocation_topology: SetOnce<Arc<super::execution::constraints::Topology>>,
 }
 #[pin_data]
 pub(super) struct Encoder {}
@@ -53,6 +53,7 @@ pub(super) struct Connector {
 pub(super) struct ConnectorState;
 
 pub(super) struct CrtcState {
+    binding: Option<super::execution::constraints::backend::Binding>,
     transition: u64,
     transition_origin: Option<scene::Configuration>,
     // Complete atomic metadata, independent of commit-tail publication and producer waits.
@@ -102,6 +103,7 @@ impl crtc::DriverCrtcState for CrtcState {
     type Crtc = Crtc;
     fn new(_: &crtc::Crtc<Crtc>) -> Result<Self> {
         Ok(Self {
+            binding: None,
             transition: 0,
             transition_origin: None,
             output_color: None,
@@ -115,6 +117,7 @@ impl crtc::DriverCrtcState for CrtcState {
     }
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
+            binding: self.binding.clone(),
             // A transition tag belongs to one request, not subsequent animation.
             transition: 0,
             transition_origin: None,
@@ -339,7 +342,7 @@ impl CrtcState {
         }
         scene.finalize(state.content);
         scene.output_color = state.output_color.clone();
-        scene.set_constraints(state.constraints_entry());
+        scene.set_binding(state.binding.as_deref());
         state.checked_scene = Some(scene);
         Ok(())
     }
@@ -453,7 +456,24 @@ impl crtc::DriverCrtc for Crtc {
         state.output_color =
             crate::color::OutputColor::new(state.degamma_lut(), state.ctm(), state.gamma_lut())?;
         CrtcState::check_configuration(old, &mut state)?;
+        if let Some(provider) = state.crtc().display.constraints.as_ref() {
+            let entry = state.constraints_entry().ok_or(EINVAL)?;
+            state.binding = if old.binding.as_ref().is_some_and(|binding|
+                core::ptr::eq(&***binding, entry))
+            {
+                old.binding.clone()
+            } else if !state.enabled() && !state.active() && state.plane_mask() == 0
+                && old.constraints_entry().is_some_and(|old| core::ptr::eq(old, entry))
+            {
+                None
+            } else {
+                Some(provider.resolve(entry)?)
+            };
+        }
         CrtcState::describe_scene(transaction, old, &mut state)?;
+        if transaction.drm_dev().constraints_enabled {
+            return if state.transition == 0 { Ok(()) } else { Err(EOPNOTSUPP) };
+        }
         let mut updates = core::array::from_fn(|_| None);
         *updates.get_mut(state.crtc().index() as usize).ok_or(EINVAL)? =
             Some(state.validation_update()?);
@@ -499,7 +519,7 @@ impl crtc::DriverCrtc for Crtc {
 impl Crtc {
     #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
     pub(crate) fn allocation_topology(&self) -> Result<&super::execution::constraints::Topology> {
-        self.allocation_topology.as_ref().ok_or(ENODEV)
+        self.allocation_topology.as_ref().map(|topology| &**topology).ok_or(ENODEV)
     }
 
     fn publish_scene(commit: &crtc::CrtcAtomicCommit<'_, Self>) {
@@ -514,7 +534,7 @@ impl Crtc {
         } else if !state.visible {
             let mut scene = scene::Scene::blank(state.blank_owner.clone());
             scene.output_color = state.output_color.clone();
-            scene.set_constraints(state.constraints_entry());
+            scene.set_binding(state.binding.as_deref());
             SceneUpdate::Replace(Some(scene))
         } else if old.visible && state.content == old.content
             && old.constraints_entry().map(core::ptr::from_ref)
@@ -539,7 +559,7 @@ impl Crtc {
             });
             scene.finalize(state.content);
             scene.output_color = state.output_color.clone();
-            scene.set_constraints(state.constraints_entry());
+            scene.set_binding(state.binding.as_deref());
             SceneUpdate::Replace(Some(scene))
         };
         commit.crtc().display.output.publish_with_configuration(
@@ -595,8 +615,64 @@ impl connector::DriverConnector for Connector {
     }
 }
 
+fn install_constraints<'a>(
+    install: atomic::Install<'a, Driver>,
+) -> atomic::InstallResult<'a, Driver> {
+    let mut selected = None;
+    let mut result = Ok(());
+    install.state().for_each_new_crtc_state(|crtc, opaque| {
+        if result.is_err() {
+            return;
+        }
+        result = (|| {
+            let state = crtc::CrtcState::<CrtcState>::from_opaque(opaque);
+            let old = install.state().get_old_crtc_state(crtc).ok_or(EINVAL)?;
+            if !state.enabled() && !state.active() && state.plane_mask() == 0
+                && state.constraints_entry().map(core::ptr::from_ref)
+                    == old.constraints_entry().map(core::ptr::from_ref)
+            {
+                return Ok(());
+            }
+            let entry = crtc.display.constraints.as_ref().ok_or(EOPNOTSUPP)?
+                .resolve(state.constraints_entry().ok_or(EINVAL)?)?;
+            let renderer = matches!(&*entry.backend(),
+                super::execution::constraints::backend::Backend::Renderer(_));
+            if renderer {
+                if selected.is_some() {
+                    return Err(EOPNOTSUPP);
+                }
+                selected = Some(entry);
+            }
+            Ok(())
+        })();
+    });
+    if let Err(error) = result {
+        return install.reject(error);
+    }
+    if let Some(entry) = selected {
+        let backend = entry.backend();
+        let _ready = match backend.hold_ready() {
+            Ok(guard) => guard,
+            Err(error) => return install.reject(error),
+        };
+        install.install()
+    } else {
+        install.install()
+    }
+}
+
 #[vtable]
 impl KmsDriver for Driver {
+    fn constraints_check(
+        transaction: &atomic::AtomicStateReader<Self>,
+        state: &crtc::OpaqueCrtcState<Self>,
+        entry: &kernel::drm::constraints::OpaqueEntry,
+    ) -> Result {
+        let state = crtc::CrtcState::<CrtcState>::from_opaque(state);
+        state.crtc().display.constraints.as_ref().ok_or(EOPNOTSUPP)?
+            .check(entry, transaction.drm_dev().authority.interval().ok(), state.validation_view()?)
+    }
+
     fn create_capture_grant(
         dev: &Device<Self, kernel::drm::device::Registered>,
         _: &Self::RegistrationData<'_>,
@@ -640,6 +716,12 @@ impl KmsDriver for Driver {
 
     fn create_objects(dev: &UnregisteredKmsDevice<'_, Self>) -> Result {
         dev.enable_preparation(8)?;
+        let domain = if dev.constraints_enabled {
+            Some(dev.enable_constraints((dev.displays.len()
+                * super::execution::constraints::provider::CAPACITY) as u32)?)
+        } else {
+            None
+        };
         let mut allocations = KVec::with_capacity(dev.displays.len(), GFP_KERNEL)?;
         for (index, display) in dev.displays.iter().enumerate() {
             let mut allocation_planes = KVec::new();
@@ -699,10 +781,12 @@ impl KmsDriver for Driver {
                 )?;
             }
             allocations.push((crtc, allocation_planes), GFP_KERNEL)?;
-            let transition = crtc.attach_replayable_range_property(
-                c"CASTKMS_TRANSITION", 0, u64::MAX, 0,
-            )?;
-            crtc.transition_property.store(transition, Ordering::Relaxed);
+            if domain.is_none() {
+                let transition = crtc.attach_replayable_range_property(
+                    c"CASTKMS_TRANSITION", 0, u64::MAX, 0,
+                )?;
+                crtc.transition_property.store(transition, Ordering::Relaxed);
+            }
             crtc.enable_color_mgmt(256, true, 256);
             crtc.set_gamma_size(256)?;
             let encoder = encoder::UnregisteredEncoder::<Encoder>::new(
@@ -752,7 +836,20 @@ impl KmsDriver for Driver {
             }
         }
         for (crtc, planes) in allocations {
-            let topology = super::execution::constraints::Topology::new(planes)?;
+            let topology = Arc::new(
+                super::execution::constraints::Topology::new(planes)?, GFP_KERNEL,
+            )?;
+            if let Some(domain) = &domain {
+                let provider = super::execution::constraints::provider::Provider::new(
+                    domain.clone(), crtc.object_id(), crtc.display.output.identity().clone(),
+                    topology.clone(),
+                )?;
+                dev.attach_constraints(&crtc, provider.initial(),
+                    super::execution::constraints::provider::CAPACITY as u32)?;
+                if !crtc.display.constraints.populate(provider) {
+                    return Err(EEXIST);
+                }
+            }
             if !crtc.allocation_topology.populate(topology) {
                 return Err(EEXIST);
             }
@@ -772,6 +869,9 @@ impl KmsDriver for Driver {
     }
 
     fn atomic_commit_install<'a>(install: atomic::Install<'a, Self>) -> atomic::InstallResult<'a, Self> {
+        if install.state().drm_dev().constraints_enabled {
+            return install_constraints(install);
+        }
         let device_state = core::ops::Deref::deref(install.state().drm_dev()).clone();
         let mut updates = core::array::from_fn(|_| None);
         let mut result = Ok(());

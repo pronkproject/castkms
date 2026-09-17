@@ -996,6 +996,18 @@ pub trait RawCrtcState: AsRawCrtcState {
         unsafe { (*self.as_raw()).active }
     }
 
+    /// Whether a mode remains configured, independently of active scanout.
+    fn enabled(&self) -> bool {
+        // SAFETY: The atomic-state view serializes access to the native enable flag.
+        unsafe { (*self.as_raw()).enable }
+    }
+
+    /// Plane-index bits attached to this CRTC, including planes without visible pixels.
+    fn plane_mask(&self) -> u32 {
+        // SAFETY: The atomic-state view serializes changes to the native attachment mask.
+        unsafe { (*self.as_raw()).plane_mask }
+    }
+
     /// Returns whether the mode or enable state changed in this atomic state.
     fn mode_changed(&self) -> bool {
         // SAFETY: The atomic-state API serializes access to this state, including its bitfields.

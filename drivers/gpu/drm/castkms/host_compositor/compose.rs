@@ -115,6 +115,9 @@ pub(crate) fn current_checked<G>(
     let layout = slot.with_image(|image| image.layout())?;
     let metadata = output.with_checked_cpu_scene(
         |scene| {
+            if !scene.host_binding() {
+                return Err(EOPNOTSUPP);
+            }
             let mut layers = KVec::new();
             for (index, layer) in scene.layers().enumerate() {
                 layers.push((index, layer), GFP_KERNEL)?;

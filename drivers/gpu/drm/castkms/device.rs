@@ -22,7 +22,7 @@ use kernel::{
     alloc::kvec::KVec,
     drm::auth::MasterRef,
     prelude::*,
-    sync::{poll::PollCondVar, Arc}, //
+    sync::{poll::PollCondVar, Arc, SetOnce}, //
 };
 
 pub(super) const MAX_OUTPUTS: u32 = 8;
@@ -35,10 +35,12 @@ pub(super) struct Display {
     pub(super) host: Arc<configuration::Configuration>,
     pub(super) startup: Arc<renderer_startup::Startup>,
     pub(crate) renderer_routes: Arc<crate::renderer::routing::Registry>,
+    pub(crate) constraints: SetOnce<Arc<crate::execution::constraints::provider::Provider>>,
 }
 
 #[pin_data]
 pub(super) struct State {
+    pub(crate) constraints_enabled: bool,
     /// Advisory wakeups only. Consumers register before rechecking their exact authority.
     pub(crate) changed: Arc<PollCondVar>,
     pub(crate) validation: Arc<crate::execution::coordinator::Coordinator>,
@@ -74,8 +76,10 @@ impl State {
         enable_cursor: bool,
         enable_overlay: bool,
         enable_plane_pipeline: bool,
+        constraints_enabled: bool,
     ) -> impl PinInit<Self, Error> {
         try_pin_init!(Self {
+            constraints_enabled,
             changed,
             validation: Arc::pin_init(
                 crate::execution::coordinator::Coordinator::new(displays.len()),
@@ -107,6 +111,11 @@ impl State {
     }
 
     fn close(&self) {
+        for display in &self.displays {
+            if let Some(provider) = display.constraints.as_ref() {
+                provider.close();
+            }
+        }
         for display in &self.displays {
             display.renderer_routes.close();
         }
@@ -154,6 +163,16 @@ impl Owner {
     }
 
     pub(super) fn new_features(count: u32, enable_cursor: bool, enable_overlay: bool, enable_plane_pipeline: bool) -> Result<Self> {
+        Self::new_configuration(count, enable_cursor, enable_overlay, enable_plane_pipeline, false)
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(super) fn new_constraints(count: u32) -> Result<Self> {
+        Self::new_configuration(count, true, true, true, true)
+    }
+
+    fn new_configuration(count: u32, enable_cursor: bool, enable_overlay: bool,
+        enable_plane_pipeline: bool, constraints_enabled: bool) -> Result<Self> {
         if count == 0 || count > MAX_OUTPUTS {
             return Err(EINVAL);
         }
@@ -177,6 +196,7 @@ impl Owner {
                         host: host.configuration(),
                         startup: startup.startup(),
                         renderer_routes,
+                        constraints: SetOnce::new(),
                     },
                     GFP_KERNEL,
                 )?,
@@ -185,7 +205,8 @@ impl Owner {
             owners.push(DisplayOwner { host, startup }, GFP_KERNEL)?;
         }
         let state = Arc::pin_init(
-            State::new(displays, changed, enable_cursor, enable_overlay, enable_plane_pipeline),
+            State::new(displays, changed, enable_cursor, enable_overlay, enable_plane_pipeline,
+                constraints_enabled),
             GFP_KERNEL,
         )?;
         Ok(Self {

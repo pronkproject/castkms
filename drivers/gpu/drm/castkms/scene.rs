@@ -10,6 +10,7 @@ pub(super) use geometry::Geometry;
 pub(crate) use configuration::Configuration;
 
 use super::Driver;
+use crate::execution::constraints::backend::Backend;
 use core::num::NonZeroU64;
 use kernel::{
     dma_resv::Reservation,
@@ -56,6 +57,7 @@ pub(super) struct Scene {
     // Historical attribution resolved by the accepted transaction, not live capture authority.
     owner: Option<MasterRef<Driver>>,
     constraints: Option<ARef<OpaqueEntry>>,
+    binding: Option<crate::execution::constraints::backend::Binding>,
 }
 
 /// The framebuffer reference preserves storage lifetime, not the contents of that storage.
@@ -95,8 +97,26 @@ impl Primary {
 
 impl Scene {
     /// Retain the exact atomic backend, independently of subsequent offer withdrawal.
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn set_constraints(&mut self, entry: Option<&OpaqueEntry>) {
         self.constraints = entry.map(ARef::from);
+        self.binding = None;
+    }
+
+    pub(super) fn set_binding(&mut self,
+        entry: Option<&kernel::drm::constraints::Entry<Backend>>,
+    ) {
+        self.constraints = entry.map(|entry| ARef::from(&**entry));
+        self.binding = entry.map(ARef::from);
+    }
+
+    /// Unknown or delegated native bindings are never permission for a HOST fallback.
+    pub(crate) fn host_binding(&self) -> bool {
+        match &self.binding {
+            Some(entry) => matches!(&*entry.backend(),
+                crate::execution::constraints::backend::Backend::Host),
+            None => self.constraints.is_none(),
+        }
     }
 
     pub(super) fn constraints(&self) -> Option<&OpaqueEntry> {
@@ -240,6 +260,7 @@ impl Scene {
             content: None,
             owner,
             constraints: None,
+            binding: None,
         }
     }
 }

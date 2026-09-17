@@ -11,6 +11,7 @@ mod delegated_outputs;
 mod delegated_geometry;
 mod session_outputs;
 mod ready_worker;
+mod native_constraints;
 
 use super::*;
 use crate::renderer::{
@@ -56,8 +57,8 @@ fn with_registered_display(
 ) -> Result {
     let registered = display._display.registration_guard().ok_or(ENODEV)?;
     let file = RegisteredMasterFile::new(&registered)?;
-    let crtc = file.crtc()?.to_owned_ref();
-    let connector = file.connector()?;
+    let crtc = file.crtc_at(0)?.to_owned_ref();
+    let connector = file.connector_at(0)?;
     let object = shmem::Object::<gem::Object>::new(
         &registered,
         640 * 480 * 4,

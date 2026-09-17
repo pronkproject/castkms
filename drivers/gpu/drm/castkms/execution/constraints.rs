@@ -3,6 +3,8 @@
 //! Generic allocation descriptions derived from renderer capability profiles.
 
 pub(crate) mod bindings;
+pub(crate) mod backend;
+pub(crate) mod provider;
 
 use super::{
     capabilities::Profile,

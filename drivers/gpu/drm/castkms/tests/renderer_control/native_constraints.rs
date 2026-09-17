@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+use super::*;
+use crate::renderer::private_pool::Pool;
+use kernel::drm::gem::ExportAccess;
+
+#[kunit_tests(rust_castkms_native_constraints)]
+mod cases {
+    use super::*;
+
+    #[test]
+    fn native_selection_retains_the_exact_ready_worker() -> Result {
+        let display = CastKms::new_constraints(c"castkms-native-constraints", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
+            let control = device.constraints_output(crtc)?;
+            check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let profile = private_images::profile()?;
+            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let mut pool = Pool::new()?;
+            pool.insert(1, || {
+                proposal.register_image(
+                    [640, 480],
+                    &[private_images::buffer(device, ExportAccess::ReadWrite)?],
+                )
+            })?;
+            candidate.submit_private_probe(None)?;
+            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let entry = provider.prepare(ready.worker())?;
+            check(entry.description().output().minimum() == (640, 480))?;
+            check(entry.description().output().maximum() == (640, 480))?;
+            check(control.lookup(entry.id()).err() == Some(ESTALE))?;
+            provider.publish(&control, &entry)?;
+            check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+            check(core::ptr::eq(&*control.selected(), &**entry))?;
+            let scene = crtc
+                .display
+                .output
+                .with_accepted(|accepted| accepted.and_then(|accepted| accepted.scene.cloned()))
+                .ok_or(EINVAL)?;
+            check(core::ptr::eq(scene.constraints().ok_or(EINVAL)?, &**entry))?;
+            check(!scene.host_binding())?;
+            let host_pool = crate::host_compositor::pool::Pool::new(
+                device,
+                &crate::host_compositor::budget::Budget::new()?,
+                crate::host_compositor::layout::Layout::new(640, 480)?,
+            )?;
+            check(
+                crate::host_compositor::compose::current(&crtc.display.output, &host_pool).err()
+                    == Some(EOPNOTSUPP),
+            )?;
+            owner.revoke();
+            check(ready.worker().hold_ready().err() == Some(EKEYREVOKED))?;
+            check(
+                device.atomic_update(|state| {
+                    state.add_crtc_state(crtc)?;
+                    Ok(())
+                }) == Err(EKEYREVOKED),
+            )?;
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            check(core::ptr::eq(&*control.selected(), &**entry))?;
+            control.restore_default()?;
+            check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
+            // A retained old scene remains attributed to the old worker, never HOST.
+            check(!scene.host_binding())?;
+            control.withdraw(entry.id())?;
+            control.forget(entry.id())?;
+            drop(provider.remove(&entry));
+            drop(pool.remove(1)?);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn cancelled_worker_is_never_published() -> Result {
+        let display = CastKms::new_constraints(c"castkms-native-cancel", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
+            let control = device.constraints_output(crtc)?;
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let profile = private_images::profile()?;
+            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let mut pool = Pool::new()?;
+            pool.insert(1, || {
+                proposal.register_image(
+                    [640, 480],
+                    &[private_images::buffer(device, ExportAccess::ReadWrite)?],
+                )
+            })?;
+            candidate.submit_private_probe(None)?;
+            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let entry = provider.prepare(ready.worker())?;
+            drop(ready);
+            check(provider.publish(&control, &entry) == Err(EKEYREVOKED))?;
+            check(control.lookup(entry.id()).err() == Some(ESTALE))?;
+            check(provider.resolve(&entry).err() == Some(ESTALE))?;
+            drop(pool.remove(1)?);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn failed_native_publication_removes_only_the_new_index_reference() -> Result {
+        let display = CastKms::new_constraints(c"castkms-native-rollback", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
+            let control = device.constraints_output(crtc)?;
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let profile = private_images::profile()?;
+            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let mut pool = Pool::new()?;
+            pool.insert(1, || {
+                proposal.register_image(
+                    [640, 480],
+                    &[private_images::buffer(device, ExportAccess::ReadWrite)?],
+                )
+            })?;
+            candidate.submit_private_probe(None)?;
+            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let entry = provider.prepare(ready.worker())?;
+            // Inject native membership without provider membership to force add failure.
+            control.add(&entry)?;
+            check(provider.publish(&control, &entry) == Err(EEXIST))?;
+            check(provider.resolve(&entry).err() == Some(ESTALE))?;
+            check(core::ptr::eq(&*control.lookup(entry.id())?, &**entry))?;
+            control.withdraw(entry.id())?;
+            control.forget(entry.id())?;
+            let next = provider.prepare(ready.worker())?;
+            provider.publish(&control, &next)?;
+            check(provider.publish(&control, &next) == Err(EEXIST))?;
+            check(core::ptr::eq(&**provider.resolve(&next)?, &**next))?;
+            let pending = provider.prepare(ready.worker())?;
+            provider.close();
+            check(provider.publish(&control, &pending) == Err(ESHUTDOWN))?;
+            check(control.lookup(pending.id()).err() == Some(ESTALE))?;
+            drop(pool.remove(1)?);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn wrong_output_cannot_adopt_a_ready_worker() -> Result {
+        let display = CastKms::new_constraints(c"castkms-native-scope", 2)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
+            let other = device
+                .displays
+                .iter()
+                .find(|other| other.output.identity() != crtc.display.output.identity())
+                .ok_or(EINVAL)?;
+            let other = other.constraints.as_ref().ok_or(EINVAL)?;
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let profile = private_images::profile()?;
+            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let mut pool = Pool::new()?;
+            pool.insert(1, || {
+                proposal.register_image(
+                    [640, 480],
+                    &[private_images::buffer(device, ExportAccess::ReadWrite)?],
+                )
+            })?;
+            candidate.submit_private_probe(None)?;
+            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            check(other.prepare(ready.worker()).err() == Some(EINVAL))?;
+            let entry = provider.prepare(ready.worker())?;
+            provider.publish(&device.constraints_output(crtc)?, &entry)?;
+            check(other.resolve(&entry).err() == Some(ESTALE))?;
+            provider.close();
+            check(ready.worker().hold_ready().err() == Some(EKEYREVOKED))?;
+            check(provider.resolve(&entry).err() == Some(ESHUTDOWN))?;
+            check(provider.prepare(ready.worker()).err() == Some(ESHUTDOWN))?;
+            drop(pool.remove(1)?);
+            Ok(())
+        })
+    }
+}

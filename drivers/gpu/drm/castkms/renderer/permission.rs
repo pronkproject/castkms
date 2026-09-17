@@ -55,6 +55,7 @@ impl Permission {
 struct Policy {
     permission: Permission,
     transition_owner: Arc<()>,
+    workers: Arc<crate::authority::grants::Registry>,
     #[pin]
     revoked: Mutex<bool>,
 }
@@ -72,10 +73,12 @@ impl Owner {
     /// Allocate the owner outside native master, object-ID and modeset locks.
     pub(crate) fn new(permission: Permission) -> Result<Self> {
         let transition_owner = Arc::new((), GFP_KERNEL)?;
+        let workers = crate::authority::grants::Registry::new()?;
         let policy = Arc::pin_init(
             pin_init!(Policy {
                 permission,
                 transition_owner,
+                workers,
                 revoked <- kernel::new_mutex!(false),
             }),
             GFP_KERNEL,
@@ -98,6 +101,7 @@ impl Owner {
             .validation
             .revoke_owner(&self.access.policy.transition_owner);
         drop(revoked);
+        self.access.policy.workers.close();
         self.access.device().changed.notify_all();
     }
 }
@@ -116,6 +120,21 @@ pub(crate) struct Access {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Access {
+    pub(crate) fn interval(&self) -> Interval {
+        self.policy.permission.interval
+    }
+
+    /// Track worker cleanup without granting pixels or extending the issuer lifetime.
+    pub(crate) fn track_worker(
+        &self,
+        revocation: &kernel::drm::capture::Revocation,
+    ) -> Result<crate::authority::grants::Registration> {
+        self.with_output(|| Ok(()))?;
+        let registration = self.policy.workers.register(revocation)?;
+        self.with_output(|| Ok(()))?;
+        Ok(registration)
+    }
+
     /// Identity only, with no authority or retained DRM resources.
     pub(crate) fn transition_owner(&self) -> Arc<()> {
         self.policy.transition_owner.clone()
