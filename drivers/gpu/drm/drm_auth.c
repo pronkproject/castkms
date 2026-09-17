@@ -266,6 +266,12 @@ int drm_setmaster_ioctl(struct drm_device *dev, void *data,
 	if (!file_priv->master)
 		return -EINVAL;
 
+	ret = drm_constraints_owner_check(dev);
+	if (ret) {
+		drm_constraints_owner_retry(dev);
+		return ret;
+	}
+
 	if (!file_priv->is_master)
 		return drm_new_set_master(dev, file_priv);
 

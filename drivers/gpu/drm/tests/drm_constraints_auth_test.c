@@ -107,10 +107,73 @@ static void implicit_master_preserves_nonparticipating_devices(struct kunit *tes
 	KUNIT_EXPECT_PTR_EQ(test, priv->master, dev->master);
 }
 
+static void returning_master_waits_for_successful_recovery(struct kunit *test)
+{
+	struct drm_device *dev = new_device(test, true);
+	struct file *file = new_file(test, dev);
+	struct drm_file *priv = file->private_data;
+	struct drm_master *identity;
+
+	KUNIT_ASSERT_EQ(test, drm_master_open(priv), 0);
+	identity = priv->master;
+	KUNIT_ASSERT_EQ(test, drm_ioctl(file, DRM_IOCTL_DROP_MASTER, 0), 0L);
+	fail_recovery(dev);
+	KUNIT_ASSERT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_MASTER, 0), -ENODEV);
+	KUNIT_EXPECT_PTR_EQ(test, dev->master, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, priv->master, identity);
+	KUNIT_EXPECT_TRUE(test, priv->is_master);
+
+	drm_constraints_owner_flush(dev);
+	KUNIT_ASSERT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_MASTER, 0), 0L);
+	KUNIT_EXPECT_TRUE(test, drm_is_current_master(priv));
+	KUNIT_EXPECT_PTR_EQ(test, priv->master, identity);
+}
+
+static void associated_master_waits_before_replacing_identity(struct kunit *test)
+{
+	struct drm_device *dev = new_device(test, true);
+	struct file *owner = new_file(test, dev);
+	struct file *file = new_file(test, dev);
+	struct drm_file *priv = file->private_data;
+	struct drm_master *identity;
+
+	KUNIT_ASSERT_EQ(test, drm_master_open(owner->private_data), 0);
+	KUNIT_ASSERT_EQ(test, drm_master_open(priv), 0);
+	identity = priv->master;
+	KUNIT_ASSERT_EQ(test, drm_ioctl(owner, DRM_IOCTL_DROP_MASTER, 0), 0L);
+	fail_recovery(dev);
+	KUNIT_ASSERT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_MASTER, 0), -ENODEV);
+	KUNIT_EXPECT_PTR_EQ(test, dev->master, NULL);
+	KUNIT_EXPECT_PTR_EQ(test, priv->master, identity);
+	KUNIT_EXPECT_FALSE(test, priv->is_master);
+
+	drm_constraints_owner_flush(dev);
+	KUNIT_ASSERT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_MASTER, 0), 0L);
+	KUNIT_EXPECT_TRUE(test, drm_is_current_master(priv));
+	KUNIT_EXPECT_PTR_NE(test, priv->master, identity);
+}
+
+static void returning_master_cannot_restart_closed_recovery(struct kunit *test)
+{
+	struct drm_device *dev = new_device(test, true);
+	struct file *file = new_file(test, dev);
+	struct drm_file *priv = file->private_data;
+
+	KUNIT_ASSERT_EQ(test, drm_master_open(priv), 0);
+	KUNIT_ASSERT_EQ(test, drm_ioctl(file, DRM_IOCTL_DROP_MASTER, 0), 0L);
+	drm_constraints_owner_stop(dev);
+	KUNIT_EXPECT_EQ(test, drm_ioctl(file, DRM_IOCTL_SET_MASTER, 0), -ENODEV);
+	KUNIT_EXPECT_PTR_EQ(test, dev->master, NULL);
+	KUNIT_EXPECT_FALSE(test, drm_is_current_master(priv));
+}
+
 static struct kunit_case drm_constraints_auth_tests[] = {
 	KUNIT_CASE(implicit_master_waits_for_successful_recovery),
 	KUNIT_CASE(implicit_master_cannot_restart_closed_recovery),
 	KUNIT_CASE(implicit_master_preserves_nonparticipating_devices),
+	KUNIT_CASE(returning_master_waits_for_successful_recovery),
+	KUNIT_CASE(associated_master_waits_before_replacing_identity),
+	KUNIT_CASE(returning_master_cannot_restart_closed_recovery),
 	{}
 };
 
