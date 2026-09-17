@@ -37,7 +37,12 @@ impl Endpoint {
         let (broker, image) = {
             let state = self.state.lock();
             let State::Ready { offer, pool, output, .. } = &*state else {
-                return Err(if matches!(&*state, State::Closed) { EKEYREVOKED } else { ENODATA });
+                // Empty, draft and publishing endpoints are idle, not terminal.
+                return if matches!(&*state, State::Closed) {
+                    Err(EKEYREVOKED)
+                } else {
+                    Ok(false)
+                };
             };
             if !matches!(output.slot, Slot::Ready) { return Ok(false); }
             (offer.control().worker()?.outputs().clone(), pool.first_completed())
