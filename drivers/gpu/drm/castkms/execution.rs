@@ -5,6 +5,8 @@
 pub(crate) mod host;
 pub(crate) mod potential;
 pub(crate) mod capabilities;
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+pub(crate) mod constraints;
 pub(crate) mod proposal;
 pub(crate) mod validation;
 pub(crate) mod coordinator;
