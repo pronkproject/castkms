@@ -34,6 +34,7 @@
 
 #include <drm/drm_auth.h>
 #include <drm/drm_atomic_prepare_auth.h>
+#include <drm/drm_constraints_owner.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
 #include <drm/drm_lease.h>
@@ -329,6 +330,11 @@ int drm_master_open(struct drm_file *file_priv)
 	 */
 	guard(mutex)(&dev->master_mutex);
 	if (!dev->master) {
+		ret = drm_constraints_owner_check(dev);
+		if (ret) {
+			drm_constraints_owner_retry(dev);
+			return ret;
+		}
 		ret = drm_new_set_master(dev, file_priv);
 	} else {
 		spin_lock(&file_priv->master_lookup_lock);
@@ -338,6 +344,7 @@ int drm_master_open(struct drm_file *file_priv)
 
 	return ret;
 }
+EXPORT_SYMBOL_IF_KUNIT(drm_master_open);
 
 void drm_master_release(struct drm_file *file_priv)
 {
