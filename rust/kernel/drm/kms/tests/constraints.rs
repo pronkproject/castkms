@@ -242,8 +242,7 @@ mod cases {
         assert_eq!(output.selected().id(), initial);
         let target = entry(output.domain(), crtc_id, plane_id)?;
         assert!(matches!(output.lookup(target.id()), Err(ESTALE)));
-        output.add(&target)?;
-        output.suggest(target.id())?;
+        output.add_suggested(&target)?;
         let snapshot = output.snapshot(0)?;
         assert_eq!(snapshot.info().count, 2);
         assert_eq!(snapshot.info().selected_id, initial);
