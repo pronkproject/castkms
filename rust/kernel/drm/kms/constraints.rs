@@ -97,6 +97,16 @@ impl<'a, T: KmsDriver> Output<'a, T> {
         to_result(unsafe { bindings::drm_constraints_crtc_add(self.crtc.as_raw(), entry.as_raw()) })
     }
 
+    /// Offer and suggest a ready backend in one observable list generation.
+    ///
+    /// This changes neither the accepted binding nor current buffer validity.
+    pub fn add_suggested(&self, entry: &OpaqueEntry) -> Result {
+        // SAFETY: The owner retains completed topology and the candidate throughout publication.
+        to_result(unsafe {
+            bindings::drm_constraints_crtc_add_suggested(self.crtc.as_raw(), entry.as_raw())
+        })
+    }
+
     /// Copy a coherent snapshot; nonzero expected generation must match.
     pub fn snapshot(&self, generation: u64) -> Result<Snapshot> {
         self.list.snapshot(generation)
