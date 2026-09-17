@@ -3,9 +3,37 @@
 #include <string.h>
 #include <time.h>
 #include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 #include <drm_fourcc.h>
 
 #include "fixture.h"
+#include "../../../../include/uapi/drm/castkms_drm.h"
+
+struct monitor_control attach_fallback_monitor(int fd, uint32_t connector_id)
+{
+	struct drm_castkms_monitor_files files = { -1, -1 };
+	struct drm_castkms_create_monitor_control create = {
+		.connector_id = connector_id,
+		.files = (uintptr_t)&files,
+	};
+	struct drm_castkms_monitor_attach attach = {0};
+
+	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL, &create) == 0);
+	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+	return (struct monitor_control) {
+		.control_fd = files.control_fd,
+		.revoke_fd = files.revoke_fd,
+	};
+}
+
+void close_monitor(struct monitor_control *monitor)
+{
+	CHECK(close(monitor->control_fd) == 0);
+	CHECK(close(monitor->revoke_fd) == 0);
+	monitor->control_fd = -1;
+	monitor->revoke_fd = -1;
+}
 
 /* Constraints owner recovery drains native reads before admitting a successor. */
 void acquire_master(int fd)

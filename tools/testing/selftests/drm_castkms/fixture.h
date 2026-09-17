@@ -22,6 +22,11 @@ struct buffer {
 	uint32_t fb;
 };
 
+struct monitor_control {
+	int control_fd;
+	int revoke_fd;
+};
+
 struct buffer create_buffer(int fd, uint32_t width, uint32_t height,
 			    unsigned char pixel);
 struct buffer import_buffer(int fd, const char *heap, uint32_t width,
@@ -32,5 +37,7 @@ void property(int fd, drmModeAtomicReq *req, uint32_t id, uint32_t type,
 	      const char *name, uint64_t value);
 void flip(int fd, uint32_t plane, uint32_t fb);
 void acquire_master(int fd);
+struct monitor_control attach_fallback_monitor(int fd, uint32_t connector_id);
+void close_monitor(struct monitor_control *monitor);
 
 #endif

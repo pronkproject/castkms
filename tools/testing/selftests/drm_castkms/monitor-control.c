@@ -56,6 +56,22 @@ static void expect_connection(int fd, uint32_t connector_id,
 	drmModeFreeConnector(connector);
 }
 
+static void expect_1080p_fallback(int fd, uint32_t connector_id)
+{
+	drmModeConnector *connector = probe_connector(fd, connector_id);
+	bool found = false;
+
+	for (int i = 0; i < connector->count_modes; i++) {
+		drmModeModeInfo *mode = &connector->modes[i];
+
+		if (mode->hdisplay == 1920 && mode->vdisplay == 1080
+		    && (mode->type & DRM_MODE_TYPE_PREFERRED))
+			found = true;
+	}
+	CHECK(found);
+	drmModeFreeConnector(connector);
+}
+
 static int create_control(int fd, uint32_t connector_id, int *revoke_fd)
 {
 	struct drm_castkms_monitor_files files;
@@ -135,14 +151,14 @@ int main(int argc, char **argv)
 	expect_ioctl_error(peer, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EACCES);
 
-	/* Failed result copyout must leave both the fd table and fallback intact. */
+	/* Failed result copyout must leave both fd table and connection state intact. */
 	unsigned int before = open_files();
 	create.files = 1;
 	for (int i = 0; i < 4; i++) {
 		expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 				   &create, EFAULT);
 		CHECK(open_files() == before);
-		expect_connection(fd, connector_id, DRM_MODE_CONNECTED);
+		expect_connection(fd, connector_id, DRM_MODE_DISCONNECTED);
 	}
 	create.files = (uintptr_t)&files;
 	/* The request is input-only; only its explicit result pointer is written. */
@@ -155,7 +171,7 @@ int main(int argc, char **argv)
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EFAULT);
 	CHECK(open_files() == before);
-	expect_connection(fd, connector_id, DRM_MODE_CONNECTED);
+	expect_connection(fd, connector_id, DRM_MODE_DISCONNECTED);
 	CHECK(munmap(partial, 2 * page_size) == 0);
 	create.files = (uintptr_t)&files;
 	struct drm_castkms_create_monitor_control *readonly = mmap(NULL, page_size,
@@ -167,7 +183,7 @@ int main(int argc, char **argv)
 	CHECK(close(files.control_fd) == 0 && close(files.revoke_fd) == 0);
 	CHECK(munmap(readonly, page_size) == 0);
 	CHECK(open_files() == before);
-	expect_connection(fd, connector_id, DRM_MODE_CONNECTED);
+	expect_connection(fd, connector_id, DRM_MODE_DISCONNECTED);
 
 	control = create_control(fd, connector_id, &revoke);
 	CHECK(fcntl(control, F_GETFD) == FD_CLOEXEC);
@@ -229,16 +245,18 @@ int main(int argc, char **argv)
 	attach.edid_ptr = 0;
 	expect_ioctl_error(control, DRM_IOCTL_CASTKMS_MONITOR_ATTACH,
 			   &attach, ECANCELED);
-	expect_connection(peer, connector_id, DRM_MODE_CONNECTED);
+	expect_connection(peer, connector_id, DRM_MODE_DISCONNECTED);
 	CHECK(close(control) == 0);
 	control = create_control(peer, connector_id, &revoke);
 	CHECK(ioctl(control, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
 	expect_connection(peer, connector_id, DRM_MODE_CONNECTED);
+	expect_1080p_fallback(peer, connector_id);
 	CHECK(close(control) == 0);
+	expect_connection(peer, connector_id, DRM_MODE_DISCONNECTED);
 	expect_ioctl_error(revoke, _IO('x', 0xff), NULL, ENOTTY);
 	CHECK(close(revoke) == 0);
 	CHECK(close(peer) == 0);
 	CHECK(close(fd) == 0);
-	puts("PASS: exclusive CastKMS monitor publication and fallback restoration");
+	puts("PASS: explicit CastKMS monitor publication and 1080p fallback");
 	return 0;
 }

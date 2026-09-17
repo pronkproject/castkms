@@ -172,6 +172,7 @@ int main(int argc, char **argv)
 	struct drm_capture_grant_files files;
 	struct drm_capture_describe description;
 	struct drm_mode_create_dumb dumb = {};
+	struct monitor_control monitor;
 	drmVersion *version;
 	drmModeRes *resources;
 	uint64_t capability;
@@ -189,6 +190,7 @@ int main(int argc, char **argv)
 	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	request.crtc_id = resources->crtcs[0];
 	request.connector_id = resources->connectors[0];
+	monitor = attach_fallback_monitor(master, request.connector_id);
 	request.files = (uintptr_t)&files;
 	drmModeFreeResources(resources);
 	reader = open(argv[1], O_RDONLY | O_CLOEXEC);
@@ -226,6 +228,7 @@ int main(int argc, char **argv)
 	CHECK(drmIoctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == 0);
 	CHECK(close(files.capture_fd) == 0);
 	CHECK(!revoked(files.control_fd));
+	close_monitor(&monitor);
 	CHECK(close(master) == 0);
 	CHECK(revoked(files.control_fd));
 	CHECK(close(files.control_fd) == 0);
