@@ -25,14 +25,18 @@ pub(super) struct Evidence {
     output: Identity,
     configuration: Configuration,
     owner: Option<MasterRef<Driver>>,
-    execution: Description,
+    execution: Option<Description>,
     constraints: Option<ARef<kernel::drm::constraints::OpaqueEntry>>,
     content: Option<ContentSerial>,
     producers: [Option<Arc<Dependencies>>; MAX_PLANES],
 }
 
 impl Evidence {
-    pub(super) fn new(current: &Current<'_>, scene: &Scene, execution: Description) -> Self {
+    pub(super) fn new(
+        current: &Current<'_>,
+        scene: &Scene,
+        execution: Option<Description>,
+    ) -> Self {
         let mut producers = core::array::from_fn(|_| None);
         for (slot, layer) in producers.iter_mut().zip(scene.layers()) {
             *slot = layer.producer.clone();
@@ -124,6 +128,18 @@ impl Released {
     /// Observe eligibility under the caller's current display and renderer exclusion.
     /// Success grants no capture authority and reserves no later operation.
     pub(crate) fn check(&self, current: &Current<'_>, execution: Description) -> Result {
+        self.check_identity(current, Some(execution))
+    }
+
+    /// Native accepted-entry identity supplies execution attribution without a second tag.
+    pub(crate) fn check_bound(&self, current: &Current<'_>) -> Result {
+        if self.evidence.constraints.is_none() {
+            return Err(EINVAL);
+        }
+        self.check_identity(current, None)
+    }
+
+    fn check_identity(&self, current: &Current<'_>, execution: Option<Description>) -> Result {
         current.check_scene_owner()?;
         if self.evidence.output != *current.output_identity()
             || self.evidence.owner.as_ref() != Some(current.master())

@@ -35,7 +35,6 @@ impl RenderJob {
         entry: &kernel::drm::constraints::Entry<crate::execution::constraints::backend::Backend>,
         image_id: u64,
         previous_content_serial: Option<u64>,
-        execution: crate::execution::Description,
         destination: Prepared,
     ) -> Result<Self> {
         let backend = entry.backend();
@@ -58,7 +57,7 @@ impl RenderJob {
                     return Err(EINVAL);
                 }
             }
-            SourceJob::claim_bound(&current, entry, &ready, previous_content_serial, execution)
+            SourceJob::claim_bound(&current, entry, &ready, previous_content_serial)
         })?;
         Ok(Self::new(source, destination))
     }

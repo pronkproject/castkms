@@ -35,11 +35,10 @@ mod cases {
             let second = provider.prepare(worker.clone())?;
             provider.publish(&control, &first)?;
             provider.publish(&control, &second)?;
-            let execution = candidate.execution();
             let claim = |entry: &kernel::drm::constraints::Entry<_>, previous| {
                 access.with_current(|current| {
                     let guard = worker.hold_ready()?;
-                    SourceJob::claim_bound(&current, entry, &guard, previous, execution)
+                    SourceJob::claim_bound(&current, entry, &guard, previous)
                 })
             };
             check(claim(&first, None).err() == Some(ESTALE))?;
@@ -48,24 +47,24 @@ mod cases {
             check(access.with_current(|current| {
                 let other = other.worker();
                 let guard = other.hold_ready()?;
-                SourceJob::claim_bound(&current, &first, &guard, None, execution)
+                SourceJob::claim_bound(&current, &first, &guard, None)
             }).err() == Some(EACCES))?;
             let job = claim(&first, None)?;
             let serial = job.scene().content_serial().map(|serial| serial.get());
             let completed = job.release_cpu();
-            access.with_current(|current| completed.check(&current, execution))?;
+            access.with_current(|current| completed.check_bound(&current))?;
             check(claim(&first, serial).err() == Some(ENODATA))?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&second))?;
-            check(access.with_current(|current| completed.check(&current, execution))
+            check(access.with_current(|current| completed.check_bound(&current))
                 == Err(ESTALE))?;
             check(claim(&first, None).err() == Some(ESTALE))?;
             claim(&second, None)?.release_without_access();
             let image = pool.image(1)?;
             check(crate::renderer::render_job::RenderJob::claim_bound(
-                &access, &second, 2, None, execution, image.prepare(1)?,
+                &access, &second, 2, None, image.prepare(1)?,
             ).err() == Some(EACCES))?;
             let job = crate::renderer::render_job::RenderJob::claim_bound(
-                &access, &second, 1, None, execution, image.prepare(2)?,
+                &access, &second, 1, None, image.prepare(2)?,
             )?;
             check(core::ptr::eq(job.destination(), &*image))?;
             job.release(crate::renderer::job::Completion::WithoutAccess);

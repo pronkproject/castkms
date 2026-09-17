@@ -16,6 +16,7 @@ mod offer_drafts;
 mod offer_lifetimes;
 mod offer_reaping;
 mod offer_publication;
+mod offer_sources;
 
 use super::*;
 use crate::renderer::{
