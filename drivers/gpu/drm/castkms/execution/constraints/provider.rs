@@ -117,6 +117,54 @@ impl Provider {
         self.bindings.resolve(entry)
     }
 
+    /// Reclaim unselected withdrawn listings and index ownership forgotten by native recovery.
+    /// Call outside native DRM and provider locks, before allocating another entry. This
+    /// neither revokes workers nor destroys independently retained accepted states or jobs.
+    /// A failed cleanup may have forgotten earlier retired listings, never live selections.
+    pub(crate) fn reap(&self, output: &Output<'_, Driver>) -> Result<usize> {
+        if !core::ptr::eq(&**self.initial, output.default_entry()) {
+            return Err(EINVAL);
+        }
+        // These owners have function scope so every error releases the publication mutex
+        // before snapshots or removed backend references can run their final destructors.
+        let observed;
+        let current;
+        let retired;
+        {
+            let closed = self.closed.lock();
+            if *closed {
+                return Err(ESHUTDOWN);
+            }
+            observed = output.snapshot(0)?;
+            if !observed.entries().any(|offer| core::ptr::eq(offer.entry, &**self.initial)) {
+                return Err(ESTALE);
+            }
+            for offer in observed.entries() {
+                if offer.selectable || offer.entry.id() == observed.info().selected_id
+                    || core::ptr::eq(offer.entry, &**self.initial)
+                {
+                    continue;
+                }
+                match self.bindings.resolve(offer.entry) {
+                    Ok(_) => (),
+                    Err(ESTALE) => continue,
+                    Err(error) => return Err(error),
+                }
+                match output.forget(offer.entry.id()) {
+                    Ok(()) | Err(ENOENT) | Err(EBUSY) => (),
+                    Err(error) => return Err(error),
+                }
+            }
+            current = output.snapshot(0)?;
+            retired = self.bindings.reap(&current)?;
+        }
+        let count = retired.len();
+        drop(observed);
+        drop(current);
+        drop(retired);
+        Ok(count)
+    }
+
     /// Called under the native list lock, including inside a readiness installation guard.
     /// Neither the publication mutex nor a worker readiness mutex is acquired here.
     pub(crate) fn check(

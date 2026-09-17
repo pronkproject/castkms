@@ -7,7 +7,8 @@ use kernel::{
         Backend,
         Domain,
         Entry,
-        OpaqueEntry, //
+        OpaqueEntry,
+        Snapshot, //
     },
     prelude::*,
     sync::{
@@ -105,6 +106,29 @@ impl<B: Backend> Bindings<B> {
             .iter()
             .position(|stored| Self::same(stored, entry))?;
         state.entries.remove(index).ok()
+    }
+
+    /// Release index ownership absent from an authoritative snapshot of this output.
+    /// The provider serializes publication and validates the snapshot's output scope.
+    /// Returned entries must be dropped outside native and provider locks.
+    pub(crate) fn reap(&self, snapshot: &Snapshot) -> Result<KVec<ARef<Entry<B>>>> {
+        let listed = |entry: &Entry<B>| {
+            snapshot.entries().any(|offer| Self::same(entry, offer.entry))
+        };
+        let mut retired = KVec::with_capacity(self.capacity, GFP_KERNEL)?;
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(ESHUTDOWN);
+        }
+        for entry in &state.entries {
+            if !listed(entry) {
+                retired.push(entry.clone(), GFP_KERNEL)?;
+            }
+        }
+        // Every removed reference has a returned owner before retain drops it under the lock.
+        // Failure in the first pass leaves membership intact and cannot destroy a backend.
+        state.entries.retain(|entry| listed(entry));
+        Ok(retired)
     }
 
     /// Exclude future resolution after native publication is closed or offers are retired.

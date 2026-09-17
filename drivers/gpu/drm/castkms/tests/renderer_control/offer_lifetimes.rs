@@ -4,7 +4,7 @@ use super::*;
 use crate::renderer::{draft::Draft, private_pool::Pool, ready};
 use kernel::drm::gem::ExportAccess;
 
-fn prepare(
+pub(super) fn prepare(
     device: &Device<Driver, Registered>,
     owner: &Owner,
 ) -> Result<(Pool, ready::Owner)> {
