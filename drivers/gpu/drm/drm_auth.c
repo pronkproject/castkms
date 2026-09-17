@@ -295,6 +295,8 @@ static void drm_drop_master(struct drm_device *dev,
 	if (dev->driver->master_drop)
 		dev->driver->master_drop(dev, fpriv);
 	drm_master_put(&dev->master);
+	if (drm_core_check_feature(dev, DRIVER_MODESET))
+		drm_constraints_owner_lost(dev);
 }
 
 int drm_dropmaster_ioctl(struct drm_device *dev, void *data,
