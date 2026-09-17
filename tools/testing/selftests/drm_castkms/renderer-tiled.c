@@ -129,7 +129,8 @@ static void reject_host_framebuffer(int fd, uint32_t plane, uint32_t framebuffer
 	drmModeAtomicFree(request);
 }
 
-static struct buffer create_tiled_buffer(int fd, uint32_t width, uint32_t height)
+static struct buffer create_tiled_buffer(int fd, uint32_t width, uint32_t height,
+					 uint32_t format)
 {
 	struct buffer buffer = create_buffer(fd, width, height, 0);
 	uint32_t handles[4] = { buffer.dumb.handle };
@@ -139,7 +140,7 @@ static struct buffer create_tiled_buffer(int fd, uint32_t width, uint32_t height
 
 	CHECK(drmModeRmFB(fd, buffer.fb) == 0);
 	buffer.fb = 0;
-	CHECK(drmModeAddFB2WithModifiers(fd, width, height, DRM_FORMAT_XRGB8888,
+	CHECK(drmModeAddFB2WithModifiers(fd, width, height, format,
 				       handles, pitches, offsets, modifiers,
 				       &buffer.fb, DRM_MODE_FB_MODIFIERS) == 0);
 	return buffer;
@@ -190,12 +191,12 @@ int main(int argc, char **argv)
 	struct drm_castkms_create_renderer_control create = { .files = (uintptr_t)&files };
 	struct {
 		struct drm_castkms_renderer_constraints header;
-		struct drm_castkms_renderer_constraints_format formats[2];
+		struct drm_castkms_renderer_constraints_format formats[3];
 	} constraints = {
 		.header = {
 			.version = DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION,
 			.kind = DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND,
-			.format_count = 2,
+			.format_count = 3,
 			.min_scale = 1U << 16,
 			.max_scale = 1U << 16,
 			.max_layers = 1,
@@ -220,6 +221,16 @@ int main(int argc, char **argv)
 			{
 				.fourcc = DRM_FORMAT_NV12,
 				.plane_count = 2,
+				.modifier = I915_FORMAT_MOD_4_TILED,
+				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
+					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+				.pitch_alignment = 1,
+				.offset_alignment = 1,
+				.max_pitch = 65536,
+			},
+			{
+				.fourcc = DRM_FORMAT_RGBX8888,
+				.plane_count = 1,
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
@@ -253,7 +264,7 @@ int main(int argc, char **argv)
 	drmModeConnector *connector;
 	drmModeModeInfo *mode;
 	struct monitor_control monitor;
-	struct buffer linear, tiled, private;
+	struct buffer linear, tiled, rgbx, private;
 	struct multiplane_buffer nv12;
 	uint64_t host, worker;
 	uint64_t content_serial, job_id;
@@ -283,7 +294,10 @@ int main(int argc, char **argv)
 			mode = &connector->modes[i];
 	plane = primary_plane(fd, 0);
 	linear = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0);
-	tiled = create_tiled_buffer(fd, mode->hdisplay, mode->vdisplay);
+	tiled = create_tiled_buffer(fd, mode->hdisplay, mode->vdisplay,
+				    DRM_FORMAT_XRGB8888);
+	rgbx = create_tiled_buffer(fd, mode->hdisplay, mode->vdisplay,
+				   DRM_FORMAT_RGBX8888);
 	nv12 = create_tiled_nv12(fd, mode->hdisplay, mode->vdisplay);
 	private = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0);
 	CHECK(drmPrimeHandleToFD(fd, private.dumb.handle, DRM_CLOEXEC | DRM_RDWR,
@@ -325,6 +339,8 @@ int main(int argc, char **argv)
 	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_XRGB8888,
 			   I915_FORMAT_MOD_4_TILED, mode->hdisplay, mode->vdisplay);
 	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_NV12,
+			   I915_FORMAT_MOD_4_TILED, mode->hdisplay, mode->vdisplay);
+	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_RGBX8888,
 			   I915_FORMAT_MOD_4_TILED, mode->hdisplay, mode->vdisplay);
 	select_framebuffer(fd, create.crtc_id, plane, tiled.fb, worker);
 	CHECK(selected(fd, create.crtc_id, 2) == worker);
@@ -398,6 +414,39 @@ int main(int argc, char **argv)
 	for (unsigned int i = 2; i < DRM_CASTKMS_RENDERER_MAX_PLANES; i++)
 		CHECK(layer->planes[i].dma_buf_fd == -1 && !layer->planes[i].pitch &&
 		      !layer->planes[i].offset && !layer->planes[i].reserved);
+	content_serial = scene->content_serial;
+	job_id = scene->job_id;
+	release.job_id = scene->job_id;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+		    &release) == 0);
+
+	select_framebuffer(fd, create.crtc_id, plane, rgbx.fb, worker);
+	memset(scene, 0, dequeue.capacity);
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+		    &dequeue) == 0);
+	layer = (void *)(scene + 1);
+	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
+	CHECK(scene->constraints_id == worker && scene->layer_count == 1);
+	CHECK(scene->content_serial > content_serial && scene->job_id != job_id);
+	CHECK(scene->width == mode->hdisplay && scene->height == mode->vdisplay);
+	CHECK(scene->producer_fd == -1 && !scene->output_color_count && !scene->reserved);
+	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
+	CHECK(layer->bytes == sizeof(*layer) && layer->plane_count == 1);
+	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
+	CHECK(layer->format == DRM_FORMAT_RGBX8888);
+	CHECK(layer->modifier == I915_FORMAT_MOD_4_TILED);
+	CHECK(layer->width == mode->hdisplay && layer->height == mode->vdisplay);
+	CHECK(!layer->source[0] && !layer->source[1]);
+	CHECK(layer->source[2] == (uint32_t)mode->hdisplay << 16);
+	CHECK(layer->source[3] == (uint32_t)mode->vdisplay << 16);
+	CHECK(!layer->position[0] && !layer->position[1]);
+	CHECK(layer->destination[0] == mode->hdisplay &&
+	      layer->destination[1] == mode->vdisplay);
+	CHECK(!layer->color_count && !layer->planes[0].offset &&
+	      !layer->planes[0].reserved);
+	CHECK(layer->planes[0].pitch == rgbx.dumb.pitch);
+	CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
 	release.job_id = scene->job_id;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
 		    &release) == 0);
@@ -413,6 +462,7 @@ int main(int argc, char **argv)
 	CHECK(drmModeSetCrtc(fd, create.crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
 	destroy_buffer(fd, &linear);
 	destroy_buffer(fd, &tiled);
+	destroy_buffer(fd, &rgbx);
 	destroy_multiplane_buffer(fd, &nv12);
 	destroy_buffer(fd, &private);
 	free(scene);
