@@ -228,12 +228,14 @@ struct drm_castkms_renderer_files {
  * issuance. Absence of a distinct current owner, or a target delegated through
  * a DRM lease, returns EBUSY.
  *
- * The renderer descriptor grants no modesetting or capture access.
- * Its operations authorize delegated rendering for this output and bound
- * drm_master identity. While that master is not current, control operations
- * fail with EACCES. Reacquiring the same master reactivates the descriptor,
- * but work and renderer configurations from the previous uninterrupted interval
- * stay invalid.
+ * The renderer descriptor grants no modesetting authority and does not
+ * authorize the separate final-image capture interface. Its operations grant
+ * scoped access to committed KMS sources for execution on this output and
+ * bound drm_master identity. While that master is not current, operations
+ * requiring fresh authority fail with EACCES; job/output release, image
+ * unregister and withdrawal remain available for cleanup. Reacquiring the same
+ * master reactivates the descriptor, but work and renderer configurations from
+ * the previous uninterrupted interval stay invalid.
  * An administratively issued descriptor is instead permanently stale after
  * its bound owner interval ends; the helper must issue a new descriptor.
  *

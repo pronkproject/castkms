@@ -13,6 +13,18 @@ Use the header from the same revision and reject unsupported versions.
 The executable fake-worker example is
 ``tools/testing/selftests/drm_castkms/renderer-control.c``.
 
+CastKMS supports a trusted userspace implementation of its virtual display's
+plane-processing engine. The DRM client continues to choose display state
+through KMS atomic commits. A renderer declares an immutable configuration,
+prepares private storage and publishes that configuration for explicit KMS
+selection; publication itself changes no accepted display state.
+
+Once selected, the renderer acquires bounded jobs derived from accepted KMS
+plane and color state. It executes those jobs with its native implementation
+and reports dependencies for work already submitted. Transfer into capture
+destinations is a separate stage, so downstream buffer reuse does not extend
+access to KMS source buffers.
+
 Renderer authority is output-scoped and distinct from final-image capture
 authority. Normal issuance requires the exact current master file controlling
 the CRTC and connector. An administrative helper can instead set
@@ -21,13 +33,18 @@ initial user namespace. That explicit mode binds to the independently observed
 current top-level owner interval; it does not use the helper's DRM-master
 association, take master from the compositor or grant modesetting rights. The
 helper must drop an accidentally acquired master role before requesting it.
-The returned close-on-exec renderer descriptor grants neither modesetting nor
-capture authority. The separate revocation descriptor controls admission.
-Issuer close also revokes the grant.
+The returned close-on-exec renderer descriptor grants scoped access to
+committed KMS sources for execution. It grants no modesetting authority and
+does not authorize the separate final-image capture interface. The renderer is
+a trusted worker responsible for synchronization, release and native resource
+isolation. The separate revocation descriptor controls admission. Issuer close
+also revokes the grant.
 
 The descriptor is bound to that ``drm_master`` identity, not permanently to
 the uninterrupted interval in which it was issued. While the bound master is
-absent or another master is current, control operations fail with ``EACCES``.
+absent or another master is current, operations requiring fresh authority fail
+with ``EACCES``. Job/output release, image unregister and withdrawal remain
+available for cleanup.
 If the same master becomes current again, the descriptor resumes with an empty
 generation after outstanding old jobs have been released. Configurations,
 published backends, private registrations and jobs from the earlier interval
@@ -47,15 +64,15 @@ A caller must handle ``EBUSY`` and ``ENODATA`` without busy-waiting.
 A pending atomic ``PREPARE_FD`` returns ``EBUSY``; normal libdrm atomic
 wrappers may be used. Never echo that request-only property's readback.
 
-Private preparation
-===================
+Backend configuration and publication
+=====================================
 
 Each renderer file owns one immutable configuration and at most one published
 backend per uninterrupted master interval. The file identifies the
 configuration; there is no separate configuration handle. Independent files
 can configure replacement workers concurrently within an interval, including
-with disabled video. A same-master
-reacquisition may reuse a drained file for a fresh generation. Preparation
+with disabled video. A same-master reacquisition may reuse a drained file for
+a fresh generation. Preparation
 acquires no live source pixels and changes no KMS state.
 
 1. ``CONFIGURE`` supplies bounded renderer constraints and exact private
@@ -63,8 +80,9 @@ acquires no live source pixels and changes no KMS state.
    the output's plane topology returns ``EOPNOTSUPP``. Failure leaves an empty
    endpoint retryable.
 2. ``REGISTER_IMAGE`` supplies increasing positive image names and one to
-   four distinct read/write DMA-BUFs each. Dimensions must equal the configuration's
-   pool dimensions. The trusted worker validates native layouts and imports.
+   four distinct read/write DMA-BUFs each. Dimensions must equal the
+   configuration's pool dimensions. The trusted worker validates native
+   layouts and imports.
 3. ``PUBLISH`` closes configuration and supplies a materialized native
    sync_file covering private preparation, or fd -1 after all preparation and
    coherency work has completed. Pending work returns ``EBUSY``; terminal
@@ -107,10 +125,10 @@ fourcc/modifier/memory-plane-count tuple, the primary, overlay and cursor roles
 that accept it, native/imported provenance, framebuffer width/height alignment
 and byte alignment/minimum/maximum pitch bounds. Implicit layout is distinct
 from explicit LINEAR. A declaration proves neither import compatibility nor
-access. Tuples without an
-aligned size in the source bounds, or which cannot fit DRM's generic minimum
-pitch at their smallest aligned source width, are omitted; a configuration with no
-usable tuple is rejected before private preparation.
+access. Tuples without an aligned size in the source bounds, or which cannot
+fit DRM's generic minimum pitch at their smallest aligned source width, are
+omitted; a configuration with no usable tuple is rejected before private
+preparation.
 When scaling is absent, both source-to-destination ratio bounds are exactly
 1.0 in unsigned 16.16 representation.
 Published generic KMS constraints carry the same per-format allocation limits,
@@ -146,7 +164,8 @@ The job includes primary, overlay and cursor plane records in stable
 back-to-front order, with ``src_*`` crop, ``crtc_*`` geometry and ordered
 plane/output color-op records.
 Sampling is nearest-neighbor; blending is premultiplied source-over against
-opaque black. A producer already completed with an error makes acquisition return
+opaque black. A producer already completed with an error makes acquisition
+return
 ``EREMOTEIO`` without publishing files or a source claim; its native error is
 not a queue-readiness result. The failed job is discarded, so polling becomes
 idle and acquisition returns ``ENODATA`` until new state is accepted. The
@@ -215,8 +234,8 @@ Revoker close and issuer close revoke admission while the renderer file still
 accepts outstanding release and private-name cleanup. Final renderer-file close
 ends that reporting channel; unreported access is not fabricated as complete.
 
-A published backend pins its registered images. After withdrawal, unregister still
-returns ``EBUSY`` for a publishing, claimed or releasing job. Submitted
+A published backend pins its registered images. After withdrawal, unregister
+still returns ``EBUSY`` for a publishing, claimed or releasing job. Submitted
 native work retains storage independently after namespace removal.
 Successful unregister is not permission to reuse storage before completion.
 
