@@ -4,6 +4,7 @@
  */
 #include <linux/file.h>
 #include <linux/uaccess.h>
+#include <kunit/visibility.h>
 
 #include <drm/drm_auth.h>
 #include <drm/drm_atomic_prepare_auth.h>
@@ -15,6 +16,8 @@
 #include <drm/drm_util.h>
 
 #include "drm_crtc_internal.h"
+#include "drm_constraints_lease.h"
+#include "drm_lease_internal.h"
 #include "drm_internal.h"
 
 /**
@@ -233,7 +236,7 @@ out:
  *	ERR_PTR(-EEXIST)	same object specified more than once in the provided list
  *	ERR_PTR(-ENOMEM)	allocation failed
  */
-static struct drm_master *drm_lease_create(struct drm_master *lessor, struct idr *leases)
+static struct drm_master *create_lease(struct drm_master *lessor, struct idr *leases)
 {
 	struct drm_device *dev = lessor->dev;
 	int error;
@@ -271,6 +274,11 @@ static struct drm_master *drm_lease_create(struct drm_master *lessor, struct idr
 		error = id;
 		goto out_lessee;
 	}
+	error = drm_constraints_lease_acquire(lessee, leases);
+	if (error) {
+		idr_remove(&drm_lease_owner(lessor)->lessee_idr, id);
+		goto out_lessee;
+	}
 
 	lessee->lessee_id = id;
 	lessee->lessor = drm_master_get(lessor);
@@ -292,6 +300,31 @@ out_lessee:
 	return ERR_PTR(error);
 }
 
+VISIBLE_IF_KUNIT struct drm_master *drm_lease_create(struct drm_master *lessor, struct idr *leases)
+{
+	struct drm_device *dev = lessor->dev;
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_master *lessee;
+	int ret;
+
+	if (!dev->mode_config.constraints_domain)
+		return create_lease(lessor, leases);
+	drm_modeset_acquire_init(&ctx, DRM_MODESET_ACQUIRE_INTERRUPTIBLE);
+	for (;;) {
+		ret = drm_modeset_lock_all_ctx(dev, &ctx);
+		if (ret != -EDEADLK)
+			break;
+		ret = drm_modeset_backoff(&ctx);
+		if (ret)
+			break;
+	}
+	lessee = ret ? ERR_PTR(ret) : create_lease(lessor, leases);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+	return lessee;
+}
+EXPORT_SYMBOL_IF_KUNIT(drm_lease_create);
+
 void drm_lease_destroy(struct drm_master *master)
 {
 	struct drm_device *dev = master->dev;
@@ -299,6 +332,7 @@ void drm_lease_destroy(struct drm_master *master)
 	mutex_lock(&dev->mode_config.idr_mutex);
 
 	drm_dbg_lease(dev, "drm_lease_destroy %d\n", master->lessee_id);
+	drm_constraints_lease_release(master);
 
 	/* This master is referenced by all lessees, hence it cannot be destroyed
 	 * until all of them have been
@@ -340,6 +374,7 @@ static void _drm_lease_revoke(struct drm_master *top)
 	 */
 	for (;;) {
 		drm_master_cancel_preparation_locked(master);
+		drm_constraints_lease_release(master);
 		drm_dbg_lease(master->dev, "revoke leases for %p %d\n",
 			      master, master->lessee_id);
 

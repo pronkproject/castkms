@@ -2,6 +2,8 @@
 #ifndef __DRM_CONSTRAINTS_INTERNAL_H__
 #define __DRM_CONSTRAINTS_INTERNAL_H__
 
+#include <linux/atomic.h>
+
 struct drm_constraints_list;
 struct drm_constraints_entry;
 
@@ -9,6 +11,8 @@ struct drm_constraints_output {
 	struct drm_constraints_list *list;
 	struct drm_constraints_entry *default_entry;
 	const struct drm_constraints_output_ops *ops;
+	/* Adds hold the CRTC lock and idr_mutex; removals hold idr_mutex. */
+	atomic_t leases;
 };
 
 /*

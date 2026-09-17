@@ -161,6 +161,7 @@ int drm_constraints_crtc_init(struct drm_crtc *crtc, struct drm_constraints_entr
 	output = kzalloc_obj(*output);
 	if (!output)
 		return -ENOMEM;
+	atomic_set(&output->leases, 0);
 	output->list = drm_constraints_list_create(crtc->dev->mode_config.constraints_domain,
 							 initial, limit);
 	if (IS_ERR(output->list)) {

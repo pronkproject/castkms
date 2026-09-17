@@ -127,6 +127,16 @@ struct drm_master {
 	struct idr leases;
 
 	/**
+	 * @constraints_lease_crtcs:
+	 *
+	 * Outputs whose fixed constraints contract is retained by this lease.
+	 * Charged at lease creation and cleared at revocation or destruction,
+	 * independently of which master is current. Protected by the device's
+	 * mode-config object-ID mutex.
+	 */
+	u32 constraints_lease_crtcs;
+
+	/**
 	 * @lessee_idr:
 	 *
 	 * All lessees under this owner (only used where @lessor is NULL).
