@@ -95,7 +95,9 @@ apply to every role; advertise the intersection of per-role restrictions. Each
 format record names an exact fourcc/modifier/memory-plane-count tuple,
 native/imported provenance, and alignment/pitch bounds. Implicit layout is
 distinct from explicit LINEAR. A declaration proves neither import
-compatibility nor access.
+compatibility nor access. Tuples that cannot fit DRM's generic minimum pitch at
+the declared minimum source width are omitted; an offer with no usable tuple is
+rejected before private preparation.
 When scaling is absent, both source-to-destination ratio bounds are exactly
 1.0 in unsigned 16.16 representation.
 Published generic KMS constraints carry the same per-format allocation limits,
