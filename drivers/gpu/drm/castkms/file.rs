@@ -183,10 +183,10 @@ impl File {
                 (file.master_snapshot().ok_or(EACCES)?.master().clone(), None)
             }
             IssuanceOrigin::Administrative(dev) => {
-                let master = dev.authority.snapshot().ok_or(EAGAIN)?;
+                let master = dev.authority.snapshot().ok_or(EBUSY)?;
                 let interval = dev.authority.interval().map_err(|error| {
                     if error == EACCES {
-                        EAGAIN
+                        EBUSY
                     } else {
                         error
                     }
@@ -198,10 +198,10 @@ impl File {
             let guard =
                 master
                     .lock_current()
-                    .ok_or(if interval.is_some() { EAGAIN } else { EACCES })?;
+                    .ok_or(if interval.is_some() { EBUSY } else { EACCES })?;
             if let Some(interval) = interval {
                 if guard.is_master_file(file) {
-                    return Err(EAGAIN);
+                    return Err(EBUSY);
                 }
                 if !guard.exclusively_holds_object(crtc)
                     || !guard.exclusively_holds_object(connector)
@@ -334,10 +334,10 @@ impl File {
                 (file.master_snapshot().ok_or(EACCES)?.master().clone(), None)
             }
             IssuanceOrigin::Administrative(dev) => {
-                let master = dev.authority.snapshot().ok_or(EAGAIN)?;
+                let master = dev.authority.snapshot().ok_or(EBUSY)?;
                 let interval = dev.authority.interval().map_err(|error| {
                     if error == EACCES {
-                        EAGAIN
+                        EBUSY
                     } else {
                         error
                     }
@@ -348,10 +348,10 @@ impl File {
         let permission = {
             let guard = master
                 .lock_current()
-                .ok_or(if interval.is_some() { EAGAIN } else { EACCES })?;
+                .ok_or(if interval.is_some() { EBUSY } else { EACCES })?;
             if let Some(interval) = interval {
                 if guard.is_master_file(file) {
-                    return Err(EAGAIN);
+                    return Err(EBUSY);
                 }
                 if !guard.exclusively_holds_object(crtc)
                     || !guard.exclusively_holds_object(connector)

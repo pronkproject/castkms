@@ -179,6 +179,8 @@ Renderer issuance has distinct desktop and administrative origins. The normal
 request comes from the exact current master. An explicit administrative request
 requires host ``CAP_SYS_ADMIN`` and binds a non-master helper's endpoint to the
 current top-level owner interval without granting the helper modesetting access.
+Issuance returns ``EBUSY`` unless a distinct current owner exclusively controls
+the selected output.
 Owner loss permanently stales that endpoint; creator close and the separate
 revocation descriptor remain independent terminal controls.
 
@@ -187,9 +189,9 @@ capture interface. CastKMS advertises administrative capture support separately
 from ordinary capture. An administrative helper must be distinct from the
 current master, and its grant is bound to the exact CRTC, connector and current
 top-level owner interval without receiving modesetting authority. Leased
-targets are rejected. Owner-interval loss permanently stales the retained
-grant, while creator close and the revocation descriptor retain their existing
-terminal behavior.
+targets and unavailable or non-distinct current owners return ``EBUSY``.
+Owner-interval loss permanently stales the retained grant, while creator close
+and the revocation descriptor retain their existing terminal behavior.
 
 Code boundaries
 ---------------

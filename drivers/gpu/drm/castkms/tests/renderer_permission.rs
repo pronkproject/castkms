@@ -88,7 +88,7 @@ mod cases {
                 fixture.drm.connector()?,
                 || Ok(()),
             ),
-            Err(EAGAIN)
+            Err(EBUSY)
         ))?;
         let owner = File::issue_administrative_renderer_control_then_for_test(
             fixture.drm.device(),

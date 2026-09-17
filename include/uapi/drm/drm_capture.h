@@ -44,7 +44,8 @@ struct drm_capture_grant_files {
  * Providers must reject targets delegated through a DRM lease. The issuing
  * file must be distinct from the current master file. Loss of that owner
  * interval permanently stales the administrative grant; reacquiring master
- * does not reactivate it.
+ * does not reactivate it. Absence of a distinct current owner, or a target
+ * delegated through a DRM lease, returns EBUSY.
  *
  * The provider validates the exact output and retains policy for later capture.
  * Issuance does not itself read pixels, grant access to raw planes or authorize

@@ -210,8 +210,8 @@ struct drm_castkms_renderer_files {
  * namespace. It binds to the independently observed current top-level owner
  * interval, not the calling file's DRM master association. A caller which is
  * itself current master must drop that incidental role before administrative
- * issuance; absence of a distinct current owner returns EAGAIN. A target
- * delegated through a DRM lease returns EBUSY.
+ * issuance. Absence of a distinct current owner, or a target delegated through
+ * a DRM lease, returns EBUSY.
  *
  * The renderer descriptor grants no modesetting or capture access.
  * Its operations authorize delegated rendering for this output and bound

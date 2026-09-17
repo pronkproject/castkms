@@ -54,7 +54,7 @@ int main(int argc, char **argv)
 	create.flags = 2;
 	expect_error(helper, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &create, EINVAL);
 	create.flags = DRM_CAPTURE_GRANT_CREATE_ADMIN;
-	expect_error(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &create, EAGAIN);
+	expect_error(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &create, EBUSY);
 	CHECK(ioctl(helper, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &create) == 0);
 	CHECK(fcntl(files.capture_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(files.control_fd, F_GETFD) == FD_CLOEXEC);
