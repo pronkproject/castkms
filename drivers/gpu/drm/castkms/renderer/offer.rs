@@ -39,6 +39,11 @@ impl Offer {
         &self.entry
     }
 
+    /// Retain admission metadata without extending the unique worker owner lifetime.
+    pub(crate) fn control(&self) -> Control {
+        Control { access: self.access.clone(), entry: self.entry.clone() }
+    }
+
     /// Copy the reply before native publication while issuer authority is stable.
     /// On any error callers ignore the copied identity. The callback must not publish files,
     /// select this entry, revoke its owner, or reenter authority. Success lists a ready offer
@@ -54,5 +59,65 @@ impl Offer {
             reply(self.entry.id())?;
             provider.publish(&output, &self.entry)
         })
+    }
+}
+
+/// Exact offer admission, revocable independently of every retained clone.
+#[derive(Clone)]
+pub(crate) struct Control {
+    access: Access,
+    entry: Binding,
+}
+
+impl Control {
+    pub(crate) fn entry(&self) -> &Binding {
+        &self.entry
+    }
+
+    /// Stabilize the accepted entry and live worker without acquiring a source read.
+    /// Callbacks may not wait, revoke, reenter admission, or release native resources.
+    pub(crate) fn with_current<R>(
+        &self,
+        f: impl FnOnce(&crate::display_control::Current<'_>) -> Result<R>,
+    ) -> Result<R> {
+        let backend = self.entry.backend();
+        let crate::execution::constraints::backend::Backend::Renderer(worker) = &*backend else {
+            return Err(EINVAL);
+        };
+        self.access.with_current(|current| {
+            let _ready = worker.hold_ready()?;
+            current.check_constraints(Some(&self.entry))?;
+            f(&current)
+        })
+    }
+
+    pub(crate) fn claim(
+        &self,
+        image: u64,
+        previous: Option<u64>,
+        destination: super::private_image::Prepared,
+    ) -> Result<super::render_job::RenderJob> {
+        super::render_job::RenderJob::claim_bound(
+            &self.access, &self.entry, image, previous, destination,
+        )
+    }
+
+    /// Recheck admission after reply encoding, immediately before installing source files.
+    /// A failed publication must release the unpublished job without access outside locks.
+    pub(crate) fn publish_source(
+        &self,
+        job: &super::render_job::RenderJob,
+        publish: impl FnOnce(),
+    ) -> Result {
+        if !job.source().scene().constraints()
+            .is_some_and(|entry| core::ptr::eq(entry, &**self.entry))
+        {
+            return Err(EACCES);
+        }
+        self.with_current(|_| { publish(); Ok(()) })
+    }
+
+    pub(crate) fn check_completed(&self, rendered: &super::render_job::Rendered) -> Result {
+        self.with_current(|current| rendered.content().check_bound(current))
     }
 }

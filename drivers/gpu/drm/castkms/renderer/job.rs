@@ -68,7 +68,7 @@ impl SourceJob {
         execution: Description,
     ) -> Result<Self> {
         current.check_constraints(None)?;
-        Self::claim_current(current, previous_content_serial, execution)
+        Self::claim_current(current, previous_content_serial, Some(execution))
     }
 
     /// Admit a source read only for the accepted entry and its held ready worker.
@@ -79,7 +79,6 @@ impl SourceJob {
         entry: &kernel::drm::constraints::Entry<crate::execution::constraints::backend::Backend>,
         ready: &super::ready::Ready<'_>,
         previous_content_serial: Option<u64>,
-        execution: Description,
     ) -> Result<Self> {
         let backend = entry.backend();
         let crate::execution::constraints::backend::Backend::Renderer(worker) = &*backend else {
@@ -89,13 +88,13 @@ impl SourceJob {
             return Err(EACCES);
         }
         current.check_constraints(Some(entry))?;
-        Self::claim_current(current, previous_content_serial, execution)
+        Self::claim_current(current, previous_content_serial, None)
     }
 
     fn claim_current(
         current: &display_control::Current<'_>,
         previous_content_serial: Option<u64>,
-        execution: Description,
+        execution: Option<Description>,
     ) -> Result<Self> {
         let (scene, claim) = current.claim_changed_scene(previous_content_serial)?;
         let binding = match binding::Retained::new(scene.constraints()) {
