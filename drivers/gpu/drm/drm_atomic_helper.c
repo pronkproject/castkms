@@ -3242,7 +3242,7 @@ static int wait_for_previous_hw_done(struct drm_atomic_commit *state)
 	struct drm_connector_state *old_conn_state;
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *old_crtc_state;
-	struct drm_plane *plane;
+	struct drm_plane *plane __maybe_unused;
 	struct drm_plane_state *old_plane_state;
 	struct drm_crtc_commit *commit;
 	int i, ret;
