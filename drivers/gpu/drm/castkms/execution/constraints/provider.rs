@@ -102,9 +102,9 @@ impl Provider {
         if worker.output() != &self.output {
             return Err(EINVAL);
         }
-        let _ready = worker.hold_ready()?;
+        let mut ready = worker.hold_ready()?;
         self.bindings.insert(entry)?;
-        if let Err(error) = output.add(entry) {
+        if let Err(error) = ready.publish(output, entry) {
             // The caller still owns entry, so removal cannot destroy its native backend.
             drop(self.bindings.remove(entry));
             return Err(error);

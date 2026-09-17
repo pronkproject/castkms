@@ -60,6 +60,13 @@ impl<'a, T: KmsDriver> Output<'a, T> {
         unsafe { &*bindings::drm_constraints_device_domain(self.crtc.drm_dev().as_raw()).cast() }
     }
 
+    /// Retainable metadata for retirement independently of KMS object lifetime.
+    /// A list reference does not preserve topology or permit unchecked publication.
+    /// New entries must still pass this output's scope validation through `add`.
+    pub fn list(&self) -> &List {
+        self.list
+    }
+
     /// Borrow the fixed default independently of current selection or offer availability.
     pub fn default_entry(&self) -> &OpaqueEntry {
         // SAFETY: Successful attachment retains a non-null fixed default until CRTC cleanup.

@@ -55,6 +55,9 @@ unsafe impl AlwaysRefCounted for List {
 }
 
 impl List {
+    /// Maximum number of entries supported by one native constraints list.
+    pub const MAX_ENTRIES: usize = bindings::DRM_CONSTRAINTS_MAX_ENTRIES as usize;
+
     /// Create bounded metadata for one output with an initial selected entry.
     ///
     /// This neither attaches a list to a CRTC nor validates backend readiness or modesetting

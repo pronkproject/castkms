@@ -2,6 +2,8 @@
 
 //! Retained renderer resources with terminal revocation serialized against installation.
 
+mod publications;
+
 use super::{
     private_image::Image,
     private_pool::RegistrationSet,
@@ -9,6 +11,7 @@ use super::{
 };
 use crate::execution::{
     capabilities::Profile,
+    constraints::backend::Backend,
     validation::SceneView, //
 };
 use core::sync::atomic::{
@@ -37,7 +40,12 @@ pub(crate) struct Worker {
     source: Source,
     live: AtomicBool,
     #[pin]
-    registrations: Mutex<Option<RegistrationSet>>,
+    resources: Mutex<Option<Resources>>,
+}
+
+struct Resources {
+    registrations: RegistrationSet,
+    publications: publications::Publications,
 }
 
 /// Endpoint lifetime, distinct from retained entries and jobs. Drop outside DRM/driver locks.
@@ -58,7 +66,7 @@ unsafe impl kernel::drm::capture::Policy for Worker {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
-    /// The candidate supplies owned registrations and a successfully completed native probe.
+    /// Preparation supplies owned registrations and a successfully completed native probe.
     pub(super) fn new(
         output: crate::output::Identity,
         interval: crate::authority::Interval,
@@ -88,6 +96,7 @@ impl Owner {
         let mut formats = KVec::new();
         formats.extend_from_slice(profile.formats(), GFP_KERNEL)?;
         let profile = Profile::new(limits, formats)?;
+        let publications = publications::Publications::new()?;
         let worker = Arc::pin_init(
             pin_init!(Worker {
                 output,
@@ -95,7 +104,10 @@ impl Owner {
                 profile,
                 source,
                 live: AtomicBool::new(true),
-                registrations <- kernel::new_mutex!(Some(registrations)),
+                resources <- kernel::new_mutex!(Some(Resources {
+                    registrations,
+                    publications,
+                })),
             }),
             GFP_KERNEL,
         )?;
@@ -130,7 +142,7 @@ impl Drop for Owner {
 /// The caller supplies authority separately and must not revoke while holding this guard.
 pub(crate) struct Ready<'a> {
     worker: &'a Worker,
-    registrations: MutexGuard<'a, Option<RegistrationSet>>,
+    resources: MutexGuard<'a, Option<Resources>>,
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -165,22 +177,25 @@ impl Worker {
     }
 
     pub(crate) fn hold_ready(&self) -> Result<Ready<'_>> {
-        let registrations = self.registrations.lock();
-        if registrations.is_none() {
+        let resources = self.resources.lock();
+        if resources.is_none() {
             return Err(EKEYREVOKED);
         }
-        Ok(Ready { worker: self, registrations })
+        Ok(Ready { worker: self, resources })
     }
 
-    /// Exclude installation, mark terminal, then drop storage outside the readiness lock.
+    /// Exclude installation, mark terminal, then withdraw offers and release private storage.
     /// Call outside native DRM and provider locks; no native fence is signaled here.
     pub(crate) fn revoke(&self) {
         let retired = {
-            let mut registrations = self.registrations.lock();
+            let mut resources = self.resources.lock();
             self.live.store(false, Ordering::Release);
-            registrations.take()
+            resources.take()
         };
-        drop(retired);
+        if let Some(Resources { registrations, publications }) = retired {
+            publications.withdraw();
+            drop(registrations);
+        }
     }
 }
 
@@ -190,10 +205,26 @@ impl Ready<'_> {
         core::ptr::eq(self.worker, worker)
     }
 
+    /// Publish with a retained withdrawal record while endpoint revocation is excluded.
+    pub(crate) fn publish(
+        &mut self,
+        output: &kernel::drm::kms::constraints::Output<'_, crate::Driver>,
+        entry: &kernel::drm::constraints::Entry<Backend>,
+    ) -> Result {
+        let backend = entry.backend();
+        let Backend::Renderer(worker) = &*backend else {
+            return Err(EOPNOTSUPP);
+        };
+        if !self.belongs_to(worker) {
+            return Err(EACCES);
+        }
+        (*self.resources).as_mut().ok_or(EKEYREVOKED)?.publications.publish(output, entry)
+    }
+
     /// Exact registered destination identity, not permission to read or write it.
     pub(crate) fn contains(&self, id: u64, image: &Image) -> bool {
-        self.registrations.as_ref().is_some_and(|set| {
-            set.images()
+        self.resources.as_ref().is_some_and(|resources| {
+            resources.registrations.images()
                 .any(|(name, stored)| name == id && core::ptr::eq(stored, image))
         })
     }
