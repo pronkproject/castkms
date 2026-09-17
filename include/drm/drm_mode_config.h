@@ -50,10 +50,18 @@ struct drm_constraints_owner;
  */
 struct drm_mode_config_funcs {
 	/**
+	 * @capture_grant_flags:
+	 *
+	 * Provider-supported DRM_CAPTURE_GRANT_CREATE_* issuance flags. Leave
+	 * zero when only current-master issuance is supported.
+	 */
+	u32 capture_grant_flags;
+
+	/**
 	 * @create_capture_grant:
 	 *
 	 * Optional issuance of creator-bound final-image capture. The provider
-	 * validates the current master file and both target objects, retains
+	 * validates the requested issuance flags and both target objects, retains
 	 * capture policy, and binds revocation to the creating file's lifetime.
 	 * Success does not authorize later source reads without current checks.
 	 *
@@ -66,6 +74,7 @@ struct drm_mode_config_funcs {
 	 */
 	int (*create_capture_grant)(struct drm_device *dev, struct drm_file *file,
 				    const struct drm_capture_target *target,
+				    u32 flags,
 				    struct drm_capture_files *files);
 
 	/**

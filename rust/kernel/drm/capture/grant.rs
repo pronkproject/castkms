@@ -30,6 +30,32 @@ pub struct Target {
     connector: NonZeroU32,
 }
 
+/// Checked capture-grant issuance origin selected by the generic dispatcher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    /// The issuing file must be the exact current DRM master.
+    Master,
+    /// Initial-user-namespace administration, subject to explicit provider support.
+    Administrative,
+}
+
+impl Origin {
+    fn from_flags(flags: u32) -> Result<Self> {
+        match flags {
+            0 => Ok(Self::Master),
+            crate::uapi::DRM_CAPTURE_GRANT_CREATE_ADMIN => Ok(Self::Administrative),
+            _ => Err(EINVAL),
+        }
+    }
+
+    fn flags(self) -> u32 {
+        match self {
+            Self::Master => 0,
+            Self::Administrative => crate::uapi::DRM_CAPTURE_GRANT_CREATE_ADMIN,
+        }
+    }
+}
+
 impl Target {
     /// Describe the requested CRTC and connector. The provider must resolve and authorize them.
     pub fn new(crtc_id: u32, connector_id: u32) -> Result<Self> {
@@ -69,6 +95,16 @@ impl<T: KmsDriver> Device<T, Registered> {
         file: &DrmFile<T::File>,
         target: Target,
     ) -> Result<FilePair> {
+        self.create_capture_grant_from(file, target, Origin::Master)
+    }
+
+    /// Ask the provider to issue capture through one explicitly selected authority origin.
+    pub fn create_capture_grant_from(
+        &self,
+        file: &DrmFile<T::File>,
+        target: Target,
+        origin: Origin,
+    ) -> Result<FilePair> {
         let mut files = bindings::drm_capture_files::default();
         // SAFETY: Registration and the typed open file retain valid native objects; target
         // and output storage remain live. Native success returns two matching owned files.
@@ -77,6 +113,7 @@ impl<T: KmsDriver> Device<T, Registered> {
                 self.as_raw(),
                 file.as_raw(),
                 &target.raw(),
+                origin.flags(),
                 &mut files,
             )
         })?;
@@ -95,6 +132,7 @@ pub(crate) unsafe extern "C" fn create_callback<T: KmsDriver>(
     raw_dev: *mut bindings::drm_device,
     raw_file: *mut bindings::drm_file,
     raw_target: *const bindings::drm_capture_target,
+    flags: u32,
     output: *mut bindings::drm_capture_files,
 ) -> core::ffi::c_int {
     // SAFETY: KMS construction binds this callback to T. Native dispatch retains an open
@@ -111,8 +149,14 @@ pub(crate) unsafe extern "C" fn create_callback<T: KmsDriver>(
         Ok(target) => target,
         Err(error) => return error.to_errno(),
     };
+    let origin = match Origin::from_flags(flags) {
+        Ok(origin) => origin,
+        Err(error) => return error.to_errno(),
+    };
     let pair = match registered
-        .registration_data_with(|data| T::create_capture_grant(&registered, data, file, target))
+        .registration_data_with(|data| {
+            T::create_capture_grant(&registered, data, file, target, origin)
+        })
     {
         Ok(pair) => pair,
         Err(error) => return error.to_errno(),

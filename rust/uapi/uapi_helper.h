@@ -8,6 +8,7 @@
 
 #include <uapi/drm/castkms_drm.h>
 #include <uapi/drm/drm.h>
+#include <uapi/drm/drm_capture.h>
 #include <uapi/drm/nova_drm.h>
 #include <uapi/drm/panthor_drm.h>
 #include <uapi/linux/android/binder.h>

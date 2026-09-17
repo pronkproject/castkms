@@ -666,6 +666,7 @@ impl KmsDriver for Driver {
         _: &Self::RegistrationData<'_>,
         file: &kernel::drm::file::File<Self::File>,
         target: kernel::drm::capture::Target,
+        _: kernel::drm::capture::Origin,
     ) -> Result<kernel::drm::capture::FilePair> {
         crate::file::File::create_capture_files(dev, file, target)
     }

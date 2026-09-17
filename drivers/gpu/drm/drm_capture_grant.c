@@ -28,6 +28,7 @@ EXPORT_SYMBOL_GPL(drm_capture_files_put);
 
 int drm_capture_create_file_grant(struct drm_device *dev, struct drm_file *file,
 				  const struct drm_capture_target *target,
+				  u32 flags,
 				  struct drm_capture_files *result)
 {
 	struct drm_capture_files created = {};
@@ -44,7 +45,9 @@ int drm_capture_create_file_grant(struct drm_device *dev, struct drm_file *file,
 	funcs = dev->mode_config.funcs;
 	if (!funcs || !funcs->create_capture_grant)
 		return -EOPNOTSUPP;
-	ret = funcs->create_capture_grant(dev, file, target, &created);
+	if (flags & ~funcs->capture_grant_flags)
+		return -EOPNOTSUPP;
+	ret = funcs->create_capture_grant(dev, file, target, flags, &created);
 	if (ret > 0)
 		ret = -EINVAL;
 	if (!ret && (IS_ERR_OR_NULL(created.capture) || IS_ERR_OR_NULL(created.control) ||
