@@ -59,6 +59,16 @@ mod cases {
                     endpoint.release_source(id, Completion::Cpu)?;
                 }
                 if round < 3 {
+                    device.atomic_update(|state| {
+                        for crtc in &crtcs {
+                            state.add_crtc_state(crtc.crtc())?;
+                        }
+                        Ok(())
+                    })?;
+                    // Complete-scene validation adds planes but does not resubmit them.
+                    for endpoint in &endpoints {
+                        check(endpoint.begin_source(1).err() == Some(ENODATA))?;
+                    }
                     device.atomic_update(|mut state| {
                         for index in 0..8 {
                             let connectors = [&*connectors[index]];

@@ -11,7 +11,7 @@ use crate::{
 use core::{mem::size_of, ptr};
 
 /// An immutable operation, with no reference to mutable KMS state or property blobs.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
     /// Preserve input values unchanged.
     Bypass,

@@ -67,6 +67,7 @@ pub(super) struct CrtcState {
 }
 
 pub(super) struct PlaneState {
+    changed: bool,
     color: Option<Arc<crate::color::Pipeline>>,
     geometry: Option<scene::Geometry>,
     selection: Selection,
@@ -79,6 +80,7 @@ impl plane::DriverPlaneState for PlaneState {
     type Plane = Plane;
     fn new(_: &plane::Plane<Plane>) -> Result<Self> {
         Ok(Self {
+            changed: false,
             color: None,
             geometry: None,
             selection: Selection::RetainedFramebuffer,
@@ -89,6 +91,7 @@ impl plane::DriverPlaneState for PlaneState {
     }
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
+            changed: false,
             color: self.color.clone(),
             geometry: None,
             selection: Selection::RetainedFramebuffer,
@@ -243,13 +246,27 @@ impl plane::DriverPlane for Plane {
                 }
             }
         }
+        let input = transaction.plane_input(state.plane())?;
+        let included = !matches!(input, atomic::PlaneInput::Omitted);
         state.selection = Selection::for_update(
-            transaction.plane_input(state.plane())?,
+            input,
             old.framebuffer(),
             state.framebuffer(),
         );
         let current = transaction.drm_dev().authority.snapshot();
         state.owner = resolve_owner(old, &state, current.as_ref());
+        // Helpers add retained planes for full-scene validation. Only explicit
+        // input or a real metadata change creates another content revision.
+        state.changed = included
+            || old.crtc().map(|crtc| crtc.index()) != state.crtc().map(|crtc| crtc.index())
+            || old.framebuffer().map(core::ptr::from_ref)
+                != state.framebuffer().map(core::ptr::from_ref)
+            || old.geometry != state.geometry
+            || old.zpos() != state.zpos()
+            || old.yuv_color()? != state.yuv_color()?
+            || old.color.as_ref().map(|color| color.operations())
+                != state.color.as_ref().map(|color| color.operations())
+            || old.owner != state.owner;
         Ok(())
     }
 
@@ -357,16 +374,16 @@ impl CrtcState {
         let mut changed =
             state.mode_changed() || state.color_mgmt_changed() || state.active() != old.active();
         transaction.try_for_each_new_plane_state(|plane, opaque| {
-            changed |= old.layer_mask & plane.mask() != 0;
             mask &= !plane.mask();
             let plane_state = plane::PlaneState::<PlaneState>::from_opaque(opaque);
+            changed |= plane_state.changed && old.layer_mask & plane.mask() != 0;
             if plane_state.geometry.is_some()
                 && plane_state
                     .crtc()
                     .is_some_and(|crtc| crtc.index() == state.crtc().index())
             {
                 mask |= plane.mask();
-                changed = true;
+                changed |= plane_state.changed;
             }
         })?;
         state.layer_mask = if state.active() { mask } else { 0 };
