@@ -72,6 +72,8 @@ struct drm_constraints_encoded_format {
 	u32 min_height;
 	u32 max_width;
 	u32 max_height;
+	u32 layout_flags; /* DRM_CONSTRAINTS_FORMAT_*; implicit requires modifier zero. */
+	u32 pad;
 };
 
 struct drm_constraints_encoded_property {
