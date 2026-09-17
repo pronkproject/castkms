@@ -180,6 +180,15 @@ current top-level owner interval without granting the helper modesetting access.
 Owner loss permanently stales that endpoint; creator close and the separate
 revocation descriptor remain independent terminal controls.
 
+Final-image capture uses the same two issuance origins through the generic DRM
+capture interface. CastKMS advertises administrative capture support separately
+from ordinary capture. An administrative helper must be distinct from the
+current master, and its grant is bound to the exact CRTC, connector and current
+top-level owner interval without receiving modesetting authority. Leased
+targets are rejected. Owner-interval loss permanently stales the retained
+grant, while creator close and the revocation descriptor retain their existing
+terminal behavior.
+
 Code boundaries
 ---------------
 

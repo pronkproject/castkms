@@ -214,4 +214,74 @@ mod cases {
         check(stream.capture()?.wait()? == Ok(()))?;
         Ok(())
     }
+
+    #[test]
+    fn administrative_issuance_uses_a_distinct_current_owner() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let owner_file = fixture.drm.master_file()?;
+        let helper_file = owner_file.associated_file()?;
+        let _fb = select(&fixture, &owner_file)?;
+        check(matches!(
+            File::issue_administrative_capture_grant_then_for_test(
+                fixture.drm.device(),
+                owner_file.file(),
+                fixture.drm.crtc()?,
+                fixture.drm.connector()?,
+                || Ok(()),
+            ),
+            Err(EAGAIN)
+        ))?;
+        let grantor = File::issue_administrative_capture_grant_then_for_test(
+            fixture.drm.device(),
+            helper_file.file(),
+            fixture.drm.crtc()?,
+            fixture.drm.connector()?,
+            || Ok(()),
+        )?;
+        let mut stream = Stream::new(&grantor.capture(), 1)?;
+        check(stream.capture()?.wait()? == Ok(()))
+    }
+
+    #[test]
+    fn administrative_grant_expires_with_its_owner_interval() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let owner_file = fixture.drm.master_file()?;
+        let helper_file = owner_file.associated_file()?;
+        let _fb = select(&fixture, &owner_file)?;
+        let grantor = File::issue_administrative_capture_grant_then_for_test(
+            fixture.drm.device(),
+            helper_file.file(),
+            fixture.drm.crtc()?,
+            fixture.drm.connector()?,
+            || Ok(()),
+        )?;
+        let capture = grantor.capture();
+        drop(owner_file);
+        check(matches!(capture.stream(1), Err(ESTALE)))?;
+        let _replacement = fixture.drm.master_file()?;
+        check(matches!(capture.stream(1), Err(ESTALE)))
+    }
+
+    #[test]
+    fn administrative_issuance_rechecks_the_owner_interval() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let owner_file = fixture.drm.master_file()?;
+        let helper_file = owner_file.associated_file()?;
+        check(matches!(
+            File::issue_administrative_capture_grant_then_for_test(
+                fixture.drm.device(),
+                helper_file.file(),
+                fixture.drm.crtc()?,
+                fixture.drm.connector()?,
+                || {
+                    fixture.drm.device().authority.changed(None);
+                    Ok(())
+                },
+            ),
+            Err(ESTALE)
+        ))
+    }
 }
