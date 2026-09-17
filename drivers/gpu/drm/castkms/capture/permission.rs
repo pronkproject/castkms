@@ -4,6 +4,7 @@
 
 pub(crate) use crate::image_access::Current;
 use crate::{
+    authority::Interval,
     display,
     display_control,
     Driver, //
@@ -26,6 +27,7 @@ use kernel::{
 /// perform final DRM cleanup. Device-owned state must not retain permissions indefinitely.
 pub(crate) struct Permission {
     target: display_control::Target,
+    interval: Option<Interval>,
 }
 
 impl Permission {
@@ -49,7 +51,32 @@ impl Permission {
     ) -> Result<Self> {
         Ok(Self {
             target: display_control::Target::new(guard, crtc, connector)?,
+            interval: None,
         })
+    }
+
+    /// Bind administrative issuance to one uninterrupted top-level owner interval.
+    pub(crate) fn administrative(
+        guard: &CurrentMasterGuard<'_, Driver>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+        interval: Interval,
+    ) -> Result<Self> {
+        Ok(Self {
+            target: display_control::Target::new(guard, crtc, connector)?,
+            interval: Some(interval),
+        })
+    }
+
+    fn check_interval(&self) -> Result {
+        let Some(expected) = self.interval else {
+            return Ok(());
+        };
+        match self.device().authority.interval() {
+            Ok(current) if current == expected => Ok(()),
+            Err(error) if error == ENODEV => Err(error),
+            _ => Err(ESTALE),
+        }
     }
 
     /// Check access and accepted ownership while excluding changes through the callback.
@@ -59,8 +86,11 @@ impl Permission {
     /// locks, wait for rendering, or release final DRM object references. Returned data
     /// is historical metadata, not permission to make a later unchecked claim.
     pub(crate) fn with_current<R>(&self, f: impl FnOnce(Current<'_>) -> Result<R>) -> Result<R> {
-        self.target
-            .with_current(|control| f(Current::new(control)?))
+        self.check_interval()?;
+        self.target.with_current(|control| {
+            self.check_interval()?;
+            f(Current::new(control)?)
+        })
     }
 
     /// Stabilize pixel ownership without selecting a HOST image layout.
@@ -69,7 +99,9 @@ impl Permission {
         &self,
         f: impl FnOnce(display_control::Current<'_>) -> Result<R>,
     ) -> Result<R> {
+        self.check_interval()?;
         self.target.with_current(|current| {
+            self.check_interval()?;
             current.check_scene_owner()?;
             f(current)
         })
@@ -77,6 +109,7 @@ impl Permission {
 
     /// Match a renderer's stabilized display scope without recursively taking DRM locks.
     pub(super) fn check_control(&self, current: &display_control::Current<'_>) -> Result {
+        self.check_interval()?;
         current.check_target(&self.target)?;
         current.check_scene_owner()
     }

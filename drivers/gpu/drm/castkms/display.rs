@@ -644,6 +644,8 @@ fn install_constraints<'a>(
 
 #[vtable]
 impl KmsDriver for Driver {
+    const CAPTURE_GRANT_FLAGS: u32 = kernel::uapi::DRM_CAPTURE_GRANT_CREATE_ADMIN;
+
     fn constraints_check(
         transaction: &atomic::AtomicStateReader<Self>,
         state: &crtc::OpaqueCrtcState<Self>,
@@ -666,9 +668,9 @@ impl KmsDriver for Driver {
         _: &Self::RegistrationData<'_>,
         file: &kernel::drm::file::File<Self::File>,
         target: kernel::drm::capture::Target,
-        _: kernel::drm::capture::Origin,
+        origin: kernel::drm::capture::Origin,
     ) -> Result<kernel::drm::capture::FilePair> {
-        crate::file::File::create_capture_files(dev, file, target)
+        crate::file::File::create_capture_files(dev, file, target, origin)
     }
 
     type FramebufferData = super::provenance::Provenance;

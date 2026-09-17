@@ -38,7 +38,7 @@ pub(crate) struct File {
 }
 
 #[derive(Clone, Copy)]
-enum RendererOrigin<'a> {
+enum IssuanceOrigin<'a> {
     Master,
     Administrative(&'a drm::Device<Driver>),
 }
@@ -151,7 +151,7 @@ impl File {
             file,
             crtc,
             connector,
-            RendererOrigin::Administrative(dev),
+            IssuanceOrigin::Administrative(dev),
             || Ok(()),
         )
     }
@@ -166,7 +166,7 @@ impl File {
             file,
             crtc,
             connector,
-            RendererOrigin::Master,
+            IssuanceOrigin::Master,
             after_create,
         )
     }
@@ -175,14 +175,14 @@ impl File {
         file: &drm::file::File<Self>,
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
-        origin: RendererOrigin<'_>,
+        origin: IssuanceOrigin<'_>,
         after_create: impl FnOnce() -> Result,
     ) -> Result<RendererOwner> {
         let (master, interval) = match origin {
-            RendererOrigin::Master => {
+            IssuanceOrigin::Master => {
                 (file.master_snapshot().ok_or(EACCES)?.master().clone(), None)
             }
-            RendererOrigin::Administrative(dev) => {
+            IssuanceOrigin::Administrative(dev) => {
                 let master = dev.authority.snapshot().ok_or(EAGAIN)?;
                 let interval = dev.authority.interval().map_err(|error| {
                     if error == EACCES {
@@ -236,7 +236,7 @@ impl File {
             {
                 return Err(EACCES);
             }
-            if let (RendererOrigin::Administrative(dev), Some(expected)) = (origin, interval) {
+            if let (IssuanceOrigin::Administrative(dev), Some(expected)) = (origin, interval) {
                 if dev.authority.interval() != Ok(expected) {
                     return Err(ESTALE);
                 }
@@ -269,7 +269,7 @@ impl File {
             file,
             crtc,
             connector,
-            RendererOrigin::Administrative(dev),
+            IssuanceOrigin::Administrative(dev),
             after_create,
         )
     }
@@ -279,10 +279,26 @@ impl File {
         dev: &drm::Device<Driver, Registered>,
         file: &drm::file::File<Self>,
         target: Target,
+        origin: drm::capture::Origin,
     ) -> Result<FilePair> {
-        let crtc = dev.lookup_crtc(file, target.crtc_id())?;
-        let connector = dev.lookup_connector(file, target.connector_id())?;
-        Self::create_capture_grant(file, crtc.crtc(), &connector)?
+        let administrative = origin == drm::capture::Origin::Administrative;
+        let (crtc, connector) = if administrative {
+            (
+                dev.lookup_crtc_unfiltered(target.crtc_id())?,
+                dev.lookup_connector_unfiltered(target.connector_id())?,
+            )
+        } else {
+            (
+                dev.lookup_crtc(file, target.crtc_id())?,
+                dev.lookup_connector(file, target.connector_id())?,
+            )
+        };
+        let origin = if administrative {
+            IssuanceOrigin::Administrative(dev)
+        } else {
+            IssuanceOrigin::Master
+        };
+        Self::issue_capture_grant_from(file, crtc.crtc(), &connector, origin, || Ok(()))?
             .into_files_with(crate::capture::client::Client::new)
     }
 
@@ -297,25 +313,102 @@ impl File {
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
     ) -> Result<Grantor> {
-        let snapshot = file.master_snapshot().ok_or(EACCES)?;
-        let permission = {
-            let guard = snapshot.master().lock_current().ok_or(EACCES)?;
-            if !guard.is_master_file(file) {
-                return Err(EACCES);
+        Self::issue_capture_grant_from(
+            file,
+            crtc,
+            connector,
+            IssuanceOrigin::Master,
+            || Ok(()),
+        )
+    }
+
+    fn issue_capture_grant_from(
+        file: &drm::file::File<Self>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+        origin: IssuanceOrigin<'_>,
+        after_create: impl FnOnce() -> Result,
+    ) -> Result<Grantor> {
+        let (master, interval) = match origin {
+            IssuanceOrigin::Master => {
+                (file.master_snapshot().ok_or(EACCES)?.master().clone(), None)
             }
-            Permission::new(&guard, crtc, connector)?
+            IssuanceOrigin::Administrative(dev) => {
+                let master = dev.authority.snapshot().ok_or(EAGAIN)?;
+                let interval = dev.authority.interval().map_err(|error| {
+                    if error == EACCES {
+                        EAGAIN
+                    } else {
+                        error
+                    }
+                })?;
+                (master, Some(interval))
+            }
+        };
+        let permission = {
+            let guard = master
+                .lock_current()
+                .ok_or(if interval.is_some() { EAGAIN } else { EACCES })?;
+            if let Some(interval) = interval {
+                if guard.is_master_file(file) {
+                    return Err(EAGAIN);
+                }
+                if !guard.exclusively_holds_object(crtc)
+                    || !guard.exclusively_holds_object(connector)
+                {
+                    return Err(EBUSY);
+                }
+                Permission::administrative(&guard, crtc, connector, interval)?
+            } else {
+                if !guard.is_master_file(file) {
+                    return Err(EACCES);
+                }
+                Permission::new(&guard, crtc, connector)?
+            }
         };
         let mut grantor = Grantor::new(permission)?;
+        after_create()?;
         {
-            let guard = snapshot.master().lock_current().ok_or(EACCES)?;
-            if !guard.is_master_file(file)
+            let guard = master
+                .lock_current()
+                .ok_or(if interval.is_some() { ESTALE } else { EACCES })?;
+            if interval.is_some()
+                && (!guard.exclusively_holds_object(crtc)
+                    || !guard.exclusively_holds_object(connector))
+            {
+                return Err(EBUSY);
+            }
+            if (interval.is_none() && !guard.is_master_file(file))
+                || (interval.is_some() && guard.is_master_file(file))
                 || !guard.holds_object(crtc)
                 || !guard.holds_object(connector)
             {
                 return Err(EACCES);
             }
+            if let (IssuanceOrigin::Administrative(dev), Some(expected)) = (origin, interval) {
+                if dev.authority.interval() != Ok(expected) {
+                    return Err(ESTALE);
+                }
+            }
             grantor.track_creator(&file.inner().grants)?;
         }
         Ok(grantor)
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    pub(crate) fn issue_administrative_capture_grant_then_for_test(
+        dev: &drm::Device<Driver>,
+        file: &drm::file::File<Self>,
+        crtc: &Crtc<display::Crtc>,
+        connector: &Connector<display::Connector>,
+        after_create: impl FnOnce() -> Result,
+    ) -> Result<Grantor> {
+        Self::issue_capture_grant_from(
+            file,
+            crtc,
+            connector,
+            IssuanceOrigin::Administrative(dev),
+            after_create,
+        )
     }
 }
