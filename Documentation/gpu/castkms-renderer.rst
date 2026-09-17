@@ -93,8 +93,12 @@ record names an exact fourcc/modifier/memory-plane-count tuple, native/imported
 provenance, and alignment/pitch bounds. Implicit layout is distinct from
 explicit LINEAR. A declaration proves neither import compatibility nor access.
 Published generic KMS constraints carry the same per-format allocation limits,
-so a compositor can choose storage before selecting the offer. Complete atomic
-validation remains authoritative for the whole scene.
+so a compositor can choose storage before selecting the offer. They also carry
+scalar rules for restricted destination position, source origin, and usable YUV
+encoding and range values. Geometry relationships, fractional-coordinate
+requirements, and color-pipeline contents cannot be represented as independent
+property ranges, so complete atomic validation remains authoritative for the
+whole scene.
 
 The static KMS envelope is 16384 by 16384 with primary/overlay formats
 including binary16 RGB. Cursor remains ARGB8888, at most 512 by 512.
