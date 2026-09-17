@@ -4,6 +4,8 @@
 #include <linux/mman.h>
 #include <linux/module.h>
 #include <linux/uaccess.h>
+#include <drm/drm_atomic.h>
+#include <drm/drm_atomic_helper.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_constraints.h>
 #include <drm/drm_constraints_device.h>
@@ -21,6 +23,8 @@
 
 #include "../drm_internal.h"
 #include "../drm_constraints_events.h"
+#include "../drm_atomic_user_input.h"
+#include "../drm_atomic_user_request.h"
 
 static const struct file_operations test_fops = {
 	.owner = THIS_MODULE,
@@ -448,7 +452,132 @@ static void file_close_discards_subscribed_records(struct kunit *test)
 	f->file = NULL;
 }
 
+static int lock_request(struct drm_device *dev, struct drm_modeset_acquire_ctx *ctx)
+{
+	int ret;
+
+	drm_modeset_acquire_init(ctx, 0);
+	for (;;) {
+		ret = drm_modeset_lock_all_ctx(dev, ctx);
+		if (ret != -EDEADLK)
+			return ret;
+		ret = drm_modeset_backoff(ctx);
+		if (ret)
+			return ret;
+	}
+}
+
+static void retained_requests_recheck_client_opt_in(struct kunit *test)
+{
+	struct query_fixture *f = new_fixture(test);
+	struct drm_file *priv = f->file->private_data;
+	struct drm_constraints_entry *target = new_target(test, f);
+	u32 object = f->crtc->base.id, count = 1;
+	u32 property = f->dev->mode_config.prop_constraints_id->base.id;
+	u64 value = drm_constraints_entry_id(target);
+	const struct drm_atomic_user_input input = {
+		.object_count = 1, .property_count = 1,
+		.objects = &object, .counts = &count, .properties = &property, .values = &value,
+	};
+	struct drm_atomic_user_request *request;
+	struct drm_modeset_acquire_ctx ctx;
+	unsigned long address = user_page(test);
+	int ret;
+
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	KUNIT_ASSERT_EQ(test, lock_request(f->dev, &ctx), 0);
+	request = drm_atomic_resolve_user_request(f->dev, priv, &input);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+	KUNIT_ASSERT_EQ(test, PTR_ERR(request), -EOPNOTSUPP);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	KUNIT_ASSERT_EQ(test, lock_request(f->dev, &ctx), 0);
+	request = drm_atomic_resolve_user_request(f->dev, priv, &input);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, request);
+	/* Preparation may wait without locks while the issuing file opts out. */
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 0, 0);
+	KUNIT_ASSERT_EQ(test, lock_request(f->dev, &ctx), 0);
+	ret = drm_atomic_validate_user_request(request, priv);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+	KUNIT_EXPECT_EQ(test, ret, -EOPNOTSUPP);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	KUNIT_ASSERT_EQ(test, lock_request(f->dev, &ctx), 0);
+	ret = drm_atomic_validate_user_request(request, priv);
+	drm_modeset_drop_locks(&ctx);
+	drm_modeset_acquire_fini(&ctx);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	drm_atomic_free_user_request(request);
+}
+
+static int check_atomic(struct drm_device *dev, struct drm_atomic_commit *state)
+{
+	return 0;
+}
+
+static int install_atomic(struct drm_device *dev, struct drm_atomic_commit *state, bool nonblock)
+{
+	return drm_atomic_helper_swap_state(state, false);
+}
+
+static const struct drm_mode_config_funcs atomic_ops = {
+	.atomic_check = check_atomic,
+	.atomic_commit = install_atomic,
+};
+
+static void atomic_ioctl_selects_only_on_acceptance(struct kunit *test)
+{
+	struct query_fixture *f = new_fixture(test);
+	struct drm_constraints_entry *target = new_target(test, f);
+	struct drm_constraints_entry *initial = drm_constraints_crtc_default(f->crtc);
+	unsigned long address = user_page(test);
+	struct {
+		struct drm_mode_atomic arg;
+		u32 object, count, property, pad;
+		u64 value;
+	} input = {
+		.arg = {
+			.flags = DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_ALLOW_MODESET,
+			.count_objs = 1,
+		},
+		.object = f->crtc->base.id, .count = 1,
+		.property = f->dev->mode_config.prop_constraints_id->base.id,
+		.value = drm_constraints_entry_id(target),
+	};
+	long ret;
+
+	f->dev->mode_config.funcs = &atomic_ops;
+	input.arg.objs_ptr = address + offsetof(typeof(input), object);
+	input.arg.count_props_ptr = address + offsetof(typeof(input), count);
+	input.arg.props_ptr = address + offsetof(typeof(input), property);
+	input.arg.prop_values_ptr = address + offsetof(typeof(input), value);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_ATOMIC, 1, 0);
+	KUNIT_ASSERT_EQ(test, copy_to_user((void __user *)address, &input, sizeof(input)), 0);
+	ret = f->file->f_op->unlocked_ioctl(f->file, DRM_IOCTL_MODE_ATOMIC, address);
+	KUNIT_EXPECT_EQ(test, ret, -EOPNOTSUPP);
+	client_cap(test, f->file, address, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1, 0);
+	KUNIT_ASSERT_EQ(test, copy_to_user((void __user *)address, &input, sizeof(input)), 0);
+	ret = f->file->f_op->unlocked_ioctl(f->file, DRM_IOCTL_MODE_ATOMIC, address);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, initial);
+	input.arg.flags = DRM_MODE_ATOMIC_ALLOW_MODESET;
+	KUNIT_ASSERT_EQ(test, copy_to_user((void __user *)address, &input, sizeof(input)), 0);
+	ret = f->file->f_op->unlocked_ioctl(f->file, DRM_IOCTL_MODE_ATOMIC, address);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, target);
+	/* Repeating the accepted ID needs no permission to change modes. */
+	input.arg.flags = 0;
+	KUNIT_ASSERT_EQ(test, copy_to_user((void __user *)address, &input, sizeof(input)), 0);
+	ret = f->file->f_op->unlocked_ioctl(f->file, DRM_IOCTL_MODE_ATOMIC, address);
+	KUNIT_EXPECT_EQ(test, ret, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, target);
+}
+
 static struct kunit_case constraints_uapi_cases[] = {
+	KUNIT_CASE(atomic_ioctl_selects_only_on_acceptance),
+	KUNIT_CASE(retained_requests_recheck_client_opt_in),
 	KUNIT_CASE(ioctl_publishes_sizing_metadata_on_enospc),
 	KUNIT_CASE(ioctl_checks_master_and_output_scope),
 	KUNIT_CASE(ioctl_respects_lease_visibility),

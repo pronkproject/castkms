@@ -427,6 +427,8 @@ struct drm_mode_config {
 	struct drm_constraints_domain *constraints_domain;
 	/** @constraints_owner: Optional recovery before replacement master admission. */
 	struct drm_constraints_owner *constraints_owner;
+	/** @prop_constraints_id: Persistent accepted constraints selection on CRTCs. */
+	struct drm_property *prop_constraints_id;
 	/** @prop_prepare_fd: Transient preparation descriptor on participating CRTCs. */
 	struct drm_property *prop_prepare_fd;
 

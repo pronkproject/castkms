@@ -14,6 +14,8 @@ struct drm_file;
  * again when applying a retained request; resolution is not authorization to
  * commit. NULL file is reserved for kernel callers with independently checked
  * authority, as with the underlying DRM object lookup functions.
+ * Constraints resolution additionally requires the target CRTC lock to retain
+ * an exact accepted binding independently of later list closure.
  */
 int drm_atomic_resolve_user_value(struct drm_mode_object *object, struct drm_property *property,
 				  struct drm_file *file, u64 value,

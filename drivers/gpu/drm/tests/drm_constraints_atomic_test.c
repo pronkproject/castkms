@@ -13,6 +13,7 @@
 #include <drm/drm_atomic_prepare_display.h>
 #include <drm/drm_atomic_prepare_outputs.h>
 #include <drm/drm_atomic_prepare_ticket.h>
+#include <drm/drm_atomic_request.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_blend.h>
@@ -31,11 +32,14 @@
 #include <drm/drm_lease.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_plane_helper.h>
+#include <drm/drm_property.h>
+#include <uapi/drm/drm_constraints.h>
 #include <kunit/test.h>
 
 #include "../drm_crtc_internal.h"
 #include "../drm_internal.h"
 #include "../drm_lease_internal.h"
+#include "../drm_atomic_user_value.h"
 
 static const struct file_operations test_fops = {
 	.owner = THIS_MODULE,
@@ -910,6 +914,16 @@ static void default_restoration_rechecks_default_availability(struct kunit *test
 	KUNIT_EXPECT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), -ESTALE);
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
 	KUNIT_EXPECT_EQ(test, f->installs, 2);
+}
+
+static void closed_default_is_not_successful_restoration(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+
+	drm_constraints_list_close(drm_constraints_crtc_list(f->crtc));
+	KUNIT_EXPECT_EQ(test, drm_atomic_constraints_restore_default(f->crtc), -ESTALE);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
 }
 
 static void recovery_restores_all_defaults_before_retiring_offers(struct kunit *test)
@@ -1936,7 +1950,146 @@ static void an_unleased_output_can_select_other_constraints(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, other->crtc->state->constraints, other->target);
 }
 
+static int set_constraints_property(struct drm_atomic_commit *state,
+				    struct drm_file *file, u64 id)
+{
+	struct atomic_fixture *f = state->dev->dev_private;
+	struct drm_modeset_acquire_ctx ctx;
+	int ret = lock_update(state, &ctx);
+
+	if (!ret)
+		ret = drm_atomic_set_property(state, file, &f->crtc->base,
+					      f->dev->mode_config.prop_constraints_id, id, false);
+	unlock_update(state);
+	return ret;
+}
+
+static void persistent_property_checks_opt_in_and_selection(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_property *property = f->dev->mode_config.prop_constraints_id;
+	struct drm_file *file = kunit_kzalloc(test, sizeof(*file), GFP_KERNEL);
+	struct drm_atomic_commit *state = new_update(test, f, NULL, f->tiled);
+	u64 value = 0, id = drm_constraints_entry_id(f->target);
+
+	KUNIT_ASSERT_NOT_NULL(test, file);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_STREQ(test, property->name, DRM_CONSTRAINTS_ID_PROPERTY);
+	KUNIT_EXPECT_PTR_EQ(test, drm_mode_obj_find_prop_id(&f->crtc->base,
+							   property->base.id), property);
+	KUNIT_EXPECT_PTR_EQ(test, drm_mode_obj_find_prop_id(&f->plane->base,
+							   property->base.id), NULL);
+	drm_modeset_lock(&f->crtc->mutex, NULL);
+	KUNIT_EXPECT_EQ(test, drm_atomic_get_property(&f->crtc->base, property, &value), 0);
+	drm_modeset_unlock(&f->crtc->mutex);
+	KUNIT_EXPECT_EQ(test, value, drm_constraints_entry_id(f->initial));
+	KUNIT_EXPECT_EQ(test, set_constraints_property(state, file, id), -EOPNOTSUPP);
+	file->kms_constraints = true;
+	KUNIT_EXPECT_EQ(test, set_constraints_property(state, file, 0), -EINVAL);
+	KUNIT_EXPECT_EQ(test, set_constraints_property(state, file, U64_MAX), -ESTALE);
+	KUNIT_ASSERT_EQ(test, set_constraints_property(state, file, id), 0);
+	state->allow_modeset = false;
+	KUNIT_EXPECT_EQ(test, run_update(state, drm_atomic_check_only), -EINVAL);
+	state->allow_modeset = true;
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	drm_modeset_lock(&f->crtc->mutex, NULL);
+	KUNIT_EXPECT_EQ(test, drm_atomic_get_property(&f->crtc->base, property, &value), 0);
+	drm_modeset_unlock(&f->crtc->mutex);
+	KUNIT_EXPECT_EQ(test, value, drm_constraints_entry_id(f->initial));
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	drm_modeset_lock(&f->crtc->mutex, NULL);
+	KUNIT_EXPECT_EQ(test, drm_atomic_get_property(&f->crtc->base, property, &value), 0);
+	drm_modeset_unlock(&f->crtc->mutex);
+	KUNIT_EXPECT_EQ(test, value, id);
+}
+
+static void persistent_property_can_be_repeated_during_closed_output_shutdown(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+	struct drm_atomic_commit *stop;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	drm_constraints_list_close(drm_constraints_crtc_list(f->crtc));
+	stop = new_disable(test, f);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, stop);
+	KUNIT_ASSERT_EQ(test, set_constraints_property(stop, NULL,
+						      drm_constraints_entry_id(f->target)), 0);
+	KUNIT_EXPECT_EQ(test,
+		set_constraints_property(stop, NULL, drm_constraints_entry_id(f->initial)),
+		-ESTALE);
+	KUNIT_ASSERT_EQ(test, run_update(stop, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(stop, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->enable);
+}
+
+static int allow_retained_request(struct drm_atomic_commit *state,
+				  const struct drm_atomic_request *request, void *data)
+{
+	return 0;
+}
+
+static void constraints_requests_retain_identity_not_availability(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_commit *state = new_update(test, f, NULL, f->tiled);
+	struct drm_constraints_list *list = drm_constraints_crtc_list(f->crtc);
+	struct drm_atomic_request_entry value = { .scalar = 23 };
+	struct drm_atomic_request *request;
+	struct drm_modeset_acquire_ctx ctx;
+	u64 id = drm_constraints_entry_id(f->target);
+	int ret;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, lock_update(state, &ctx), 0);
+	ret = drm_atomic_resolve_user_value(&f->crtc->base,
+			f->dev->mode_config.prop_constraints_id, NULL, id, &value);
+	unlock_update(state);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	KUNIT_EXPECT_EQ(test, value.type, DRM_ATOMIC_REQUEST_CONSTRAINTS);
+	KUNIT_EXPECT_PTR_EQ(test, value.constraints, f->target);
+	request = drm_atomic_request_create(f->dev, &value, 1);
+	drm_atomic_release_user_value(&value);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, request);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_withdraw(list, id), 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_forget(list, id), 0);
+	kunit_release_action(test, put_entry, f->target);
+	KUNIT_EXPECT_EQ(test, f->backends[1].released, 0);
+	KUNIT_EXPECT_PTR_EQ(test, drm_atomic_request_entry(request, 0)->constraints, f->target);
+	KUNIT_ASSERT_EQ(test, lock_update(state, &ctx), 0);
+	ret = drm_atomic_request_apply(request, state, allow_retained_request, NULL);
+	unlock_update(state);
+	KUNIT_EXPECT_EQ(test, ret, -ESTALE);
+	drm_atomic_request_destroy(request);
+	KUNIT_EXPECT_EQ(test, f->backends[1].released, 1);
+}
+
+static void constraints_requests_reject_unretained_identifiers(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry value = {
+		.object = &f->crtc->base,
+		.property = f->dev->mode_config.prop_constraints_id,
+		.type = DRM_ATOMIC_REQUEST_SCALAR,
+		.scalar = drm_constraints_entry_id(f->target),
+	};
+	struct drm_atomic_request *request = drm_atomic_request_create(f->dev, &value, 1);
+
+	KUNIT_EXPECT_EQ(test, PTR_ERR(request), -EINVAL);
+	value.type = DRM_ATOMIC_REQUEST_CONSTRAINTS;
+	value.constraints = NULL;
+	request = drm_atomic_request_create(f->dev, &value, 1);
+	KUNIT_EXPECT_EQ(test, PTR_ERR(request), -EINVAL);
+}
+
 static struct kunit_case drm_constraints_atomic_tests[] = {
+	KUNIT_CASE(persistent_property_checks_opt_in_and_selection),
+	KUNIT_CASE(persistent_property_can_be_repeated_during_closed_output_shutdown),
+	KUNIT_CASE(constraints_requests_retain_identity_not_availability),
+	KUNIT_CASE(constraints_requests_reject_unretained_identifiers),
 	KUNIT_CASE(leases_preserve_default_until_revocation),
 	KUNIT_CASE(installation_rechecks_newly_created_leases),
 	KUNIT_CASE(nondefault_selection_cannot_be_inherited_by_a_lease),
@@ -1964,6 +2117,7 @@ static struct kunit_case drm_constraints_atomic_tests[] = {
 	KUNIT_CASE(framebuffer_removal_can_disable_unavailable_output),
 	KUNIT_CASE(default_restoration_requires_quiescent_output),
 	KUNIT_CASE(default_restoration_rechecks_default_availability),
+	KUNIT_CASE(closed_default_is_not_successful_restoration),
 	KUNIT_CASE(recovery_restores_all_defaults_before_retiring_offers),
 	KUNIT_CASE(recovery_does_not_reopen_closed_lists),
 	KUNIT_CASE(recovery_retains_pending_native_reads),

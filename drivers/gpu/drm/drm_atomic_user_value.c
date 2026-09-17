@@ -5,6 +5,10 @@
 #include <linux/export.h>
 #include <linux/sync_file.h>
 #include <drm/drm_device.h>
+#include <drm/drm_atomic_constraints.h>
+#include <drm/drm_constraints_entry.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_file.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_lease.h>
 #include <drm/drm_property.h>
@@ -30,6 +34,9 @@ void drm_atomic_release_user_value(struct drm_atomic_request_entry *entry)
 	case DRM_ATOMIC_REQUEST_FENCE:
 		dma_fence_put(entry->fence);
 		break;
+	case DRM_ATOMIC_REQUEST_CONSTRAINTS:
+		drm_constraints_entry_put(entry->constraints);
+		break;
 	case DRM_ATOMIC_REQUEST_SCALAR:
 		break;
 	}
@@ -50,7 +57,15 @@ int drm_atomic_resolve_user_value(struct drm_mode_object *object, struct drm_pro
 	if (!drm_property_change_valid_get(property, value, &reference))
 		return -EINVAL;
 
-	if (property == property->dev->mode_config.prop_in_fence_fd) {
+	if (property == property->dev->mode_config.prop_constraints_id) {
+		if (file && !READ_ONCE(file->kms_constraints))
+			return -EOPNOTSUPP;
+		resolved.type = DRM_ATOMIC_REQUEST_CONSTRAINTS;
+		resolved.constraints =
+			drm_atomic_resolve_constraints_for_crtc(obj_to_crtc(object), value);
+		if (IS_ERR(resolved.constraints))
+			return PTR_ERR(resolved.constraints);
+	} else if (property == property->dev->mode_config.prop_in_fence_fd) {
 		resolved.type = DRM_ATOMIC_REQUEST_FENCE;
 		if (value != U64_MAX) {
 			resolved.fence = sync_file_get_fence(value);

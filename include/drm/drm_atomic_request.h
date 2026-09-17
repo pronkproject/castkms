@@ -7,6 +7,7 @@
 struct dma_fence;
 struct drm_atomic_commit;
 struct drm_atomic_request;
+struct drm_constraints_entry;
 struct drm_device;
 struct drm_framebuffer;
 struct drm_mode_object;
@@ -19,6 +20,7 @@ enum drm_atomic_request_value_type {
 	DRM_ATOMIC_REQUEST_BLOB,
 	DRM_ATOMIC_REQUEST_OBJECT,
 	DRM_ATOMIC_REQUEST_FENCE,
+	DRM_ATOMIC_REQUEST_CONSTRAINTS,
 };
 
 /**
@@ -31,6 +33,7 @@ enum drm_atomic_request_value_type {
  * @blob: immutable property blob, or NULL
  * @reference: resolved modeset object, or NULL
  * @fence: resolved plane input fence, or NULL
+ * @constraints: resolved non-NULL constraints entry
  *
  * The caller keeps the entries unchanged and owns all supplied references until
  * request creation returns.
@@ -48,6 +51,7 @@ struct drm_atomic_request_entry {
 		struct drm_property_blob *blob;
 		struct drm_mode_object *reference;
 		struct dma_fence *fence;
+		struct drm_constraints_entry *constraints;
 	};
 };
 

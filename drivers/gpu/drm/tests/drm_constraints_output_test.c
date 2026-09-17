@@ -362,7 +362,29 @@ static void property_rules_require_attached_supported_domains(struct kunit *test
 	}
 }
 
+static void attachment_requires_property_capacity(struct kunit *test)
+{
+	struct output_fixture *f = new_fixture(test, "constraints-property-full");
+	struct drm_constraints_entry *entry = new_entry(test, f, f->crtc->base.id,
+							f->plane->base.id);
+	struct drm_property *property;
+	unsigned int i = f->crtc->base.properties->count;
+	char name[32];
+
+	for (; i < DRM_OBJECT_MAX_PROPERTY; i++) {
+		snprintf(name, sizeof(name), "test_property_%u", i);
+		property = drm_property_create_range(&f->drm, 0, name, 0, 1);
+		KUNIT_ASSERT_NOT_NULL(test, property);
+		drm_object_attach_property(&f->crtc->base, property, 0);
+	}
+	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_init(f->crtc, entry, 4, &output_ops), -ENOSPC);
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_crtc_list(f->crtc), NULL);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, NULL);
+	KUNIT_EXPECT_EQ(test, f->crtc->base.properties->count, DRM_OBJECT_MAX_PROPERTY);
+}
+
 static struct kunit_case drm_constraints_output_tests[] = {
+	KUNIT_CASE(attachment_requires_property_capacity),
 	KUNIT_CASE(reset_and_pristine_state_retain_accepted_binding),
 	KUNIT_CASE(fixed_default_survives_withdrawal_and_selection),
 	KUNIT_CASE(attaching_rejects_foreign_device_and_objects),

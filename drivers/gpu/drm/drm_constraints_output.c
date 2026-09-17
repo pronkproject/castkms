@@ -155,6 +155,10 @@ int drm_constraints_crtc_init(struct drm_crtc *crtc, struct drm_constraints_entr
 	    (crtc->state && (crtc->state->enable || crtc->state->active ||
 			     crtc->state->commit || crtc->state->constraints)))
 		return -EBUSY;
+	if (!crtc->dev->mode_config.prop_constraints_id || !crtc->base.properties)
+		return -EINVAL;
+	if (crtc->base.properties->count >= DRM_OBJECT_MAX_PROPERTY)
+		return -ENOSPC;
 	ret = validate_scope(crtc, initial);
 	if (ret)
 		return ret;
@@ -174,6 +178,8 @@ int drm_constraints_crtc_init(struct drm_crtc *crtc, struct drm_constraints_entr
 	crtc->constraints_output = output;
 	if (crtc->state)
 		crtc->state->constraints = drm_constraints_entry_get(initial);
+	drm_object_attach_property(&crtc->base, crtc->dev->mode_config.prop_constraints_id,
+				   drm_constraints_entry_id(initial));
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_constraints_crtc_init);
