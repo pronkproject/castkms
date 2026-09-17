@@ -9,6 +9,10 @@ const fn fourcc_code(a: u8, b: u8, c: u8, d: u8) -> u32 {
     (a as u32) | (b as u32) << 8 | (c as u32) << 16 | (d as u32) << 24
 }
 
+const fn modifier_code(vendor: u8, value: u64) -> u64 {
+    (vendor as u64) << 56 | (value & 0x00ff_ffff_ffff_ffff)
+}
+
 // TODO: We manually import this because we don't have a reasonable way of getting constants from
 // function-like macros in bindgen yet.
 /// Sentinel used when no explicit framebuffer modifier was supplied.
@@ -18,6 +22,15 @@ pub const FORMAT_MOD_INVALID: u64 = 0xffffffffffffff;
 /// A driver that accepts only linear scanout has to say so through the plane's format-modifier
 /// list, or userspace sees no `IN_FORMATS` property and has to guess what the plane will take.
 pub const FORMAT_MOD_LINEAR: u64 = 0;
+
+/// Intel X-tiled layout (`I915_FORMAT_MOD_X_TILED`).
+pub const I915_FORMAT_MOD_X_TILED: u64 = modifier_code(0x01, 1);
+/// Intel Y-tiled layout (`I915_FORMAT_MOD_Y_TILED`).
+pub const I915_FORMAT_MOD_Y_TILED: u64 = modifier_code(0x01, 2);
+/// Intel Yf-tiled layout (`I915_FORMAT_MOD_Yf_TILED`).
+pub const I915_FORMAT_MOD_YF_TILED: u64 = modifier_code(0x01, 3);
+/// Intel Tile 4 layout (`I915_FORMAT_MOD_4_TILED`).
+pub const I915_FORMAT_MOD_4_TILED: u64 = modifier_code(0x01, 9);
 
 /// 32 bpp RGB with unused alpha.
 pub const XRGB8888: u32 = fourcc_code(b'X', b'R', b'2', b'4');
