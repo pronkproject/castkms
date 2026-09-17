@@ -46,6 +46,7 @@ fn profile(limits: Limits, image: &FramebufferRef<Driver>) -> Result<Profile> {
             planes: image.plane_count() as u32,
             native: true,
             imported: false,
+            roles: [true; 3],
             width_alignment: 1,
             height_alignment: 1,
             pitch_alignment: 1,

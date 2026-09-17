@@ -254,7 +254,7 @@ static void check_offer_rules(int fd, uint32_t crtc, uint64_t id, uint32_t plane
 		}
 		CHECK(cursor == end);
 	}
-	CHECK(count == 2 && total == 18);
+	CHECK(count == 2 && total == 2);
 	CHECK(geometry_found && geometries == 9);
 	CHECK(plane_limits == 2);
 	for (unsigned int i = 0; i < 2; i++)
@@ -466,6 +466,8 @@ int main(int argc, char **argv)
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+				.roles = DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_PRIMARY |
+					 DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_OVERLAY,
 				.width_alignment = 64,
 				.height_alignment = 4,
 				.pitch_alignment = 1,
@@ -479,6 +481,7 @@ int main(int argc, char **argv)
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+				.roles = DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_PRIMARY,
 				.width_alignment = 64,
 				.height_alignment = 4,
 				.pitch_alignment = 1,
@@ -492,6 +495,7 @@ int main(int argc, char **argv)
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+				.roles = DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_PRIMARY,
 				.width_alignment = 64,
 				.height_alignment = 4,
 				.pitch_alignment = 1,

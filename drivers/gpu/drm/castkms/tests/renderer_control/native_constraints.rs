@@ -175,6 +175,7 @@ mod cases {
                         planes,
                         native: true,
                         imported: true,
+                        roles: [true; 3],
                         width_alignment: 1,
                         height_alignment: 1,
                         pitch_alignment: 1,

@@ -18,6 +18,8 @@ pub(crate) struct Format {
     pub(crate) planes: u32,
     pub(crate) native: bool,
     pub(crate) imported: bool,
+    /// Primary, overlay and cursor roles that accept this tuple.
+    pub(crate) roles: [bool; 3],
     /// Framebuffer dimension alignment in pixels.
     pub(crate) width_alignment: u32,
     pub(crate) height_alignment: u32,
@@ -123,6 +125,7 @@ impl Profile {
                 || format.modifier == Some(fourcc::FORMAT_MOD_INVALID)
                 || !(1..=4).contains(&format.planes)
                 || (!format.native && !format.imported)
+                || !format.roles.contains(&true)
                 || !format.width_alignment.is_power_of_two()
                 || !format.height_alignment.is_power_of_two()
                 || !has_aligned_value(
@@ -176,6 +179,7 @@ impl Profile {
         fourcc: u32,
         modifier: Option<u64>,
         planes: usize,
+        role: usize,
         imported: bool,
         width: u32,
         height: u32,
@@ -186,6 +190,7 @@ impl Profile {
             format.fourcc == fourcc
                 && format.modifier == modifier
                 && format.planes as usize == planes
+                && format.roles[role]
                 && width % format.width_alignment == 0
                 && height % format.height_alignment == 0
                 && pitch != 0
@@ -226,6 +231,7 @@ impl Profile {
                     image.format(),
                     image.modifier(),
                     image.plane_count(),
+                    role,
                     imported,
                     image.width(),
                     image.height(),
@@ -377,6 +383,7 @@ mod tests {
                 planes: 1,
                 native: false,
                 imported: true,
+                roles: [true; 3],
                 width_alignment: 1,
                 height_alignment: 1,
                 pitch_alignment: 4,
@@ -437,17 +444,18 @@ mod tests {
     fn modifier_and_provenance_are_exact() -> Result {
         let modifier = Some(0x0100_0000_0000_0001);
         let profile = profile(limits(), modifier)?;
-        assert!(profile.storage(fourcc::XRGB8888, modifier, 1, true, 128, 64, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, false, 128, 64, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, Some(0), 1, true, 128, 64, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, None, 1, true, 128, 64, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 2, true, 128, 64, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 128, 64, 15, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 128, 64, 16, 1));
+        assert!(profile.storage(fourcc::XRGB8888, modifier, 1, 0, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, 0, false, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, Some(0), 1, 0, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, None, 1, 0, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 2, 0, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, 0, true, 128, 64, 15, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, 0, true, 128, 64, 16, 1));
         assert!(!profile.storage(
             fourcc::XRGB8888,
             modifier,
             1,
+            0,
             true,
             128,
             64,
@@ -679,6 +687,10 @@ mod tests {
                 ..valid.formats()[0]
             },
             Format {
+                roles: [false; 3],
+                ..valid.formats()[0]
+            },
+            Format {
                 native: false,
                 imported: false,
                 ..valid.formats()[0]
@@ -703,6 +715,20 @@ mod tests {
             GFP_KERNEL,
         )?;
         assert!(matches!(Profile::new(narrow, formats), Err(EINVAL)));
+        Ok(())
+    }
+
+    #[test]
+    fn storage_tuples_apply_only_to_declared_roles() -> Result {
+        let valid = profile(limits(), None)?;
+        let mut format = valid.formats()[0];
+        format.roles = [true, false, false];
+        let mut formats = KVec::new();
+        formats.push(format, GFP_KERNEL)?;
+        let profile = Profile::new(limits(), formats)?;
+
+        assert!(profile.storage(fourcc::XRGB8888, None, 1, 0, true, 64, 32, 256, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, None, 1, 1, true, 64, 32, 256, 0));
         Ok(())
     }
 }

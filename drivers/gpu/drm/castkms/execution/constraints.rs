@@ -132,6 +132,7 @@ fn format_supported(
         return false;
     };
     potential::FORMATS.contains(&format.fourcc)
+        && format.roles[role(plane)]
         && (plane.kind != Kind::Cursor || format.fourcc == fourcc::ARGB8888)
         && format.planes as usize == potential::plane_count(format.fourcc)
         && width <= maximum[0]
@@ -457,6 +458,7 @@ mod tests {
                     planes: 1,
                     native: true,
                     imported: true,
+                    roles: [true; 3],
                     width_alignment: if modifier == Some(TILED) { 64 } else { 1 },
                     height_alignment: if modifier == Some(TILED) { 4 } else { 1 },
                     pitch_alignment: 4,
@@ -562,6 +564,7 @@ mod tests {
                 planes: 2,
                 native: false,
                 imported: true,
+                roles: [true; 3],
                 width_alignment: 1,
                 height_alignment: 1,
                 pitch_alignment: 16,
@@ -614,6 +617,7 @@ mod tests {
                     planes,
                     native: false,
                     imported: true,
+                    roles: [true; 3],
                     width_alignment: 1,
                     height_alignment: 1,
                     pitch_alignment: 16,
@@ -649,6 +653,7 @@ mod tests {
                 planes: 1,
                 native: false,
                 imported: true,
+                roles: [true; 3],
                 width_alignment: 1,
                 height_alignment: 1,
                 pitch_alignment: 256,
@@ -699,6 +704,7 @@ mod tests {
                     planes,
                     native: false,
                     imported: true,
+                    roles: [true; 3],
                     width_alignment: 1,
                     height_alignment: 1,
                     pitch_alignment: 256,
@@ -790,6 +796,27 @@ mod tests {
     }
 
     #[test]
+    fn format_roles_filter_each_plane_allocation_set() -> Result {
+        let reference = profile(limits())?;
+        let mut formats = KVec::new();
+        for (format, roles) in reference.formats().iter().zip([
+            [true, false, false],
+            [false, true, false],
+            [false, false, true],
+        ]) {
+            formats.push(RendererFormat { roles, ..*format }, GFP_KERNEL)?;
+        }
+        let description = renderer(&Profile::new(limits(), formats)?, &planes())?;
+        let formats = description.formats();
+
+        assert_eq!(formats.len(), 3);
+        assert_eq!(formats[0].plane_id(), 7);
+        assert_eq!(formats[1].plane_id(), 8);
+        assert_eq!(formats[2].plane_id(), 9);
+        Ok(())
+    }
+
+    #[test]
     fn allocation_intersection_never_widens_exact_geometry() -> Result {
         let mut limits = limits();
         limits.geometry.output = [32768; 2];
@@ -814,6 +841,7 @@ mod tests {
                     planes,
                     native: false,
                     imported: true,
+                    roles: [true; 3],
                     width_alignment: 1,
                     height_alignment: 1,
                     pitch_alignment: 16,

@@ -14,7 +14,7 @@
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND 1
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_FORMATS 256
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_HEADER_BYTES 128U
-#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES 48U
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES 56U
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_BYTES \
 	(DRM_CASTKMS_RENDERER_CONSTRAINTS_HEADER_BYTES + \
 	 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES * \
@@ -31,6 +31,10 @@
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE (1U << 0)
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED (1U << 1)
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER (1U << 2)
+
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_PRIMARY (1U << 0)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_OVERLAY (1U << 1)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_CURSOR (1U << 2)
 
 /* Scene values and the corresponding capability-mask bits share one namespace. */
 #define DRM_CASTKMS_YUV_ENCODING_BT601 0
@@ -51,8 +55,8 @@
  * follow this 128-byte header. Unknown flags and reserved fields must be zero.
  * kind must be DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND. Fixed default constraints
  * are discovered through generic KMS listing, not supplied by the worker.
- * RENDERER limits apply to every role; advertise the intersection if roles have
- * different restrictions. Dimensions and scale limits are positive; scales are
+ * Limits other than format choices apply to every role; advertise their
+ * intersection if roles have different restrictions. Dimensions and scale limits are
  * inclusive unsigned 16.16 source/destination ratios. Roles are primary,
  * overlay and cursor. Without the SCALE flag, both scale limits must equal
  * 1.0 (1 << 16). YUV masks use bit positions from the scene encoding.
@@ -66,7 +70,7 @@
  * describe the composed image, not an individual layer's destination rectangle.
  * max_color_operations applies independently to each plane color pipeline and
  * to the output color pipeline.
- * Header and 48-byte format-record layouts are fixed within a version;
+ * Header and 56-byte format-record layouts are fixed within a version;
  * new record fields require a new version.
  */
 struct drm_castkms_renderer_constraints {
@@ -94,7 +98,10 @@ struct drm_castkms_renderer_constraints {
  * must be zero and denotes implicit layout, distinct from explicit LINEAR.
  * At least one provenance flag is required. width_alignment and
  * height_alignment are positive powers of two in pixels. The byte alignments
- * are positive powers of two and apply to each memory plane. min_pitch and
+ * are positive powers of two and apply to each memory plane. roles is a
+ * nonempty mask of DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_* values. Each tuple
+ * applies only to those plane roles; max_roles can independently prohibit a
+ * role. min_pitch and
  * max_pitch are inclusive and contain at least one aligned value. Only tuples
  * with at least one aligned size inside the declared source bounds, and whose
  * pitch interval admits the generic DRM minimum at the smallest such width,
@@ -106,13 +113,14 @@ struct drm_castkms_renderer_constraints_format {
 	__u32 plane_count;
 	__u64 modifier;
 	__u32 flags;
+	__u32 roles;
 	__u32 width_alignment;
 	__u32 height_alignment;
 	__u32 pitch_alignment;
 	__u32 offset_alignment;
 	__u32 min_pitch;
 	__u32 max_pitch;
-	__u32 reserved;
+	__u32 reserved[2];
 };
 
 #define DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS 1

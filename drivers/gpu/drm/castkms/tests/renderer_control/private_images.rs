@@ -18,6 +18,7 @@ pub(crate) fn profile_for(modifier: Option<u64>) -> Result<Profile> {
         planes: 1,
         native: true,
         imported: true,
+        roles: [true; 3],
         width_alignment: 1,
         height_alignment: 1,
         pitch_alignment: 1,

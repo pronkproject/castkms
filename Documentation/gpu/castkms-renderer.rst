@@ -86,7 +86,7 @@ Whole-scene declarations
 ========================
 
 Renderer constraints consist of a 128-byte native-endian header and up to
-256 fixed 48-byte format records. Their kind is
+256 fixed 56-byte format records. Their kind is
 ``DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND``. Fixed default
 constraints come from generic KMS listing, not a worker declaration.
 Unknown flags and reserved fields must be zero.
@@ -100,11 +100,13 @@ requires a separately prepared endpoint.
 The constraints bound crop, fractional coordinates, positioning, scale ratios,
 layer and role counts, LUT lengths and color operations. The operation ceiling
 applies independently to each plane pipeline and the output pipeline. Limits
-apply to every role; advertise the intersection of per-role restrictions. Each
-format record names an exact fourcc/modifier/memory-plane-count tuple,
-native/imported provenance, framebuffer width/height alignment and byte
-alignment/minimum/maximum pitch bounds. Implicit layout is distinct from explicit LINEAR. A
-declaration proves neither import compatibility nor access. Tuples without an
+other than format choices apply to every role; advertise the intersection of
+per-role restrictions. Each format record names an exact
+fourcc/modifier/memory-plane-count tuple, the primary, overlay and cursor roles
+that accept it, native/imported provenance, framebuffer width/height alignment
+and byte alignment/minimum/maximum pitch bounds. Implicit layout is distinct
+from explicit LINEAR. A declaration proves neither import compatibility nor
+access. Tuples without an
 aligned size in the source bounds, or which cannot fit DRM's generic minimum
 pitch at their smallest aligned source width, are omitted; an offer with no
 usable tuple is rejected before private preparation.

@@ -47,13 +47,14 @@ struct Storage {
     plane_count: u32,
     modifier: u64,
     flags: u32,
+    roles: u32,
     width_alignment: u32,
     height_alignment: u32,
     pitch_alignment: u32,
     offset_alignment: u32,
     min_pitch: u32,
     max_pitch: u32,
-    reserved: u32,
+    reserved: [u32; 2],
 }
 
 // SAFETY: All fields are integers, and the u64 is aligned without interior or tail padding.
@@ -67,7 +68,7 @@ const _: () = {
         core::mem::size_of::<Header>()
             == core::mem::size_of::<uapi::drm_castkms_renderer_constraints>()
     );
-    assert!(core::mem::size_of::<Storage>() == 48);
+    assert!(core::mem::size_of::<Storage>() == 56);
     assert!(
         core::mem::size_of::<Storage>()
             == core::mem::size_of::<uapi::drm_castkms_renderer_constraints_format>()
@@ -90,6 +91,9 @@ const FEATURES: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_CROP
 const STORAGE: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE
     | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED
     | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER;
+const ROLES: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_PRIMARY
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_OVERLAY
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_CURSOR;
 const YUV_ENCODINGS: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT601
     | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT709
     | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT2020;
@@ -120,8 +124,9 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
     let mut tuples = KVec::with_capacity(header.format_count as usize, GFP_KERNEL)?;
     for bytes in formats.chunks_exact(core::mem::size_of::<Storage>()) {
         let format = Storage::from_bytes_copy(bytes).ok_or(EINVAL)?;
-        if format.reserved != 0
+        if format.reserved != [0; 2]
             || format.flags & !STORAGE != 0
+            || format.roles & !ROLES != 0
             || (format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER == 0
                 && format.modifier != 0)
         {
@@ -135,6 +140,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
                 planes: format.plane_count,
                 native: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE != 0,
                 imported: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED != 0,
+                roles: core::array::from_fn(|role| format.roles & (1 << role) != 0),
                 width_alignment: format.width_alignment,
                 height_alignment: format.height_alignment,
                 pitch_alignment: format.pitch_alignment,
@@ -241,13 +247,17 @@ fn encode(profile: &Profile) -> Result<KVec<u8>> {
                     | u32::from(format.imported) * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED
                     | u32::from(format.modifier.is_some())
                         * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+                roles: format.roles.into_iter().enumerate().fold(
+                    0,
+                    |mask, (role, supported)| mask | u32::from(supported) << role,
+                ),
                 width_alignment: format.width_alignment,
                 height_alignment: format.height_alignment,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
                 min_pitch: format.min_pitch,
                 max_pitch: format.max_pitch,
-                reserved: 0,
+                reserved: [0; 2],
             };
             bytes.extend_from_slice(storage.as_bytes(), GFP_KERNEL)?;
         }
@@ -269,6 +279,7 @@ mod tests {
                 planes: 1,
                 native: false,
                 imported: true,
+                roles: [true, false, true],
                 width_alignment: 64,
                 height_alignment: 4,
                 pitch_alignment: 128,
@@ -320,6 +331,7 @@ mod tests {
         assert_eq!(decoded.formats()[0].width_alignment, 64);
         assert_eq!(decoded.formats()[0].height_alignment, 4);
         assert_eq!(decoded.formats()[0].min_pitch, 1024);
+        assert_eq!(decoded.formats()[0].roles, [true, false, true]);
         let again = encode(&decoded)?;
         assert_eq!(&*bytes, &*again);
         Ok(())
@@ -340,13 +352,17 @@ mod tests {
     fn parser_rejects_unknown_bits_reserved_words_and_partial_records() -> Result {
         let profile = profile()?;
         let original = encode(&profile)?;
-        for offset in [8, 64, 68, 72, 124, 144, 172] {
+        for offset in [8, 64, 68, 72, 124, 144, 148, 176, 180] {
             let mut bytes = KVec::new();
             bytes.extend_from_slice(&original, GFP_KERNEL)?;
             bytes[offset..offset + 4].copy_from_slice(&u32::MAX.to_ne_bytes());
             assert!(matches!(decode(&bytes), Err(EINVAL)));
         }
-        for size in [0, 127, 128, 175] {
+        let mut bytes = KVec::new();
+        bytes.extend_from_slice(&original, GFP_KERNEL)?;
+        bytes[148..152].copy_from_slice(&0u32.to_ne_bytes());
+        assert!(matches!(decode(&bytes), Err(EINVAL)));
+        for size in [0, 127, 128, 183] {
             assert!(matches!(decode(&original[..size]), Err(EINVAL)));
         }
         Ok(())
@@ -365,8 +381,8 @@ mod tests {
         let mut bytes = encode(&profile)?;
         assert_eq!(bytes.len(), MAX_BYTES);
         assert_eq!(decode(&bytes)?.formats().len(), 256);
-        let first = Storage::from_bytes_copy(&bytes[128..176]).ok_or(EINVAL)?;
-        bytes[176..224].copy_from_slice(first.as_bytes());
+        let first = Storage::from_bytes_copy(&bytes[128..184]).ok_or(EINVAL)?;
+        bytes[184..240].copy_from_slice(first.as_bytes());
         assert!(matches!(decode(&bytes), Err(EINVAL)));
         bytes.push(0, GFP_KERNEL)?;
         assert!(matches!(decode(&bytes), Err(E2BIG)));
