@@ -21,6 +21,7 @@ mod endpoints;
 mod endpoint_streams;
 mod endpoint_withdrawal;
 mod native_host_images;
+mod issuer_lifetime;
 
 use super::*;
 use crate::renderer::{
