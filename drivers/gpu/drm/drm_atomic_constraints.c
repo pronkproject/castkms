@@ -14,6 +14,7 @@
 #include <drm/drm_fourcc.h>
 
 #include "drm_constraints_internal.h"
+#include "drm_constraints_lease.h"
 #include "drm_crtc_internal.h"
 
 static int candidate_available(struct drm_constraints_entry *entry, void *data)
@@ -293,6 +294,9 @@ int drm_atomic_constraints_check(struct drm_atomic_commit *state)
 	if (quiescing_output(&update))
 		return drm_constraints_list_quiesce(list, update.crtc->constraints,
 						       check_scene, &update);
+	ret = drm_constraints_lease_check(update.crtc);
+	if (ret)
+		return ret;
 	return drm_constraints_list_check(list, update.crtc->constraints,
 					     check_scene, &update);
 }
@@ -342,6 +346,9 @@ int drm_atomic_constraints_install(struct drm_atomic_commit *state,
 	if (quiescing_output(&update))
 		return drm_constraints_list_quiesce(list, update.crtc->constraints,
 						       install_scene, &update);
+	ret = drm_constraints_lease_check(update.crtc);
+	if (ret)
+		return ret;
 	return drm_constraints_list_accept(list, update.crtc->constraints,
 					      install_scene, &update);
 }

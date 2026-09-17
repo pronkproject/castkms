@@ -29,6 +29,16 @@ multiple CRTCs when every CRTC in the transaction is disabled, plane-free and
 retains its accepted binding. Asynchronous plane updates are rejected. Drivers
 which do not attach constraints keep their ordinary atomic behavior.
 
+Leased outputs retain their fixed default contract until every outstanding
+lease of that output is revoked or destroyed, including leases retained by an
+inactive master tree. Creating a lease of an output with nondefault accepted
+constraints returns ``-EBUSY``. Selecting nondefault constraints on a leased
+output also returns ``-EBUSY``. Default-contract updates and changes on other,
+unleased outputs remain available. Lease creation serializes with atomic
+installation, which rechecks the lease restriction even after a successful
+earlier validation. Quiescing an output without changing its binding remains
+possible.
+
 Descriptions and identities
 ===========================
 

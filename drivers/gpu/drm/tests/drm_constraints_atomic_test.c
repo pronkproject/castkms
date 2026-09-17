@@ -28,12 +28,14 @@
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_ioctl.h>
 #include <drm/drm_kunit_helpers.h>
+#include <drm/drm_lease.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_plane_helper.h>
 #include <kunit/test.h>
 
 #include "../drm_crtc_internal.h"
 #include "../drm_internal.h"
+#include "../drm_lease_internal.h"
 
 static const struct file_operations test_fops = {
 	.owner = THIS_MODULE,
@@ -1782,7 +1784,165 @@ static void complete_scene_checks_overlay_and_cursor_contracts(struct kunit *tes
 	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, entry);
 }
 
+static void put_lease_master(void *data)
+{
+	struct drm_master *master = data;
+
+	drm_master_put(&master);
+}
+
+static struct drm_master *new_lease_root(struct kunit *test, struct drm_device *dev)
+{
+	struct drm_master *master = drm_master_create(dev);
+
+	KUNIT_ASSERT_NOT_NULL(test, master);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_lease_master, master), 0);
+	return master;
+}
+
+static struct drm_master *lease_outputs(struct kunit *test, struct drm_master *root,
+					struct drm_crtc *first, struct drm_crtc *second,
+					int expected)
+{
+	struct drm_master *lease;
+	DEFINE_IDR(ids);
+	int ret;
+
+	ret = idr_alloc(&ids, first, first->base.id, first->base.id + 1, GFP_KERNEL);
+	if (ret < 0)
+		idr_destroy(&ids);
+	KUNIT_ASSERT_EQ(test, ret, first->base.id);
+	if (second) {
+		ret = idr_alloc(&ids, second, second->base.id, second->base.id + 1, GFP_KERNEL);
+		if (ret < 0)
+			idr_destroy(&ids);
+		KUNIT_ASSERT_EQ(test, ret, second->base.id);
+	}
+	lease = drm_lease_create(root, &ids);
+	if (IS_ERR(lease)) {
+		idr_destroy(&ids);
+		KUNIT_EXPECT_EQ(test, PTR_ERR(lease), expected);
+		return NULL;
+	}
+	KUNIT_EXPECT_EQ(test, expected, 0);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_lease_master, lease), 0);
+	return lease;
+}
+
+static void leases_preserve_default_until_revocation(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_master *root = new_lease_root(test, f->dev);
+	struct drm_master *lease = lease_outputs(test, root, f->crtc, NULL, 0);
+	struct drm_atomic_commit *fixed = new_update(test, f, f->initial, f->linear);
+	struct drm_atomic_commit *target = new_update(test, f, f->target, f->tiled);
+
+	KUNIT_ASSERT_NOT_NULL(test, lease);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixed);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, target);
+	KUNIT_EXPECT_EQ(test, run_update(fixed, check_update), 0);
+	KUNIT_EXPECT_EQ(test, run_update(target, check_update), -EBUSY);
+	drm_lease_revoke(lease);
+	drm_lease_revoke(lease);
+	KUNIT_EXPECT_EQ(test, run_update(target, check_update), 0);
+}
+
+static void installation_rechecks_newly_created_leases(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_master *root = new_lease_root(test, f->dev);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+	struct drm_master *lease;
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	lease = lease_outputs(test, root, f->crtc, NULL, 0);
+	KUNIT_ASSERT_NOT_NULL(test, lease);
+	KUNIT_EXPECT_EQ(test, run_update(state, swap_update), -EBUSY);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->initial);
+	drm_lease_revoke(lease);
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+}
+
+static void nondefault_selection_cannot_be_inherited_by_a_lease(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_master *root = new_lease_root(test, f->dev);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, lease_outputs(test, root, f->crtc, NULL, -EBUSY), NULL);
+	KUNIT_EXPECT_TRUE(test, list_empty(&root->lessees));
+	KUNIT_EXPECT_PTR_EQ(test, f->crtc->state->constraints, f->target);
+}
+
+static void each_master_tree_retains_its_own_leased_contract(struct kunit *test)
+{
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_master *root = new_lease_root(test, f->dev);
+	struct drm_master *other = new_lease_root(test, f->dev);
+	struct drm_master *first = lease_outputs(test, root, f->crtc, NULL, 0);
+	struct drm_master *second = lease_outputs(test, other, f->crtc, NULL, 0);
+	struct drm_atomic_commit *state = new_update(test, f, f->target, f->tiled);
+
+	KUNIT_ASSERT_NOT_NULL(test, first);
+	KUNIT_ASSERT_NOT_NULL(test, second);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), -EBUSY);
+	drm_lease_revoke(first);
+	kunit_release_action(test, put_lease_master, first);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), -EBUSY);
+	/* Destruction must return the charge even without explicit revocation. */
+	kunit_release_action(test, put_lease_master, second);
+	KUNIT_EXPECT_EQ(test, run_update(state, check_update), 0);
+}
+
+static void lease_failure_changes_no_other_output_contract(struct kunit *test)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_master *root = new_lease_root(test, f->dev);
+	struct drm_atomic_commit *selected, *candidate;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	selected = new_update(test, other, other->target, other->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, selected);
+	KUNIT_ASSERT_EQ(test, run_update(selected, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(selected, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, lease_outputs(test, root, f->crtc, other->crtc, -EBUSY), NULL);
+	candidate = new_update(test, f, f->target, f->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, candidate);
+	KUNIT_EXPECT_EQ(test, run_update(candidate, check_update), 0);
+}
+
+static void an_unleased_output_can_select_other_constraints(struct kunit *test)
+{
+	struct atomic_fixture *other = kunit_kzalloc(test, sizeof(*other), GFP_KERNEL);
+	struct atomic_fixture *f = new_fixture(test);
+	struct drm_master *root = new_lease_root(test, f->dev);
+	struct drm_atomic_commit *state;
+
+	KUNIT_ASSERT_NOT_NULL(test, other);
+	init_additional_output(test, other, f->dev);
+	KUNIT_ASSERT_NOT_NULL(test, lease_outputs(test, root, f->crtc, NULL, 0));
+	state = new_update(test, other, other->target, other->tiled);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, state);
+	KUNIT_ASSERT_EQ(test, run_update(state, drm_atomic_check_only), 0);
+	KUNIT_ASSERT_EQ(test, run_update(state, swap_update), 0);
+	KUNIT_EXPECT_PTR_EQ(test, other->crtc->state->constraints, other->target);
+}
+
 static struct kunit_case drm_constraints_atomic_tests[] = {
+	KUNIT_CASE(leases_preserve_default_until_revocation),
+	KUNIT_CASE(installation_rechecks_newly_created_leases),
+	KUNIT_CASE(nondefault_selection_cannot_be_inherited_by_a_lease),
+	KUNIT_CASE(each_master_tree_retains_its_own_leased_contract),
+	KUNIT_CASE(lease_failure_changes_no_other_output_contract),
+	KUNIT_CASE(an_unleased_output_can_select_other_constraints),
 	KUNIT_CASE(target_creation_precedes_atomic_selection),
 	KUNIT_CASE(atomic_layout_matching_distinguishes_implicit_from_linear),
 	KUNIT_CASE(readiness_loss_after_check_prevents_installation),

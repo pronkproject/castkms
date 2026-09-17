@@ -37,6 +37,8 @@ int drm_atomic_constraints_restore_default(struct drm_crtc *crtc);
  * state, then calls the provider's full-scene check.
  * Selecting or updating an enabled scene admits only one independent output
  * per transaction. Asynchronous plane updates are not supported.
+ * Outstanding leases retain an output's fixed default contract. Nondefault
+ * bindings on leased outputs return EBUSY at validation and acceptance.
  * Fully disabling the CRTC with every plane detached retains its binding and
  * remains possible after list closure or backend failure. Such quiescence
  * selects no new entry and does not complete outstanding native source reads.
