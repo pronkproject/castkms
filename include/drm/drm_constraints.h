@@ -9,6 +9,8 @@ struct drm_constraints_description;
 /* Kernel prototype limits, not an allocated userspace ABI. */
 #define DRM_CONSTRAINTS_MAX_FORMATS 4096
 #define DRM_CONSTRAINTS_MAX_PROPERTIES 64
+#define DRM_CONSTRAINTS_MAX_PLANE_LIMITS 64
+#define DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT 64
 #define DRM_CONSTRAINTS_FORMAT_IMPLICIT (1U << 0)
 #define DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE 1U
 #define DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED 2U
@@ -86,6 +88,22 @@ struct drm_constraints_property {
 	u64 mask;
 };
 
+/**
+ * struct drm_constraints_plane_limit - one overlapping active-plane ceiling
+ * @max_active: maximum simultaneously used planes from this group
+ * @count: number of distinct plane IDs
+ * @plane_ids: borrowed input IDs, copied by description creation
+ *
+ * Every group applies. A plane can therefore participate in an overall limit
+ * and in narrower resource or role limits. Counts and IDs are bounded by the
+ * DRM_CONSTRAINTS_MAX_* constants.
+ */
+struct drm_constraints_plane_limit {
+	u32 max_active;
+	u32 count;
+	const u32 *plane_ids;
+};
+
 /*
  * Immutable, independently referenced allocation information. Creation copies
  * all input before returning; the caller retains ownership of its input.
@@ -103,6 +121,15 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 				   const struct drm_constraints_property *properties,
 				   unsigned int property_count);
 struct drm_constraints_description *
+drm_constraints_description_create_with_plane_limits(
+				   const struct drm_constraints_size *output,
+				   const struct drm_constraints_format *formats,
+				   unsigned int count,
+				   const struct drm_constraints_property *properties,
+				   unsigned int property_count,
+				   const struct drm_constraints_plane_limit *plane_limits,
+				   unsigned int plane_limit_count);
+struct drm_constraints_description *
 drm_constraints_description_get(struct drm_constraints_description *description);
 void drm_constraints_description_put(struct drm_constraints_description *description);
 
@@ -115,6 +142,9 @@ drm_constraints_description_formats(const struct drm_constraints_description *de
 const struct drm_constraints_property *
 drm_constraints_description_properties(const struct drm_constraints_description *description,
 				       unsigned int *count);
+const struct drm_constraints_plane_limit *
+drm_constraints_description_plane_limits(const struct drm_constraints_description *description,
+					 unsigned int *count);
 
 /* Test one scalar using the rule's declared native DRM property semantics. */
 bool drm_constraints_property_matches(const struct drm_constraints_property *property, u64 value);

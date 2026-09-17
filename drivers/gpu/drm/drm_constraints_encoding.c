@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
+#include <linux/align.h>
 #include <linux/build_bug.h>
 #include <linux/err.h>
 #include <linux/export.h>
@@ -19,6 +20,7 @@ static_assert(sizeof(struct drm_mode_constraints_record) == 16);
 static_assert(sizeof(struct drm_mode_constraints_output_size) == 32);
 static_assert(sizeof(struct drm_mode_constraints_plane_format) == 72);
 static_assert(sizeof(struct drm_mode_constraints_property) == 56);
+static_assert(sizeof(struct drm_mode_constraints_plane_limit) == 24);
 static_assert(offsetof(struct drm_mode_constraints_list, generation) == 8);
 static_assert(offsetof(struct drm_mode_constraints_list, reserved) == 48);
 static_assert(offsetof(struct drm_mode_constraints, reserved) == 24);
@@ -29,24 +31,40 @@ static_assert(offsetof(struct drm_mode_constraints_property, minimum) == 32);
 static_assert(DRM_CONSTRAINTS_MAX_ENTRIES <= DRM_MODE_CONSTRAINTS_MAX_ENTRIES);
 static_assert(DRM_CONSTRAINTS_MAX_FORMATS <= DRM_MODE_CONSTRAINTS_MAX_FORMATS);
 static_assert(DRM_CONSTRAINTS_MAX_PROPERTIES <= DRM_MODE_CONSTRAINTS_MAX_PROPERTIES);
+static_assert(DRM_CONSTRAINTS_MAX_PLANE_LIMITS <= DRM_MODE_CONSTRAINTS_MAX_PLANE_LIMITS);
+static_assert(DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT <=
+	      DRM_MODE_CONSTRAINTS_MAX_PLANES_PER_LIMIT);
 static_assert(sizeof(struct drm_mode_constraints_list) +
 	      1ULL * DRM_CONSTRAINTS_MAX_ENTRIES *
 	      (sizeof(struct drm_mode_constraints) +
 	       sizeof(struct drm_mode_constraints_description) +
 	       sizeof(struct drm_mode_constraints_output_size) +
 	       DRM_CONSTRAINTS_MAX_FORMATS * sizeof(struct drm_mode_constraints_plane_format) +
-	       DRM_CONSTRAINTS_MAX_PROPERTIES * sizeof(struct drm_mode_constraints_property)) <=
+	       DRM_CONSTRAINTS_MAX_PROPERTIES * sizeof(struct drm_mode_constraints_property) +
+	       DRM_CONSTRAINTS_MAX_PLANE_LIMITS *
+	       ALIGN(sizeof(struct drm_mode_constraints_plane_limit) +
+		     DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT * sizeof(__u32), 8)) <=
 	      DRM_MODE_CONSTRAINTS_MAX_BYTES);
+
+static size_t plane_limit_size(const struct drm_constraints_plane_limit *limit)
+{
+	return ALIGN(sizeof(struct drm_mode_constraints_plane_limit) +
+		     size_mul(limit->count, sizeof(__u32)), 8);
+}
 
 static size_t description_size(struct drm_constraints_description *description)
 {
-	unsigned int formats, properties;
+	const struct drm_constraints_plane_limit *plane_limits;
+	unsigned int formats, properties, plane_limit_count, i;
 	size_t records;
 
 	drm_constraints_description_formats(description, &formats);
 	drm_constraints_description_properties(description, &properties);
 	records = size_add(size_mul(formats, sizeof(struct drm_mode_constraints_plane_format)),
 			   size_mul(properties, sizeof(struct drm_mode_constraints_property)));
+	plane_limits = drm_constraints_description_plane_limits(description, &plane_limit_count);
+	for (i = 0; i < plane_limit_count; i++)
+		records = size_add(records, plane_limit_size(&plane_limits[i]));
 	return size_add(sizeof(struct drm_mode_constraints_description) +
 			sizeof(struct drm_mode_constraints_output_size), records);
 }
@@ -57,7 +75,8 @@ static size_t encode_description(struct drm_constraints_description *description
 	const struct drm_constraints_size *size = drm_constraints_description_output(description);
 	const struct drm_constraints_format *formats;
 	const struct drm_constraints_property *properties;
-	unsigned int format_count, property_count, i;
+	const struct drm_constraints_plane_limit *plane_limits;
+	unsigned int format_count, property_count, plane_limit_count, i;
 	struct drm_mode_constraints_description header;
 	struct drm_mode_constraints_output_size output = {
 		.header = {
@@ -71,10 +90,11 @@ static size_t encode_description(struct drm_constraints_description *description
 
 	formats = drm_constraints_description_formats(description, &format_count);
 	properties = drm_constraints_description_properties(description, &property_count);
+	plane_limits = drm_constraints_description_plane_limits(description, &plane_limit_count);
 	header = (struct drm_mode_constraints_description) {
 		.version = DRM_MODE_CONSTRAINTS_VERSION,
 		.length = description_size(description),
-		.record_count = 1 + format_count + property_count,
+		.record_count = 1 + format_count + property_count + plane_limit_count,
 		.records_offset = offset + sizeof(header),
 	};
 	memcpy((u8 *)buffer + offset, &header, sizeof(header));
@@ -128,6 +148,26 @@ static size_t encode_description(struct drm_constraints_description *description
 
 		memcpy((u8 *)buffer + offset, &record, sizeof(record));
 		offset += sizeof(record);
+	}
+	for (i = 0; i < plane_limit_count; i++) {
+		size_t length = plane_limit_size(&plane_limits[i]);
+		struct drm_mode_constraints_plane_limit record = {
+			.header = {
+				.type = DRM_MODE_CONSTRAINTS_RECORD_PLANE_LIMIT,
+				.flags = DRM_MODE_CONSTRAINTS_RECORD_REQUIRED,
+				.length = length,
+			},
+			.max_active = plane_limits[i].max_active,
+			.count_planes = plane_limits[i].count,
+		};
+
+		memcpy((u8 *)buffer + offset, &record, sizeof(record));
+		memcpy((u8 *)buffer + offset + sizeof(record), plane_limits[i].plane_ids,
+		       sizeof(__u32) * plane_limits[i].count);
+		memset((u8 *)buffer + offset + sizeof(record) +
+		       sizeof(__u32) * plane_limits[i].count, 0,
+		       length - sizeof(record) - sizeof(__u32) * plane_limits[i].count);
+		offset += length;
 	}
 	return offset;
 }

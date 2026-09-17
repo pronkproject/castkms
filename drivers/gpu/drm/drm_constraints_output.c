@@ -111,8 +111,9 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 	struct drm_constraints_description *description;
 	const struct drm_constraints_format *formats;
 	const struct drm_constraints_property *properties;
+	const struct drm_constraints_plane_limit *plane_limits;
 	struct drm_plane *plane;
-	unsigned int count, i;
+	unsigned int count, format_count, format, i, j;
 	bool found;
 	int ret;
 
@@ -120,8 +121,8 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 	    drm_constraints_entry_crtc(entry) != crtc->base.id)
 		return -EINVAL;
 	description = drm_constraints_entry_description(entry);
-	formats = drm_constraints_description_formats(description, &count);
-	for (i = 0; i < count; i++) {
+	formats = drm_constraints_description_formats(description, &format_count);
+	for (i = 0; i < format_count; i++) {
 		found = false;
 		drm_for_each_plane(plane, crtc->dev) {
 			if (plane->base.id == formats[i].plane_id &&
@@ -139,6 +140,25 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 		ret = validate_property(crtc, &properties[i]);
 		if (ret)
 			return ret;
+	}
+	plane_limits = drm_constraints_description_plane_limits(description, &count);
+	for (i = 0; i < count; i++) {
+		for (j = 0; j < plane_limits[i].count; j++) {
+			found = false;
+			drm_for_each_plane(plane, crtc->dev) {
+				if (plane->base.id != plane_limits[i].plane_ids[j] ||
+				    !(plane->possible_crtcs & drm_crtc_mask(crtc)))
+					continue;
+				for (format = 0; format < format_count; format++)
+					if (formats[format].plane_id == plane->base.id) {
+						found = true;
+						break;
+					}
+				break;
+			}
+			if (!found)
+				return -EINVAL;
+		}
 	}
 	return 0;
 }

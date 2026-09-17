@@ -230,6 +230,33 @@ static int check_properties(struct constraints_update *update,
 	return 0;
 }
 
+static int check_plane_limits(struct constraints_update *update,
+			      struct drm_constraints_description *description)
+{
+	const struct drm_constraints_plane_limit *limits;
+	struct drm_plane_state *plane_state;
+	struct drm_plane *plane;
+	unsigned int count, active, i, id;
+	int state_index;
+
+	limits = drm_constraints_description_plane_limits(description, &count);
+	for (i = 0; i < count; i++) {
+		active = 0;
+		for_each_new_plane_in_state(update->state, plane, plane_state, state_index) {
+			if (plane_state->crtc != update->crtc->crtc)
+				continue;
+			for (id = 0; id < limits[i].count; id++)
+				if (limits[i].plane_ids[id] == plane->base.id) {
+					active++;
+					break;
+				}
+		}
+		if (active > limits[i].max_active)
+			return -EINVAL;
+	}
+	return 0;
+}
+
 static int check_scene(struct drm_constraints_entry *entry, void *data)
 {
 	struct constraints_update *update = data;
@@ -274,6 +301,9 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 	}
 	if (mask != update->crtc->plane_mask)
 		return -EINVAL;
+	ret = check_plane_limits(update, description);
+	if (ret)
+		return ret;
 	/* Stopping scanout requires no new work from an unavailable backend. */
 	if (quiescing_output(update))
 		return 0;

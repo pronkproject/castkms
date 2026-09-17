@@ -71,6 +71,13 @@ request-only properties, object IDs, blob contents and driver-private
 properties are not scalar rules. Rules constrain enabled outputs and the
 planes used by their scenes, not unused objects.
 
+Active-plane limits name a nonempty set of plane object IDs and the maximum
+number that may be used together. Every record applies. Overlapping groups can
+therefore express an overall layer ceiling and narrower shared-resource or
+plane-role ceilings without assigning generic meaning to driver plane roles.
+Each named plane must belong to the output and have at least one allocation
+record in the same description.
+
 These descriptions guide allocation; they do not solve every combination.
 The provider still validates complete scenes, LUT contents, color pipelines,
 cropping/scaling interactions and shared resources. Descriptions neither
@@ -83,9 +90,10 @@ needed for final release. Availability never changes an ID's meaning. The
 domain's quota includes entries retained by snapshots, accepted state and
 retiring work, not just currently offered entries.
 
-The current native bounds are 4096 format records and 64 scalar property
-records per description, and at most 64 entries per output list. Providers
-choose their retained-entry quota and may choose a smaller list limit.
+The current native bounds are 4096 format records, 64 scalar property records,
+64 active-plane-limit records and 64 plane IDs per limit, and at most 64 entries
+per output list. Providers choose their retained-entry quota and may choose a
+smaller list limit.
 The experimental UAPI declares corresponding bounds in
 ``include/uapi/drm/drm_constraints.h``.
 Format capacity accounts for per-plane expansion: the same format/modifier
@@ -127,8 +135,8 @@ explicit padding and aligned 64-bit values. List and description headers are
 versioned; entries have a stride, and descriptions contain length-delimited
 output-dimension, per-plane format/modifier and scalar-property records.
 Every offset is relative to the start of the complete snapshot. Per-plane
-format records are alternatives; scalar rules apply together. Unknown
-required records make an entry unusable, not unrestricted.
+format records are alternatives; scalar rules and active-plane limits apply
+together. Unknown required records make an entry unusable, not unrestricted.
 
 The encoding is bounded to 32 MiB, including a maximum-size native list.
 All padding and reserved output fields are zero. A null buffer with zero

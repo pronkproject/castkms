@@ -16,6 +16,8 @@ struct drm_constraints_description {
 	unsigned int count;
 	unsigned int property_count;
 	struct drm_constraints_property *properties;
+	unsigned int plane_limit_count;
+	struct drm_constraints_plane_limit *plane_limits;
 	struct drm_constraints_format formats[];
 };
 
@@ -65,19 +67,24 @@ static bool size_valid(const struct drm_constraints_size *size)
 }
 
 struct drm_constraints_description *
-drm_constraints_description_create(const struct drm_constraints_size *output,
+drm_constraints_description_create_with_plane_limits(
+				   const struct drm_constraints_size *output,
 				   const struct drm_constraints_format *formats,
 				   unsigned int count,
 				   const struct drm_constraints_property *properties,
-				   unsigned int property_count)
+				   unsigned int property_count,
+				   const struct drm_constraints_plane_limit *plane_limits,
+				   unsigned int plane_limit_count)
 {
 	struct drm_constraints_description *description;
-	unsigned int i, j;
+	unsigned int i, j, copied_limits = 0;
 	int ret;
 
 	if (!output || !formats || !count || count > DRM_CONSTRAINTS_MAX_FORMATS ||
 	    !size_valid(output) || property_count > DRM_CONSTRAINTS_MAX_PROPERTIES ||
-	    (property_count && !properties))
+	    (property_count && !properties) ||
+	    plane_limit_count > DRM_CONSTRAINTS_MAX_PLANE_LIMITS ||
+	    (plane_limit_count && !plane_limits))
 		return ERR_PTR(-EINVAL);
 	for (i = 0; i < count; i++) {
 		if (!formats[i].plane_id || !__drm_format_info(formats[i].format) ||
@@ -109,6 +116,23 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 			    properties[i].property_id == properties[j].property_id)
 				return ERR_PTR(-EEXIST);
 	}
+	for (i = 0; i < plane_limit_count; i++) {
+		if (!plane_limits[i].max_active || !plane_limits[i].count ||
+		    plane_limits[i].max_active > plane_limits[i].count ||
+		    plane_limits[i].count > DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT ||
+		    !plane_limits[i].plane_ids)
+			return ERR_PTR(-EINVAL);
+		for (j = 0; j < plane_limits[i].count; j++) {
+			unsigned int previous;
+
+			if (!plane_limits[i].plane_ids[j])
+				return ERR_PTR(-EINVAL);
+			for (previous = 0; previous < j; previous++)
+				if (plane_limits[i].plane_ids[j] ==
+				    plane_limits[i].plane_ids[previous])
+					return ERR_PTR(-EEXIST);
+		}
+	}
 	description = kvzalloc(struct_size(description, formats, count), GFP_KERNEL);
 	if (!description)
 		return ERR_PTR(-ENOMEM);
@@ -120,12 +144,50 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 			return ERR_PTR(-ENOMEM);
 		}
 	}
+	if (plane_limit_count) {
+		description->plane_limits = kcalloc(plane_limit_count,
+						    sizeof(*description->plane_limits), GFP_KERNEL);
+		if (!description->plane_limits)
+			goto err_properties;
+		for (i = 0; i < plane_limit_count; i++) {
+			description->plane_limits[i] = plane_limits[i];
+			description->plane_limits[i].plane_ids =
+				kmemdup_array(plane_limits[i].plane_ids, plane_limits[i].count,
+					      sizeof(*plane_limits[i].plane_ids), GFP_KERNEL);
+			if (!description->plane_limits[i].plane_ids)
+				goto err_plane_limits;
+			copied_limits++;
+		}
+	}
 	kref_init(&description->ref);
 	description->output = *output;
 	description->count = count;
 	description->property_count = property_count;
+	description->plane_limit_count = plane_limit_count;
 	memcpy(description->formats, formats, sizeof(*formats) * count);
 	return description;
+
+err_plane_limits:
+	while (copied_limits)
+		kfree(description->plane_limits[--copied_limits].plane_ids);
+	kfree(description->plane_limits);
+err_properties:
+	kfree(description->properties);
+	kvfree(description);
+	return ERR_PTR(-ENOMEM);
+}
+EXPORT_SYMBOL_GPL(drm_constraints_description_create_with_plane_limits);
+
+struct drm_constraints_description *
+drm_constraints_description_create(const struct drm_constraints_size *output,
+				   const struct drm_constraints_format *formats,
+				   unsigned int count,
+				   const struct drm_constraints_property *properties,
+				   unsigned int property_count)
+{
+	return drm_constraints_description_create_with_plane_limits(output, formats, count,
+							   properties, property_count,
+							   NULL, 0);
 }
 EXPORT_SYMBOL_GPL(drm_constraints_description_create);
 
@@ -141,7 +203,11 @@ static void description_free(struct kref *ref)
 {
 	struct drm_constraints_description *description =
 		container_of(ref, struct drm_constraints_description, ref);
+	unsigned int i;
 
+	for (i = 0; i < description->plane_limit_count; i++)
+		kfree(description->plane_limits[i].plane_ids);
+	kfree(description->plane_limits);
 	kfree(description->properties);
 	kvfree(description);
 }
@@ -176,3 +242,12 @@ drm_constraints_description_properties(const struct drm_constraints_description 
 	return description->properties;
 }
 EXPORT_SYMBOL_GPL(drm_constraints_description_properties);
+
+const struct drm_constraints_plane_limit *
+drm_constraints_description_plane_limits(const struct drm_constraints_description *description,
+					 unsigned int *count)
+{
+	*count = description->plane_limit_count;
+	return description->plane_limits;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_description_plane_limits);
