@@ -118,7 +118,7 @@ static void check_offer_properties(int fd, uint32_t crtc, uint64_t id, uint32_t 
 	};
 	uint32_t ids[6];
 	bool found[6] = { 0 };
-	unsigned int count = 0;
+	unsigned int count = 0, total = 0, plane_limits = 0;
 
 	for (unsigned int i = 0; i < 6; i++)
 		ids[i] = property_id(fd, plane, names[i]);
@@ -162,8 +162,13 @@ static void check_offer_properties(int fd, uint32_t crtc, uint64_t id, uint32_t 
 				struct drm_mode_constraints_property *property = (void *)header;
 
 				CHECK(header->length == sizeof(*property));
+				CHECK(header->flags == DRM_MODE_CONSTRAINTS_RECORD_REQUIRED);
+				total++;
+				if (property->object_id != plane) {
+					cursor += header->length;
+					continue;
+				}
 				count++;
-				CHECK(property->object_id == plane);
 				for (unsigned int rule = 0; rule < 6; rule++) {
 					if (property->property_id != ids[rule])
 						continue;
@@ -182,12 +187,39 @@ static void check_offer_properties(int fd, uint32_t crtc, uint64_t id, uint32_t 
 						CHECK(property->mask == (rule == 4 ? 0x7 : 0x3));
 					}
 				}
+			} else if (header->type == DRM_MODE_CONSTRAINTS_RECORD_PLANE_LIMIT) {
+				struct drm_mode_constraints_plane_limit *limit = (void *)header;
+				size_t payload, length;
+				bool has_primary = false;
+
+				CHECK(limit->count_planes <=
+				      DRM_MODE_CONSTRAINTS_MAX_PLANES_PER_LIMIT);
+				payload = sizeof(*limit) + limit->count_planes * sizeof(uint32_t);
+				length = (payload + 7) & ~7;
+				CHECK(header->flags == DRM_MODE_CONSTRAINTS_RECORD_REQUIRED);
+				CHECK(header->length == length);
+				CHECK(limit->max_active == 1);
+				for (uint32_t member = 0; member < limit->count_planes; member++) {
+					CHECK(limit->plane_ids[member]);
+					has_primary |= limit->plane_ids[member] == plane;
+					for (uint32_t previous = 0; previous < member; previous++)
+						CHECK(limit->plane_ids[member] !=
+						      limit->plane_ids[previous]);
+				}
+				for (size_t padding = payload; padding < length; padding++)
+					CHECK(!cursor[padding]);
+				if (has_primary)
+					CHECK(limit->count_planes == 9);
+				else
+					CHECK(limit->count_planes == 8);
+				plane_limits++;
 			}
 			cursor += header->length;
 		}
 		CHECK(cursor == end);
 	}
-	CHECK(count == 6);
+	CHECK(count == 6 && total == 54);
+	CHECK(plane_limits == 2);
 	for (unsigned int i = 0; i < 6; i++)
 		CHECK(found[i]);
 	free(list);
@@ -369,7 +401,7 @@ int main(int argc, char **argv)
 			.min_scale = 1U << 16,
 			.max_scale = 1U << 16,
 			.max_layers = 1,
-			.max_roles = { 1, 0, 0 },
+			.max_roles = { 1, 1, 0 },
 			.yuv_encodings = DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT601 |
 				 DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT709 |
 				 DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT2020,
