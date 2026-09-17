@@ -70,6 +70,8 @@ static struct event_fixture *new_fixture(struct kunit *test)
 	struct drm_constraints_format format = {
 		.format = DRM_FORMAT_XRGB8888, .size = size,
 		.flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT,
+		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;

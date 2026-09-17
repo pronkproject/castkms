@@ -3,6 +3,7 @@
 #include <linux/err.h>
 #include <linux/export.h>
 #include <linux/kref.h>
+#include <linux/log2.h>
 #include <linux/slab.h>
 
 #include <drm/drm_constraints.h>
@@ -83,6 +84,12 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 		    formats[i].modifier == DRM_FORMAT_MOD_INVALID ||
 		    (formats[i].flags & ~DRM_CONSTRAINTS_FORMAT_IMPLICIT) ||
 		    (formats[i].flags && formats[i].modifier) ||
+		    !formats[i].storage_flags ||
+		    (formats[i].storage_flags & ~(DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE |
+						 DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED)) ||
+		    !is_power_of_2(formats[i].pitch_alignment) ||
+		    !is_power_of_2(formats[i].offset_alignment) ||
+		    formats[i].max_pitch < formats[i].pitch_alignment ||
 		    !size_valid(&formats[i].size))
 			return ERR_PTR(-EINVAL);
 		for (j = 0; j < i; j++) {

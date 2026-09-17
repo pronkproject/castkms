@@ -47,7 +47,12 @@ scalar property records. Inclusive nonzero output and framebuffer dimension
 bounds may describe exact sizes by making each minimum equal its maximum.
 Framebuffer bounds concern allocation, not the fractional source rectangle.
 Each allocation record names an existing plane and a standard DRM
-format/modifier pair. Tiled layouts are not restricted to software-compositor
+format/modifier pair. It also states whether framebuffer memory may originate
+on the queried DRM device, arrive through PRIME DMA-BUF import, or use either
+origin. A memory plane's pitch and offset must satisfy the stated byte
+alignments, and its pitch must not exceed the advertised maximum. The record
+includes the format's memory-plane count so an allocator can size the complete
+framebuffer. Tiled layouts are not restricted to software-compositor
 capabilities.
 
 Scalar rules use the native DRM range, signed-range, enum or bitmask type.
@@ -86,7 +91,7 @@ The experimental UAPI declares corresponding bounds in
 Format capacity accounts for per-plane expansion: the same format/modifier
 alternative on ten planes consumes ten records. Large immutable descriptions
 permit virtual allocation rather than requiring contiguous memory. The
-16-MiB snapshot bound covers a full list of maximum-sized descriptions.
+32-MiB snapshot bound covers a full list of maximum-sized descriptions.
 
 Lists and snapshots
 ======================
@@ -125,7 +130,7 @@ Every offset is relative to the start of the complete snapshot. Per-plane
 format records are alternatives; scalar rules apply together. Unknown
 required records make an entry unusable, not unrestricted.
 
-The encoding is bounded to 16 MiB, including a maximum-size native list.
+The encoding is bounded to 32 MiB, including a maximum-size native list.
 All padding and reserved output fields are zero. A null buffer with zero
 capacity discovers the required size. An undersized buffer returns
 ``-ENOSPC`` and the required size without modifying any payload. Other errors

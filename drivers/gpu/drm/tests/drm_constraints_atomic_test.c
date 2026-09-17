@@ -187,6 +187,8 @@ new_layout_entry(struct kunit *test, struct atomic_fixture *f, u32 format, u64 m
 		.modifier = modifier,
 		.size = size,
 		.flags = implicit ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0,
+		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
 	};
 	struct drm_constraints_description *description;
 	struct drm_constraints_entry *entry;
@@ -1742,12 +1744,34 @@ new_scene_entry(struct kunit *test, struct atomic_fixture *f,
 {
 	const struct drm_constraints_size output = { 128, 64, 128, 64 };
 	const struct drm_constraints_format formats[] = {
-		{ f->plane->base.id, DRM_FORMAT_ARGB8888, I915_FORMAT_MOD_X_TILED,
-		  { 128, 64, 128, 64 } },
-		{ overlay->base.id, DRM_FORMAT_ARGB8888, DRM_FORMAT_MOD_LINEAR,
-		  { 128, 64, 128, 64 } },
-		{ cursor->base.id, DRM_FORMAT_ARGB8888, DRM_FORMAT_MOD_LINEAR,
-		  { 64, 64, 64, 64 } },
+		{
+			.plane_id = f->plane->base.id,
+			.format = DRM_FORMAT_ARGB8888,
+			.modifier = I915_FORMAT_MOD_X_TILED,
+			.size = { 128, 64, 128, 64 },
+			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.pitch_alignment = 1,
+			.offset_alignment = 1,
+			.max_pitch = U32_MAX,
+		}, {
+			.plane_id = overlay->base.id,
+			.format = DRM_FORMAT_ARGB8888,
+			.modifier = DRM_FORMAT_MOD_LINEAR,
+			.size = { 128, 64, 128, 64 },
+			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.pitch_alignment = 1,
+			.offset_alignment = 1,
+			.max_pitch = U32_MAX,
+		}, {
+			.plane_id = cursor->base.id,
+			.format = DRM_FORMAT_ARGB8888,
+			.modifier = DRM_FORMAT_MOD_LINEAR,
+			.size = { 64, 64, 64, 64 },
+			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.pitch_alignment = 1,
+			.offset_alignment = 1,
+			.max_pitch = U32_MAX,
+		},
 	};
 	const struct drm_constraints_property rules[] = {
 		{ .object_id = overlay->base.id, .property_id = overlay->alpha_property->base.id,

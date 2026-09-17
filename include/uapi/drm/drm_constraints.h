@@ -37,7 +37,7 @@
  */
 
 #define DRM_MODE_CONSTRAINTS_VERSION 1
-#define DRM_MODE_CONSTRAINTS_MAX_BYTES (16U * 1024U * 1024U)
+#define DRM_MODE_CONSTRAINTS_MAX_BYTES (32U * 1024U * 1024U)
 #define DRM_MODE_CONSTRAINTS_MAX_ENTRIES 64U
 #define DRM_MODE_CONSTRAINTS_MAX_FORMATS 4096U
 #define DRM_MODE_CONSTRAINTS_MAX_PROPERTIES 64U
@@ -48,6 +48,8 @@
 #define DRM_MODE_CONSTRAINTS_RECORD_PLANE_FORMAT 2U
 #define DRM_MODE_CONSTRAINTS_RECORD_PROPERTY 3U
 #define DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT (1U << 0)
+#define DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE (1U << 0)
+#define DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_IMPORTED (1U << 1)
 
 #define DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED 0x04
 #define DRM_KMS_CONSTRAINTS_LIST_CLOSED (1U << 0)
@@ -254,14 +256,23 @@ struct drm_mode_constraints_output_size {
  * @max_width: Maximum framebuffer width, at least @min_width.
  * @max_height: Maximum framebuffer height, at least @min_height.
  * @layout_flags: Zero or DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT.
- * @pad: Zero.
+ * @storage_flags: Permitted DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_* origins.
+ * @plane_count: Number of framebuffer memory planes.
+ * @pitch_alignment: Required byte alignment of every plane pitch.
+ * @offset_alignment: Required byte alignment of every plane offset.
+ * @max_pitch: Maximum pitch in bytes for every plane.
  *
  * Dimensions describe framebuffer allocation, not the fractional source
  * rectangle or scaled destination. LAYOUT_IMPLICIT means framebuffer creation
  * without DRM_MODE_FB_MODIFIERS; it does not promise linear storage. Explicit
  * LINEAR has modifier zero and layout_flags zero. Unknown layout flags make
- * the entry unsupported. Tuples of plane, format, modifier and layout flags
- * are unique within a description.
+ * the entry unsupported. At least one storage origin is present; unknown
+ * storage flags make the entry unsupported. NATIVE means storage created on
+ * the queried DRM device, while IMPORTED means a PRIME-imported DMA-BUF. The
+ * flags apply independently to every memory plane, so both flags also permit
+ * framebuffers whose planes have mixed origins. Alignments are positive powers
+ * of two, and max_pitch is at least pitch_alignment. Tuples of plane, format,
+ * modifier and layout flags are unique within a description.
  *
  * These records do not rewrite IN_FORMATS. Target framebuffer construction
  * precedes selecting the target entry; constructing a framebuffer does not
@@ -277,7 +288,11 @@ struct drm_mode_constraints_plane_format {
 	__u32 max_width;
 	__u32 max_height;
 	__u32 layout_flags;
-	__u32 pad;
+	__u32 storage_flags;
+	__u32 plane_count;
+	__u32 pitch_alignment;
+	__u32 offset_alignment;
+	__u32 max_pitch;
 };
 
 /**
