@@ -109,6 +109,10 @@ fn yuv(format: u32) -> Option<(usize, usize, bool, bool, usize)> {
     })
 }
 
+pub(crate) fn is_yuv(format: u32) -> bool {
+    yuv(format).is_some()
+}
+
 pub(crate) fn plane_count(format: u32) -> usize {
     yuv(format).map_or(1, |(_, _, planar, _, _)| if planar { 3 } else { 2 })
 }

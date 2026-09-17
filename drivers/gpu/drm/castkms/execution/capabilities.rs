@@ -75,6 +75,9 @@ pub(crate) struct Profile {
 impl Profile {
     pub(crate) fn new(limits: Limits, formats: KVec<Format>) -> Result<Self> {
         let geometry = limits.geometry;
+        let has_yuv = formats
+            .iter()
+            .any(|format| crate::formats::is_yuv(format.fourcc));
         if geometry.output.contains(&0)
             || geometry.source.contains(&0)
             || geometry.min_output.contains(&0)
@@ -93,6 +96,9 @@ impl Profile {
             || limits.color.lut_entries > 256
             || formats.is_empty()
             || formats.len() > MAX_FORMATS
+            || (has_yuv
+                && (!limits.color.yuv_encodings.contains(&true)
+                    || !limits.color.yuv_ranges.contains(&true)))
         {
             return Err(EINVAL);
         }
@@ -407,6 +413,45 @@ mod tests {
         duplicate.pitch_alignment = 8;
         formats.push(duplicate, GFP_KERNEL)?;
         assert!(matches!(Profile::new(limits(), formats), Err(EINVAL)));
+        Ok(())
+    }
+
+    #[test]
+    fn yuv_formats_require_usable_color_values() -> Result {
+        let valid = profile(limits(), None)?;
+        for color in [
+            ColorLimits {
+                yuv_encodings: [false; 3],
+                ..limits().color
+            },
+            ColorLimits {
+                yuv_ranges: [false; 2],
+                ..limits().color
+            },
+        ] {
+            let mut formats = KVec::new();
+            formats.push(
+                Format {
+                    fourcc: fourcc::NV12,
+                    ..valid.formats()[0]
+                },
+                GFP_KERNEL,
+            )?;
+            assert!(matches!(
+                Profile::new(
+                    Limits {
+                        color,
+                        ..limits()
+                    },
+                    formats
+                ),
+                Err(EINVAL)
+            ));
+        }
+        let mut rgb_only = limits();
+        rgb_only.color.yuv_encodings = [false; 3];
+        rgb_only.color.yuv_ranges = [false; 2];
+        profile(rgb_only, None)?;
         Ok(())
     }
 
