@@ -31,6 +31,9 @@ struct buffer create_buffer(int fd, uint32_t width, uint32_t height,
 			    unsigned char pixel);
 struct buffer import_buffer(int fd, const char *heap, uint32_t width,
 			    uint32_t height);
+struct buffer import_xrgb_buffer_with_modifier(int fd, const char *heap,
+					       uint32_t width, uint32_t height,
+					       uint64_t modifier);
 void destroy_buffer(int fd, struct buffer *buffer);
 uint32_t primary_plane(int fd, unsigned int crtc_index);
 void property(int fd, drmModeAtomicReq *req, uint32_t id, uint32_t type,

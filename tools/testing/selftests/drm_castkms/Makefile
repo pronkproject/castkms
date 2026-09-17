@@ -14,7 +14,7 @@ $(OUTPUT)/modeset: fixture.c import.c
 $(OUTPUT)/master-lifetime: fixture.c
 $(OUTPUT)/monitor-control: fixture.c
 $(OUTPUT)/renderer-control: fixture.c
-$(OUTPUT)/renderer-tiled: fixture.c
+$(OUTPUT)/renderer-tiled: fixture.c import.c
 $(OUTPUT)/renderer-multi-output: fixture.c
 $(OUTPUT)/capture-grant: fixture.c
 $(OUTPUT)/capture-stream: fixture.c

@@ -213,6 +213,7 @@ int main(int argc, char **argv)
 				.plane_count = 1,
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
+					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
 				.pitch_alignment = 1,
 				.offset_alignment = 1,
@@ -264,15 +265,15 @@ int main(int argc, char **argv)
 	drmModeConnector *connector;
 	drmModeModeInfo *mode;
 	struct monitor_control monitor;
-	struct buffer linear, tiled, rgbx, private;
+	struct buffer linear, tiled, rgbx, imported = { 0 }, private;
 	struct multiplane_buffer nv12;
 	uint64_t host, worker;
 	uint64_t content_serial, job_id;
 	uint32_t plane;
 	int fd, private_fd;
 
-	if (argc != 2) {
-		fprintf(stderr, "SKIP: supply a disposable CastKMS node\n");
+	if (argc != 2 && argc != 3) {
+		fprintf(stderr, "SKIP: supply a disposable CastKMS node [DMA heap]\n");
 		return 4;
 	}
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -299,6 +300,10 @@ int main(int argc, char **argv)
 	rgbx = create_tiled_buffer(fd, mode->hdisplay, mode->vdisplay,
 				   DRM_FORMAT_RGBX8888);
 	nv12 = create_tiled_nv12(fd, mode->hdisplay, mode->vdisplay);
+	if (argc == 3)
+		imported = import_xrgb_buffer_with_modifier(fd, argv[2], mode->hdisplay,
+							    mode->vdisplay,
+							    I915_FORMAT_MOD_4_TILED);
 	private = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0);
 	CHECK(drmPrimeHandleToFD(fd, private.dumb.handle, DRM_CLOEXEC | DRM_RDWR,
 			       &private_fd) == 0);
@@ -447,9 +452,44 @@ int main(int argc, char **argv)
 	CHECK(layer->planes[0].pitch == rgbx.dumb.pitch);
 	CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
+	content_serial = scene->content_serial;
+	job_id = scene->job_id;
 	release.job_id = scene->job_id;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
 		    &release) == 0);
+	if (argc == 3) {
+		select_framebuffer(fd, create.crtc_id, plane, imported.fb, worker);
+		memset(scene, 0, dequeue.capacity);
+		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
+			    &dequeue) == 0);
+		layer = (void *)(scene + 1);
+		CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
+		CHECK(scene->constraints_id == worker && scene->layer_count == 1);
+		CHECK(scene->content_serial > content_serial && scene->job_id != job_id);
+		CHECK(scene->width == mode->hdisplay && scene->height == mode->vdisplay);
+		CHECK(scene->producer_fd == -1 && !scene->output_color_count &&
+		      !scene->reserved);
+		CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
+		CHECK(layer->bytes == sizeof(*layer) && layer->plane_count == 1);
+		CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
+		CHECK(layer->format == DRM_FORMAT_XRGB8888);
+		CHECK(layer->modifier == I915_FORMAT_MOD_4_TILED);
+		CHECK(layer->width == mode->hdisplay && layer->height == mode->vdisplay);
+		CHECK(!layer->source[0] && !layer->source[1]);
+		CHECK(layer->source[2] == (uint32_t)mode->hdisplay << 16);
+		CHECK(layer->source[3] == (uint32_t)mode->vdisplay << 16);
+		CHECK(!layer->position[0] && !layer->position[1]);
+		CHECK(layer->destination[0] == mode->hdisplay &&
+		      layer->destination[1] == mode->vdisplay);
+		CHECK(!layer->color_count && !layer->planes[0].offset &&
+		      !layer->planes[0].reserved);
+		CHECK(layer->planes[0].pitch == mode->hdisplay * 4);
+		CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+		CHECK(close(layer->planes[0].dma_buf_fd) == 0);
+		release.job_id = scene->job_id;
+		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+			    &release) == 0);
+	}
 
 	select_framebuffer(fd, create.crtc_id, plane, linear.fb, host);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER,
@@ -464,6 +504,8 @@ int main(int argc, char **argv)
 	destroy_buffer(fd, &tiled);
 	destroy_buffer(fd, &rgbx);
 	destroy_multiplane_buffer(fd, &nv12);
+	if (argc == 3)
+		destroy_buffer(fd, &imported);
 	destroy_buffer(fd, &private);
 	free(scene);
 	drmModeFreeConnector(connector);
