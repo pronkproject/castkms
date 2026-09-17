@@ -318,6 +318,14 @@ impl Current<'_> {
         Ok(())
     }
 
+    /// HOST image admission follows the accepted backend, not framebuffer CPU readability.
+    pub(crate) fn check_host_image(&self) -> Result {
+        if !self.scene.ok_or(EAGAIN)?.host_binding() {
+            return Err(EOPNOTSUPP);
+        }
+        Ok(())
+    }
+
     /// Compare exact accepted backend identity while publication is excluded.
     /// Matching metadata alone grants neither pixels nor readiness for a new read.
     pub(crate) fn check_constraints(

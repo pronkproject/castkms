@@ -20,6 +20,7 @@ mod offer_sources;
 mod endpoints;
 mod endpoint_streams;
 mod endpoint_withdrawal;
+mod native_host_images;
 
 use super::*;
 use crate::renderer::{
