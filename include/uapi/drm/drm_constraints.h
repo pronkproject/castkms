@@ -18,6 +18,37 @@
 #define DRM_MODE_CONSTRAINTS_RECORD_PROPERTY 3U
 #define DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT (1U << 0)
 
+#define DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED 0x04
+#define DRM_KMS_CONSTRAINTS_LIST_CLOSED (1U << 0)
+
+/**
+ * struct drm_event_kms_constraints_list_changed - Advisory output list change
+ * @base: Standard DRM event header; type DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED.
+ * @crtc_id: CRTC whose constraints list changed.
+ * @flags: DRM_KMS_CONSTRAINTS_LIST_CLOSED, or zero.
+ * @generation: Observed nonzero list generation, or zero when CLOSED is set.
+ * @reserved: Zero.
+ *
+ * Prompts a fresh DRM_IOCTL_MODE_LIST_CONSTRAINTS query. Notifications coalesce:
+ * clients need not observe every intermediate generation. A queued record is
+ * immutable, so a newer change may follow it after consumption. Full event
+ * queues retain pending changes until capacity is returned; failed reads do
+ * not consume an event. CLOSED is terminal: further queries return ESTALE.
+ *
+ * This event grants no authority, selects no entry and signals neither display
+ * completion nor native GPU completion. Query on initial setup and resume even
+ * when no event has arrived. Delivery requires explicit client subscription;
+ * read-only listing does not subscribe a file. Userspace event dispatch must
+ * expose this record rather than silently discarding an unknown event type.
+ */
+struct drm_event_kms_constraints_list_changed {
+	struct drm_event base;
+	__u32 crtc_id;
+	__u32 flags;
+	__aligned_u64 generation;
+	__aligned_u64 reserved;
+};
+
 /**
  * struct drm_mode_list_constraints - Copy one output's constraints snapshot
  * @crtc_id: Output CRTC object ID.

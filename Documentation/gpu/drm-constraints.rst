@@ -14,8 +14,9 @@ the scene is not a reservation, and acceptance needs no later userspace
 activation acknowledgment.
 
 The implementation provides native atomic helpers and experimental read-only
-listing through ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``. A client capability,
-selection property and notification event are not implemented. No production
+listing through ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``. The DRM core also has a
+bounded event producer and an experimental change-event encoding. Client
+subscription and the selection property are not implemented. No production
 CastKMS provider is attached to these helpers. The native test provider uses
 framebuffer metadata, not GPU allocation or PRIME import. Those boundaries
 must not be inferred from successful native tests.
@@ -144,6 +145,36 @@ snapshot size, not the caller's advertised capacity.
 The ioctl returns no descriptors and performs no activation. It does not use
 ``-EAGAIN`` and is suitable for libdrm's ordinary ``drmIoctl()`` wrapper. A
 successful query reserves neither availability nor subsequent selection.
+
+Bounded change notifications
+===========================
+
+``DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED`` carries a CRTC ID, list generation
+and flags in a 32-byte record on the ordinary DRM event stream. A zero flags
+field carries an observed nonzero generation. ``DRM_KMS_CONSTRAINTS_LIST_CLOSED``
+carries generation zero and means that further listing is permanently stale.
+The reserved field is zero. An event prompts a fresh query; it neither selects
+an entry nor signals presentation or native execution completion.
+
+The core producer reserves one reusable event slot per attached output and
+never rewrites a queued payload. Further changes coalesce behind that record.
+After consumption, the latest generation is delivered if it differs from the
+one sent. Queue exhaustion retains the pending change, and returned capacity
+triggers another attempt without polling or allocating another slot. Outputs
+are retried round-robin so a frequently changing output cannot monopolize the
+available notification capacity. Failed and short reads retain the event.
+
+Publication rechecks current-master identity and CRTC registration/lease
+visibility. Loss of authority excludes new notifications; previously queued
+records remain historical observations. Observer destruction detaches list and
+event-space waiters and joins deferred work before releasing the file context.
+Queued event slots independently retain their storage until consumed or
+discarded during file teardown.
+
+The producer is exercised through native tests; no client-subscription UAPI
+is attached yet. Read-only listing does not subscribe a file. Clients must
+query at initial setup and resume, and their DRM event dispatch must expose
+the complete record instead of silently consuming an unknown event type.
 
 Native atomic integration
 =========================
