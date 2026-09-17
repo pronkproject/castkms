@@ -44,7 +44,7 @@ impl Publications {
             list: ARef::from(output.list()),
             id: entry.id(),
         }, GFP_KERNEL)?;
-        if let Err(error) = output.add(entry) {
+        if let Err(error) = output.add_suggested(entry) {
             // The borrowed output still retains the list, excluding final native destruction.
             drop(self.entries.pop());
             return Err(error);
