@@ -27,7 +27,7 @@ unsafe impl Backend for TestBackend {}
 
 fn description() -> Result<ARef<Description>> {
     let size = Size::exact(128, 64);
-    Description::new(size, &[Format::new(7, fourcc::XRGB8888, 0, size)], &[])
+    Description::new(size, &[Format::new(7, fourcc::XRGB8888, 0, size)], &[], &[])
 }
 
 fn backend(drops: &Arc<AtomicU32>) -> Result<Arc<TestBackend>> {

@@ -27,6 +27,7 @@ fn format_entry(
             Format::implicit(plane_id, format, size),
         ],
         &[],
+        &[],
     )?;
     OpaqueEntry::new_stateless(domain, crtc_id, &description)
 }

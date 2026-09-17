@@ -616,6 +616,7 @@ impl KmsDriver for TestDriver {
                         Format::implicit(plane.object_id(), fourcc::XRGB8888, size),
                     ],
                     &[],
+                    &[],
                 )?;
                 let entry = OpaqueEntry::new_stateless(domain, crtc.object_id(), &description)?;
                 dev.attach_constraints(crtc, &entry, 4)?;

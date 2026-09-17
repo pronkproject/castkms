@@ -60,6 +60,7 @@ mod cases {
                 Property::unsigned_range(id, crtc_width, 640, 640),
                 Property::unsigned_range(id, source_width, 640 << 16, 640 << 16),
             ],
+            &[],
         )?;
         let target =
             OpaqueEntry::new_stateless(output.domain(), dev.crtc()?.object_id(), &description)?;

@@ -266,7 +266,7 @@ pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Des
             )?;
         }
     }
-    Description::new(output, &formats, properties)
+    Description::new(output, &formats, properties, &[])
 }
 
 /// Describe the profile's allocation choices within the fixed KMS object envelope.
@@ -332,7 +332,7 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
             plane_limits.push(ActivePlaneLimit::new(maximum as u32, group)?, GFP_KERNEL)?;
         }
     }
-    Description::new_with_plane_limits(
+    Description::new(
         output,
         &formats,
         &renderer_properties(profile, planes)?,

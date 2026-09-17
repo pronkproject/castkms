@@ -105,7 +105,7 @@ static struct query_fixture *new_fixture(struct kunit *test)
 	f->unattached = drm_kunit_helper_create_crtc(test, f->dev, plane, NULL, NULL, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->unattached);
 	drm_mode_config_reset(f->dev);
-	description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
+	description = drm_constraints_description_create(&size, &format, 1, NULL, 0, NULL, 0);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	entry = drm_constraints_entry_create_stateless(drm_constraints_device_domain(f->dev),

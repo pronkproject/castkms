@@ -34,7 +34,8 @@ unsafe impl Backend for TestBackend {}
 
 fn entry(domain: &Domain, drops: &Arc<AtomicU32>) -> Result<ARef<Entry<TestBackend>>> {
     let size = Size::exact(128, 64);
-    let description = Description::new(size, &[Format::new(7, fourcc::XRGB8888, 0, size)], &[])?;
+    let description =
+        Description::new(size, &[Format::new(7, fourcc::XRGB8888, 0, size)], &[], &[])?;
     Entry::new(
         domain,
         9,
@@ -72,7 +73,7 @@ mod cases {
             )?;
         }
         // Metadata capacity only: these alternatives are not attached to a KMS device.
-        let description = Description::new(size, &formats, &properties)?;
+        let description = Description::new(size, &formats, &properties, &[])?;
         let domain = Domain::new(count)?;
         let initial = Entry::new(
             &domain,
