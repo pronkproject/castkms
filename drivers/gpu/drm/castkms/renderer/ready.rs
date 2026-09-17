@@ -129,6 +129,7 @@ impl Drop for Owner {
 /// Holds resource readiness through a single native installation or authorized source claim.
 /// The caller supplies authority separately and must not revoke while holding this guard.
 pub(crate) struct Ready<'a> {
+    worker: &'a Worker,
     registrations: MutexGuard<'a, Option<RegistrationSet>>,
 }
 
@@ -168,7 +169,7 @@ impl Worker {
         if registrations.is_none() {
             return Err(EKEYREVOKED);
         }
-        Ok(Ready { registrations })
+        Ok(Ready { worker: self, registrations })
     }
 
     /// Exclude installation, mark terminal, then drop storage outside the readiness lock.
@@ -183,8 +184,12 @@ impl Worker {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Ready<'_> {
+    /// The held readiness exclusion belongs to this exact retained worker.
+    pub(super) fn belongs_to(&self, worker: &Worker) -> bool {
+        core::ptr::eq(self.worker, worker)
+    }
+
     /// Exact registered destination identity, not permission to read or write it.
     pub(crate) fn contains(&self, id: u64, image: &Image) -> bool {
         self.registrations.as_ref().is_some_and(|set| {

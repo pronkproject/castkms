@@ -309,6 +309,19 @@ impl Current<'_> {
         Ok(())
     }
 
+    /// Compare exact accepted backend identity while publication is excluded.
+    /// Matching metadata alone grants neither pixels nor readiness for a new read.
+    pub(crate) fn check_constraints(
+        &self,
+        entry: Option<&kernel::drm::constraints::OpaqueEntry>,
+    ) -> Result {
+        let scene = self.scene.ok_or(EAGAIN)?;
+        if scene.constraints().map(core::ptr::from_ref) != entry.map(core::ptr::from_ref) {
+            return Err(ESTALE);
+        }
+        Ok(())
+    }
+
     /// Claim and retain the current scene while its authority and generation are stable.
     ///
     /// The claim, not the cloned scene, prevents source retirement. The caller must not
