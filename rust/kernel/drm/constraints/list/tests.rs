@@ -92,19 +92,16 @@ mod cases {
         }
         let snapshot = list.snapshot(0)?;
         let bytes = snapshot.encode()?;
-        let description_size =
-            core::mem::size_of::<bindings::drm_constraints_encoded_description>()
-                + core::mem::size_of::<bindings::drm_constraints_encoded_output>()
-                + formats.len() * core::mem::size_of::<bindings::drm_constraints_encoded_format>()
-                + properties.len()
-                    * core::mem::size_of::<bindings::drm_constraints_encoded_property>();
-        let expected = core::mem::size_of::<bindings::drm_constraints_encoded_list>()
+        let description_size = core::mem::size_of::<bindings::drm_mode_constraints_description>()
+            + core::mem::size_of::<bindings::drm_mode_constraints_output_size>()
+            + formats.len() * core::mem::size_of::<bindings::drm_mode_constraints_plane_format>()
+            + properties.len() * core::mem::size_of::<bindings::drm_mode_constraints_property>();
+        let expected = core::mem::size_of::<bindings::drm_mode_constraints_list>()
             + count as usize
-                * (core::mem::size_of::<bindings::drm_constraints_encoded_entry>()
-                    + description_size);
+                * (core::mem::size_of::<bindings::drm_mode_constraints>() + description_size);
         assert_eq!(bytes.len(), expected);
         assert!(bytes.len() > 4 * 1024 * 1024);
-        assert!(bytes.len() <= bindings::DRM_CONSTRAINTS_ENCODING_MAX_SIZE as usize);
+        assert!(bytes.len() <= bindings::DRM_MODE_CONSTRAINTS_MAX_BYTES as usize);
         list.close();
         drop(snapshot);
         drop(list);
@@ -112,14 +109,14 @@ mod cases {
         drop(description);
         drop(domain);
         assert_eq!(drops.load(Ordering::Relaxed), count);
-        let length = core::mem::offset_of!(bindings::drm_constraints_encoded_list, length);
+        let length = core::mem::offset_of!(bindings::drm_mode_constraints_list, length);
         assert_eq!(
             u32::from_ne_bytes(bytes[length..length + 4].try_into().unwrap()) as usize,
             expected
         );
-        let last = bytes.len() - core::mem::size_of::<bindings::drm_constraints_encoded_property>();
+        let last = bytes.len() - core::mem::size_of::<bindings::drm_mode_constraints_property>();
         let property_id =
-            last + core::mem::offset_of!(bindings::drm_constraints_encoded_property, property_id);
+            last + core::mem::offset_of!(bindings::drm_mode_constraints_property, property_id);
         assert_eq!(
             u32::from_ne_bytes(bytes[property_id..property_id + 4].try_into().unwrap()),
             99 + bindings::DRM_CONSTRAINTS_MAX_PROPERTIES
@@ -272,11 +269,11 @@ mod cases {
         let snapshot = list.snapshot(0)?;
         let info = snapshot.info();
         let bytes = snapshot.encode()?;
-        assert!(bytes.len() <= bindings::DRM_CONSTRAINTS_ENCODING_MAX_SIZE as usize);
-        assert!(bytes.len() >= core::mem::size_of::<bindings::drm_constraints_encoded_list>());
-        let generation = core::mem::offset_of!(bindings::drm_constraints_encoded_list, generation);
-        let selected = core::mem::offset_of!(bindings::drm_constraints_encoded_list, selected_id);
-        let suggested = core::mem::offset_of!(bindings::drm_constraints_encoded_list, suggested_id);
+        assert!(bytes.len() <= bindings::DRM_MODE_CONSTRAINTS_MAX_BYTES as usize);
+        assert!(bytes.len() >= core::mem::size_of::<bindings::drm_mode_constraints_list>());
+        let generation = core::mem::offset_of!(bindings::drm_mode_constraints_list, generation);
+        let selected = core::mem::offset_of!(bindings::drm_mode_constraints_list, selected_id);
+        let suggested = core::mem::offset_of!(bindings::drm_mode_constraints_list, suggested_id);
         assert_eq!(
             u64::from_ne_bytes(bytes[generation..generation + 8].try_into().unwrap()),
             info.generation
