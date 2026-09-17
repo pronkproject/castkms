@@ -230,7 +230,7 @@ mod cases {
                 fixture.drm.connector()?,
                 || Ok(()),
             ),
-            Err(EAGAIN)
+            Err(EBUSY)
         ))?;
         let grantor = File::issue_administrative_capture_grant_then_for_test(
             fixture.drm.device(),

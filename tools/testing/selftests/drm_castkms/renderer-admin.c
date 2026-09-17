@@ -51,7 +51,7 @@ int main(int argc, char **argv)
 	create.flags = 2;
 	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create, EINVAL);
 	create.flags = DRM_CASTKMS_RENDERER_CREATE_ADMIN;
-	expect_error(master, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create, EAGAIN);
+	expect_error(master, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create, EBUSY);
 	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER_CONTROL, &create) == 0);
 	CHECK(fcntl(files.renderer_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(files.revoke_fd, F_GETFD) == FD_CLOEXEC);
