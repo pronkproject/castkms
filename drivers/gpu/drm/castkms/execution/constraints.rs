@@ -122,13 +122,22 @@ fn role(plane: &Plane) -> usize {
 fn format_supported(
     plane: &Plane,
     format: &super::capabilities::Format,
-    minimum_width: u32,
+    minimum: [u32; 2],
+    maximum: [u32; 2],
 ) -> bool {
+    let Some(width) = align_dimension(minimum[0], format.width_alignment) else {
+        return false;
+    };
+    let Some(height) = align_dimension(minimum[1], format.height_alignment) else {
+        return false;
+    };
     potential::FORMATS.contains(&format.fourcc)
         && (plane.kind != Kind::Cursor || format.fourcc == fourcc::ARGB8888)
         && format.planes as usize == potential::plane_count(format.fourcc)
+        && width <= maximum[0]
+        && height <= maximum[1]
         && (0..format.planes as usize).all(|memory_plane| {
-            fourcc::minimum_pitch(format.fourcc, memory_plane, minimum_width).is_some_and(
+            fourcc::minimum_pitch(format.fourcc, memory_plane, width).is_some_and(
                 |minimum| {
                     let alignment = u64::from(format.pitch_alignment);
                     minimum
@@ -141,6 +150,12 @@ fn format_supported(
         })
 }
 
+fn align_dimension(value: u32, alignment: u32) -> Option<u32> {
+    value
+        .checked_add(alignment.checked_sub(1)?)
+        .map(|rounded| rounded & !(alignment - 1))
+}
+
 fn source_ceiling(plane: &Plane) -> u32 {
     if plane.kind == Kind::Cursor {
         potential::MAX_CURSOR_DIMENSION
@@ -151,6 +166,10 @@ fn source_ceiling(plane: &Plane) -> u32 {
 
 fn plane_supported(profile: &Profile, plane: &Plane) -> bool {
     let limits = profile.limits();
+    let maximum = [
+        limits.geometry.source[0].min(source_ceiling(plane)),
+        limits.geometry.source[1].min(source_ceiling(plane)),
+    ];
     limits.roles[role(plane)] != 0
         && bounds(
             limits.geometry.min_source,
@@ -161,7 +180,9 @@ fn plane_supported(profile: &Profile, plane: &Plane) -> bool {
         && profile
             .formats()
             .iter()
-            .any(|format| format_supported(plane, format, limits.geometry.min_source[0]))
+            .any(|format| {
+                format_supported(plane, format, limits.geometry.min_source, maximum)
+            })
 }
 
 fn enabled_mask<const N: usize>(enabled: &[bool; N], values: [u32; N]) -> u64 {
@@ -200,7 +221,11 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
             .formats()
             .iter()
             .any(|format| {
-                format_supported(plane, format, limits.geometry.min_source[0])
+                let maximum = [
+                    limits.geometry.source[0].min(source_ceiling(plane)),
+                    limits.geometry.source[1].min(source_ceiling(plane)),
+                ];
+                format_supported(plane, format, limits.geometry.min_source, maximum)
                     && crate::formats::is_yuv(format.fourcc)
             });
         if supports_yuv {
@@ -318,7 +343,7 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
         if !plane_supported(profile, plane) {
             continue;
         }
-        let size = bounds(
+        let maximum_size = bounds(
             limits.geometry.min_source,
             limits.geometry.source,
             source_ceiling(plane),
@@ -326,13 +351,23 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
         .ok_or(EOPNOTSUPP)?;
         geometries.push(renderer_geometry(profile, plane), GFP_KERNEL)?;
         for format in profile.formats() {
-            if !format_supported(plane, format, limits.geometry.min_source[0]) {
+            let maximum = [maximum_size.maximum().0, maximum_size.maximum().1];
+            if !format_supported(plane, format, limits.geometry.min_source, maximum) {
                 continue;
             }
+            let size = Size::new(
+                align_dimension(limits.geometry.min_source[0], format.width_alignment)
+                    .ok_or(EOPNOTSUPP)?,
+                align_dimension(limits.geometry.min_source[1], format.height_alignment)
+                    .ok_or(EOPNOTSUPP)?,
+                maximum[0],
+                maximum[1],
+            );
             let format = match format.modifier {
                 Some(modifier) => Format::new(plane.id, format.fourcc, modifier, size),
                 None => Format::implicit(plane.id, format.fourcc, size),
             }
+            .with_dimension_alignment(format.width_alignment, format.height_alignment)
             .with_storage(
                 format.native,
                 format.imported,
@@ -420,6 +455,8 @@ mod tests {
                     planes: 1,
                     native: true,
                     imported: true,
+                    width_alignment: if modifier == Some(TILED) { 64 } else { 1 },
+                    height_alignment: if modifier == Some(TILED) { 4 } else { 1 },
                     pitch_alignment: 4,
                     offset_alignment: 4,
                     max_pitch: 65536,
@@ -471,6 +508,7 @@ mod tests {
         assert_eq!(formats[1].modifier(), None);
         assert_eq!(formats[0].size().minimum(), (64, 32));
         assert_eq!(formats[0].size().maximum(), (8192, 8192));
+        assert_eq!(formats[0].dimension_alignment(), (64, 4));
         assert_eq!(formats[3].plane_id(), 8);
         assert_eq!(formats[6].plane_id(), 9);
         assert_eq!(formats[6].format(), fourcc::ARGB8888);
@@ -482,6 +520,22 @@ mod tests {
         assert_eq!(geometries[0].plane_id(), 7);
         assert_eq!(geometries[0].operations(), (true, true, true));
         assert_eq!(geometries[0].scale(), (1 << 12, 1 << 20));
+        Ok(())
+    }
+
+    #[test]
+    fn each_allocation_starts_at_its_first_aligned_source_size() -> Result {
+        let mut limits = limits();
+        limits.geometry.min_source = [65, 33];
+        let description = renderer(&profile(limits)?, &planes())?;
+        let formats = description.formats();
+
+        assert_eq!(formats[0].modifier(), Some(TILED));
+        assert_eq!(formats[0].size().minimum(), (128, 36));
+        assert_eq!(formats[0].dimension_alignment(), (64, 4));
+        assert_eq!(formats[1].modifier(), None);
+        assert_eq!(formats[1].size().minimum(), (65, 33));
+        assert_eq!(formats[1].dimension_alignment(), (1, 1));
         Ok(())
     }
 
@@ -505,6 +559,8 @@ mod tests {
                 planes: 2,
                 native: false,
                 imported: true,
+                width_alignment: 1,
+                height_alignment: 1,
                 pitch_alignment: 16,
                 offset_alignment: 4096,
                 max_pitch: 65536,
@@ -554,6 +610,8 @@ mod tests {
                     planes,
                     native: false,
                     imported: true,
+                    width_alignment: 1,
+                    height_alignment: 1,
                     pitch_alignment: 16,
                     offset_alignment: 4096,
                     max_pitch: 65536,
@@ -586,6 +644,8 @@ mod tests {
                 planes: 1,
                 native: false,
                 imported: true,
+                width_alignment: 1,
+                height_alignment: 1,
                 pitch_alignment: 256,
                 offset_alignment: 4096,
                 max_pitch: 7679,
@@ -629,6 +689,8 @@ mod tests {
                     planes,
                     native: false,
                     imported: true,
+                    width_alignment: 1,
+                    height_alignment: 1,
                     pitch_alignment: 256,
                     offset_alignment: 4096,
                     max_pitch,
@@ -741,6 +803,8 @@ mod tests {
                     planes,
                     native: false,
                     imported: true,
+                    width_alignment: 1,
+                    height_alignment: 1,
                     pitch_alignment: 16,
                     offset_alignment: 16,
                     max_pitch: 131072,

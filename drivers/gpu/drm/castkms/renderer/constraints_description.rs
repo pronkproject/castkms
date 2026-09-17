@@ -47,6 +47,8 @@ struct Storage {
     plane_count: u32,
     modifier: u64,
     flags: u32,
+    width_alignment: u32,
+    height_alignment: u32,
     pitch_alignment: u32,
     offset_alignment: u32,
     max_pitch: u32,
@@ -63,7 +65,7 @@ const _: () = {
         core::mem::size_of::<Header>()
             == core::mem::size_of::<uapi::drm_castkms_renderer_constraints>()
     );
-    assert!(core::mem::size_of::<Storage>() == 32);
+    assert!(core::mem::size_of::<Storage>() == 40);
     assert!(
         core::mem::size_of::<Storage>()
             == core::mem::size_of::<uapi::drm_castkms_renderer_constraints_format>()
@@ -130,6 +132,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
                 planes: format.plane_count,
                 native: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE != 0,
                 imported: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED != 0,
+                width_alignment: format.width_alignment,
+                height_alignment: format.height_alignment,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
                 max_pitch: format.max_pitch,
@@ -233,6 +237,8 @@ fn encode(profile: &Profile) -> Result<KVec<u8>> {
                     | u32::from(format.imported) * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED
                     | u32::from(format.modifier.is_some())
                         * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+                width_alignment: format.width_alignment,
+                height_alignment: format.height_alignment,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
                 max_pitch: format.max_pitch,
@@ -257,6 +263,8 @@ mod tests {
                 planes: 1,
                 native: false,
                 imported: true,
+                width_alignment: 64,
+                height_alignment: 4,
                 pitch_alignment: 128,
                 offset_alignment: 4096,
                 max_pitch: 65536,
@@ -302,6 +310,8 @@ mod tests {
         assert_eq!(decoded.limits().geometry.min_output, [1920, 1080]);
         assert_eq!(decoded.limits().geometry.min_source, [64, 32]);
         assert_eq!(decoded.formats()[0].modifier, Some(0x0100_0000_0000_0001));
+        assert_eq!(decoded.formats()[0].width_alignment, 64);
+        assert_eq!(decoded.formats()[0].height_alignment, 4);
         let again = encode(&decoded)?;
         assert_eq!(&*bytes, &*again);
         Ok(())
@@ -328,7 +338,7 @@ mod tests {
             bytes[offset..offset + 4].copy_from_slice(&u32::MAX.to_ne_bytes());
             assert!(matches!(decode(&bytes), Err(EINVAL)));
         }
-        for size in [0, 127, 128, 159] {
+        for size in [0, 127, 128, 167] {
             assert!(matches!(decode(&original[..size]), Err(EINVAL)));
         }
         Ok(())
@@ -347,8 +357,8 @@ mod tests {
         let mut bytes = encode(&profile)?;
         assert_eq!(bytes.len(), MAX_BYTES);
         assert_eq!(decode(&bytes)?.formats().len(), 256);
-        let first = Storage::from_bytes_copy(&bytes[128..160]).ok_or(EINVAL)?;
-        bytes[160..192].copy_from_slice(first.as_bytes());
+        let first = Storage::from_bytes_copy(&bytes[128..168]).ok_or(EINVAL)?;
+        bytes[168..208].copy_from_slice(first.as_bytes());
         assert!(matches!(decode(&bytes), Err(EINVAL)));
         bytes.push(0, GFP_KERNEL)?;
         assert!(matches!(decode(&bytes), Err(E2BIG)));

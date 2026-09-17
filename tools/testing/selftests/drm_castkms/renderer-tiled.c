@@ -302,6 +302,8 @@ static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 					CHECK(format->pitch_alignment == 1);
 					CHECK(format->offset_alignment == 1);
 					CHECK(format->max_pitch == 65536);
+					CHECK(format->width_alignment == 64);
+					CHECK(format->height_alignment == 4);
 					CHECK(format->min_width == width &&
 					      format->max_width == width);
 					CHECK(format->min_height == height &&
@@ -433,6 +435,8 @@ int main(int argc, char **argv)
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+				.width_alignment = 64,
+				.height_alignment = 4,
 				.pitch_alignment = 1,
 				.offset_alignment = 1,
 				.max_pitch = 65536,
@@ -443,6 +447,8 @@ int main(int argc, char **argv)
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+				.width_alignment = 64,
+				.height_alignment = 4,
 				.pitch_alignment = 1,
 				.offset_alignment = 1,
 				.max_pitch = 65536,
@@ -453,6 +459,8 @@ int main(int argc, char **argv)
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
+				.width_alignment = 64,
+				.height_alignment = 4,
 				.pitch_alignment = 1,
 				.offset_alignment = 1,
 				.max_pitch = 65536,

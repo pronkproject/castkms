@@ -18,6 +18,9 @@ pub(crate) struct Format {
     pub(crate) planes: u32,
     pub(crate) native: bool,
     pub(crate) imported: bool,
+    /// Framebuffer dimension alignment in pixels.
+    pub(crate) width_alignment: u32,
+    pub(crate) height_alignment: u32,
     /// Byte alignment and maximum pitch, applied to every memory plane.
     pub(crate) pitch_alignment: u32,
     pub(crate) offset_alignment: u32,
@@ -72,6 +75,16 @@ pub(crate) struct Profile {
     formats: KVec<Format>,
 }
 
+fn has_aligned_value(minimum: u32, maximum: u32, alignment: u32) -> bool {
+    if !alignment.is_power_of_two() {
+        return false;
+    }
+    minimum
+        .checked_add(alignment - 1)
+        .map(|value| value & !(alignment - 1))
+        .is_some_and(|value| value <= maximum)
+}
+
 impl Profile {
     pub(crate) fn new(limits: Limits, formats: KVec<Format>) -> Result<Self> {
         let geometry = limits.geometry;
@@ -109,6 +122,18 @@ impl Profile {
                 || format.modifier == Some(fourcc::FORMAT_MOD_INVALID)
                 || !(1..=4).contains(&format.planes)
                 || (!format.native && !format.imported)
+                || !format.width_alignment.is_power_of_two()
+                || !format.height_alignment.is_power_of_two()
+                || !has_aligned_value(
+                    geometry.min_source[0],
+                    geometry.source[0],
+                    format.width_alignment,
+                )
+                || !has_aligned_value(
+                    geometry.min_source[1],
+                    geometry.source[1],
+                    format.height_alignment,
+                )
                 || !format.pitch_alignment.is_power_of_two()
                 || !format.offset_alignment.is_power_of_two()
                 || format.max_pitch < format.pitch_alignment
@@ -146,6 +171,8 @@ impl Profile {
         modifier: Option<u64>,
         planes: usize,
         imported: bool,
+        width: u32,
+        height: u32,
         pitch: u32,
         offset: u32,
     ) -> bool {
@@ -153,6 +180,8 @@ impl Profile {
             format.fourcc == fourcc
                 && format.modifier == modifier
                 && format.planes as usize == planes
+                && width % format.width_alignment == 0
+                && height % format.height_alignment == 0
                 && pitch != 0
                 && pitch <= format.max_pitch
                 && pitch % format.pitch_alignment == 0
@@ -191,6 +220,8 @@ impl Profile {
                     image.modifier(),
                     image.plane_count(),
                     imported,
+                    image.width(),
+                    image.height(),
                     image.pitch(index)?,
                     image.offset(index)?,
                 ) {
@@ -339,6 +370,8 @@ mod tests {
                 planes: 1,
                 native: false,
                 imported: true,
+                width_alignment: 1,
+                height_alignment: 1,
                 pitch_alignment: 4,
                 offset_alignment: 4,
                 max_pitch: 65536,
@@ -396,14 +429,23 @@ mod tests {
     fn modifier_and_provenance_are_exact() -> Result {
         let modifier = Some(0x0100_0000_0000_0001);
         let profile = profile(limits(), modifier)?;
-        assert!(profile.storage(fourcc::XRGB8888, modifier, 1, true, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, false, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, Some(0), 1, true, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, None, 1, true, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 2, true, 16, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 15, 0));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 16, 1));
-        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 65540, 0));
+        assert!(profile.storage(fourcc::XRGB8888, modifier, 1, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, false, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, Some(0), 1, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, None, 1, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 2, true, 128, 64, 16, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 128, 64, 15, 0));
+        assert!(!profile.storage(fourcc::XRGB8888, modifier, 1, true, 128, 64, 16, 1));
+        assert!(!profile.storage(
+            fourcc::XRGB8888,
+            modifier,
+            1,
+            true,
+            128,
+            64,
+            65540,
+            0
+        ));
         profile.check_output([16384; 2])?;
         assert_eq!(profile.check_output([16385, 1]), Err(EOPNOTSUPP));
         Ok(())
@@ -605,6 +647,14 @@ mod tests {
         assert!(matches!(Profile::new(limits(), formats), Err(EINVAL)));
         for format in [
             Format {
+                width_alignment: 0,
+                ..valid.formats()[0]
+            },
+            Format {
+                height_alignment: 3,
+                ..valid.formats()[0]
+            },
+            Format {
                 pitch_alignment: 0,
                 ..valid.formats()[0]
             },
@@ -630,6 +680,17 @@ mod tests {
             formats.push(format, GFP_KERNEL)?;
             assert!(matches!(Profile::new(limits(), formats), Err(EINVAL)));
         }
+        let mut narrow = limits();
+        narrow.geometry.source = [63, 63];
+        let mut formats = KVec::new();
+        formats.push(
+            Format {
+                width_alignment: 64,
+                ..valid.formats()[0]
+            },
+            GFP_KERNEL,
+        )?;
+        assert!(matches!(Profile::new(narrow, formats), Err(EINVAL)));
         Ok(())
     }
 }
