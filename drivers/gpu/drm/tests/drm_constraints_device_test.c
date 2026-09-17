@@ -133,6 +133,7 @@ static void unregistration_stops_recovery_before_driver_unload(struct kunit *tes
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
 	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(dev, 2), 0);
 	dev->dev_private = &status;
+	KUNIT_ASSERT_EQ(test, drm_dev_register(dev, 0), 0);
 	drm_dev_unregister(dev);
 	drm_constraints_owner_flush(dev);
 	KUNIT_EXPECT_EQ(test, status, -ENODEV);
