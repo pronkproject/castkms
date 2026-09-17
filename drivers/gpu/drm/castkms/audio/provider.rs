@@ -1,44 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Explicit audio authority scoped to one master and one monitor attachment.
+//! Retained audio authority with disposable per-master-interval taps.
 
-use super::tap::Tap;
-use crate::{
-    authority::grants,
-    display_control::Target, //
-};
+use super::{source::Source, tap::Tap};
+use crate::display_control::Target;
 use kernel::{
-    drm::capture::{
-        Authority,
-        Creator,
-        Policy as NativePolicy,
-        Registration, //
-    },
+    drm::capture::{Authority, Creator, Policy as NativePolicy, Registration},
     prelude::*,
-    sync::{
-        aref::ARef,
-        poll::PollCondVar,
-        Arc, //
-    },
-    time::hrtimer::ArcHrTimerHandle, //
+    sync::{aref::ARef, poll::PollCondVar, Arc, Completion, Mutex},
+    time::hrtimer::ArcHrTimerHandle,
 };
 
-pub(super) struct Policy {
-    target: Target,
-    tap: Arc<Tap>,
-}
-
-// SAFETY: The vtable retains CastKMS and all callbacks until policy destruction.
-#[vtable]
-unsafe impl NativePolicy for Policy {
-    fn revoke(&self) {
-        self.tap.terminate(EKEYREVOKED);
-    }
-}
+const MAX_GRANTS: usize = 256;
 
 struct Running {
     tap: Arc<Tap>,
-    timer: Option<ArcHrTimerHandle<Tap>>,
+    _timer: ArcHrTimerHandle<Tap>,
+    interval: crate::authority::Interval,
 }
 
 impl Drop for Running {
@@ -47,42 +25,130 @@ impl Drop for Running {
     }
 }
 
+struct State {
+    active: Option<Running>,
+    closed: Option<Error>,
+}
+
+#[pin_data]
+pub(super) struct Policy {
+    target: Target,
+    source: Arc<Source>,
+    #[pin]
+    state: Mutex<State>,
+}
+
+// SAFETY: The vtable retains CastKMS and all callbacks until policy destruction.
+#[vtable]
+unsafe impl NativePolicy for Policy {
+    fn revoke(&self) {
+        self.close(EKEYREVOKED);
+    }
+}
+
+impl Policy {
+    fn tap(&self, interval: crate::authority::Interval) -> Result<Arc<Tap>> {
+        let retired = {
+            let mut state = self.state.lock();
+            if let Some(error) = state.closed {
+                return Err(error);
+            }
+            if let Some(active) = &state.active {
+                if active.interval == interval {
+                    return Ok(active.tap.clone());
+                }
+            }
+            state.active.take()
+        };
+        if let Some(retired) = retired {
+            retired.tap.terminate(EAGAIN);
+            drop(retired);
+        }
+
+        let tap = self.source.open()?;
+        let running = Running {
+            _timer: tap.start(),
+            tap: tap.clone(),
+            interval,
+        };
+        let mut state = self.state.lock();
+        if let Some(error) = state.closed {
+            drop(state);
+            drop(running);
+            return Err(error);
+        }
+        if state.active.is_some() {
+            drop(state);
+            drop(running);
+            return Err(EBUSY);
+        }
+        state.active = Some(running);
+        Ok(tap)
+    }
+
+    fn active_tap(&self) -> Option<Arc<Tap>> {
+        self.state.lock().active.as_ref().map(|active| active.tap.clone())
+    }
+
+    fn suspend(&self) {
+        let retired = self.state.lock().active.take();
+        if let Some(retired) = retired {
+            retired.tap.terminate(EAGAIN);
+            drop(retired);
+        }
+        self.target.device().changed.notify_all();
+    }
+
+    fn close(&self, error: Error) {
+        let retired = {
+            let mut state = self.state.lock();
+            if state.closed.is_some() {
+                return;
+            }
+            state.closed = Some(error);
+            state.active.take()
+        };
+        if let Some(retired) = retired {
+            retired.tap.terminate(error);
+            drop(retired);
+        }
+        self.target.device().changed.notify_all();
+    }
+}
+
 /// Unique revocation duty, independent of clients and the issuing DRM file.
 pub(crate) struct Owner {
     access: Access,
-    _running: Running,
     creator: Option<Registration>,
-    _device: grants::Registration,
+    _device: DeviceRegistration,
 }
 
 impl Owner {
     pub(crate) fn new(target: Target) -> Result<Self> {
-        // Monitor probing acquires native object-ID locks while holding its description
-        // mutex. Snapshot the source before entering native display-control locks.
         let source = target.display().monitor.audio()?;
-        target.with_output_objects(|| Ok(()))?;
+        let interval = target.with_output_objects(|| target.device().authority.interval())?;
         let tap = source.open()?;
         let running = Running {
-            timer: None,
-            tap: tap.clone(),
+            _timer: tap.start(),
+            tap,
+            interval,
         };
-        let policy = Arc::new(Policy { target, tap }, GFP_KERNEL)?;
+        let policy = Arc::pin_init(
+            pin_init!(Policy {
+                target,
+                source,
+                state <- kernel::new_mutex!(State { active: Some(running), closed: None }),
+            }),
+            GFP_KERNEL,
+        )?;
         let authority = Authority::new(policy.clone())?;
-        let device = policy
-            .target
-            .device()
-            .audio_grants
-            .register(&authority.revocation())?;
-        let mut owner = Self {
+        let device = policy.target.device().audio_grants.register(&policy)?;
+        let owner = Self {
             access: Access { authority, policy },
-            _running: running,
             creator: None,
             _device: device,
         };
         owner.access.check()?;
-        // Register revocation before starting sample reads. A master transition between
-        // the final check and timer start makes the tap terminal before its first tick.
-        owner._running.timer = Some(owner._running.tap.start());
         Ok(owner)
     }
 
@@ -121,52 +187,145 @@ impl Access {
         if self.authority.is_revoked() {
             return Err(EKEYREVOKED);
         }
-        let result = self.policy.target.with_output_objects(|| {
-            // The tap retains only its original playback. Attachment retirement makes
-            // that tap terminal; no monitor lookup or rebinding is permitted here.
+        self.policy.target.with_output_objects(|| {
             if self.authority.is_revoked() {
                 return Err(EKEYREVOKED);
             }
-            if let Some(error) = self.policy.tap.terminal() {
+            let interval = self.policy.target.device().authority.interval()?;
+            let tap = self.policy.tap(interval)?;
+            if let Some(error) = tap.terminal() {
                 return Err(error);
             }
-            Ok(f(&self.policy.tap))
-        });
-        match result {
-            Ok(result) => result,
-            Err(error) => {
-                self.policy.tap.terminate(error);
-                Err(error)
-            }
-        }
+            f(&tap)
+        })
     }
 
     pub(crate) fn check(&self) -> Result {
-        self.with_current(|_| Ok(()))
+        self.with_current(|_| Ok(())).map_err(Self::public_error)
     }
 
     pub(crate) fn read(&self, output: &mut [u8], nonblock: bool) -> Result<usize> {
         loop {
             match self.with_current(|tap| tap.read(output)) {
-                Err(EAGAIN) if !nonblock => self.policy.tap.wait()?,
+                Err(EAGAIN) if !nonblock => {
+                    let Some(tap) = self.policy.active_tap() else { return Err(EAGAIN) };
+                    tap.wait()?;
+                }
+                Err(EACCES) => return Err(EAGAIN),
                 result => return result,
             }
         }
     }
 
-    pub(super) fn changed(&self) -> &PollCondVar {
-        &self.policy.tap.changed
+    pub(super) fn active_tap(&self) -> Option<Arc<Tap>> {
+        self.policy.active_tap()
+    }
+
+    pub(super) fn authority_changed(&self) -> &PollCondVar {
+        &self.policy.target.device().changed
     }
 
     pub(super) fn readable(&self) -> Result<bool> {
-        self.with_current(|tap| Ok(tap.readable()))
+        self.with_current(|tap| Ok(tap.readable())).map_err(Self::public_error)
     }
 
     pub(super) fn dropped_frames(&self) -> Result<u64> {
-        self.with_current(|tap| Ok(tap.dropped()))
+        self.with_current(|tap| Ok(tap.dropped())).map_err(Self::public_error)
     }
 
     pub(crate) fn close(&self) {
-        self.policy.tap.terminate(ECANCELED);
+        self.policy.close(ECANCELED);
+    }
+
+    fn public_error(error: Error) -> Error {
+        if error == EACCES { EAGAIN } else { error }
+    }
+}
+
+struct RegistryState {
+    closed: bool,
+    policies: KVec<Arc<Policy>>,
+}
+
+#[pin_data]
+pub(crate) struct Registry {
+    #[pin]
+    state: Mutex<RegistryState>,
+    #[pin]
+    cleanup_done: Completion,
+}
+
+impl Registry {
+    pub(crate) fn new() -> Result<Arc<Self>> {
+        Arc::pin_init(
+            pin_init!(Self {
+                state <- kernel::new_mutex!(RegistryState {
+                    closed: false,
+                    policies: KVec::new(),
+                }),
+                cleanup_done <- Completion::new(),
+            }),
+            GFP_KERNEL,
+        )
+    }
+
+    fn register(self: &Arc<Self>, policy: &Arc<Policy>) -> Result<DeviceRegistration> {
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(ENODEV);
+        }
+        if state.policies.len() == MAX_GRANTS {
+            return Err(EBUSY);
+        }
+        state.policies.push(policy.clone(), GFP_KERNEL)?;
+        Ok(DeviceRegistration { registry: self.clone(), policy: policy.clone() })
+    }
+
+    pub(crate) fn suspend_all(&self) {
+        let state = self.state.lock();
+        for policy in &state.policies {
+            policy.suspend();
+        }
+    }
+
+    pub(crate) fn close(&self) {
+        let retired = {
+            let mut state = self.state.lock();
+            if state.closed {
+                None
+            } else {
+                state.closed = true;
+                Some(core::mem::take(&mut state.policies))
+            }
+        };
+        if let Some(retired) = retired {
+            for policy in &retired {
+                policy.close(ENODEV);
+            }
+            drop(retired);
+            self.cleanup_done.complete_all();
+        } else {
+            self.cleanup_done.wait_for_completion();
+        }
+    }
+
+    fn remove(&self, policy: &Arc<Policy>) {
+        let retired = {
+            let mut state = self.state.lock();
+            state.policies.iter().position(|item| Arc::ptr_eq(item, policy))
+                .and_then(|index| state.policies.remove(index).ok())
+        };
+        drop(retired);
+    }
+}
+
+struct DeviceRegistration {
+    registry: Arc<Registry>,
+    policy: Arc<Policy>,
+}
+
+impl Drop for DeviceRegistration {
+    fn drop(&mut self) {
+        self.registry.remove(&self.policy);
     }
 }

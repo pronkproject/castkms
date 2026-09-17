@@ -57,7 +57,7 @@ pub(super) struct State {
     pub(super) capture_grants: Arc<grants::Registry>,
     pub(super) renderer_workers: Arc<grants::Registry>,
     #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-    pub(super) audio_grants: Arc<grants::Registry>,
+    pub(super) audio_grants: Arc<crate::audio::provider::Registry>,
     pub(super) capture_streams: Arc<streams::Registry>,
     pub(super) capture_budget: Arc<budget::Budget>,
     pub(crate) capture_request_budget: Arc<crate::capture::request_budget::Budget>,
@@ -96,7 +96,7 @@ impl State {
             capture_grants: grants::Registry::new()?,
             renderer_workers: grants::Registry::new_device_workers()?,
             #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-            audio_grants: grants::Registry::new()?,
+            audio_grants: crate::audio::provider::Registry::new()?,
             capture_streams: streams::Registry::new()?,
             capture_budget: budget::Budget::new()?,
             capture_request_budget: crate::capture::request_budget::Budget::new()?,

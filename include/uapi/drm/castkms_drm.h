@@ -575,12 +575,16 @@ struct drm_castkms_audio_files {
  * @flags: Zero, or DRM_CASTKMS_AUDIO_NONBLOCK for nonblocking reads.
  * @reserved: Must be zero.
  *
- * At most one live stream may capture an attachment. Master loss, creator close,
- * revocation, detach or device removal terminates the stream and discards queued
- * samples. An old file never follows a replacement attachment. Capture operates
- * independently of the selected video renderer. Disabling the CRTC suspends
- * delivery without revoking the capability. Files are installed only after
- * the complete result has been copied successfully.
+ * At most one active stream may capture an attachment. Master loss suspends the
+ * retained capability with EAGAIN and discards its tap and queued samples. If
+ * the same bound drm_master becomes current again, the descriptor opens a fresh
+ * tap; samples from the preceding interval never resume. This allows the new
+ * current master to create its own stream in the meantime. Creator close,
+ * revocation, detach or device removal remains terminal. An old file never
+ * follows a replacement attachment. Capture operates independently of the
+ * selected video renderer. Disabling the CRTC suspends delivery without
+ * revoking the capability. Files are installed only after the complete result
+ * has been copied successfully.
  */
 struct drm_castkms_create_audio_capture {
 	__u32 crtc_id;
@@ -610,7 +614,9 @@ struct drm_castkms_create_audio_capture {
  * are discarded on activity transitions. ALSA playback interrupted by a
  * modeset must be prepared again. Nonzero reads smaller than one frame fail
  * with EINVAL; an empty nonblocking stream returns
- * EAGAIN. poll() reports readable samples or terminal POLLHUP|POLLERR.
+ * EAGAIN. Authority suspension also returns EAGAIN; poll remains idle until
+ * reacquisition or terminal revocation. poll() reports readable samples or
+ * terminal POLLHUP|POLLERR.
  */
 struct drm_castkms_audio_query {
 	__u32 version;
