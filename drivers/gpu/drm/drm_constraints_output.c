@@ -92,6 +92,20 @@ static int validate_property(struct drm_crtc *crtc, const struct drm_constraints
 	return 0;
 }
 
+static bool plane_supports_allocation(struct drm_plane *plane,
+				     const struct drm_constraints_format *format)
+{
+	unsigned int i;
+
+	if (!(format->flags & DRM_CONSTRAINTS_FORMAT_IMPLICIT))
+		return drm_plane_has_format(plane, format->format, format->modifier);
+	/* Implicit layout has no advertised modifier; complete-state checks still apply. */
+	for (i = 0; i < plane->format_count; i++)
+		if (plane->format_types[i] == format->format)
+			return true;
+	return false;
+}
+
 static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *entry)
 {
 	struct drm_constraints_description *description;
@@ -108,13 +122,11 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 	description = drm_constraints_entry_description(entry);
 	formats = drm_constraints_description_formats(description, &count);
 	for (i = 0; i < count; i++) {
-		if (formats[i].flags)
-			return -EOPNOTSUPP;
 		found = false;
 		drm_for_each_plane(plane, crtc->dev) {
 			if (plane->base.id == formats[i].plane_id &&
 			    (plane->possible_crtcs & drm_crtc_mask(crtc)) &&
-			    drm_plane_has_format(plane, formats[i].format, formats[i].modifier)) {
+			    plane_supports_allocation(plane, &formats[i])) {
 				found = true;
 				break;
 			}
