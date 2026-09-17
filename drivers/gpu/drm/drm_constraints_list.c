@@ -98,6 +98,13 @@ static int find_entry(struct drm_constraints_list *list, u64 id)
 	return -ENOENT;
 }
 
+/* Callers reject overflow before changing observable state. */
+static void advance_generation(struct drm_constraints_list *list)
+{
+	lockdep_assert_held(&list->lock);
+	list->info.generation++;
+}
+
 struct drm_constraints_entry *
 drm_constraints_list_selected(struct drm_constraints_list *list)
 {
@@ -151,7 +158,7 @@ int drm_constraints_list_add(struct drm_constraints_list *list,
 			.entry = drm_constraints_entry_get(entry),
 			.selectable = true,
 		};
-		list->info.generation++;
+		advance_generation(list);
 	}
 	mutex_unlock(&list->lock);
 	return ret;
@@ -174,7 +181,7 @@ int drm_constraints_list_withdraw(struct drm_constraints_list *list, u64 id)
 		list->entries[index].selectable = false;
 		if (list->info.suggested_id == id)
 			list->info.suggested_id = 0;
-		list->info.generation++;
+		advance_generation(list);
 	}
 	mutex_unlock(&list->lock);
 	return ret;
@@ -200,7 +207,7 @@ int drm_constraints_list_forget(struct drm_constraints_list *list, u64 id)
 		memmove(&list->entries[index], &list->entries[index + 1],
 			(list->info.count - index) * sizeof(*list->entries));
 		memset(&list->entries[list->info.count], 0, sizeof(*list->entries));
-		list->info.generation++;
+		advance_generation(list);
 	}
 	mutex_unlock(&list->lock);
 	if (entry)
@@ -225,7 +232,7 @@ int drm_constraints_list_suggest(struct drm_constraints_list *list, u64 id)
 		ret = -EOVERFLOW;
 	else {
 		list->info.suggested_id = id;
-		list->info.generation++;
+		advance_generation(list);
 	}
 	mutex_unlock(&list->lock);
 	return ret;
@@ -261,7 +268,7 @@ int drm_constraints_list_retain_default(struct drm_constraints_list *list,
 		list->entries[0].selectable = true;
 		list->info.count = 1;
 		list->info.suggested_id = 0;
-		list->info.generation++;
+		advance_generation(list);
 	}
 	mutex_unlock(&list->lock);
 	for (i = 0; i < count; i++)
@@ -350,7 +357,7 @@ int drm_constraints_list_accept(struct drm_constraints_list *list,
 	ret = install(entry, data);
 	if (!ret && changed) {
 		list->info.selected_id = drm_constraints_entry_id(entry);
-		list->info.generation++;
+		advance_generation(list);
 	}
 out:
 	mutex_unlock(&list->lock);
