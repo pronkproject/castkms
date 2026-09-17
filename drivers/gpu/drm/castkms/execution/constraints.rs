@@ -51,6 +51,40 @@ fn bounds(minimum: [u32; 2], maximum: [u32; 2], ceiling: u32) -> Option<Size> {
     Some(Size::new(minimum[0], minimum[1], maximum[0], maximum[1]))
 }
 
+/// Describe allocations for the built-in compositor on the supplied existing planes.
+///
+/// Both implicit layout and explicit linear layout are accepted. The framebuffer validator
+/// remains responsible for storage bounds, and complete-scene checks validate operations.
+/// The caller supplies standard scalar property rules; no readiness or source access is granted.
+pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Description>> {
+    check_planes(planes)?;
+    let output = Size::new(1, 1, super::host::MAX_WIDTH, super::host::MAX_HEIGHT);
+    let mut formats = KVec::new();
+    for plane in planes {
+        let size = if plane.kind == Kind::Cursor {
+            Size::new(
+                1,
+                1,
+                super::host::MAX_WIDTH.min(potential::MAX_CURSOR_DIMENSION),
+                super::host::MAX_HEIGHT.min(potential::MAX_CURSOR_DIMENSION),
+            )
+        } else {
+            output
+        };
+        for &format in super::host::FORMATS {
+            if plane.kind == Kind::Cursor && format != fourcc::ARGB8888 {
+                continue;
+            }
+            formats.push(Format::implicit(plane.id, format, size), GFP_KERNEL)?;
+            formats.push(
+                Format::new(plane.id, format, fourcc::FORMAT_MOD_LINEAR, size),
+                GFP_KERNEL,
+            )?;
+        }
+    }
+    Description::new(output, &formats, properties)
+}
+
 /// Describe the profile's allocation choices within the fixed KMS object envelope.
 ///
 /// Geometry is intersected with native allocation limits, including the cursor limit.
@@ -281,6 +315,48 @@ mod tests {
         assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
         planes[1].id = 0;
         assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
+        Ok(())
+    }
+
+    #[test]
+    fn host_describes_only_builtin_allocation_choices() -> Result {
+        let rules = [Property::unsigned_range(8, 17, 1, 30)];
+        let description = host(&planes(), &rules)?;
+        assert_eq!(description.output().minimum(), (1, 1));
+        assert_eq!(description.output().maximum(), (8192, 8192));
+        assert_eq!(description.properties()[0].bounds(), (1, 30));
+        let formats = description.formats();
+        assert_eq!(formats.len(), 4 * super::super::host::FORMATS.len() + 2);
+        for pair in formats.chunks_exact(2) {
+            assert_eq!(pair[0].modifier(), None);
+            assert_eq!(pair[1].modifier(), Some(fourcc::FORMAT_MOD_LINEAR));
+            assert_eq!(pair[0].format(), pair[1].format());
+            assert_eq!(pair[0].plane_id(), pair[1].plane_id());
+            assert!(super::super::host::FORMATS.contains(&pair[0].format()));
+            assert_eq!(pair[0].size().minimum(), (1, 1));
+            assert_eq!(pair[0].size().minimum(), pair[1].size().minimum());
+            assert_eq!(pair[0].size().maximum(), pair[1].size().maximum());
+            if pair[0].plane_id() == 9 {
+                assert_eq!(pair[0].format(), fourcc::ARGB8888);
+                assert_eq!(pair[0].size().maximum(), (512, 512));
+            } else {
+                assert_eq!(pair[0].size().maximum(), (8192, 8192));
+            }
+        }
+        assert!(!formats
+            .iter()
+            .any(|format| format.format() == fourcc::XRGB16161616F));
+        Ok(())
+    }
+
+    #[test]
+    fn host_rejects_ambiguous_plane_identity() -> Result {
+        assert!(matches!(host(&[], &[]), Err(EINVAL)));
+        let mut planes = planes();
+        planes[1].id = planes[0].id;
+        assert!(matches!(host(&planes, &[]), Err(EINVAL)));
+        planes[1].id = 0;
+        assert!(matches!(host(&planes, &[]), Err(EINVAL)));
         Ok(())
     }
 }
