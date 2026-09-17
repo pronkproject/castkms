@@ -14,7 +14,7 @@ mod cases {
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
-            check(endpoint.describe()?.phase == Phase::Prepared)?;
+            check(endpoint.describe()?.phase == Phase::Draft)?;
             endpoint.publish(|_| Ok(()))?;
             let description = endpoint.describe()?;
             check(description.phase == Phase::Published)?;
@@ -87,7 +87,7 @@ mod cases {
             check(endpoint.withdraw() == Err(ENODATA))?;
             endpoint.declare(private_images::profile()?, [640, 480])?;
             check(endpoint.withdraw() == Err(ENODATA))?;
-            check(endpoint.describe()?.phase == Phase::Prepared)?;
+            check(endpoint.describe()?.phase == Phase::Draft)?;
             endpoint.close();
             check(endpoint.describe().err() == Some(EKEYREVOKED))?;
             check(endpoint.withdraw() == Err(EKEYREVOKED))?;
