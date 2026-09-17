@@ -132,6 +132,14 @@ impl Profile {
         &self.formats
     }
 
+    /// Narrow this declaration to one exact private output geometry.
+    pub(crate) fn with_exact_output(mut self, output: [u32; 2]) -> Result<Self> {
+        self.check_output(output)?;
+        self.limits.geometry.min_output = output;
+        self.limits.geometry.output = output;
+        Ok(self)
+    }
+
     fn storage(
         &self,
         fourcc: u32,

@@ -31,9 +31,10 @@ pub(crate) struct Draft {
 
 impl Draft {
     pub(crate) fn new(access: Access, profile: Profile, dimensions: [u32; 2]) -> Result<Self> {
-        profile.check_output(dimensions)?;
-        access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
+        let profile = profile.with_exact_output(dimensions)?;
+        let constraints = access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
         let interval = access.current_interval()?;
+        constraints.check_profile(&profile)?;
         Ok(Self {
             access,
             interval,

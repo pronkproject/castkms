@@ -120,4 +120,32 @@ mod cases {
             Ok(())
         })
     }
+
+    #[test]
+    fn preparation_rejects_unusable_allocation_tuples() -> Result {
+        let display = CastKms::new_constraints(c"castkms-draft-allocations", 1)?;
+        let device = display._display.registration_guard().ok_or(ENODEV)?;
+        let file = RegisteredMasterFile::new(&device)?;
+        let crtc = file.crtc()?;
+        let connector = file.connector()?;
+        let owner = owner(&file, crtc, &connector)?;
+        let valid = private_images::profile()?;
+        let mut formats = KVec::new();
+        formats.push(
+            crate::execution::capabilities::Format {
+                planes: 2,
+                ..valid.formats()[0]
+            },
+            GFP_KERNEL,
+        )?;
+        let unusable = crate::execution::capabilities::Profile::new(*valid.limits(), formats)?;
+
+        let endpoint = crate::renderer::endpoint::Endpoint::new(
+            owner.access(),
+            device.to_registered_ref(),
+        )?;
+        check(endpoint.declare(unusable, [640, 480]) == Err(EOPNOTSUPP))?;
+        endpoint.declare(private_images::profile()?, [640, 480])?;
+        Ok(())
+    }
 }

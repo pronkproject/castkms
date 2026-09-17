@@ -261,7 +261,9 @@ struct drm_castkms_renderer_query {
  * constraints points to constraints_size bytes. width/height are the exact
  * private-pool target within the declared output bounds; they need not match
  * the current mode. Flags/reserved must be zero. Success changes only the draft.
- * Failure leaves an empty endpoint retryable; a second declaration is EALREADY.
+ * A declaration without a usable allocation intersection with the output's
+ * plane topology is EOPNOTSUPP. Failure leaves an empty endpoint retryable; a
+ * second declaration is EALREADY.
  */
 struct drm_castkms_renderer_prepare_offer {
 	__u64 constraints;
