@@ -1,28 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Per-device execution metadata and explicit lifetime of its connector property.
+//! Per-device execution metadata and serialized renderer changes.
 
 use super::{
-    property,
     Description, //
     Prepared,
     Profile,
 };
-use crate::{
-    display::Connector,
-    Driver, //
-};
+use crate::Driver;
 use kernel::{
     drm::{
-        device::Registered,
-        kms::{
-            connector::{
-                ReadOnlyBlobProperty,
-                UnregisteredConnector, //
-            },
-            LockedState, //
-        },
-        Device, //
+        kms::LockedState,
     },
     prelude::*,
     sync::{
@@ -55,21 +43,8 @@ struct State {
 }
 
 enum Slot {
-    Empty,
-    Attaching,
-    Ready(ReadOnlyBlobProperty<Connector>),
+    Ready,
     Closed,
-}
-
-struct Attachment<'a>(&'a Publication);
-
-impl Drop for Attachment<'_> {
-    fn drop(&mut self) {
-        let mut state = self.0.state.lock();
-        if matches!(state.slot, Slot::Attaching) {
-            state.slot = Slot::Empty;
-        }
-    }
 }
 
 /// Registration ownership closes this device-retaining property before final DRM teardown.
@@ -86,38 +61,11 @@ impl Publication {
             origin: Arc::new((), GFP_KERNEL)?,
             state <- kernel::new_mutex!(State {
                 description: super::initial(),
-                slot: Slot::Empty,
+                slot: Slot::Ready,
                 next_proposal: 1,
                 pending: None,
             }),
         })
-    }
-
-    /// Attach once during unpublished KMS construction, without outer DRM control locks.
-    pub(crate) fn attach(&self, connector: &UnregisteredConnector<Connector>) -> Result {
-        let (description, _attachment) = self.reserve_attachment()?;
-        let property = property::attach(connector, description)?;
-        {
-            let mut state = self.state.lock();
-            if !matches!(state.slot, Slot::Attaching) {
-                return Err(ENODEV);
-            }
-            state.slot = Slot::Ready(property);
-        }
-        Ok(())
-    }
-
-    fn reserve_attachment(&self) -> Result<(Description, Attachment<'_>)> {
-        let description = {
-            let mut state = self.state.lock();
-            match state.slot {
-                Slot::Closed => return Err(ENODEV),
-                Slot::Empty => state.slot = Slot::Attaching,
-                _ => return Err(EALREADY),
-            }
-            state.description
-        };
-        Ok((description, Attachment(self)))
     }
 
     /// Observe metadata only; retaining it preserves neither authority nor an active renderer.
@@ -174,9 +122,8 @@ impl Publication {
     ) -> Result<super::proposal::Registration> {
         let mut state = self.state.lock();
         match state.slot {
-            Slot::Ready(_) => (),
+            Slot::Ready => (),
             Slot::Closed => return Err(ENODEV),
-            _ => return Err(EAGAIN),
         }
         if state.description != expected {
             return Err(ESTALE);
@@ -290,26 +237,21 @@ impl Publication {
     ///
     /// Preparation alone changes no capability. Publication rechecks origin, generation,
     /// device and shutdown state; the caller separately authorizes the renderer handoff.
-    pub(crate) fn prepare(
-        &self,
-        device: &Device<Driver, Registered>,
-        profile: Profile,
-    ) -> Result<Prepared> {
+    pub(crate) fn prepare(&self, profile: Profile) -> Result<Prepared> {
         let expected = {
             let state = self.state.lock();
             match state.slot {
-                Slot::Ready(_) => state.description,
+                Slot::Ready => state.description,
                 Slot::Closed => return Err(ENODEV),
-                _ => return Err(EAGAIN),
             }
         };
-        Prepared::new(device, self.origin.clone(), expected, profile)
+        Prepared::new(self.origin.clone(), expected, profile)
     }
 
     /// Publish execution and its gated input contract under the same installation lock.
     pub(crate) fn publish_proposal(
         &self,
-        locked: &LockedState<'_, Driver>,
+        _locked: &LockedState<'_, Driver>,
         prepared: &mut Prepared,
         generation: u64,
         configuration: Option<&crate::scene::Configuration>,
@@ -330,11 +272,10 @@ impl Publication {
                 pending,
                 ..
             } = &mut *state;
-            let property = match slot {
-                Slot::Ready(property) => property,
+            match slot {
+                Slot::Ready => (),
                 Slot::Closed => return Err(ENODEV),
-                _ => return Err(EAGAIN),
-            };
+            }
             let entry = pending
                 .as_ref()
                 .filter(|entry| entry.description.generation == generation)
@@ -342,7 +283,6 @@ impl Publication {
             entry
                 .reservation
                 .activate(configuration, generation, check, || {
-                    property.replace_blob(locked, &mut prepared.blob)?;
                     *description = change.next;
                     prepared.pending = None;
                     Ok(())
@@ -353,50 +293,13 @@ impl Publication {
         Ok(())
     }
 
-    /// Release the control handle outside its mutex, preserving the installed native blob.
+    /// Close the internal control handle and release any pending proposal outside its mutex.
     pub(crate) fn close(&self) {
-        let (slot, pending) = {
+        let pending = {
             let mut state = self.state.lock();
-            (
-                core::mem::replace(&mut state.slot, Slot::Closed),
-                state.pending.take(),
-            )
+            state.slot = Slot::Closed;
+            state.pending.take()
         };
         drop(pending);
-        if let Slot::Ready(property) = slot {
-            drop(property);
-        }
-    }
-}
-
-#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-#[kunit_tests(rust_castkms_execution_attachment)]
-mod tests {
-    use super::*;
-    use kernel::sync::Arc;
-
-    #[test]
-    fn abandoned_attachment_returns_the_empty_slot() -> Result {
-        let publication = Arc::pin_init(Publication::new(), GFP_KERNEL)?;
-        let (_, attachment) = publication.reserve_attachment()?;
-        assert_eq!(publication.reserve_attachment().err(), Some(EALREADY));
-        drop(attachment);
-        let (_, replacement) = publication.reserve_attachment()?;
-        drop(replacement);
-        let empty = matches!(publication.state.lock().slot, Slot::Empty);
-        assert!(empty);
-        Ok(())
-    }
-
-    #[test]
-    fn abandoned_attachment_does_not_reopen_a_closed_slot() -> Result {
-        let publication = Arc::pin_init(Publication::new(), GFP_KERNEL)?;
-        let (_, attachment) = publication.reserve_attachment()?;
-        publication.close();
-        drop(attachment);
-        assert_eq!(publication.reserve_attachment().err(), Some(ENODEV));
-        let closed = matches!(publication.state.lock().slot, Slot::Closed);
-        assert!(closed);
-        Ok(())
     }
 }

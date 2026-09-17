@@ -325,7 +325,7 @@ impl Candidate {
             .access
             .display()
             .execution
-            .prepare(registered, Profile::HostV1)?;
+            .prepare(Profile::HostV1)?;
         let description = prepared.description()?;
         // Resource lifecycle exclusion precedes display control; no drain occurs under DRM locks.
         self.access.display().host.with_change(|change| {
@@ -373,7 +373,7 @@ impl Candidate {
             .access
             .display()
             .execution
-            .prepare(registered, Profile::GpuV1)?;
+            .prepare(Profile::GpuV1)?;
         let description = prepared.description()?;
         let (active, source) =
             self.access
