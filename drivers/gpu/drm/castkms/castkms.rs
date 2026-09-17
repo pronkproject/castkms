@@ -167,7 +167,7 @@ impl drm::Driver for Driver {
         dev.capture_streams.revoke_all();
         dev.renderer_workers.revoke_all();
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-        dev.audio_grants.revoke_all();
+        dev.audio_grants.suspend_all();
         dev.authority.changed(master);
         dev.changed.notify_all();
     }

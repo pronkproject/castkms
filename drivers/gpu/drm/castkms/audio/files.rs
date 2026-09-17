@@ -158,12 +158,21 @@ impl Client {
     ) -> bindings::__poll_t {
         // SAFETY: VFS retains the file and its private allocation throughout poll.
         let client = unsafe { &*(*file).private_data.cast::<Self>() };
+        if let Some(tap) = client.access.active_tap() {
+            // SAFETY: Both pointers have their VFS poll callback lifetimes. The retained
+            // tap keeps its wait queue alive through registration and readiness recheck.
+            unsafe {
+                PollTable::from_raw(table)
+                    .register_wait(File::from_raw_file(file), &tap.changed)
+            };
+        }
         // SAFETY: Both pointers have their VFS poll callback lifetimes.
         unsafe {
             PollTable::from_raw(table)
-                .register_wait(File::from_raw_file(file), client.access.changed())
+                .register_wait(File::from_raw_file(file), client.access.authority_changed())
         };
         match client.access.readable() {
+            Err(EAGAIN) => 0,
             Err(_) => (bindings::POLLHUP | bindings::POLLERR) as _,
             Ok(true) => (bindings::POLLIN | bindings::POLLRDNORM) as _,
             Ok(false) => 0,

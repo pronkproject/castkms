@@ -151,6 +151,17 @@ static void signal_on(unsigned int index)
 	CHECK(!"missing per-output audio signal");
 }
 
+static void audio_suspended(int fd)
+{
+	struct drm_castkms_audio_query query = {0};
+	struct pollfd event = { .fd = fd, .events = POLLIN };
+	unsigned int sample;
+
+	CHECK(poll(&event, 1, 0) == 0);
+	CHECK(read(fd, &sample, sizeof(sample)) < 0 && errno == EAGAIN);
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_AUDIO_QUERY, &query) < 0 && errno == EAGAIN);
+}
+
 static void enable(int fd, struct output *output)
 {
 	CHECK(drmModeSetCrtc(fd, output->crtc, output->buffer.fb, 0, 0,
@@ -161,6 +172,7 @@ int main(int argc, char **argv)
 {
 	struct drm_castkms_monitor_attach attach = {0};
 	struct drm_castkms_monitor_detach detach = {0};
+	struct drm_castkms_audio_files retained[OUTPUTS];
 	unsigned char edid[256];
 	drmModeRes *resources;
 	drmVersion *version;
@@ -251,26 +263,38 @@ int main(int argc, char **argv)
 	successor = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(successor >= 0);
 	CHECK(drmDropMaster(fd) == 0);
-	for (unsigned int i = 0; i < OUTPUTS; i++)
-		audio_terminal(outputs[i].audio.audio_fd);
+	for (unsigned int i = 0; i < OUTPUTS; i++) {
+		retained[i] = outputs[i].audio;
+		audio_suspended(retained[i].audio_fd);
+	}
 	acquire_master(successor);
 	for (unsigned int i = 0; i < OUTPUTS; i++) {
 		struct output *output = &outputs[i];
-		struct drm_castkms_audio_files old = output->audio;
 
 		output->audio = audio_capture(successor, output->crtc, output->connector);
 		enable(successor, output);
 		signal_on(i);
-		audio_terminal(old.audio_fd);
-		CHECK(close(old.audio_fd) == 0 && close(old.revoke_fd) == 0);
+		audio_suspended(retained[i].audio_fd);
 	}
 	CHECK(close(successor) == 0);
 	for (unsigned int i = 0; i < OUTPUTS; i++) {
+		audio_terminal(outputs[i].audio.audio_fd);
+		CHECK(close(outputs[i].audio.audio_fd) == 0);
+		CHECK(close(outputs[i].audio.revoke_fd) == 0);
+		outputs[i].audio = retained[i];
+	}
+	acquire_master(fd);
+	for (unsigned int i = 0; i < OUTPUTS; i++) {
+		enable(fd, &outputs[i]);
+		signal_on(i);
+	}
+	for (unsigned int i = 0; i < OUTPUTS; i++) {
 		struct output *output = &outputs[i];
 
-		audio_terminal(output->audio.audio_fd);
 		stop_writer(output);
-		CHECK(close(output->audio.audio_fd) == 0 && close(output->audio.revoke_fd) == 0);
+		CHECK(close(output->audio.revoke_fd) == 0);
+		audio_terminal(output->audio.audio_fd);
+		CHECK(close(output->audio.audio_fd) == 0);
 		CHECK(close(output->monitor_files.control_fd) == 0 && close(output->monitor_files.revoke_fd) == 0);
 		destroy_buffer(fd, &output->buffer);
 	}

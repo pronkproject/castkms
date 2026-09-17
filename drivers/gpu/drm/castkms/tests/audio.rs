@@ -116,6 +116,31 @@ mod cases {
     }
 
     #[test]
+    fn same_master_reacquisition_reactivates_audio_with_a_fresh_queue() -> Result {
+        renderer_control::with_display(|device, crtc, connector, _, file| {
+            let monitor = device.monitor.acquire(device)?;
+            monitor.attach(Some(edid()?))?;
+            let owner = File::issue_audio_owner(file.file(), crtc, connector)?;
+            let access = owner.access();
+            let master = file.file().master_snapshot().ok_or(EINVAL)?;
+            let mut samples = [0xff; 1920];
+            check(access.read(&mut samples, false)? == samples.len())?;
+
+            <Driver as kernel::drm::Driver>::master_changed(device, None);
+            check(access.check() == Err(EAGAIN))?;
+            check(access.read(&mut samples, true) == Err(EAGAIN))?;
+            <Driver as kernel::drm::Driver>::master_changed(
+                device,
+                Some(master.master().clone()),
+            );
+
+            access.check()?;
+            check(access.read(&mut samples, false)? == samples.len())?;
+            check(samples.iter().all(|sample| *sample == 0))
+        })
+    }
+
+    #[test]
     fn eight_audio_attachments_have_independent_lifetimes() -> Result {
         let driver = CastKms::new_features(c"castkms-eight-audio", 8, false, false, false)?;
         let device = driver._display.registration_guard().ok_or(ENODEV)?;
