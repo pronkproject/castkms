@@ -5,7 +5,7 @@
 use kernel::prelude::*;
 
 /// Source coordinates use unsigned 16.16 pixels; destination positions may be negative.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Geometry {
     pub(crate) source: [u32; 4],
     pub(crate) position: [i32; 2],
