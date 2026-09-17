@@ -222,6 +222,21 @@ int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry
 }
 EXPORT_SYMBOL_GPL(drm_constraints_crtc_add);
 
+int drm_constraints_crtc_add_suggested(struct drm_crtc *crtc,
+				       struct drm_constraints_entry *entry)
+{
+	int ret;
+
+	if (!crtc->constraints_output)
+		return -EOPNOTSUPP;
+	ret = validate_scope(crtc, entry);
+	if (ret)
+		return ret;
+	return drm_constraints_list_add_suggested(crtc->constraints_output->list,
+						  entry);
+}
+EXPORT_SYMBOL_GPL(drm_constraints_crtc_add_suggested);
+
 void drm_constraints_crtc_state_init(struct drm_crtc_state *state)
 {
 	if (state->crtc->constraints_output)

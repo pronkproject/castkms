@@ -44,6 +44,7 @@ static const struct drm_constraints_output_ops output_ops = { .check = check };
 
 static void put_description(void *data) { drm_constraints_description_put(data); }
 static void put_entry(void *data) { drm_constraints_entry_put(data); }
+static void put_snapshot(void *data) { drm_constraints_snapshot_put(data); }
 static void put_state(void *data) { drm_atomic_helper_crtc_destroy_state(NULL, data); }
 
 static struct output_fixture *new_fixture_with_modifiers(struct kunit *test, const char *name,
@@ -198,13 +199,22 @@ static void publishing_revalidates_complete_object_scope(struct kunit *test)
 							  fixture->plane->base.id);
 	struct drm_constraints_entry *wrong_plane = new_entry(test, fixture, fixture->crtc->base.id,
 							      U32_MAX);
+	const struct drm_constraints_snapshot_info *info;
+	struct drm_constraints_snapshot *snapshot;
 	struct drm_constraints_entry *selected;
+	int result;
 
 	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, target), -EOPNOTSUPP);
 	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, initial, 4, &output_ops), 0);
 	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, foreign), -EINVAL);
-	KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(fixture->crtc, wrong_plane), -EINVAL);
-	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add(fixture->crtc, target), 0);
+	result = drm_constraints_crtc_add_suggested(fixture->crtc, wrong_plane);
+	KUNIT_EXPECT_EQ(test, result, -EINVAL);
+	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_add_suggested(fixture->crtc, target), 0);
+	snapshot = drm_constraints_list_snapshot(drm_constraints_crtc_list(fixture->crtc), 0);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, snapshot);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_snapshot, snapshot), 0);
+	info = drm_constraints_snapshot_info(snapshot);
+	KUNIT_EXPECT_EQ(test, info->suggested_id, drm_constraints_entry_id(target));
 	selected = drm_constraints_list_selected(drm_constraints_crtc_list(fixture->crtc));
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, selected), 0);
 	KUNIT_EXPECT_PTR_EQ(test, selected, initial);

@@ -162,8 +162,8 @@ int drm_constraints_list_quiesce(struct drm_constraints_list *list,
 	return ret > 0 ? -EINVAL : ret;
 }
 
-int drm_constraints_list_add(struct drm_constraints_list *list,
-			     struct drm_constraints_entry *entry)
+static int add_entry(struct drm_constraints_list *list,
+		     struct drm_constraints_entry *entry, bool suggest)
 {
 	int ret = 0;
 
@@ -184,12 +184,27 @@ int drm_constraints_list_add(struct drm_constraints_list *list,
 			.entry = drm_constraints_entry_get(entry),
 			.selectable = true,
 		};
+		if (suggest)
+			list->info.suggested_id = drm_constraints_entry_id(entry);
 		advance_generation(list);
 	}
 	mutex_unlock(&list->lock);
 	return ret;
 }
+
+int drm_constraints_list_add(struct drm_constraints_list *list,
+			     struct drm_constraints_entry *entry)
+{
+	return add_entry(list, entry, false);
+}
 EXPORT_SYMBOL_GPL(drm_constraints_list_add);
+
+int drm_constraints_list_add_suggested(struct drm_constraints_list *list,
+				       struct drm_constraints_entry *entry)
+{
+	return add_entry(list, entry, true);
+}
+EXPORT_SYMBOL_GPL(drm_constraints_list_add_suggested);
 
 int drm_constraints_list_withdraw(struct drm_constraints_list *list, u64 id)
 {

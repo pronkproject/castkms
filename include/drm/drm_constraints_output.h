@@ -54,6 +54,9 @@ struct drm_constraints_entry *drm_constraints_crtc_default(struct drm_crtc *crtc
 
 /* Publish a ready entry after validating device, CRTC and existing plane scope. */
 int drm_constraints_crtc_add(struct drm_crtc *crtc, struct drm_constraints_entry *entry);
+/* Publish and suggest one ready entry as a single observable list change. */
+int drm_constraints_crtc_add_suggested(struct drm_crtc *crtc,
+				       struct drm_constraints_entry *entry);
 
 /* Atomic state helper: initialize the owned binding without allocating. */
 void drm_constraints_crtc_state_init(struct drm_crtc_state *state);
