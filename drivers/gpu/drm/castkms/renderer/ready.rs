@@ -31,6 +31,8 @@ use kernel::{
 /// Already submitted jobs independently retain their own buffers and native completion.
 #[pin_data]
 pub(crate) struct Worker {
+    output: crate::output::Identity,
+    interval: crate::authority::Interval,
     profile: Profile,
     source: Source,
     live: AtomicBool,
@@ -42,12 +44,24 @@ pub(crate) struct Worker {
 #[must_use = "dropping the endpoint owner terminally revokes its worker"]
 pub(crate) struct Owner {
     worker: Arc<Worker>,
+    authority: kernel::sync::aref::ARef<kernel::drm::capture::Authority<Worker>>,
+    permission: Option<crate::authority::grants::Registration>,
+}
+
+// SAFETY: The module retains the worker callback and destructor through native revocation.
+#[vtable]
+unsafe impl kernel::drm::capture::Policy for Worker {
+    fn revoke(&self) {
+        Worker::revoke(self);
+    }
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
     /// The candidate supplies owned registrations and a successfully completed native probe.
     pub(super) fn new(
+        output: crate::output::Identity,
+        interval: crate::authority::Interval,
         profile: &Profile,
         dimensions: [u32; 2],
         registrations: RegistrationSet,
@@ -74,17 +88,31 @@ impl Owner {
         let mut formats = KVec::new();
         formats.extend_from_slice(profile.formats(), GFP_KERNEL)?;
         let profile = Profile::new(limits, formats)?;
+        let worker = Arc::pin_init(
+            pin_init!(Worker {
+                output,
+                interval,
+                profile,
+                source,
+                live: AtomicBool::new(true),
+                registrations <- kernel::new_mutex!(Some(registrations)),
+            }),
+            GFP_KERNEL,
+        )?;
+        let authority = kernel::drm::capture::Authority::new(worker.clone())?;
         Ok(Self {
-            worker: Arc::pin_init(
-                pin_init!(Worker {
-                    profile,
-                    source,
-                    live: AtomicBool::new(true),
-                    registrations <- kernel::new_mutex!(Some(registrations)),
-                }),
-                GFP_KERNEL,
-            )?,
+            worker,
+            authority,
+            permission: None,
         })
+    }
+
+    pub(super) fn track_permission(&mut self, access: &super::permission::Access) -> Result {
+        if self.permission.is_some() {
+            return Err(EALREADY);
+        }
+        self.permission = Some(access.track_worker(&self.authority.revocation())?);
+        Ok(())
     }
 
     pub(crate) fn worker(&self) -> Arc<Worker> {
@@ -94,7 +122,7 @@ impl Owner {
 
 impl Drop for Owner {
     fn drop(&mut self) {
-        self.worker.revoke();
+        self.authority.revoke();
     }
 }
 
@@ -106,6 +134,14 @@ pub(crate) struct Ready<'a> {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Worker {
+    pub(crate) fn output(&self) -> &crate::output::Identity {
+        &self.output
+    }
+
+    pub(crate) fn interval(&self) -> crate::authority::Interval {
+        self.interval
+    }
+
     pub(crate) fn profile(&self) -> &Profile {
         &self.profile
     }

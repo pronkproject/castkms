@@ -117,7 +117,13 @@ impl Candidate {
     ) -> Result<super::ready::Owner> {
         let registrations = self.pin_private_images(pool, dimensions)?;
         let source = self.with_current_control(|_| self.probe.completed_source())?;
-        super::ready::Owner::new(profile, dimensions, registrations, source)
+        let mut owner = super::ready::Owner::new(
+            self.access.display().output.identity().clone(),
+            self.access.interval(),
+            profile, dimensions, registrations, source,
+        )?;
+        owner.track_permission(&self.access)?;
+        Ok(owner)
     }
 
     /// Register immutable pending capabilities without changing KMS acceptance.

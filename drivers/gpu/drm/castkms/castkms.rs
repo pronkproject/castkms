@@ -101,9 +101,20 @@ impl CastKms {
     }
 
     fn new_features(name: &CStr, output_count: u32, enable_cursor: bool, enable_overlay: bool, enable_plane_pipeline: bool) -> Result<Self> {
+        let state = device::Owner::new_features(
+            output_count, enable_cursor, enable_overlay, enable_plane_pipeline,
+        )?;
+        Self::new_with_state(name, state)
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+    fn new_constraints(name: &CStr, output_count: u32) -> Result<Self> {
+        Self::new_with_state(name, device::Owner::new_constraints(output_count)?)
+    }
+
+    fn new_with_state(name: &CStr, state: device::Owner) -> Result<Self> {
         let parent =
             faux::Registration::new_with_dma_mask(name, None, kernel::dma::DmaMask::new::<64>())?;
-        let state = device::Owner::new_features(output_count, enable_cursor, enable_overlay, enable_plane_pipeline)?;
         let drm =
             drm::UnregisteredDevice::<Driver>::new(parent.as_ref(), Ok::<_, Error>(state.state()))?;
         // SAFETY: After successful construction, field drop order unplugs DRM before parent
