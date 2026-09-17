@@ -247,16 +247,19 @@ int main(int argc, char **argv)
 		audio_terminal(old.audio_fd);
 		CHECK(close(old.audio_fd) == 0 && close(old.revoke_fd) == 0);
 	}
+	/* Open before dropping master so asynchronous recovery cannot reject open. */
+	successor = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(successor >= 0);
 	CHECK(drmDropMaster(fd) == 0);
 	for (unsigned int i = 0; i < OUTPUTS; i++)
 		audio_terminal(outputs[i].audio.audio_fd);
-	successor = open(argv[1], O_RDWR | O_CLOEXEC);
-	CHECK(successor >= 0 && drmSetMaster(successor) == 0);
+	acquire_master(successor);
 	for (unsigned int i = 0; i < OUTPUTS; i++) {
 		struct output *output = &outputs[i];
 		struct drm_castkms_audio_files old = output->audio;
 
 		output->audio = audio_capture(successor, output->crtc, output->connector);
+		enable(successor, output);
 		signal_on(i);
 		audio_terminal(old.audio_fd);
 		CHECK(close(old.audio_fd) == 0 && close(old.revoke_fd) == 0);
