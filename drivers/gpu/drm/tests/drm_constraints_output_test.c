@@ -46,7 +46,8 @@ static void put_description(void *data) { drm_constraints_description_put(data);
 static void put_entry(void *data) { drm_constraints_entry_put(data); }
 static void put_state(void *data) { drm_atomic_helper_crtc_destroy_state(NULL, data); }
 
-static struct output_fixture *new_fixture(struct kunit *test, const char *name)
+static struct output_fixture *new_fixture_with_modifiers(struct kunit *test, const char *name,
+						       const u64 *modifiers)
 {
 	struct output_fixture *fixture;
 	struct device *dev;
@@ -58,13 +59,18 @@ static struct output_fixture *new_fixture(struct kunit *test, const char *name)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture);
 	KUNIT_ASSERT_EQ(test, drm_constraints_device_init(&fixture->drm, 8), 0);
 	fixture->plane = drm_kunit_helper_create_primary_plane(test, &fixture->drm,
-							     NULL, NULL, NULL, 0, NULL);
+							     NULL, NULL, NULL, 0, modifiers);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->plane);
 	fixture->crtc = drm_kunit_helper_create_crtc(test, &fixture->drm, fixture->plane,
 						    NULL, NULL, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, fixture->crtc);
 	drm_mode_config_reset(&fixture->drm);
 	return fixture;
+}
+
+static struct output_fixture *new_fixture(struct kunit *test, const char *name)
+{
+	return new_fixture_with_modifiers(test, name, NULL);
 }
 
 static struct drm_constraints_entry *
@@ -259,6 +265,39 @@ new_property_entry(struct kunit *test, struct output_fixture *fixture,
 	return entry;
 }
 
+static void implicit_offer_requires_format_not_linear_modifier(struct kunit *test)
+{
+	static const u64 modifiers[] = { I915_FORMAT_MOD_X_TILED, DRM_FORMAT_MOD_INVALID };
+	struct output_fixture *f =
+		new_fixture_with_modifiers(test, "constraints-implicit", modifiers);
+	const struct drm_constraints_size size = { 64, 32, 64, 32 };
+	struct drm_constraints_format format = {
+		.plane_id = f->plane->base.id, .format = DRM_FORMAT_XRGB8888,
+		.size = size, .flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT,
+	};
+	struct drm_constraints_description *description;
+	struct drm_constraints_entry *entry;
+	unsigned int i;
+
+	for (i = 0; i < 3; i++) {
+		description = drm_constraints_description_create(&size, &format, 1, NULL, 0);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+		KUNIT_ASSERT_EQ(test,
+				kunit_add_action_or_reset(test, put_description, description), 0);
+		entry = drm_constraints_entry_create(drm_constraints_device_domain(&f->drm),
+						    f->crtc->base.id, description, &entry_ops, f);
+		KUNIT_ASSERT_NOT_ERR_OR_NULL(test, entry);
+		KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_entry, entry), 0);
+		if (!i)
+			KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(f->crtc, entry, 4,
+								     &output_ops), 0);
+		else
+			KUNIT_EXPECT_EQ(test, drm_constraints_crtc_add(f->crtc, entry), -EINVAL);
+		format.flags = i ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0;
+		format.format = i ? DRM_FORMAT_NV12 : DRM_FORMAT_XRGB8888;
+	}
+}
+
 static void property_rules_require_attached_supported_domains(struct kunit *test)
 {
 	struct output_fixture *fixture = new_fixture(test, "constraints-properties");
@@ -330,6 +369,7 @@ static struct kunit_case drm_constraints_output_tests[] = {
 	KUNIT_CASE(attaching_requires_disabled_unregistered_output),
 	KUNIT_CASE(publishing_revalidates_complete_object_scope),
 	KUNIT_CASE(offers_require_advertised_plane_allocations),
+	KUNIT_CASE(implicit_offer_requires_format_not_linear_modifier),
 	KUNIT_CASE(property_rules_require_attached_supported_domains),
 	{}
 };
