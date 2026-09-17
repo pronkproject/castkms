@@ -914,9 +914,13 @@ claims, renderer replacement and HOST selection. These checks use the kernel's
 display locks and publication paths; they do not establish physical GPU
 interoperability.
 
-The ``renderer-control`` selftest exercises the file interface, including
-descriptor publication, continuous scene updates, retained source reads and
-orderly return to HOST execution. A successful probe is not a captured frame.
+The ``renderer-control`` selftest joins the renderer and capture file
+interfaces. It CPU-copies a source scene into renderer-private storage, holds
+the resulting private-to-recipient claim while completing another source job,
+copies the private image into the capture destination and checks the delivered
+pixels. It also covers fault-safe descriptor publication, continuous scene
+updates, retained source reads and orderly return to HOST execution. This is a
+system-memory renderer fixture, not physical GPU interoperability evidence.
 
 Building without another display driver
 ---------------------------------------

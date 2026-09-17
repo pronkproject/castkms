@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-/* Immutable offers, ordinary atomic selection and source lifetimes. */
+/* Immutable offers, source rendering and delegated capture delivery. */
 #include "fixture.h"
 
 #include <dirent.h>
 #include <drm_fourcc.h>
 #include <fcntl.h>
+#include <linux/dma-buf.h>
 #include <poll.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -13,6 +14,7 @@
 #include <unistd.h>
 
 #include "../../../../include/uapi/drm/castkms_drm.h"
+#include "../../../../include/uapi/drm/drm_capture.h"
 #include "../../../../include/uapi/drm/drm_constraints.h"
 
 _Static_assert(sizeof(struct drm_castkms_renderer_query) == 32, "query layout");
@@ -24,6 +26,8 @@ _Static_assert(sizeof(struct drm_castkms_renderer_scene) == 56, "scene layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_dequeue_output) == 32, "output dequeue layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_output) == 72, "output layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_release_output) == 32, "output release layout");
+_Static_assert(sizeof(struct drm_capture_queue_output) == 40, "capture queue layout");
+_Static_assert(sizeof(struct drm_capture_result) == 24, "capture result layout");
 
 static void expect_error(int fd, unsigned long cmd, void *request, int error)
 {
@@ -120,6 +124,120 @@ static void close_scene(struct drm_castkms_renderer_scene *scene)
 	}
 }
 
+static struct drm_castkms_renderer_layer *single_layer(
+	struct drm_castkms_renderer_scene *scene, uint64_t constraints_id,
+	uint32_t width, uint32_t height, uint64_t previous)
+{
+	struct drm_castkms_renderer_layer *layer = (void *)(scene + 1);
+
+	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
+	CHECK(scene->constraints_id == constraints_id && scene->content_serial > previous);
+	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
+	CHECK(scene->width == width && scene->height == height);
+	CHECK(scene->layer_count == 1 && scene->producer_fd == -1);
+	CHECK(!scene->output_color_count && !scene->reserved);
+	CHECK(layer->bytes == sizeof(*layer));
+	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
+	CHECK(layer->format == DRM_FORMAT_XRGB8888);
+	CHECK(layer->modifier == DRM_FORMAT_MOD_INVALID && layer->plane_count == 1);
+	CHECK(layer->width == width && layer->height == height);
+	CHECK(layer->source[0] == 0 && layer->source[1] == 0);
+	CHECK(layer->source[2] == width << 16 && layer->source[3] == height << 16);
+	CHECK(layer->position[0] == 0 && layer->position[1] == 0);
+	CHECK(layer->destination[0] == width && layer->destination[1] == height);
+	CHECK(!layer->color_count && !layer->planes[0].reserved);
+	return layer;
+}
+
+static void check_layout(size_t size, uint64_t offset, uint32_t pitch,
+			 uint32_t width, uint32_t height)
+{
+	size_t row = (size_t)width * 4;
+
+	CHECK(width && height && row / 4 == width);
+	CHECK(pitch >= row && offset <= size && row <= size - offset);
+	CHECK((size_t)(height - 1) <= (size - offset - row) / pitch);
+}
+
+static void copy_linear(int source, size_t source_size, uint32_t source_pitch,
+			uint64_t source_offset, int destination, size_t destination_size,
+			uint32_t destination_pitch, uint64_t destination_offset,
+			uint32_t width, uint32_t height)
+{
+	struct dma_buf_sync source_sync = { .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
+	struct dma_buf_sync destination_sync = { .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE };
+	unsigned char *source_pixels, *destination_pixels;
+	size_t row = (size_t)width * 4;
+
+	check_layout(source_size, source_offset, source_pitch, width, height);
+	check_layout(destination_size, destination_offset, destination_pitch, width, height);
+	source_pixels = mmap(NULL, source_size, PROT_READ, MAP_SHARED, source, 0);
+	destination_pixels = mmap(NULL, destination_size, PROT_WRITE, MAP_SHARED,
+				  destination, 0);
+	CHECK(source_pixels != MAP_FAILED && destination_pixels != MAP_FAILED);
+	CHECK(ioctl(source, DMA_BUF_IOCTL_SYNC, &source_sync) == 0);
+	CHECK(ioctl(destination, DMA_BUF_IOCTL_SYNC, &destination_sync) == 0);
+	for (uint32_t y = 0; y < height; y++)
+		memcpy(destination_pixels + destination_offset + (size_t)y * destination_pitch,
+		       source_pixels + source_offset + (size_t)y * source_pitch, row);
+	destination_sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE;
+	source_sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	CHECK(ioctl(destination, DMA_BUF_IOCTL_SYNC, &destination_sync) == 0);
+	CHECK(ioctl(source, DMA_BUF_IOCTL_SYNC, &source_sync) == 0);
+	CHECK(munmap(destination_pixels, destination_size) == 0);
+	CHECK(munmap(source_pixels, source_size) == 0);
+}
+
+static void check_pixels(int dma, const struct buffer *buffer, uint32_t width,
+			 uint32_t height, unsigned char value)
+{
+	struct dma_buf_sync sync = { .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
+	unsigned char *pixels = mmap(NULL, buffer->dumb.size, PROT_READ, MAP_SHARED, dma, 0);
+
+	CHECK(pixels != MAP_FAILED);
+	CHECK(ioctl(dma, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	for (uint32_t y = 0; y < height; y++)
+		for (uint32_t x = 0; x < width * 4; x++)
+			if (x % 4 != 3)
+				CHECK(pixels[(size_t)y * buffer->dumb.pitch + x] == value);
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	CHECK(ioctl(dma, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	CHECK(munmap(pixels, buffer->dumb.size) == 0);
+}
+
+static void wait_capture(int fd)
+{
+	struct pollfd event = { .fd = fd, .events = POLLIN };
+
+	CHECK(poll(&event, 1, 5000) == 1);
+	CHECK(event.revents & POLLIN);
+	CHECK(!(event.revents & (POLLHUP | POLLERR | POLLNVAL)));
+}
+
+static void render_one(int renderer, struct drm_castkms_renderer_dequeue_scene *dequeue,
+		       struct drm_castkms_renderer_scene *scene,
+		       struct drm_castkms_renderer_release_source *release,
+		       uint64_t constraints_id, uint64_t *previous,
+		       int private_fd, const struct buffer *private)
+{
+	struct drm_castkms_renderer_layer *layer;
+
+	readable(renderer, 1);
+	CHECK(ioctl(renderer, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE, dequeue) == 0);
+	layer = single_layer(scene, constraints_id, private->dumb.width,
+			     private->dumb.height, *previous);
+	*previous = scene->content_serial;
+	release->job_id = scene->job_id;
+	expect_error(renderer, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE, dequeue, EBUSY);
+	copy_linear(layer->planes[0].dma_buf_fd, private->dumb.size,
+		    layer->planes[0].pitch, layer->planes[0].offset,
+		    private_fd, private->dumb.size, private->dumb.pitch, 0,
+		    private->dumb.width, private->dumb.height);
+	close_scene(scene);
+	release->kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE;
+	CHECK(ioctl(renderer, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE, release) == 0);
+}
+
 int main(int argc, char **argv)
 {
 	struct drm_castkms_renderer_files files = { .renderer_fd = -1, .revoke_fd = -1 };
@@ -155,16 +273,36 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_release_source release = {
 		.completion_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS,
 	};
+	struct drm_castkms_renderer_dequeue_output take_output = { .image_id = 1 };
+	struct drm_castkms_renderer_output renderer_output;
+	struct drm_castkms_renderer_release_output release_output = {
+		.completion_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
+	};
+	struct drm_capture_grant_files capture_files = { .capture_fd = -1, .control_fd = -1 };
+	struct drm_mode_create_capture_grant grant = { .files = (uintptr_t)&capture_files };
+	struct drm_capture_describe description;
+	struct drm_capture_create_stream stream = { .id = 1, .capacity = 1 };
+	struct drm_capture_register_destination destination = {
+		.id = 1, .format = DRM_FORMAT_XRGB8888, .num_planes = 1,
+		.modifier = DRM_FORMAT_MOD_LINEAR,
+	};
+	struct drm_capture_queue_output queue = {
+		.stream = 1, .use_id = 1, .destination = 1, .reuse_fd = -1,
+	};
+	struct drm_capture_dequeue take_capture = { .stream = 1 };
+	struct drm_capture_result capture_result;
+	struct drm_capture_unregister_destination remove_destination = { .id = 1 };
+	struct drm_capture_destroy_stream destroy_stream = { .id = 1 };
 	struct drm_castkms_renderer_scene *scene;
 	drmModeRes *resources;
 	drmModeConnector *connector;
 	drmModeModeInfo *mode;
-	struct buffer source[2], private;
+	struct buffer source[2], private[2], output;
 	struct monitor_control monitor;
 	uint64_t host, worker, previous = 0;
 	unsigned int baseline;
 	uint32_t plane;
-	int fd, private_fd;
+	int fd, private_fd[2], output_fd;
 	void *fault;
 
 	CHECK(argc == 2);
@@ -176,6 +314,8 @@ int main(int argc, char **argv)
 	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	create.crtc_id = resources->crtcs[0];
 	create.connector_id = resources->connectors[0];
+	grant.crtc_id = create.crtc_id;
+	grant.connector_id = create.connector_id;
 	monitor = attach_fallback_monitor(fd, create.connector_id);
 	host = selected(fd, create.crtc_id, 1);
 	connector = drmModeGetConnector(fd, create.connector_id);
@@ -212,11 +352,15 @@ int main(int argc, char **argv)
 		&prepare, EALREADY);
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER,
 		&publish, ENODATA);
-	private = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0);
-	CHECK(drmPrimeHandleToFD(fd, private.dumb.handle, DRM_CLOEXEC | DRM_RDWR,
-		&private_fd) == 0);
-	image.buffers = (uintptr_t)&private_fd;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE, &image) == 0);
+	for (unsigned int i = 0; i < 2; i++) {
+		private[i] = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0);
+		CHECK(drmPrimeHandleToFD(fd, private[i].dumb.handle, DRM_CLOEXEC | DRM_RDWR,
+			&private_fd[i]) == 0);
+		image.image_id = i + 1;
+		image.buffers = (uintptr_t)&private_fd[i];
+		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+			&image) == 0);
+	}
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE, &probe) == 0);
 	publish.result = (uintptr_t)fault;
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER, &publish, EFAULT);
@@ -236,6 +380,9 @@ int main(int argc, char **argv)
 		&remove, EBUSY);
 	source[0] = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x33);
 	source[1] = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0x88);
+	output = create_buffer(fd, mode->hdisplay, mode->vdisplay, 0);
+	CHECK(drmPrimeHandleToFD(fd, output.dumb.handle, DRM_CLOEXEC | DRM_RDWR,
+		&output_fd) == 0);
 	CHECK(drmModeSetCrtc(fd, create.crtc_id, source[0].fb, 0, 0,
 			     &create.connector_id, 1, mode) == 0);
 	select_offer(fd, create.crtc_id, worker,
@@ -243,6 +390,22 @@ int main(int argc, char **argv)
 	CHECK(selected(fd, create.crtc_id, 2) == host);
 	select_offer(fd, create.crtc_id, worker, DRM_MODE_ATOMIC_ALLOW_MODESET);
 	CHECK(selected(fd, create.crtc_id, 2) == worker);
+	CHECK(ioctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &grant) == 0);
+	CHECK(fcntl(capture_files.capture_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(fcntl(capture_files.control_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &description) == 0);
+	CHECK(description.width == mode->hdisplay && description.height == mode->vdisplay);
+	CHECK(description.format == DRM_FORMAT_XRGB8888);
+	CHECK(description.modifier == DRM_FORMAT_MOD_LINEAR && description.max_requests);
+	stream.offer = description.id;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CREATE_STREAM, &stream) == 0);
+	destination.width = mode->hdisplay;
+	destination.height = mode->vdisplay;
+	destination.fds[0] = output_fd;
+	destination.strides[0] = output.dumb.pitch;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_REGISTER_DESTINATION,
+		&destination) == 0);
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
 	scene = calloc(1, dequeue.capacity);
 	CHECK(scene);
 	dequeue.result = (uintptr_t)fault;
@@ -250,31 +413,77 @@ int main(int argc, char **argv)
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE, &dequeue, EFAULT);
 	CHECK(open_files() == baseline);
 	dequeue.result = (uintptr_t)scene;
-	for (unsigned int frame = 0; frame < 24; frame++) {
-		readable(files.renderer_fd, 1);
-		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
-			&dequeue) == 0);
-		CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-		CHECK(scene->constraints_id == worker && scene->content_serial > previous);
-		CHECK(scene->bytes == sizeof(*scene) + sizeof(struct drm_castkms_renderer_layer));
-		CHECK(scene->layer_count == 1 && scene->producer_fd == -1
-			&& !scene->output_color_count);
-		previous = scene->content_serial;
-		release.job_id = scene->job_id;
-		expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
-			&dequeue, EBUSY);
-		readable(files.renderer_fd, 0);
-		close_scene(scene);
-		release.kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE;
-		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
-			&release) == 0);
-		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
-			&release) == 0);
-		readable(files.renderer_fd, 0);
+	render_one(files.renderer_fd, &dequeue, scene, &release, worker, &previous,
+		   private_fd[0], &private[0]);
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
+		&release) == 0);
+
+	/* Failed publication grants no access and leaks no DMA-BUF descriptor. */
+	take_output.result = (uintptr_t)fault;
+	baseline = open_files();
+	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
+		&take_output, EFAULT);
+	CHECK(open_files() == baseline);
+	wait_capture(capture_files.capture_fd);
+	take_capture.result = (uintptr_t)&capture_result;
+	memset(&capture_result, 0xa5, sizeof(capture_result));
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE, &take_capture) == 0);
+	CHECK(capture_result.use_id == 1 && capture_result.status == -ECANCELED);
+	CHECK(!capture_result.completed_at_ns && !capture_result.reserved);
+	queue.use_id = 2;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
+	take_output.result = (uintptr_t)&renderer_output;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
+		&take_output) == 0);
+	CHECK(renderer_output.image_id == 1 && renderer_output.width == mode->hdisplay);
+	CHECK(renderer_output.height == mode->vdisplay);
+	CHECK(renderer_output.format == DRM_FORMAT_XRGB8888 && renderer_output.plane_count == 1);
+	CHECK(renderer_output.modifier == DRM_FORMAT_MOD_LINEAR);
+	CHECK(renderer_output.dma_buf_fd >= 0);
+	CHECK(fcntl(renderer_output.dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(!renderer_output.reserved[0] && !renderer_output.reserved[1]);
+
+	/* A held E-to-D claim must not retain A-to-E source access. */
+	flip(fd, plane, source[1].fb);
+	dequeue.image_id = 2;
+	render_one(files.renderer_fd, &dequeue, scene, &release, worker, &previous,
+		   private_fd[1], &private[1]);
+	copy_linear(private_fd[0], private[0].dumb.size, private[0].dumb.pitch, 0,
+		    renderer_output.dma_buf_fd, output.dumb.size, renderer_output.pitch,
+		    renderer_output.offset, mode->hdisplay, mode->vdisplay);
+	release_output.job_id = renderer_output.job_id;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT,
+		&release_output) == 0);
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT,
+		&release_output) == 0);
+	CHECK(close(renderer_output.dma_buf_fd) == 0);
+	wait_capture(capture_files.capture_fd);
+	memset(&capture_result, 0xa5, sizeof(capture_result));
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE, &take_capture) == 0);
+	CHECK(capture_result.use_id == 2 && capture_result.status == 0);
+	CHECK(capture_result.completed_at_ns > 0 && !capture_result.reserved);
+	check_pixels(output_fd, &output, mode->hdisplay, mode->vdisplay, 0x33);
+	take_output.image_id = 2;
+	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
+		&take_output, ENODATA);
+
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
+		&remove_destination) == 0);
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM,
+		&destroy_stream) == 0);
+	CHECK(close(capture_files.control_fd) == 0);
+	CHECK(close(capture_files.capture_fd) == 0);
+
+	for (unsigned int frame = 2; frame < 24; frame++) {
+		flip(fd, plane, source[frame % 2].fb);
+		dequeue.image_id = frame % 2 + 1;
+		render_one(files.renderer_fd, &dequeue, scene, &release, worker, &previous,
+			   private_fd[frame % 2], &private[frame % 2]);
 		expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
 			&dequeue, ENODATA);
-		flip(fd, plane, source[(frame + 1) % 2].fb);
 	}
+	flip(fd, plane, source[0].fb);
+	dequeue.image_id = 1;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE, &dequeue) == 0);
 	release.job_id = scene->job_id;
 	close_scene(scene);
@@ -285,20 +494,28 @@ int main(int argc, char **argv)
 	CHECK(close(files.revoke_fd) == 0);
 	release.kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE, &release) == 0);
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE, &remove) == 0);
+	for (unsigned int i = 0; i < 2; i++) {
+		remove.image_id = i + 1;
+		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE,
+			&remove) == 0);
+	}
 	select_offer(fd, create.crtc_id, host, DRM_MODE_ATOMIC_ALLOW_MODESET);
 	CHECK(close(files.renderer_fd) == 0);
-	CHECK(close(private_fd) == 0);
+	for (unsigned int i = 0; i < 2; i++)
+		CHECK(close(private_fd[i]) == 0);
+	CHECK(close(output_fd) == 0);
 	CHECK(drmModeSetCrtc(fd, create.crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
 	for (unsigned int i = 0; i < 2; i++)
 		destroy_buffer(fd, &source[i]);
-	destroy_buffer(fd, &private);
+	for (unsigned int i = 0; i < 2; i++)
+		destroy_buffer(fd, &private[i]);
+	destroy_buffer(fd, &output);
 	free(scene);
 	CHECK(munmap(fault, 4096) == 0);
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
 	close_monitor(&monitor);
 	CHECK(close(fd) == 0);
-	puts("PASS: immutable offers, atomic selection, 24 frames and revoked source release");
+	puts("PASS: renderer scenes, independent output delivery, 24 frames and cleanup");
 	return 0;
 }
