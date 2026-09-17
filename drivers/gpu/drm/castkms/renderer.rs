@@ -10,7 +10,7 @@ pub(crate) mod offer;
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) mod endpoint;
 pub(crate) mod content;
-mod capability_description;
+mod constraints_description;
 pub(crate) mod description;
 mod client_file;
 pub(crate) mod files;

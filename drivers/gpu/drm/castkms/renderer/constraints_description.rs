@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Bounded capability encoding, independent of userspace access and authorization.
+//! Bounded renderer constraints, independent of userspace access and authorization.
 
 use crate::execution::{
     capabilities::{ColorLimits, Format, GeometryLimits, Limits, Profile},
@@ -11,7 +11,7 @@ use kernel::{
     uapi,
 };
 
-pub(super) const MAX_BYTES: usize = uapi::DRM_CASTKMS_CAPABILITY_MAX_BYTES as usize;
+pub(super) const MAX_BYTES: usize = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_BYTES as usize;
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
@@ -61,36 +61,36 @@ const _: () = {
     assert!(core::mem::size_of::<Header>() == 128);
     assert!(
         core::mem::size_of::<Header>()
-            == core::mem::size_of::<uapi::drm_castkms_capability_profile>()
+            == core::mem::size_of::<uapi::drm_castkms_renderer_constraints>()
     );
     assert!(core::mem::size_of::<Storage>() == 32);
     assert!(
         core::mem::size_of::<Storage>()
-            == core::mem::size_of::<uapi::drm_castkms_capability_format>()
+            == core::mem::size_of::<uapi::drm_castkms_renderer_constraints_format>()
     );
     assert!(
         crate::execution::capabilities::MAX_FORMATS
-            == uapi::DRM_CASTKMS_CAPABILITY_MAX_FORMATS as usize
+            == uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_FORMATS as usize
     );
     assert!(MAX_BYTES == core::mem::size_of::<Header>()
         + core::mem::size_of::<Storage>() * crate::execution::capabilities::MAX_FORMATS);
 };
 
-const FEATURES: u32 = uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP
-    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL
-    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_POSITION
-    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SCALE
-    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SRGB
-    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX
-    | uapi::DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX;
-const STORAGE: u32 = uapi::DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE
-    | uapi::DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED
-    | uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER;
-const YUV_ENCODINGS: u32 = uapi::DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT601
-    | uapi::DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT709
-    | uapi::DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT2020;
-const YUV_RANGES: u32 = uapi::DRM_CASTKMS_CAPABILITY_YUV_RANGE_LIMITED
-    | uapi::DRM_CASTKMS_CAPABILITY_YUV_RANGE_FULL;
+const FEATURES: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_CROP
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FRACTIONAL
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_POSITION
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_SCALE
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_SRGB
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_PLANE_MATRIX
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_OUTPUT_MATRIX;
+const STORAGE: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER;
+const YUV_ENCODINGS: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT601
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT709
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT2020;
+const YUV_RANGES: u32 = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_LIMITED
+    | uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_FULL;
 
 /// Decode the worker-owned whole-scene declaration.
 pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
@@ -98,7 +98,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
         return Err(E2BIG);
     }
     let (header, formats) = Header::from_bytes_copy_prefix(bytes).ok_or(EINVAL)?;
-    if header.version != uapi::DRM_CASTKMS_CAPABILITY_VERSION {
+    if header.version != uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION {
         return Err(EOPNOTSUPP);
     }
     if header.reserved != [0; 10]
@@ -110,14 +110,14 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
     {
         return Err(EINVAL);
     }
-    if header.kind != uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER {
+    if header.kind != uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND {
         return Err(EINVAL);
     }
     let mut tuples = KVec::with_capacity(header.format_count as usize, GFP_KERNEL)?;
     for bytes in formats.chunks_exact(core::mem::size_of::<Storage>()) {
         let format = Storage::from_bytes_copy(bytes).ok_or(EINVAL)?;
         if format.flags & !STORAGE != 0
-            || (format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER == 0
+            || (format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER == 0
                 && format.modifier != 0)
         {
             return Err(EINVAL);
@@ -125,11 +125,11 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
         tuples.push(
             Format {
                 fourcc: format.fourcc,
-                modifier: (format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER != 0)
+                modifier: (format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER != 0)
                     .then_some(format.modifier),
                 planes: format.plane_count,
-                native: format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE != 0,
-                imported: format.flags & uapi::DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED != 0,
+                native: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE != 0,
+                imported: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED != 0,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
                 max_pitch: format.max_pitch,
@@ -145,18 +145,18 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
                 min_source: header.min_source,
                 output: header.max_output,
                 source: header.max_source,
-                crop: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP),
-                fractional: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL),
-                position: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_POSITION),
-                scale: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SCALE),
+                crop: has(uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_CROP),
+                fractional: has(uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FRACTIONAL),
+                position: has(uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_POSITION),
+                scale: has(uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_SCALE),
                 min_scale: header.min_scale,
                 max_scale: header.max_scale,
             },
             color: ColorLimits {
                 operations: header.max_color_operations as usize,
-                srgb: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SRGB),
-                plane_matrix: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX),
-                output_matrix: has(uapi::DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX),
+                srgb: has(uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_SRGB),
+                plane_matrix: has(uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_PLANE_MATRIX),
+                output_matrix: has(uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_OUTPUT_MATRIX),
                 lut_entries: header.max_lut_entries as usize,
                 yuv_encodings: core::array::from_fn(|bit| header.yuv_encodings & (1 << bit) != 0),
                 yuv_ranges: core::array::from_fn(|bit| header.yuv_ranges & (1 << bit) != 0),
@@ -171,8 +171,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 fn encode(profile: &Profile) -> Result<KVec<u8>> {
     let mut header = Header {
-        version: uapi::DRM_CASTKMS_CAPABILITY_VERSION,
-        kind: uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER,
+        version: uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION,
+        kind: uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND,
         ..Default::default()
     };
     let mut bytes = KVec::with_capacity(MAX_BYTES, GFP_KERNEL)?;
@@ -180,21 +180,21 @@ fn encode(profile: &Profile) -> Result<KVec<u8>> {
         let limits = profile.limits();
         let geometry = limits.geometry;
         let color = limits.color;
-        header.kind = uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER;
+        header.kind = uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND;
         header.format_count = profile.formats().len() as u32;
         for (enabled, flag) in [
-            (geometry.crop, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_CROP),
-            (geometry.fractional, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL),
-            (geometry.position, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_POSITION),
-            (geometry.scale, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SCALE),
-            (color.srgb, uapi::DRM_CASTKMS_CAPABILITY_PROFILE_SRGB),
+            (geometry.crop, uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_CROP),
+            (geometry.fractional, uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FRACTIONAL),
+            (geometry.position, uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_POSITION),
+            (geometry.scale, uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_SCALE),
+            (color.srgb, uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_SRGB),
             (
                 color.plane_matrix,
-                uapi::DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX,
+                uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_PLANE_MATRIX,
             ),
             (
                 color.output_matrix,
-                uapi::DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX,
+                uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_OUTPUT_MATRIX,
             ),
         ] {
             if enabled {
@@ -229,10 +229,10 @@ fn encode(profile: &Profile) -> Result<KVec<u8>> {
                 fourcc: format.fourcc,
                 plane_count: format.planes,
                 modifier: format.modifier.unwrap_or(0),
-                flags: u32::from(format.native) * uapi::DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE
-                    | u32::from(format.imported) * uapi::DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED
+                flags: u32::from(format.native) * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE
+                    | u32::from(format.imported) * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED
                     | u32::from(format.modifier.is_some())
-                        * uapi::DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER,
+                        * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
                 max_pitch: format.max_pitch,
@@ -312,7 +312,7 @@ mod tests {
         let mut bytes = encode(&profile()?)?;
         bytes[4..8].copy_from_slice(&0u32.to_ne_bytes());
         assert!(matches!(decode(&bytes), Err(EINVAL)));
-        bytes[4..8].copy_from_slice(&uapi::DRM_CASTKMS_CAPABILITY_KIND_RENDERER.to_ne_bytes());
+        bytes[4..8].copy_from_slice(&uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND.to_ne_bytes());
         bytes[0..4].copy_from_slice(&0u32.to_ne_bytes());
         assert!(matches!(decode(&bytes), Err(EOPNOTSUPP)));
         Ok(())

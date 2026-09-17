@@ -33,8 +33,8 @@ unsafe impl AsBytes for Query {}
 
 #[repr(C)]
 struct Prepare {
-    profile: u64,
-    profile_size: u32,
+    constraints: u64,
+    constraints_size: u32,
     flags: u32,
     width: u32,
     height: u32,
@@ -245,19 +245,19 @@ impl ClientFile {
 
     fn prepare(&self, arg: usize) -> Result {
         let request = read::<Prepare>(arg)?;
-        if request.profile == 0 || request.flags != 0 || request.reserved != [0; 3] {
+        if request.constraints == 0 || request.flags != 0 || request.reserved != [0; 3] {
             return Err(EINVAL);
         }
-        if request.profile_size as usize > super::capability_description::MAX_BYTES {
+        if request.constraints_size as usize > super::constraints_description::MAX_BYTES {
             return Err(E2BIG);
         }
-        let pointer = usize::try_from(request.profile).map_err(|_| EOVERFLOW)?;
-        let mut bytes = KVec::with_capacity(request.profile_size as usize, GFP_KERNEL)?;
-        bytes.resize(request.profile_size as usize, 0, GFP_KERNEL)?;
+        let pointer = usize::try_from(request.constraints).map_err(|_| EOVERFLOW)?;
+        let mut bytes = KVec::with_capacity(request.constraints_size as usize, GFP_KERNEL)?;
+        bytes.resize(request.constraints_size as usize, 0, GFP_KERNEL)?;
         UserSlice::new(UserPtr::from_addr(pointer), bytes.len())
             .reader()
             .read_slice(&mut bytes)?;
-        let profile = super::capability_description::decode(&bytes)?;
+        let profile = super::constraints_description::decode(&bytes)?;
         self.endpoint
             .declare(profile, [request.width, request.height])
     }

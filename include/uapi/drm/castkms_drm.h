@@ -6,26 +6,31 @@
 
 #include <linux/types.h>
 
-#define DRM_CASTKMS_MONITOR_CONTROL_VERSION 2
+#define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 10
+#define DRM_CASTKMS_RENDERER_VERSION 1
 
-#define DRM_CASTKMS_CAPABILITY_VERSION 2
-#define DRM_CASTKMS_CAPABILITY_KIND_RENDERER 2
-#define DRM_CASTKMS_CAPABILITY_MAX_FORMATS 256
-#define DRM_CASTKMS_CAPABILITY_MAX_BYTES (128U + 32U * 256U)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION 1
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND 1
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_FORMATS 256
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_HEADER_BYTES 128U
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES 32U
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_BYTES \
+	(DRM_CASTKMS_RENDERER_CONSTRAINTS_HEADER_BYTES + \
+	 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_BYTES * \
+	 DRM_CASTKMS_RENDERER_CONSTRAINTS_MAX_FORMATS)
 
-#define DRM_CASTKMS_CAPABILITY_PROFILE_CROP (1U << 0)
-#define DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL (1U << 1)
-#define DRM_CASTKMS_CAPABILITY_PROFILE_POSITION (1U << 2)
-#define DRM_CASTKMS_CAPABILITY_PROFILE_SCALE (1U << 3)
-#define DRM_CASTKMS_CAPABILITY_PROFILE_SRGB (1U << 4)
-#define DRM_CASTKMS_CAPABILITY_PROFILE_PLANE_MATRIX (1U << 5)
-#define DRM_CASTKMS_CAPABILITY_PROFILE_OUTPUT_MATRIX (1U << 6)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_CROP (1U << 0)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FRACTIONAL (1U << 1)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_POSITION (1U << 2)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_SCALE (1U << 3)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_SRGB (1U << 4)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_PLANE_MATRIX (1U << 5)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_OUTPUT_MATRIX (1U << 6)
 
-#define DRM_CASTKMS_CAPABILITY_FORMAT_NATIVE (1U << 0)
-#define DRM_CASTKMS_CAPABILITY_FORMAT_IMPORTED (1U << 1)
-#define DRM_CASTKMS_CAPABILITY_FORMAT_EXPLICIT_MODIFIER (1U << 2)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE (1U << 0)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED (1U << 1)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER (1U << 2)
 
 /* Scene values and the corresponding capability-mask bits share one namespace. */
 #define DRM_CASTKMS_YUV_ENCODING_BT601 0
@@ -33,23 +38,23 @@
 #define DRM_CASTKMS_YUV_ENCODING_BT2020 2 /* Nonconstant luminance. */
 #define DRM_CASTKMS_YUV_RANGE_LIMITED 0
 #define DRM_CASTKMS_YUV_RANGE_FULL 1
-#define DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT601 (1U << DRM_CASTKMS_YUV_ENCODING_BT601)
-#define DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT709 (1U << DRM_CASTKMS_YUV_ENCODING_BT709)
-#define DRM_CASTKMS_CAPABILITY_YUV_ENCODING_BT2020 (1U << DRM_CASTKMS_YUV_ENCODING_BT2020)
-#define DRM_CASTKMS_CAPABILITY_YUV_RANGE_LIMITED (1U << DRM_CASTKMS_YUV_RANGE_LIMITED)
-#define DRM_CASTKMS_CAPABILITY_YUV_RANGE_FULL (1U << DRM_CASTKMS_YUV_RANGE_FULL)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT601 (1U << DRM_CASTKMS_YUV_ENCODING_BT601)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT709 (1U << DRM_CASTKMS_YUV_ENCODING_BT709)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT2020 (1U << DRM_CASTKMS_YUV_ENCODING_BT2020)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_LIMITED (1U << DRM_CASTKMS_YUV_RANGE_LIMITED)
+#define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_FULL (1U << DRM_CASTKMS_YUV_RANGE_FULL)
 
 /*
  * Native-endian immutable whole-scene contract. Exactly format_count records
  * follow this 128-byte header. Unknown flags and reserved fields must be zero.
- * kind must be DRM_CASTKMS_CAPABILITY_KIND_RENDERER. Fixed default constraints
+ * kind must be DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND. Fixed default constraints
  * are discovered through generic KMS listing, not supplied by the worker.
  * RENDERER limits apply to every role; advertise the intersection if roles have
  * different restrictions. Dimensions and scale limits are positive; scales are
  * inclusive unsigned 16.16 source/destination ratios. Roles are primary,
  * overlay and cursor. YUV masks use bit positions from the scene encoding.
  * Sampling is nearest-neighbor, blending is premultiplied source-over and
- * stacking follows the scene description. A profile grants no buffer access.
+ * stacking follows the scene description. Constraints grant no buffer access.
  * min_output/min_source and max_output/max_source bound width and height
  * inclusively.
  * RENDERER bounds must be positive with min <= max on each axis. Equal bounds
@@ -59,7 +64,7 @@
  * Header and 32-byte format-record layouts are fixed within a version;
  * new record fields require a new version.
  */
-struct drm_castkms_capability_profile {
+struct drm_castkms_renderer_constraints {
 	__u32 version;
 	__u32 kind;
 	__u32 flags;
@@ -85,7 +90,7 @@ struct drm_castkms_capability_profile {
  * At least one provenance flag is required. Alignments are positive powers of
  * two and apply to each memory plane. Duplicate tuples are rejected.
  */
-struct drm_castkms_capability_format {
+struct drm_castkms_renderer_constraints_format {
 	__u32 fourcc;
 	__u32 plane_count;
 	__u64 modifier;
@@ -245,14 +250,14 @@ struct drm_castkms_renderer_query {
 
 /*
  * Prepare exactly one immutable whole-scene declaration on an empty endpoint.
- * profile points to profile_size capability bytes. width/height are the exact
+ * constraints points to constraints_size bytes. width/height are the exact
  * private-pool target within the declared output bounds; they need not match
  * the current mode. Flags/reserved must be zero. Success changes only the draft.
  * Failure leaves an empty endpoint retryable; a second declaration is EALREADY.
  */
 struct drm_castkms_renderer_prepare_offer {
-	__u64 profile;
-	__u32 profile_size;
+	__u64 constraints;
+	__u32 constraints_size;
 	__u32 flags;
 	__u32 width;
 	__u32 height;
@@ -372,7 +377,7 @@ struct drm_castkms_renderer_release_source {
  * ENOSPC without consuming the scene. Flags and reserved fields must be zero.
  * Empty/unchanged scenes return ENODATA, and an outstanding job returns EBUSY.
  */
-#define DRM_CASTKMS_RENDERER_SCENE_VERSION 2
+#define DRM_CASTKMS_RENDERER_SCENE_VERSION 1
 #define DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES 65536
 #define DRM_CASTKMS_RENDERER_SCENE_MAX_LAYERS 24
 #define DRM_CASTKMS_RENDERER_SCENE_MAX_COLOR_OPS 16
@@ -549,15 +554,15 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
 #define DRM_CASTKMS_MONITOR_ATTACH 0x02
 #define DRM_CASTKMS_MONITOR_DETACH 0x03
-#define DRM_CASTKMS_RENDERER_QUERY 0x04
-#define DRM_CASTKMS_RENDERER_PREPARE_OFFER 0x05
-#define DRM_CASTKMS_RENDERER_WITHDRAW_OFFER 0x06
-#define DRM_CASTKMS_RENDERER_PUBLISH_OFFER 0x09
-#define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x08
-#define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x0b
-#define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
-#define DRM_CASTKMS_RENDERER_REGISTER_IMAGE 0x0f
-#define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x10
+#define DRM_CASTKMS_RENDERER_QUERY 0x00
+#define DRM_CASTKMS_RENDERER_PREPARE_OFFER 0x01
+#define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x02
+#define DRM_CASTKMS_RENDERER_PUBLISH_OFFER 0x03
+#define DRM_CASTKMS_RENDERER_WITHDRAW_OFFER 0x04
+#define DRM_CASTKMS_RENDERER_REGISTER_IMAGE 0x05
+#define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x06
+#define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x07
+#define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x08
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {

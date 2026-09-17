@@ -5,8 +5,8 @@ CastKMS renderer constraints protocol
 Integration boundary
 ====================
 
-The experimental interface in ``include/uapi/drm/castkms_drm.h`` uses renderer
-version 10, capability encoding version 2 and complete-scene encoding version 2.
+The experimental interface in ``include/uapi/drm/castkms_drm.h`` uses version 1
+for the renderer endpoint, renderer constraints and complete-scene encoding.
 Use the header from the same revision and reject unsupported versions.
 The executable fake-worker example is
 ``tools/testing/selftests/drm_castkms/renderer-control.c``.
@@ -36,7 +36,7 @@ The file identifies the draft; there is no separate draft handle. Independent
 files can prepare replacement workers concurrently, including with disabled
 video. Preparation acquires no live source pixels and changes no KMS state.
 
-1. ``PREPARE_OFFER`` supplies a bounded capability profile and exact private
+1. ``PREPARE_OFFER`` supplies bounded renderer constraints and exact private
    pool width and height. Failure leaves an empty endpoint retryable.
 2. ``REGISTER_IMAGE`` supplies increasing positive image names and one to
    four distinct read/write DMA-BUFs each. Dimensions must equal the draft's
@@ -63,8 +63,9 @@ authority. A published offer need not be selected.
 Whole-scene declarations
 ========================
 
-A capability profile consists of a 128-byte native-endian header and up to
-256 fixed 32-byte format records. Its kind is ``RENDERER``. Fixed default
+Renderer constraints consist of a 128-byte native-endian header and up to
+256 fixed 32-byte format records. Their kind is
+``DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND``. Fixed default
 constraints come from generic KMS listing, not a worker declaration.
 Unknown flags and reserved fields must be zero.
 
@@ -74,7 +75,7 @@ The declared output interval must contain the private pool dimensions;
 the published offer is narrowed to that exact target. Changing dimensions
 requires a separately prepared endpoint.
 
-Profiles bound crop, fractional coordinates, positioning, scale ratios,
+The constraints bound crop, fractional coordinates, positioning, scale ratios,
 layer and role counts, LUT lengths and color operations. Limits apply to
 every role; advertise the intersection of per-role restrictions. Each format
 record names an exact fourcc/modifier/memory-plane-count tuple, native/imported
