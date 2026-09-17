@@ -3,6 +3,7 @@
 #define __DRM_CONSTRAINTS_LIST_H__
 
 #include <linux/types.h>
+#include <linux/wait.h>
 
 struct drm_constraints_list;
 struct drm_constraints_domain;
@@ -36,6 +37,23 @@ drm_constraints_list_create(struct drm_constraints_domain *domain,
 struct drm_constraints_list *
 drm_constraints_list_get(struct drm_constraints_list *list);
 void drm_constraints_list_put(struct drm_constraints_list *list);
+
+/*
+ * Advisory notification for observable generation changes and permanent closure.
+ * Retain the list until every wait entry has been removed. Register the wait
+ * entry before observing generation to avoid missing a concurrent change.
+ * Wake callbacks run under the list mutex and waitqueue spinlock: they must
+ * not sleep, observe the list, or acquire caller/provider locks. Queue deferred
+ * work or wake a task instead. Notifications grant neither access nor selection.
+ */
+wait_queue_head_t *drm_constraints_list_waitqueue(struct drm_constraints_list *list);
+/*
+ * Observe without allocating a snapshot. Returns ESTALE after permanent
+ * closure, leaving generation unchanged; otherwise stores the current nonzero
+ * generation. A later snapshot may have changed and must recheck the value.
+ * The output pointer must be valid and the caller must retain the list.
+ */
+int drm_constraints_list_observe(struct drm_constraints_list *list, u64 *generation);
 
 /*
  * Permanently exclude new selection and listing, synchronizing with acceptance

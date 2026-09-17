@@ -546,7 +546,120 @@ static void retiring_offers_requires_an_available_selected_default(struct kunit 
 		drm_constraints_list_retain_default(fixture->list, target), -ESTALE);
 }
 
+struct list_observer {
+	wait_queue_entry_t wait;
+	struct drm_constraints_list *list;
+	unsigned int notifications;
+};
+
+static int observe_wakeup(wait_queue_entry_t *wait, unsigned int mode, int flags, void *key)
+{
+	struct list_observer *observer = container_of(wait, struct list_observer, wait);
+
+	observer->notifications++;
+	return 0;
+}
+
+static void remove_observer(void *data)
+{
+	struct list_observer *observer = data;
+
+	remove_wait_queue(drm_constraints_list_waitqueue(observer->list), &observer->wait);
+	drm_constraints_list_put(observer->list);
+}
+
+static struct list_observer *observe_list(struct kunit *test, struct drm_constraints_list *list)
+{
+	struct list_observer *observer = kunit_kzalloc(test, sizeof(*observer), GFP_KERNEL);
+
+	KUNIT_ASSERT_NOT_NULL(test, observer);
+	observer->list = drm_constraints_list_get(list);
+	init_waitqueue_func_entry(&observer->wait, observe_wakeup);
+	add_wait_queue(drm_constraints_list_waitqueue(list), &observer->wait);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, remove_observer, observer), 0);
+	return observer;
+}
+
+static int accept_observed(struct drm_constraints_entry *entry, void *data)
+{
+	return 0;
+}
+
+static void generation_observers_follow_every_visible_change(struct kunit *test)
+{
+	struct list_fixture *fixture = new_fixture(test, 3);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	struct drm_constraints_list *list = fixture->list;
+	struct list_observer *observer = observe_list(test, list);
+	u64 id = drm_constraints_entry_id(target), generation = 0;
+
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_observe(list, &generation), 0);
+	KUNIT_EXPECT_EQ(test, generation, 1);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_add(list, target), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 1);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_suggest(list, id), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 2);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_accept(list, target, accept_observed, NULL), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 3);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_withdraw(list, id), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 4);
+	KUNIT_ASSERT_EQ(test,
+		drm_constraints_list_accept(list, fixture->initial, accept_observed, NULL), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 5);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_forget(list, id), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 6);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_add(list, target), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 7);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_retain_default(list, fixture->initial), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 8);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_observe(list, &generation), 0);
+	KUNIT_EXPECT_EQ(test, generation, 9);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_snapshot_info(snapshot(test, list, generation))->generation,
+		generation);
+}
+
+static void failed_or_repeated_operations_do_not_notify(struct kunit *test)
+{
+	struct list_fixture *fixture = new_fixture(test, 2);
+	struct list_observer *observer = observe_list(test, fixture->list);
+	u64 id = drm_constraints_entry_id(fixture->initial);
+
+	KUNIT_EXPECT_EQ(test, drm_constraints_list_add(fixture->list, fixture->initial), -EEXIST);
+	KUNIT_EXPECT_EQ(test, drm_constraints_list_suggest(fixture->list, 0), 0);
+	KUNIT_EXPECT_EQ(test, drm_constraints_list_suggest(fixture->list, id + 1), -ESTALE);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_list_accept(fixture->list, fixture->initial,
+					    accept_observed, NULL), 0);
+	KUNIT_EXPECT_EQ(test,
+		drm_constraints_list_retain_default(fixture->list, fixture->initial), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 0);
+	KUNIT_ASSERT_EQ(test, drm_constraints_list_withdraw(fixture->list, id), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 1);
+	KUNIT_EXPECT_EQ(test, drm_constraints_list_withdraw(fixture->list, id), 0);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 1);
+}
+
+static void closure_wakes_retained_observers_once(struct kunit *test)
+{
+	struct list_fixture *fixture = new_fixture(test, 2);
+	struct list_observer *observer = observe_list(test, fixture->list);
+	u64 generation = 99;
+
+	kunit_release_action(test, put_list, fixture->list);
+	drm_constraints_list_close(observer->list);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 1);
+	KUNIT_EXPECT_EQ(test, drm_constraints_list_observe(observer->list, &generation), -ESTALE);
+	KUNIT_EXPECT_EQ(test, generation, 99);
+	drm_constraints_list_close(observer->list);
+	KUNIT_EXPECT_EQ(test, observer->notifications, 1);
+}
+
 static struct kunit_case drm_constraints_list_tests[] = {
+	KUNIT_CASE(generation_observers_follow_every_visible_change),
+	KUNIT_CASE(failed_or_repeated_operations_do_not_notify),
+	KUNIT_CASE(closure_wakes_retained_observers_once),
 	KUNIT_CASE(retiring_offers_preserves_snapshots_and_default),
 	KUNIT_CASE(retiring_offers_releases_resources_outside_list_lock),
 	KUNIT_CASE(retiring_offers_requires_an_available_selected_default),
