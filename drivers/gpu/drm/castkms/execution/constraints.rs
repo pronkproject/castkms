@@ -28,6 +28,11 @@ use kernel::{
     sync::aref::ARef, //
 };
 
+const _: () = assert!(
+    crate::execution::capabilities::MAX_FORMATS * crate::scene::MAX_PLANES
+        <= kernel_bindings::DRM_CONSTRAINTS_MAX_FORMATS as usize
+);
+
 /// Existing plane identity and role; native publication validates output membership.
 pub(crate) struct Plane {
     pub(crate) id: u32,
