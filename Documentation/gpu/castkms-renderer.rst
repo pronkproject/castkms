@@ -1,6 +1,8 @@
-===================================
+.. SPDX-License-Identifier: GPL-2.0-only
+
+=====================================
 CastKMS renderer constraints protocol
-===================================
+=====================================
 
 Integration boundary
 ====================
@@ -17,6 +19,13 @@ the CRTC and connector. The returned close-on-exec renderer descriptor grants
 neither modesetting nor capture authority. The separate revocation descriptor
 controls admission. Issuer close also revokes the grant.
 
+The descriptor is bound to that ``drm_master`` identity, not permanently to
+the uninterrupted interval in which it was issued. While the bound master is
+absent or another master is current, control operations fail with ``EACCES``.
+If the same master becomes current again, the descriptor resumes with an empty
+generation after outstanding old jobs have been released. Drafts, offers,
+private registrations and jobs from the earlier interval never reactivate.
+
 The KMS client discovers immutable descriptions with
 ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``, subscribes with
 ``DRM_CLIENT_CAP_KMS_CONSTRAINTS`` after enabling atomic support, and selects
@@ -31,10 +40,12 @@ wrappers may be used. Never echo that request-only property's readback.
 Private preparation
 ===================
 
-Each renderer file owns one immutable draft and at most one published offer.
-The file identifies the draft; there is no separate draft handle. Independent
-files can prepare replacement workers concurrently, including with disabled
-video. Preparation acquires no live source pixels and changes no KMS state.
+Each renderer file owns one immutable draft and at most one published offer per
+uninterrupted master interval. The file identifies the draft; there is no
+separate draft handle. Independent files can prepare replacement workers
+concurrently within an interval, including with disabled video. A same-master
+reacquisition may reuse a drained file for a fresh generation. Preparation
+acquires no live source pixels and changes no KMS state.
 
 1. ``PREPARE_OFFER`` supplies bounded renderer constraints and exact private
    pool width and height. Failure leaves an empty endpoint retryable.
@@ -133,6 +144,34 @@ tracking rejects known overlapping DMA-BUF/reservation identities. The renderer
 must additionally isolate queues and mappings from downstream release waits.
 Pool accounting alone cannot establish native dependency independence.
 
+Recipient output jobs
+=====================
+
+Final-image clients use the generic capture interface in
+``include/uapi/drm/drm_capture.h``. While a renderer constraints entry is
+accepted, ``DESCRIBE`` returns that exact worker's output configuration,
+``CREATE_STREAM`` registers bounded demand with the worker, and
+``QUEUE_OUTPUT`` supplies recipient-owned storage plus its reuse fence. A
+stream never grants access to the KMS source planes or renderer-private image.
+
+After ``RELEASE_SOURCE`` has produced a valid private image, the renderer calls
+``DEQUEUE_OUTPUT`` with its private image name. Success returns one writable
+recipient DMA-BUF and checked layout under a new output job ID. Version 1
+destinations are single-plane linear XRGB8888. A destination allocation and
+its described image span may each be at most 512 MiB, and all endpoints share
+a device-wide 512 MiB recipient ledger. The claim waits independently
+for the private-image completion and recipient reuse dependency; it does not
+reacquire or retain a compositor source read. Failed copyout installs no fd and
+releases both images without access.
+
+``RELEASE_OUTPUT`` uses the same ``NO_ACCESS``, ``CPU_DONE`` and ``SUBMITTED``
+meanings as source release, but its fence covers private-image reads and
+recipient writes only. Capture publishes a terminal result after that native
+work completes. Cancellation suppresses a successful result but cannot revoke
+an already claimed write. Renderer loss quarantines an unresolved destination
+rather than fabricating completion. ``poll`` reports either a changed scene or
+a ready recipient claim; it remains advisory and never reserves the job.
+
 Withdrawal and replacement
 ==========================
 
@@ -159,15 +198,16 @@ appropriate. A failed or withdrawn member never partially selects the cohort.
 
 Unexpected worker loss is not transparent migration. A withdrawn selected
 binding remains retained; its buffers must not be reinterpreted as HOST.
-Master-loss recovery and native read retirement follow the generic constraints
-contract. A list-change event only prompts re-query; it grants no authority.
+Master loss withdraws the old worker generation. Release its outstanding source
+and recipient jobs; once drained, the retained endpoint reports ``EMPTY`` when
+the same master returns and can prepare a new generation. A list-change event
+only prompts re-query; it grants no authority.
 
 Remaining integration
 =====================
 
-The public source stream composes into renderer-private storage. Public
-recipient-output job transport, delegated capture-file integration, negotiated
-destination layouts and real cross-GPU rendering qualification remain separate
-work. Public final-image capture uses HOST delivery and rejects renderer-backed
-scenes. Passing fake-worker tests is not evidence of a completed GPU
-capture/encoding pipeline.
+The public source and recipient transports now cover A-to-E and E-to-D as
+independently released stages. Destination layout negotiation beyond the
+version 1 linear XRGB8888 capture contract, physical cross-GPU import/rendering
+qualification, and an installed userspace media pipeline remain. Passing the
+fake-worker tests is not evidence of physical GPU interoperability.

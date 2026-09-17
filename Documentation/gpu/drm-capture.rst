@@ -192,7 +192,9 @@ Repeated numbers in one request use the first resolved allocation, and every
 temporary reference is released after the provider returns. CastKMS accepts
 single-plane HOST_V1 images through its existing checked image and client
 registry. It currently bounds registrations to 16 per client and allocations
-to 16 MiB each, independently of stream request depth and private result storage.
+to 512 MiB each, independently of stream request depth and private result
+storage. The complete described image span has the same bound, including row
+padding. A larger bounded allocation may back a smaller image view.
 These operations do not queue a capture or deliver pixels. Unregistering a
 name is not storage revocation or GPU completion, and cleanup remains available
 after capture revocation. Registration does not guarantee that a later exporter
