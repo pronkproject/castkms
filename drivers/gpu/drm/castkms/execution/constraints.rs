@@ -17,6 +17,7 @@ use kernel::{
         constraints::{
             Description,
             Format,
+            PlaneLimit as ActivePlaneLimit,
             Property,
             Size, //
         },
@@ -138,6 +139,21 @@ fn source_ceiling(plane: &Plane) -> u32 {
     }
 }
 
+fn plane_supported(profile: &Profile, plane: &Plane) -> bool {
+    let limits = profile.limits();
+    limits.roles[role(plane)] != 0
+        && bounds(
+            limits.geometry.min_source,
+            limits.geometry.source,
+            source_ceiling(plane),
+        )
+        .is_some()
+        && profile
+            .formats()
+            .iter()
+            .any(|format| format_supported(plane, format))
+}
+
 fn enabled_mask<const N: usize>(enabled: &[bool; N], values: [u32; N]) -> u64 {
     enabled
         .iter()
@@ -166,18 +182,7 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
     );
     let mut properties = KVec::new();
     for plane in planes {
-        if limits.roles[role(plane)] == 0
-            || bounds(
-                limits.geometry.min_source,
-                limits.geometry.source,
-                source_ceiling(plane),
-            )
-            .is_none()
-            || !profile
-                .formats()
-                .iter()
-                .any(|format| format_supported(plane, format))
-        {
+        if !plane_supported(profile, plane) {
             continue;
         }
         let ids = plane.properties;
@@ -205,6 +210,21 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
         }
     }
     Ok(properties)
+}
+
+fn renderer_plane_groups(
+    profile: &Profile,
+    planes: &[Plane],
+) -> Result<(KVec<u32>, [KVec<u32>; 3])> {
+    let mut all = KVec::new();
+    let mut roles: [KVec<u32>; 3] = core::array::from_fn(|_| KVec::new());
+    for plane in planes {
+        if plane_supported(profile, plane) {
+            all.push(plane.id, GFP_KERNEL)?;
+            roles[role(plane)].push(plane.id, GFP_KERNEL)?;
+        }
+    }
+    Ok((all, roles))
 }
 
 fn bounds(minimum: [u32; 2], maximum: [u32; 2], ceiling: u32) -> Option<Size> {
@@ -302,7 +322,22 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
     if formats.is_empty() {
         return Err(EOPNOTSUPP);
     }
-    Description::new(output, &formats, &renderer_properties(profile, planes)?)
+    let (all, role_groups) = renderer_plane_groups(profile, planes)?;
+    let mut plane_limits = KVec::new();
+    if limits.layers < all.len() {
+        plane_limits.push(ActivePlaneLimit::new(limits.layers as u32, &all)?, GFP_KERNEL)?;
+    }
+    for (group, maximum) in role_groups.iter().zip(limits.roles) {
+        if maximum < group.len() {
+            plane_limits.push(ActivePlaneLimit::new(maximum as u32, group)?, GFP_KERNEL)?;
+        }
+    }
+    Description::new_with_plane_limits(
+        output,
+        &formats,
+        &renderer_properties(profile, planes)?,
+        &plane_limits,
+    )
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
@@ -428,6 +463,7 @@ mod tests {
         assert_eq!(formats[6].format(), fourcc::ARGB8888);
         assert_eq!(formats[6].size().maximum(), (512, 512));
         assert!(description.properties().is_empty());
+        assert!(description.plane_limits().is_empty());
         Ok(())
     }
 
@@ -474,6 +510,43 @@ mod tests {
             properties[5].mask(),
             1 << kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE
         );
+        Ok(())
+    }
+
+    #[test]
+    fn layer_and_role_counts_become_overlapping_plane_limits() -> Result {
+        let mut topology = KVec::new();
+        for plane in planes() {
+            topology.push(plane, GFP_KERNEL)?;
+        }
+        for (id, color_encoding) in [(10, 27), (11, 29)] {
+            topology.push(
+                Plane {
+                    id,
+                    kind: Kind::Overlay,
+                    properties: PlaneProperties {
+                        crtc_x: 17,
+                        crtc_y: 18,
+                        source_x: 19,
+                        source_y: 20,
+                        color_encoding,
+                        color_range: color_encoding + 1,
+                    },
+                },
+                GFP_KERNEL,
+            )?;
+        }
+        let mut limits = limits();
+        limits.layers = 3;
+        limits.roles = [1, 2, 1];
+        let profile = profile(limits)?;
+        let description = renderer(&profile, &topology)?;
+        let plane_limits = description.plane_limits();
+        assert_eq!(plane_limits.len(), 2);
+        assert_eq!(plane_limits[0].max_active(), 3);
+        assert_eq!(plane_limits[0].plane_ids(), [7, 8, 9, 10, 11]);
+        assert_eq!(plane_limits[1].max_active(), 2);
+        assert_eq!(plane_limits[1].plane_ids(), [8, 10, 11]);
         Ok(())
     }
 
