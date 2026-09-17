@@ -583,6 +583,11 @@ bool drm_master_internal_acquire(struct drm_device *dev)
 		mutex_unlock(&dev->master_mutex);
 		return false;
 	}
+	if (drm_constraints_owner_check(dev)) {
+		drm_constraints_owner_retry(dev);
+		mutex_unlock(&dev->master_mutex);
+		return false;
+	}
 
 	return true;
 }
