@@ -8,8 +8,9 @@
 
 #include "fixture.h"
 
-struct buffer import_buffer(int fd, const char *heap, uint32_t width,
-			    uint32_t height)
+struct buffer import_xrgb_buffer_with_modifier(int fd, const char *heap,
+					       uint32_t width, uint32_t height,
+					       uint64_t modifier)
 {
 	struct buffer buffer = {0};
 	struct dma_heap_allocation_data allocation = {
@@ -17,7 +18,7 @@ struct buffer import_buffer(int fd, const char *heap, uint32_t width,
 		.fd_flags = O_RDWR | O_CLOEXEC,
 	};
 	uint32_t handles[4] = {0}, pitches[4] = {width * 4}, offsets[4] = {0};
-	uint64_t modifiers[4] = {DRM_FORMAT_MOD_LINEAR};
+	uint64_t modifiers[4] = { modifier };
 	int heap_fd = open(heap, O_RDWR | O_CLOEXEC);
 
 	CHECK(heap_fd >= 0);
@@ -31,4 +32,11 @@ struct buffer import_buffer(int fd, const char *heap, uint32_t width,
 	CHECK(drmCloseBufferHandle(fd, handles[0]) == 0);
 	CHECK(close(allocation.fd) == 0);
 	return buffer;
+}
+
+struct buffer import_buffer(int fd, const char *heap, uint32_t width,
+			    uint32_t height)
+{
+	return import_xrgb_buffer_with_modifier(fd, heap, width, height,
+						DRM_FORMAT_MOD_LINEAR);
 }
