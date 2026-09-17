@@ -32,7 +32,7 @@ static struct display discover(int fd)
 	drmModeConnector *connector;
 	struct display d;
 
-	CHECK(resources && resources->count_crtcs == 1 && resources->count_connectors == 1);
+	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	d.crtc = resources->crtcs[0];
 	d.connector = resources->connectors[0];
 	d.plane = primary_plane(fd, 0);

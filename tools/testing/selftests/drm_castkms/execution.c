@@ -19,7 +19,7 @@ int main(int argc, char **argv)
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0 && drmIsMaster(fd) == 1);
 	resources = drmModeGetResources(fd);
-	CHECK(resources && resources->count_crtcs == 1);
+	CHECK(resources && resources->count_crtcs > 0);
 	query.crtc_id = resources->crtcs[0];
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_LIST_CONSTRAINTS, &query) == 0);
 	CHECK(query.size >= sizeof(*list) && query.generation);

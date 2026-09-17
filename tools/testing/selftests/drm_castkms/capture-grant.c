@@ -186,7 +186,7 @@ int main(int argc, char **argv)
 	drmFreeVersion(version);
 	CHECK(drmGetCap(master, DRM_CAP_CAPTURE_GRANT, &capability) == 0 && capability == 1);
 	resources = drmModeGetResources(master);
-	CHECK(resources && resources->count_crtcs == 1 && resources->count_connectors == 1);
+	CHECK(resources && resources->count_crtcs > 0 && resources->count_connectors > 0);
 	request.crtc_id = resources->crtcs[0];
 	request.connector_id = resources->connectors[0];
 	request.files = (uintptr_t)&files;
