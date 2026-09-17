@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-2.0-only
+
+//! Private preparation of an immutable renderer offer, independent of active scanout.
+
+use super::{
+    permission::Access,
+    private_image::Image,
+    private_pool::Pool,
+    probe::{Probe, Source},
+    ready,
+};
+use crate::execution::capabilities::Profile;
+use kernel::{
+    dma_buf::DmaBuf,
+    dma_fence::Fence,
+    prelude::*,
+    sync::{aref::ARef, Arc},
+};
+
+/// One endpoint's immutable declaration and private storage namespace.
+/// Preparation does not reserve the output, require enabled video, or admit source reads.
+/// Multiple drafts may coexist; only ordinary atomic state can select a published entry.
+pub(crate) struct Draft {
+    access: Access,
+    owner: Arc<()>,
+    profile: Profile,
+    dimensions: [u32; 2],
+    probe: Arc<Probe>,
+}
+
+impl Draft {
+    pub(crate) fn new(access: Access, profile: Profile, dimensions: [u32; 2]) -> Result<Self> {
+        profile.check_output(dimensions)?;
+        access.with_output(|| {
+            access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
+            Ok(())
+        })?;
+        Ok(Self {
+            access,
+            owner: Arc::new((), GFP_KERNEL)?,
+            profile,
+            dimensions,
+            probe: Arc::pin_init(Probe::new(), GFP_KERNEL)?,
+        })
+    }
+
+    pub(crate) fn access(&self) -> &Access {
+        &self.access
+    }
+
+    pub(crate) fn dimensions(&self) -> [u32; 2] {
+        self.dimensions
+    }
+
+    /// Allocate outside native locks, rechecking authority and source independence afterward.
+    /// The trusted renderer supplies the private layout; no CPU format interpretation applies.
+    pub(crate) fn register_image(&self, buffers: &[ARef<DmaBuf>]) -> Result<Arc<Image>> {
+        self.access.check_private_storage(buffers)?;
+        let image = Image::new(
+            &self.access.device().image_storage,
+            &self.owner,
+            self.access.device().changed.clone(),
+            self.dimensions,
+            buffers,
+        )?;
+        self.access.check_private_storage(buffers)?;
+        Ok(image)
+    }
+
+    /// Report private startup work without borrowing display pixels or selecting this draft.
+    pub(crate) fn submit_probe(&self, completion: Option<ARef<Fence>>) -> Result {
+        self.access.with_output(|| Ok(()))?;
+        self.probe.submit_then(Source::Private, completion, || {
+            self.access.with_output(|| Ok(()))
+        })
+    }
+
+    /// Pin only this draft's existing registrations after successful native probe completion.
+    /// Endpoint serialization protects the pool; publication must recheck live authority.
+    pub(crate) fn prepare_worker(&self, pool: &Pool) -> Result<ready::Owner> {
+        let registrations = pool.pin_dimensions(&self.owner, self.dimensions)?;
+        let source = self.access.with_output(|| self.probe.completed_source())?;
+        let mut owner = ready::Owner::new(
+            self.access.display().output.identity().clone(),
+            self.access.interval(),
+            &self.profile,
+            self.dimensions,
+            registrations,
+            source,
+        )?;
+        owner.track_permission(&self.access)?;
+        Ok(owner)
+    }
+}
