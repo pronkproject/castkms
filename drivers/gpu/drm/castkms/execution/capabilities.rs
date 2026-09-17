@@ -24,6 +24,7 @@ pub(crate) struct Format {
     /// Byte alignment and maximum pitch, applied to every memory plane.
     pub(crate) pitch_alignment: u32,
     pub(crate) offset_alignment: u32,
+    pub(crate) min_pitch: u32,
     pub(crate) max_pitch: u32,
 }
 
@@ -136,7 +137,12 @@ impl Profile {
                 )
                 || !format.pitch_alignment.is_power_of_two()
                 || !format.offset_alignment.is_power_of_two()
-                || format.max_pitch < format.pitch_alignment
+                || format.min_pitch == 0
+                || format
+                    .min_pitch
+                    .checked_add(format.pitch_alignment - 1)
+                    .map(|pitch| pitch & !(format.pitch_alignment - 1))
+                    .is_none_or(|pitch| pitch > format.max_pitch)
                 // One set of layout constraints must cover the entire framebuffer.
                 || formats[..index].iter().any(|previous| {
                     previous.fourcc == format.fourcc
@@ -183,6 +189,7 @@ impl Profile {
                 && width % format.width_alignment == 0
                 && height % format.height_alignment == 0
                 && pitch != 0
+                && pitch >= format.min_pitch
                 && pitch <= format.max_pitch
                 && pitch % format.pitch_alignment == 0
                 && offset % format.offset_alignment == 0
@@ -374,6 +381,7 @@ mod tests {
                 height_alignment: 1,
                 pitch_alignment: 4,
                 offset_alignment: 4,
+                min_pitch: 1,
                 max_pitch: 65536,
             },
             GFP_KERNEL,
@@ -660,6 +668,10 @@ mod tests {
             },
             Format {
                 offset_alignment: 3,
+                ..valid.formats()[0]
+            },
+            Format {
+                min_pitch: 0,
                 ..valid.formats()[0]
             },
             Format {

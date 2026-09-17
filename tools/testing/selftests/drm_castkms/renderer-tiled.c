@@ -330,7 +330,9 @@ static void check_offer_format(int fd, uint32_t crtc, uint64_t id,
 					CHECK(format->plane_count == plane_count);
 					CHECK(format->pitch_alignment == 1);
 					CHECK(format->offset_alignment == 1);
+					CHECK(format->min_pitch == 256);
 					CHECK(format->max_pitch == 65536);
+					CHECK(!format->reserved);
 					CHECK(format->width_alignment == 64);
 					CHECK(format->height_alignment == 4);
 					CHECK(format->min_width == width &&
@@ -468,6 +470,7 @@ int main(int argc, char **argv)
 				.height_alignment = 4,
 				.pitch_alignment = 1,
 				.offset_alignment = 1,
+				.min_pitch = 256,
 				.max_pitch = 65536,
 			},
 			{
@@ -480,6 +483,7 @@ int main(int argc, char **argv)
 				.height_alignment = 4,
 				.pitch_alignment = 1,
 				.offset_alignment = 1,
+				.min_pitch = 256,
 				.max_pitch = 65536,
 			},
 			{
@@ -492,6 +496,7 @@ int main(int argc, char **argv)
 				.height_alignment = 4,
 				.pitch_alignment = 1,
 				.offset_alignment = 1,
+				.min_pitch = 256,
 				.max_pitch = 65536,
 			},
 		},

@@ -141,6 +141,7 @@ fn format_supported(
                 |minimum| {
                     let alignment = u64::from(format.pitch_alignment);
                     minimum
+                        .max(u64::from(format.min_pitch))
                         .max(1)
                         .checked_add(alignment - 1)
                         .map(|pitch| pitch & !(alignment - 1))
@@ -374,7 +375,8 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
                 format.pitch_alignment,
                 format.offset_alignment,
                 format.max_pitch,
-            );
+            )
+            .with_minimum_pitch(format.min_pitch);
             formats.push(format, GFP_KERNEL)?;
         }
     }
@@ -459,6 +461,7 @@ mod tests {
                     height_alignment: if modifier == Some(TILED) { 4 } else { 1 },
                     pitch_alignment: 4,
                     offset_alignment: 4,
+                    min_pitch: 1,
                     max_pitch: 65536,
                 },
                 GFP_KERNEL,
@@ -563,6 +566,7 @@ mod tests {
                 height_alignment: 1,
                 pitch_alignment: 16,
                 offset_alignment: 4096,
+                min_pitch: 1,
                 max_pitch: 65536,
             },
             GFP_KERNEL,
@@ -614,6 +618,7 @@ mod tests {
                     height_alignment: 1,
                     pitch_alignment: 16,
                     offset_alignment: 4096,
+                    min_pitch: 1,
                     max_pitch: 65536,
                 },
                 GFP_KERNEL,
@@ -648,6 +653,7 @@ mod tests {
                 height_alignment: 1,
                 pitch_alignment: 256,
                 offset_alignment: 4096,
+                min_pitch: 1,
                 max_pitch: 7679,
             },
             GFP_KERNEL,
@@ -658,6 +664,7 @@ mod tests {
         let mut formats = KVec::new();
         formats.push(
             RendererFormat {
+                min_pitch: 7680,
                 max_pitch: 7680,
                 ..profile.formats()[0]
             },
@@ -665,7 +672,10 @@ mod tests {
         )?;
         let description = renderer(&Profile::new(limits, formats)?, &planes())?;
         assert_eq!(description.formats().len(), 1);
-        assert_eq!(description.formats()[0].storage_layout().2, 7680);
+        assert_eq!(
+            description.formats()[0].storage_layout(),
+            (256, 4096, 7680, 7680)
+        );
         Ok(())
     }
 
@@ -693,6 +703,7 @@ mod tests {
                     height_alignment: 1,
                     pitch_alignment: 256,
                     offset_alignment: 4096,
+                    min_pitch: 1,
                     max_pitch,
                 },
                 GFP_KERNEL,
@@ -807,6 +818,7 @@ mod tests {
                     height_alignment: 1,
                     pitch_alignment: 16,
                     offset_alignment: 16,
+                    min_pitch: 1,
                     max_pitch: 131072,
                 },
                 GFP_KERNEL,
@@ -824,7 +836,10 @@ mod tests {
         assert_eq!(description.formats()[0].modifier(), Some(TILED));
         assert!(!description.formats()[0].permits_native());
         assert!(description.formats()[0].permits_imported());
-        assert_eq!(description.formats()[0].storage_layout(), (16, 16, 131072));
+        assert_eq!(
+            description.formats()[0].storage_layout(),
+            (16, 16, 1, 131072)
+        );
         Ok(())
     }
 
@@ -870,7 +885,7 @@ mod tests {
             assert_eq!(pair[0].size().maximum(), pair[1].size().maximum());
             assert!(pair[0].permits_native());
             assert!(pair[0].permits_imported());
-            assert_eq!(pair[0].storage_layout(), (1, 1, u32::MAX));
+            assert_eq!(pair[0].storage_layout(), (1, 1, 1, u32::MAX));
             assert_eq!(pair[0].storage_layout(), pair[1].storage_layout());
             if pair[0].plane_id() == 9 {
                 assert_eq!(pair[0].format(), fourcc::ARGB8888);

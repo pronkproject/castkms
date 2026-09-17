@@ -132,7 +132,8 @@ static void publish(int fd, struct output *output)
 			.fourcc = DRM_FORMAT_XRGB8888, .plane_count = 1,
 			.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE,
 			.width_alignment = 1, .height_alignment = 1,
-			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = 65536,
+			.pitch_alignment = 1, .offset_alignment = 1,
+			.min_pitch = 1, .max_pitch = 65536,
 		},
 	};
 	struct drm_castkms_renderer_prepare_offer prepare = {

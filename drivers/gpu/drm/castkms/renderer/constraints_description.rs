@@ -51,7 +51,9 @@ struct Storage {
     height_alignment: u32,
     pitch_alignment: u32,
     offset_alignment: u32,
+    min_pitch: u32,
     max_pitch: u32,
+    reserved: u32,
 }
 
 // SAFETY: All fields are integers, and the u64 is aligned without interior or tail padding.
@@ -65,7 +67,7 @@ const _: () = {
         core::mem::size_of::<Header>()
             == core::mem::size_of::<uapi::drm_castkms_renderer_constraints>()
     );
-    assert!(core::mem::size_of::<Storage>() == 40);
+    assert!(core::mem::size_of::<Storage>() == 48);
     assert!(
         core::mem::size_of::<Storage>()
             == core::mem::size_of::<uapi::drm_castkms_renderer_constraints_format>()
@@ -118,7 +120,8 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
     let mut tuples = KVec::with_capacity(header.format_count as usize, GFP_KERNEL)?;
     for bytes in formats.chunks_exact(core::mem::size_of::<Storage>()) {
         let format = Storage::from_bytes_copy(bytes).ok_or(EINVAL)?;
-        if format.flags & !STORAGE != 0
+        if format.reserved != 0
+            || format.flags & !STORAGE != 0
             || (format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER == 0
                 && format.modifier != 0)
         {
@@ -136,6 +139,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
                 height_alignment: format.height_alignment,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
+                min_pitch: format.min_pitch,
                 max_pitch: format.max_pitch,
             },
             GFP_KERNEL,
@@ -241,7 +245,9 @@ fn encode(profile: &Profile) -> Result<KVec<u8>> {
                 height_alignment: format.height_alignment,
                 pitch_alignment: format.pitch_alignment,
                 offset_alignment: format.offset_alignment,
+                min_pitch: format.min_pitch,
                 max_pitch: format.max_pitch,
+                reserved: 0,
             };
             bytes.extend_from_slice(storage.as_bytes(), GFP_KERNEL)?;
         }
@@ -267,6 +273,7 @@ mod tests {
                 height_alignment: 4,
                 pitch_alignment: 128,
                 offset_alignment: 4096,
+                min_pitch: 1024,
                 max_pitch: 65536,
             },
             GFP_KERNEL,
@@ -312,6 +319,7 @@ mod tests {
         assert_eq!(decoded.formats()[0].modifier, Some(0x0100_0000_0000_0001));
         assert_eq!(decoded.formats()[0].width_alignment, 64);
         assert_eq!(decoded.formats()[0].height_alignment, 4);
+        assert_eq!(decoded.formats()[0].min_pitch, 1024);
         let again = encode(&decoded)?;
         assert_eq!(&*bytes, &*again);
         Ok(())
@@ -332,13 +340,13 @@ mod tests {
     fn parser_rejects_unknown_bits_reserved_words_and_partial_records() -> Result {
         let profile = profile()?;
         let original = encode(&profile)?;
-        for offset in [8, 64, 68, 72, 124, 144] {
+        for offset in [8, 64, 68, 72, 124, 144, 172] {
             let mut bytes = KVec::new();
             bytes.extend_from_slice(&original, GFP_KERNEL)?;
             bytes[offset..offset + 4].copy_from_slice(&u32::MAX.to_ne_bytes());
             assert!(matches!(decode(&bytes), Err(EINVAL)));
         }
-        for size in [0, 127, 128, 167] {
+        for size in [0, 127, 128, 175] {
             assert!(matches!(decode(&original[..size]), Err(EINVAL)));
         }
         Ok(())
@@ -357,8 +365,8 @@ mod tests {
         let mut bytes = encode(&profile)?;
         assert_eq!(bytes.len(), MAX_BYTES);
         assert_eq!(decode(&bytes)?.formats().len(), 256);
-        let first = Storage::from_bytes_copy(&bytes[128..168]).ok_or(EINVAL)?;
-        bytes[168..208].copy_from_slice(first.as_bytes());
+        let first = Storage::from_bytes_copy(&bytes[128..176]).ok_or(EINVAL)?;
+        bytes[176..224].copy_from_slice(first.as_bytes());
         assert!(matches!(decode(&bytes), Err(EINVAL)));
         bytes.push(0, GFP_KERNEL)?;
         assert!(matches!(decode(&bytes), Err(E2BIG)));
