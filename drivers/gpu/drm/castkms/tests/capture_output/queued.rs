@@ -72,7 +72,8 @@ mod cases {
             check(matches!(stream.queue_to(image.clone(), None), Err(EAGAIN)))?;
             fixture.drm.device().host.current()?.flush_for_test();
             let frame = wait_output(&mut output)?;
-            check(frame.metadata().layout() == image.layout())?;
+            check(frame.metadata().layout().dimensions() == (640, 480))?;
+            check(image.dimensions() == [640, 480])?;
             check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])
         })
     }
@@ -108,7 +109,8 @@ mod cases {
             fixture.select(&fb, false, 0)?;
             reuse.complete(Ok(()))?;
             let frame = wait_output(&mut output)?;
-            check(frame.metadata().layout() == image.layout())?;
+            check(frame.metadata().layout().dimensions() == (640, 480))?;
+            check(image.dimensions() == [640, 480])?;
             check(pixels(image.buffer())?[128..132] == [0x12, 0x12, 0x12, 0xff])?;
             check(matches!(output.try_complete_frame(), Err(EALREADY)))
         })
@@ -185,7 +187,8 @@ mod cases {
             check(queue.advance() == 0)?;
             queue.dequeue(|completion| {
                 check(completion.use_id == 2)?;
-                check(completion.result?.metadata().layout() == second.layout())
+                check(completion.result?.metadata().layout().dimensions() == (640, 480))?;
+                check(second.dimensions() == [640, 480])
             })?;
             reuse.complete(Ok(()))?;
             advance_one(&mut queue)?;

@@ -41,7 +41,7 @@ mod cases {
             client.register_destination(1, image(fixture)?)?;
             let retained = client.destination(1)?;
             let alias = Image::new(
-                retained.buffer().into(), retained.layout(), fourcc::XRGB8888,
+                retained.buffer().into(), Layout::new(640, 480)?, fourcc::XRGB8888,
                 fourcc::FORMAT_MOD_LINEAR, retained.pitch(), retained.offset(),
             )?;
             check(client.register_destination(2, alias) == Err(EEXIST))?;
@@ -72,7 +72,7 @@ mod cases {
             check(!core::ptr::eq(&*retained, &*client.destination(2)?))?;
             client.close_stream(1)?;
             drop(client);
-            check(retained.layout() == Layout::new(640, 480)?)?;
+            check(retained.dimensions() == [640, 480])?;
             check(retained.buffer().size() >= 640 * 480 * 4)
         })
     }
@@ -143,14 +143,14 @@ mod cases {
     }
 
     #[test]
-    fn a_small_view_does_not_hide_an_oversized_retained_allocation() -> Result {
+    fn a_small_view_can_reuse_a_larger_bounded_allocation() -> Result {
         with_exporter(|fixture| {
             let _connector = fixture.drm.publish_connector_identity()?;
             let creator = fixture.drm.master_file()?;
             let _fb = select(fixture, &creator)?;
             let grantor = grant(fixture, &creator)?;
             let mut client = Client::new(grantor.capture())?;
-            let oversized = Image::new(
+            let larger = Image::new(
                 fixture.drm.export_dumb(2048, 2049, 32)?,
                 Layout::new(640, 480)?,
                 fourcc::XRGB8888,
@@ -158,8 +158,8 @@ mod cases {
                 2560,
                 0,
             )?;
-            check(client.register_destination(1, oversized) == Err(E2BIG))?;
-            client.register_destination(1, image(fixture)?)
+            client.register_destination(1, larger)?;
+            client.unregister_destination(1)
         })
     }
 }

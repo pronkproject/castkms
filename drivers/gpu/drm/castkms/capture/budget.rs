@@ -15,6 +15,11 @@ const BYTE_LIMIT: usize = 512 * 1024 * 1024;
 pub(super) const STREAM_LIMIT: usize = 16;
 pub(super) const CAPACITY_LIMIT: u32 = 8;
 
+/// Largest queue that can fit by itself for an exact HOST result layout.
+pub(super) fn maximum_capacity(layout: Layout) -> u32 {
+    core::cmp::min(CAPACITY_LIMIT as usize, BYTE_LIMIT / layout.size()) as u32
+}
+
 struct Used {
     bytes: usize,
     streams: usize,
@@ -46,7 +51,7 @@ impl Budget {
         if capacity == 0 {
             return Err(EINVAL);
         }
-        if capacity > CAPACITY_LIMIT {
+        if capacity > maximum_capacity(layout) {
             return Err(E2BIG);
         }
         let bytes = layout

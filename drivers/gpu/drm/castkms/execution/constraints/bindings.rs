@@ -39,7 +39,6 @@ pub(crate) struct Bindings<B: Backend> {
     state: Mutex<State<B>>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl<B: Backend> Bindings<B> {
     pub(crate) fn new(
         domain: ARef<Domain>,

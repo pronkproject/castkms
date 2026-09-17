@@ -4,8 +4,7 @@
 
 use super::delegated_destination::{Image, Use};
 use crate::{
-    renderer::{candidate::Candidate, job::Completion, render_job::Rendered},
-    renderer_startup::{Active, Observation},
+    renderer::{job::Completion, render_job::Rendered},
     scene::ContentSerial,
 };
 use kernel::{
@@ -54,12 +53,7 @@ pub(crate) struct Request {
     state: Mutex<State>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Image {
-    pub(crate) fn request(self: &Arc<Self>, reuse: Option<ARef<Fence>>) -> Result<Arc<Request>> {
-        self.request_accounted(reuse, None, None)
-    }
-
     pub(super) fn request_accounted(
         self: &Arc<Self>,
         reuse: Option<ARef<Fence>>,
@@ -81,7 +75,6 @@ impl Image {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Request {
     fn notify(&self) {
         if let Some(changed) = &self.changed {
@@ -158,13 +151,33 @@ impl Request {
     }
 
     /// Reconcile worker loss without retaining its active ownership or claiming an image.
-    pub(crate) fn status_for(&self, renderer: &Candidate, active: &Observation) -> Status {
+    pub(crate) fn status_for_worker(&self) -> Status {
         if matches!(self.state.lock().phase, Phase::Queued) {
-            if let Err(error) = renderer.with_observed_control(active, |_| Ok(())) {
+            if let Err(error) = self.destination.scope().with_worker(|_| Ok(())) {
                 self.fail_queued(error);
             }
         }
         self.status()
+    }
+
+    pub(crate) fn ready_for(&self, image: &Rendered) -> bool {
+        let result = (|| {
+            let usage = {
+                let state = self.state.lock();
+                if !matches!(state.phase, Phase::Queued) { return Ok(false); }
+                state.usage.as_ref().ok_or(EIO)?.clone()
+            };
+            self.destination.scope().with_worker(|current| image.content().check_bound(current))?;
+            let source = match image.content().status() {
+                FenceStatus::Pending => false,
+                FenceStatus::Complete(result) => { result?; true }
+            };
+            Ok(source && usage.ready()?)
+        })();
+        match result {
+            Ok(ready) => ready,
+            Err(error) => { self.fail_queued(error); false }
+        }
     }
 
     pub(crate) fn content_serial(&self) -> Option<ContentSerial> {
@@ -185,34 +198,14 @@ impl Request {
         }
     }
 
-    /// Retain concrete submitted output completion, including after cancellation or revocation.
-    /// This is cleanup evidence, not capture authorization or successful frame publication.
-    /// Native fence success does not override the request's separately reconciled result.
-    /// No fence exists for queued demand, an unresolved claim, or synchronous CPU completion.
-    pub(crate) fn native_completion(&self) -> Option<ARef<Fence>> {
-        self.state.lock().completion.clone()
-    }
-
     /// Claim one bounded E-to-D stage only after source production and destination reuse
     /// succeeded. `Ok(None)` is pending; every error terminates an unclaimed request.
     /// Native queues and mappings must isolate this output stage from source-reading work.
     pub(crate) fn try_claim(
         self: &Arc<Self>,
-        renderer: &Arc<Candidate>,
-        active: &Active,
         image: &Arc<Rendered>,
     ) -> Result<Option<Claim>> {
-        self.try_claim_observed(renderer, &active.observation(), image)
-    }
-
-    /// Claim against an observed incarnation without extending active worker ownership.
-    pub(crate) fn try_claim_observed(
-        self: &Arc<Self>,
-        renderer: &Arc<Candidate>,
-        active: &Observation,
-        image: &Arc<Rendered>,
-    ) -> Result<Option<Claim>> {
-        let result = self.prepare_claim(renderer, active, image);
+        let result = self.prepare_claim(image);
         if let Err(error) = result.as_ref() {
             self.fail_queued(*error);
         }
@@ -221,8 +214,6 @@ impl Request {
 
     fn prepare_claim(
         self: &Arc<Self>,
-        renderer: &Arc<Candidate>,
-        active: &Observation,
         image: &Arc<Rendered>,
     ) -> Result<Option<Claim>> {
         let usage = {
@@ -236,8 +227,7 @@ impl Request {
         };
         // Authority loss is terminal even while a downstream reuse fence is pending.
         self.destination.scope().with_current(|_| Ok(()))?;
-        let observation = active.clone();
-        renderer.with_observed_control(&observation, |_| Ok(()))?;
+        self.destination.scope().with_worker(|_| Ok(()))?;
         let source_ready = match image.content().status() {
             FenceStatus::Pending => false,
             FenceStatus::Complete(result) => {
@@ -257,13 +247,11 @@ impl Request {
         let retirement = Retirement::new(Hold {
             request: self.clone(),
             image: image.clone(),
-            renderer: renderer.clone(),
-            observation: observation.clone(),
             report: report.clone(),
         })?;
         self.destination
             .scope()
-            .with_image(renderer, &observation, image, |current| {
+            .with_image(image, |current| {
                 if current.uses_reservation(usage.image().buffer().reservation())? {
                     return Err(EINVAL);
                 }
@@ -278,7 +266,6 @@ impl Request {
             })?;
         Ok(Some(Claim {
             request: self.clone(),
-            image: image.clone(),
             report,
             retirement: Some(retirement),
         }))
@@ -314,8 +301,6 @@ struct Report {
 struct Hold {
     request: Arc<Request>,
     image: Arc<Rendered>,
-    renderer: Arc<Candidate>,
-    observation: Observation,
     report: Arc<Report>,
 }
 
@@ -336,10 +321,7 @@ unsafe impl Retire for Hold {
             },
         };
         let scoped = self.request.destination.scope().with_image(
-            &self.renderer,
-            &self.observation,
-            &self.image,
-            |_| Ok(self.request.complete(native)),
+            &self.image, |_| Ok(self.request.complete(native)),
         );
         let retired = match scoped {
             Ok(retired) => retired,
@@ -354,19 +336,11 @@ unsafe impl Retire for Hold {
 #[must_use = "output claims must report native completion or confirm no access"]
 pub(crate) struct Claim {
     request: Arc<Request>,
-    image: Arc<Rendered>,
     report: Arc<Report>,
     retirement: Option<Retirement<Hold>>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Claim {
-    /// Private input admitted for this output stage, not a new compositor source read.
-    /// Borrowed storage remains covered by the claim's native completion obligation.
-    pub(crate) fn source(&self) -> &Rendered {
-        &self.image
-    }
-
     /// Exact recipient storage and checked layout admitted for this output stage.
     /// Retaining a DMA-BUF reference grants no write beyond the claimed stage.
     pub(crate) fn destination(&self) -> &Image {

@@ -5,7 +5,7 @@
 mod binding;
 
 use super::content::{Evidence, Released};
-use crate::{display_control, execution::Description, scene::Scene};
+use crate::{display_control, scene::Scene};
 use kernel::{
     dma_buf::DmaBuf,
     dma_fence::Fence,
@@ -61,16 +61,6 @@ pub(crate) struct SourceJob {
 }
 
 impl SourceJob {
-    /// Claim and retain the currently authorized scene as one indivisible operation.
-    pub(super) fn claim(
-        current: &display_control::Current<'_>,
-        previous_content_serial: Option<u64>,
-        execution: Description,
-    ) -> Result<Self> {
-        current.check_constraints(None)?;
-        Self::claim_current(current, previous_content_serial, Some(execution))
-    }
-
     /// Admit a source read only for the accepted entry and its held ready worker.
     /// The caller holds current permission exclusion before acquiring readiness.
     /// Retaining an entry or observing list selection alone cannot authorize this call.
@@ -88,13 +78,12 @@ impl SourceJob {
             return Err(EACCES);
         }
         current.check_constraints(Some(entry))?;
-        Self::claim_current(current, previous_content_serial, None)
+        Self::claim_current(current, previous_content_serial)
     }
 
     fn claim_current(
         current: &display_control::Current<'_>,
         previous_content_serial: Option<u64>,
-        execution: Option<Description>,
     ) -> Result<Self> {
         let (scene, claim) = current.claim_changed_scene(previous_content_serial)?;
         let binding = match binding::Retained::new(scene.constraints()) {
@@ -105,7 +94,7 @@ impl SourceJob {
                 return Err(error);
             }
         };
-        let evidence = Evidence::new(current, &scene, execution);
+        let evidence = Evidence::new(current, &scene);
         Ok(Self {
             scene,
             claim,

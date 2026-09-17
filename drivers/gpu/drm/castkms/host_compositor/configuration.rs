@@ -2,8 +2,6 @@
 
 //! Lazy worker replacement with registration-owned shutdown.
 
-mod change;
-
 use super::{
     budget::Budget,
     layout::Layout,
@@ -34,7 +32,6 @@ struct Active {
 
 enum State {
     Open(Option<Active>),
-    Disabled,
     Closed,
 }
 
@@ -91,7 +88,6 @@ impl Configuration {
             let mut state = self.state.lock();
             let active = match &mut *state {
                 State::Open(active) => active,
-                State::Disabled => return Err(EOPNOTSUPP),
                 State::Closed => return Err(ENODEV),
             };
             if let Some(current) = active.as_ref() {
@@ -116,7 +112,6 @@ impl Configuration {
         match &*self.state.lock() {
             State::Open(Some(active)) => Ok(active.worker.handle()),
             State::Open(None) => Err(EAGAIN),
-            State::Disabled => Err(EOPNOTSUPP),
             State::Closed => Err(ENODEV),
         }
     }
@@ -133,7 +128,6 @@ impl Configuration {
             let mut state = self.state.lock();
             let active = match &mut *state {
                 State::Open(active) => active,
-                State::Disabled => return Err(EOPNOTSUPP),
                 State::Closed => return Err(ENODEV),
             };
             active.take()

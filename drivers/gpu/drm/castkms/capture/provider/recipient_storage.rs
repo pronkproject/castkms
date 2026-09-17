@@ -11,10 +11,9 @@ impl Capture {
     /// Allocation and final-reference release run outside display and authority guards.
     pub(crate) fn retain_destination_storage(&self, image: &mut Image) -> Result {
         self.describe_stream()?;
-        let (width, height) = image.layout().dimensions();
         let storage = self.policy.permission.device().image_storage.register(
             Pool::Recipient,
-            [width, height],
+            image.dimensions(),
             &[image.buffer().into()],
         )?;
         self.describe_stream()?;

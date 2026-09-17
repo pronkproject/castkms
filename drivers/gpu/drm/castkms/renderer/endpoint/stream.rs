@@ -48,13 +48,17 @@ impl Stream {
             | Slot::Claimed { image: current, .. } => current == image,
         }
     }
+
+    pub(super) fn idle(&self) -> bool {
+        matches!(self.slot, Slot::Ready)
+    }
 }
 
 impl Endpoint {
     /// Advisory source availability. An unselected offer is idle, not revoked.
     pub(crate) fn source_readable(&self) -> Result<bool> {
+        self.refresh_generation()?;
         let state = self.state.lock();
-        self.access.with_output(|| Ok(()))?;
         match &*state {
             State::Closed => Err(EKEYREVOKED),
             State::Ready { offer, source, .. } => {
@@ -78,8 +82,9 @@ impl Endpoint {
     /// Reserve independent private storage, then claim only the selected live offer's scene.
     /// All fallible encoding and descriptor preparation must finish before Pending::publish.
     pub(crate) fn begin_source(&self, image_id: u64) -> Result<Pending<'_>> {
+        self.refresh_generation()?;
         let mut state = self.state.lock();
-        let State::Ready { offer, pool, source } = &mut *state else {
+        let State::Ready { offer, pool, source, .. } = &mut *state else {
             return Err(if matches!(&*state, State::Closed) { EKEYREVOKED } else { ENODATA });
         };
         if !matches!(source.slot, Slot::Ready) {
@@ -170,6 +175,7 @@ impl Endpoint {
 
     /// Borrow completed content with live offer admission; a recipient needs its own grant.
     pub(crate) fn completed_image(&self, id: u64) -> Result<Arc<Rendered>> {
+        self.refresh_generation()?;
         let state = self.state.lock();
         let State::Ready { offer, pool, .. } = &*state else {
             return Err(if matches!(&*state, State::Closed) { EKEYREVOKED } else { ENODATA });

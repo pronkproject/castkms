@@ -10,7 +10,6 @@ use kernel::{
 };
 
 const REGISTRATION_LIMIT: usize = 16;
-const ALLOCATION_LIMIT: usize = 16 * 1024 * 1024;
 
 pub(super) struct Destinations {
     images: Resources<Arc<Image>>,
@@ -35,7 +34,7 @@ impl Destinations {
             }
             // Limit retained allocations, not only the visible rows within each one.
             // No pages are mapped or pinned by registration itself.
-            if image.buffer().size() > ALLOCATION_LIMIT {
+            if image.buffer().size() > crate::image_storage::MAX_BYTES {
                 return Err(E2BIG);
             }
             retain(&mut image)?;

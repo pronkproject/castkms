@@ -36,7 +36,6 @@ mod capture_host_stream;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod capture_permissions;
 #[cfg(CONFIG_DRM_CLIENT)]
-mod capture_snapshots;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod capture_provider;
 mod capture_streams;
@@ -46,7 +45,6 @@ mod configurations;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod display_control;
 mod generations;
-mod gem_budget;
 mod host_attempts;
 mod host_cache;
 mod host_composition;
@@ -63,7 +61,6 @@ mod host_origins;
 mod host_pool;
 mod host_requests;
 mod host_results;
-mod host_snapshots;
 mod host_wait;
 mod host_worker;
 #[cfg(CONFIG_DRM_CLIENT)]
@@ -75,23 +72,17 @@ mod topology;
 mod composition_planes;
 mod atomic_scenes;
 #[cfg(CONFIG_DRM_CLIENT)]
-mod validation_installation;
 mod renderer_capabilities;
 mod output_identity;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod imports;
 mod producers;
-mod renderer_startup;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod renderer_permission;
 #[cfg(CONFIG_DRM_CLIENT)]
-mod renderer_candidates;
-#[cfg(CONFIG_DRM_CLIENT)]
-mod renderer_proposals;
 #[cfg(CONFIG_DRM_CLIENT)]
 mod renderer_control;
 #[cfg(CONFIG_DRM_CLIENT)]
-mod renderer_snapshots;
 mod vblank;
 use kernel::drm::{
     auth::MasterRef,

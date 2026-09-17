@@ -14,7 +14,6 @@ use super::{
     execution::publication::Publication,
     host_compositor::configuration,
     monitor::Monitor,
-    renderer_startup,
     Driver,
     Output, //
 };
@@ -33,8 +32,6 @@ pub(super) struct Display {
     pub(super) output: Arc<Output>,
     pub(super) monitor: Arc<Monitor>,
     pub(super) host: Arc<configuration::Configuration>,
-    pub(super) startup: Arc<renderer_startup::Startup>,
-    pub(crate) renderer_routes: Arc<crate::renderer::routing::Registry>,
     pub(crate) constraints: SetOnce<Arc<crate::execution::constraints::provider::Provider>>,
 }
 
@@ -57,9 +54,8 @@ pub(super) struct State {
     pub(super) monitor: Arc<Monitor>,
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) host: Arc<configuration::Configuration>,
-    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-    pub(super) startup: Arc<renderer_startup::Startup>,
     pub(super) capture_grants: Arc<grants::Registry>,
+    pub(super) renderer_workers: Arc<grants::Registry>,
     #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
     pub(super) audio_grants: Arc<grants::Registry>,
     pub(super) capture_streams: Arc<streams::Registry>,
@@ -97,9 +93,8 @@ impl State {
             monitor: displays.first().ok_or(EINVAL)?.monitor.clone(),
             #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
             host: displays.first().ok_or(EINVAL)?.host.clone(),
-            #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-            startup: displays.first().ok_or(EINVAL)?.startup.clone(),
             capture_grants: grants::Registry::new()?,
+            renderer_workers: grants::Registry::new_device_workers()?,
             #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
             audio_grants: grants::Registry::new()?,
             capture_streams: streams::Registry::new()?,
@@ -116,15 +111,13 @@ impl State {
                 provider.close();
             }
         }
-        for display in &self.displays {
-            display.renderer_routes.close();
-        }
         self.image_storage.close();
         self.validation.close();
         for display in &self.displays {
             display.monitor.close();
         }
         self.capture_grants.close();
+        self.renderer_workers.close();
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
         self.audio_grants.close();
         self.capture_streams.close();
@@ -148,20 +141,9 @@ pub(super) struct Owner {
 
 struct DisplayOwner {
     host: configuration::Owner,
-    startup: renderer_startup::Owner,
 }
 
 impl Owner {
-    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-    pub(super) fn new() -> Result<Self> {
-        Self::new_outputs(1)
-    }
-
-    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-    pub(super) fn new_outputs(count: u32) -> Result<Self> {
-        Self::new_configuration(count, false, false, false, false)
-    }
-
     pub(super) fn new_features(count: u32, enable_cursor: bool, enable_overlay: bool, enable_plane_pipeline: bool) -> Result<Self> {
         Self::new_configuration(count, enable_cursor, enable_overlay, enable_plane_pipeline, true)
     }
@@ -184,9 +166,6 @@ impl Owner {
             let output = Arc::pin_init(Output::new_notified(Some(changed.clone())), GFP_KERNEL)?;
             let monitor = Monitor::new()?;
             let host = configuration::Owner::new(output.clone(), execution.clone())?;
-            let startup = renderer_startup::Owner::new_notified(output.identity(), changed.clone())?;
-            let renderer_routes =
-                crate::renderer::routing::Registry::new(output.identity(), changed.clone())?;
             displays.push(
                 Arc::new(
                     Display {
@@ -194,15 +173,13 @@ impl Owner {
                         output,
                         monitor,
                         host: host.configuration(),
-                        startup: startup.startup(),
-                        renderer_routes,
                         constraints: SetOnce::new(),
                     },
                     GFP_KERNEL,
                 )?,
                 GFP_KERNEL,
             )?;
-            owners.push(DisplayOwner { host, startup }, GFP_KERNEL)?;
+            owners.push(DisplayOwner { host }, GFP_KERNEL)?;
         }
         let state = Arc::pin_init(
             State::new(displays, changed, enable_cursor, enable_overlay, enable_plane_pipeline,
@@ -220,9 +197,6 @@ impl Owner {
     }
 
     pub(super) fn close(&self) {
-        for display in &self.displays {
-            display.startup.close();
-        }
         self.state.close();
         for display in &self.displays {
             display.host.close();

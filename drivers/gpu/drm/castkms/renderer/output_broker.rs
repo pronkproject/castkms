@@ -118,7 +118,7 @@ impl Broker {
     /// Scan each recipient once without holding directory exclusion during admission.
     /// Round-robin selection prevents one repeatedly ready recipient from monopolizing E.
     pub(crate) fn try_claim(&self, image: &Arc<Rendered>) -> Option<Job> {
-        let snapshot: [Option<(usize, u64, Arc<Endpoint>)>; QUEUE_LIMIT] = {
+        let snapshot: [Option<(usize, Arc<Endpoint>)>; QUEUE_LIMIT] = {
             let state = self.state.lock();
             if state.closed {
                 return None;
@@ -127,10 +127,10 @@ impl Broker {
                 let slot = (state.cursor + offset) % QUEUE_LIMIT;
                 state.entries[slot]
                     .as_ref()
-                    .map(|entry| (slot, entry.id, entry.endpoint.clone()))
+                    .map(|entry| (slot, entry.endpoint.clone()))
             })
         };
-        for (slot, id, endpoint) in snapshot.into_iter().flatten() {
+        for (slot, endpoint) in snapshot.into_iter().flatten() {
             // Recipient metadata publication may fault in userspace. Never wait behind
             // that client while selecting output for the renderer's independent stages.
             let claimed = match endpoint.queue.try_lock() {
@@ -147,13 +147,29 @@ impl Broker {
             endpoint.finish_close();
             if let Some(output) = claimed {
                 self.state.lock().cursor = (slot + 1) % QUEUE_LIMIT;
-                return Some(Job {
-                    queue_id: id,
-                    output,
-                });
+                return Some(Job { output });
             }
         }
         None
+    }
+
+    pub(crate) fn can_claim(&self, image: &Rendered) -> bool {
+        let endpoints: [Option<Arc<Endpoint>>; QUEUE_LIMIT] = {
+            let state = self.state.lock();
+            if state.closed { return false; }
+            core::array::from_fn(|offset| {
+                let slot = (state.cursor + offset) % QUEUE_LIMIT;
+                state.entries[slot].as_ref().map(|entry| entry.endpoint.clone())
+            })
+        };
+        for endpoint in endpoints.into_iter().flatten() {
+            let ready = endpoint.queue.try_lock().is_some_and(|mut queue| {
+                !endpoint.closing.load(Ordering::SeqCst) && queue.can_claim(image)
+            });
+            endpoint.finish_close();
+            if ready { return true; }
+        }
+        false
     }
 
     /// Stop discovery and cancel demand without waiting for native completion.
@@ -170,9 +186,7 @@ impl Broker {
 }
 
 /// The exact recipient queue is named separately from its local destination-use IDs.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Job {
-    pub(crate) queue_id: u64,
     pub(crate) output: OutputJob,
 }
 
@@ -184,12 +198,7 @@ pub(crate) struct Registration {
     endpoint: Arc<Endpoint>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Registration {
-    pub(crate) fn id(&self) -> u64 {
-        self.id
-    }
-
     /// The callback may publish metadata but must not reenter this queue's operations.
     pub(crate) fn with_queue<R>(
         &self,

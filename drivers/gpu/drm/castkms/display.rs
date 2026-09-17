@@ -52,8 +52,6 @@ pub(super) struct ConnectorState;
 
 pub(super) struct CrtcState {
     binding: Option<super::execution::constraints::backend::Binding>,
-    transition: u64,
-    transition_origin: Option<scene::Configuration>,
     // Complete atomic metadata, independent of commit-tail publication and producer waits.
     checked_scene: Option<scene::Scene>,
     output_color: Option<Arc<crate::color::OutputColor>>,
@@ -105,8 +103,6 @@ impl crtc::DriverCrtcState for CrtcState {
     fn new(_: &crtc::Crtc<Crtc>) -> Result<Self> {
         Ok(Self {
             binding: None,
-            transition: 0,
-            transition_origin: None,
             output_color: None,
             checked_scene: None,
             configuration: None,
@@ -119,9 +115,6 @@ impl crtc::DriverCrtcState for CrtcState {
     fn duplicate(&self) -> Result<Self> {
         Ok(Self {
             binding: self.binding.clone(),
-            // A transition tag belongs to one request, not subsequent animation.
-            transition: 0,
-            transition_origin: None,
             output_color: self.output_color.clone(),
             checked_scene: self.checked_scene.clone(),
             configuration: self.configuration.clone(),
@@ -289,16 +282,9 @@ impl plane::DriverPlane for Plane {
 }
 
 impl CrtcState {
-    pub(crate) fn tag_transition(&mut self, token: u64) {
-        self.transition = token;
-    }
-
     fn validation_update(&self) -> Result<crate::execution::coordinator::Update<'_>> {
         Ok(crate::execution::coordinator::Update {
             scene: self.validation_view()?,
-            token: self.transition,
-            previous_configuration: self.transition_origin.as_ref(),
-            configuration: self.configuration.as_ref(),
         })
     }
 
@@ -448,7 +434,6 @@ impl crtc::DriverCrtc for Crtc {
 
     fn atomic_check(check: crtc::CrtcAtomicCheck<'_, Self>) -> Result {
         let (transaction, old, mut state) = check.take_all();
-        state.transition_origin = old.configuration.clone();
         CrtcState::resolve_blank_owner(transaction, old, &mut state)?;
         state.validate_color_mgmt(256)?;
         state.output_color =
@@ -470,7 +455,7 @@ impl crtc::DriverCrtc for Crtc {
         }
         CrtcState::describe_scene(transaction, old, &mut state)?;
         if transaction.drm_dev().constraints_enabled {
-            return if state.transition == 0 { Ok(()) } else { Err(EOPNOTSUPP) };
+            return Ok(());
         }
         let mut updates = core::array::from_fn(|_| None);
         *updates.get_mut(state.crtc().index() as usize).ok_or(EINVAL)? =
@@ -566,11 +551,6 @@ impl Crtc {
             state.configuration.clone(),
         );
         if old.configuration != state.configuration {
-            // A tagged migration deliberately changes the candidate's configuration.
-            // The gate, not an unchanged mode identity, controls its activation.
-            if state.transition == 0 {
-                commit.crtc().display.startup.configuration_changed();
-            }
             if let Some(configuration) = &old.configuration {
                 transaction
                     .drm_dev()

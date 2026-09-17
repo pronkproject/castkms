@@ -28,6 +28,14 @@ mod cases {
     }
 
     #[test]
+    fn maximum_capacity_reflects_the_exact_result_layout() -> Result {
+        check(maximum_capacity(Layout::new(1920, 1080)?) == CAPACITY_LIMIT)?;
+        let largest = Layout::new(8192, 8192)?;
+        check(maximum_capacity(largest) == 2)?;
+        check(matches!(Budget::new()?.reserve(largest, 3), Err(E2BIG)))
+    }
+
+    #[test]
     fn retained_queue_storage_blocks_replacement_without_waiting() -> Result {
         let budget = Budget::new()?;
         let layout = Layout::new(4096, 4095)?;

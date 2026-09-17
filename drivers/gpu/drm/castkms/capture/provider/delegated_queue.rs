@@ -16,14 +16,7 @@ use crate::{
         request_budget::Charge,
         requests, //
     },
-    renderer::{
-        candidate::Candidate,
-        render_job::Rendered, //
-    },
-    renderer_startup::{
-        Active,
-        Observation, //
-    },
+    renderer::render_job::Rendered,
     scene::ContentSerial, //
 };
 use kernel::{
@@ -37,7 +30,6 @@ use kernel::{
 };
 
 struct Pending {
-    use_id: u64,
     request: Arc<Request>,
 }
 
@@ -48,13 +40,10 @@ pub(crate) struct Completion {
     pub(crate) result: Result,
     pub(crate) content: Option<ContentSerial>,
     pub(crate) completed_at: Option<kernel::time::Instant<kernel::time::Monotonic>>,
-    pub(crate) native: Option<ARef<Fence>>,
 }
 
 /// One bounded output claim, named independently of its private source image.
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Job {
-    pub(crate) use_id: u64,
     pub(crate) claim: Claim,
 }
 
@@ -62,8 +51,6 @@ pub(crate) struct Job {
 /// The queue observes its worker; only the worker's owner keeps that incarnation active.
 pub(crate) struct Queue {
     scope: Delegated,
-    renderer: Arc<Candidate>,
-    active: Observation,
     changed: Arc<PollCondVar>,
     records: requests::Queue<Pending, Arc<Request>>,
     charge: Arc<Charge>,
@@ -71,33 +58,15 @@ pub(crate) struct Queue {
     lost: bool,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
-impl Delegated {
-    pub(crate) fn create_queue(
-        &self,
-        renderer: &Arc<Candidate>,
-        active: &Active,
-        capacity: u32,
-    ) -> Result<Queue> {
-        self.create_queue_observed(renderer, &active.observation(), capacity)
-    }
-
-    /// Retain worker identity without borrowing or extending endpoint ownership.
-    pub(crate) fn create_queue_observed(
-        &self,
-        renderer: &Arc<Candidate>,
-        active: &Observation,
-        capacity: u32,
-    ) -> Result<Queue> {
-        self.with_renderer(renderer, active, |_| Ok(()))?;
-        let charge = self.request_budget().reserve(capacity)?;
+impl Queue {
+    pub(crate) fn new(scope: &Delegated, capacity: u32) -> Result<Queue> {
+        scope.with_worker(|_| Ok(()))?;
+        let charge = scope.request_budget().reserve(capacity)?;
         let records = requests::Queue::new(charge.capacity())?;
-        self.with_renderer(renderer, active, |_| Ok(()))?;
+        scope.with_worker(|_| Ok(()))?;
         Ok(Queue {
-            scope: self.clone(),
-            renderer: renderer.clone(),
-            active: active.clone(),
-            changed: self.changed(),
+            scope: scope.clone(),
+            changed: scope.changed(),
             records,
             charge,
             closing: false,
@@ -106,7 +75,6 @@ impl Delegated {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Queue {
     /// Register poll waiters before reconciling authority, dependencies and terminal results.
     /// Shared wakeups may belong to another queue or output and convey no pixel authority.
@@ -126,11 +94,9 @@ impl Queue {
             return Err(ESHUTDOWN);
         }
         self.scope.check_same(destination.scope())?;
-        self.scope
-            .with_renderer(&self.renderer, &self.active, |_| Ok(()))?;
+        self.scope.with_worker(|_| Ok(()))?;
         self.records.queue(use_id, || {
             Ok(Pending {
-                use_id,
                 request: destination.request_accounted(
                     reuse,
                     Some(self.charge.clone()),
@@ -157,21 +123,26 @@ impl Queue {
             if let Ok(Some(claim)) =
                 pending
                     .request
-                    .try_claim_observed(&self.renderer, &self.active, image)
+                    .try_claim(image)
             {
-                claimed = Some(Job {
-                    use_id: pending.use_id,
-                    claim,
-                });
+                claimed = Some(Job { claim });
             }
         });
         self.advance();
         claimed
     }
 
+    pub(crate) fn can_claim(&mut self, image: &Rendered) -> bool {
+        if self.closing { return false; }
+        let mut ready = false;
+        self.records.for_each_pending(|pending| ready |= pending.request.ready_for(image));
+        self.advance();
+        ready
+    }
+
     pub(crate) fn cancel(&mut self, use_id: u64) -> Result {
         self.records.cancel(use_id, |pending| {
-            if pending.request.status_for(&self.renderer, &self.active) != Status::Pending {
+            if pending.request.status_for_worker() != Status::Pending {
                 return Err(EALREADY);
             }
             pending.request.cancel();
@@ -182,7 +153,7 @@ impl Queue {
     /// Reconcile authority and native completion without reading or retaining a source.
     pub(crate) fn advance(&mut self) -> usize {
         self.records.advance(|pending| {
-            match pending.request.status_for(&self.renderer, &self.active) {
+            match pending.request.status_for_worker() {
                 Status::Pending => Ok(None),
                 Status::Complete(_) => Ok(Some(pending.request.clone())),
                 Status::Lost => {
@@ -211,10 +182,9 @@ impl Queue {
     ) -> Result<R> {
         self.records.dequeue(|completed| {
             let request = completed.result?;
-            let result = match request.status_for(&self.renderer, &self.active) {
+            let result = match request.status_for_worker() {
                 Status::Complete(Ok(())) => {
-                    self.scope
-                        .with_renderer(&self.renderer, &self.active, |_| Ok(()))
+                    self.scope.with_worker(|_| Ok(()))
                 }
                 Status::Complete(Err(error)) => Err(error),
                 Status::Lost => return Err(EIO),
@@ -225,7 +195,6 @@ impl Queue {
                 result,
                 content: result.ok().and_then(|()| request.content_serial()),
                 completed_at: result.ok().and_then(|()| request.completed_at()),
-                native: request.native_completion(),
             })
         })
     }

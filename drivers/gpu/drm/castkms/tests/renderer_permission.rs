@@ -100,7 +100,7 @@ mod cases {
     }
 
     #[test]
-    fn startup_control_does_not_require_or_grant_image_ownership() -> Result {
+    fn renderer_control_does_not_require_or_grant_image_ownership() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
         enable(&fixture)?;
@@ -145,7 +145,7 @@ mod cases {
     }
 
     #[test]
-    fn a_new_control_interval_does_not_revive_an_old_permission() -> Result {
+    fn same_master_reacquisition_reactivates_the_permission() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
         let file = fixture.drm.master_file()?;
@@ -155,14 +155,13 @@ mod cases {
         let master = file.file().master_snapshot().ok_or(EINVAL)?;
         // Model ordered callbacks while keeping the native identity available for lookup.
         fixture.drm.device().authority.changed(None);
+        check(matches!(access.with_current(|_| Ok(())), Err(EACCES)))?;
         fixture
             .drm
             .device()
             .authority
             .changed(Some(master.master().clone()));
-        check(matches!(access.with_current(|_| Ok(())), Err(ESTALE)))?;
-        let replacement = super::owner(&fixture, &file)?;
-        replacement.access().with_current(|_| Ok(()))
+        access.with_current(|_| Ok(()))
     }
 
     #[test]

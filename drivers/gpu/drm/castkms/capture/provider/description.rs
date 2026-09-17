@@ -7,14 +7,12 @@ use super::{
     Stream, //
 };
 use crate::{
-    capture::budget::CAPACITY_LIMIT,
     host_compositor::layout::Layout,
     scene::Configuration, //
 };
-use kernel::{
-    drm::fourcc,
-    prelude::*, //
-};
+#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
+use kernel::drm::fourcc;
+use kernel::prelude::*;
 
 /// A description for allocating a host-linear consumer before opening its stream.
 ///
@@ -29,6 +27,9 @@ pub(crate) struct Description {
 }
 
 impl Description {
+    pub(crate) fn capture(&self) -> &Capture {
+        &self.capture
+    }
     /// Historical mode and route identity, without preserving permission to open a stream.
     pub(crate) fn configuration(&self) -> &Configuration {
         &self.configuration
@@ -38,17 +39,19 @@ impl Description {
         self.layout
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn format(&self) -> u32 {
         fourcc::XRGB8888
     }
 
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn modifier(&self) -> u64 {
         fourcc::FORMAT_MOD_LINEAR
     }
 
     /// Maximum private request count, not a reservation of currently available capacity.
     pub(crate) fn max_requests(&self) -> u32 {
-        CAPACITY_LIMIT
+        crate::capture::budget::maximum_capacity(self.layout)
     }
 
     /// Open only for the retained grant and configuration, without silently changing layout.

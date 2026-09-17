@@ -41,10 +41,10 @@ impl RenderJob {
         let crate::execution::constraints::backend::Backend::Renderer(worker) = &*backend else {
             return Err(EOPNOTSUPP);
         };
-        if worker.interval() != access.interval() {
-            return Err(ESTALE);
-        }
         let source = access.with_current(|current| {
+            if worker.interval() != access.device().authority.interval()? {
+                return Err(ESTALE);
+            }
             let ready = worker.hold_ready()?;
             if !ready.contains(image_id, destination.image()) {
                 return Err(EACCES);

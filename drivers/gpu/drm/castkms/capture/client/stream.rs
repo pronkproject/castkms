@@ -4,8 +4,7 @@
 
 use super::streams::Streams;
 use crate::capture::{
-    provider::Frame,
-    requests::Completion, //
+    client_queue::Completion,
 };
 use kernel::prelude::*;
 
@@ -37,7 +36,7 @@ impl<'a> Stream<'a> {
 
     pub(crate) fn dequeue<R>(
         &mut self,
-        publish: impl for<'b> FnOnce(Completion<'b, Frame>) -> Result<R>,
+        publish: impl FnOnce(Completion) -> Result<R>,
     ) -> Result<R> {
         self.streams
             .with_queue(self.id, |queue| queue.dequeue(publish))

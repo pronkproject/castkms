@@ -14,7 +14,6 @@ mod formats;
 mod file;
 mod gem;
 mod host_compositor;
-mod host_snapshot;
 mod image_access;
 mod image_storage;
 mod monitor;
@@ -23,7 +22,6 @@ mod output;
 mod provenance;
 mod renderer;
 mod renderer_file;
-mod renderer_startup;
 mod scene;
 
 use file::File;
@@ -166,11 +164,8 @@ impl drm::Driver for Driver {
     }
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {
-        for display in &dev.displays {
-            display.startup.invalidate_current();
-        }
-        dev.validation.invalidate_all();
         dev.capture_streams.revoke_all();
+        dev.renderer_workers.revoke_all();
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
         dev.audio_grants.revoke_all();
         dev.authority.changed(master);

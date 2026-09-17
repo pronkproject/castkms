@@ -123,11 +123,6 @@ mod cases {
                 )?;
             }
         }
-        let displays = &fixture.drm.device().displays;
-        let first = displays[0].startup.begin()?;
-        let last = displays[7].startup.begin()?;
-        first.check()?;
-        last.check()?;
         fixture.drm.update(|mut transaction| {
             transaction
                 .as_mut()
@@ -136,8 +131,6 @@ mod cases {
         for (index, display) in fixture.drm.device().displays.iter().enumerate() {
             check(display.output.has_scene() == (index != 7))?;
         }
-        first.check()?;
-        check(last.check().is_err())?;
         check(matches!(fixture.drm.crtc_at(8), Err(EINVAL)))?;
         check(matches!(fixture.drm.plane_at(8), Err(EINVAL)))?;
         check(matches!(fixture.drm.connector_at(8), Err(EINVAL)))?;

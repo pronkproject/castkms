@@ -165,4 +165,33 @@ mod cases {
             Ok(())
         })
     }
+
+    #[test]
+    fn master_reacquisition_drains_old_claim_before_endpoint_reuse() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-stream-generation", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.publish(|_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+            let pending = endpoint.begin_source(1)?;
+            let id = pending.id();
+            pending.publish(|| ())?;
+            let master = file.file().master_snapshot().ok_or(EINVAL)?;
+
+            <Driver as kernel::drm::Driver>::master_changed(device, None);
+            <Driver as kernel::drm::Driver>::master_changed(
+                device,
+                Some(master.master().clone()),
+            );
+            check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Withdrawn)?;
+            check(endpoint.begin_source(1).err() == Some(EBUSY))?;
+            endpoint.release_source(id, Completion::WithoutAccess)?;
+            check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Empty)?;
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            device.constraints_output(crtc)?.restore_default()?;
+            endpoint.declare(private_images::profile()?, [640, 480])
+        })
+    }
 }

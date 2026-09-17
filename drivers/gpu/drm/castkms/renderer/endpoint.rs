@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Serialized preparation and publication of one immutable renderer endpoint.
+//! Serialized preparation and publication of one renderer generation at a time.
 
 mod stream;
+mod output;
 
 use super::{draft::Draft, offer::Offer, permission::Access, private_pool::Pool};
 use crate::{execution::capabilities::Profile, Driver};
@@ -18,7 +19,7 @@ enum State {
     Empty,
     Draft { draft: Arc<Draft>, pool: Pool },
     Publishing,
-    Ready { offer: Offer, pool: Pool, source: stream::Stream },
+    Ready { offer: Offer, pool: Pool, source: stream::Stream, output: output::Stream },
     Closed,
 }
 
@@ -37,8 +38,7 @@ pub(crate) struct Description {
     pub(crate) constraints_id: u64,
 }
 
-/// One worker declaration per file lifetime. Replacement uses an independent endpoint.
-/// A retained endpoint reference is not permission to renew a closed worker.
+/// One worker generation at a time. A same-master reacquisition can prepare a fresh one.
 #[pin_data(PinnedDrop)]
 pub(crate) struct Endpoint {
     access: Access,
@@ -56,9 +56,59 @@ impl Endpoint {
         }), GFP_KERNEL)
     }
 
+    /// Retire state from an earlier master interval without reviving any of its work.
+    /// Outstanding claims keep their release channel and delay reuse of the endpoint.
+    fn refresh_generation(&self) -> Result {
+        let interval = self.access.current_interval()?;
+        let (retired, revocation, stale_id) = {
+            let mut state = self.state.lock();
+            match &*state {
+                State::Draft { draft, .. } if draft.interval() != interval => (
+                    Some(core::mem::replace(&mut *state, State::Empty)),
+                    None,
+                    None,
+                ),
+                State::Ready { offer, source, output, .. } if offer.interval() != interval => {
+                    let id = offer.entry().id();
+                    let revocation = Some(offer.revocation());
+                    let retired = if source.idle() && output.idle() {
+                        Some(core::mem::replace(&mut *state, State::Empty))
+                    } else {
+                        None
+                    };
+                    (retired, revocation, Some(id))
+                }
+                _ => (None, None, None),
+            }
+        };
+        if let Some(revocation) = revocation {
+            revocation.revoke();
+        }
+        drop(retired);
+
+        // Revocation can make a concurrently publishing claim return its slot. Reap the
+        // generation if it became idle, but never confuse it with a replacement identity.
+        if let Some(id) = stale_id {
+            let retired = {
+                let mut state = self.state.lock();
+                if matches!(&*state, State::Ready { offer, source, output, .. }
+                    if offer.entry().id() == id && offer.interval() != interval
+                        && source.idle() && output.idle())
+                {
+                    Some(core::mem::replace(&mut *state, State::Empty))
+                } else {
+                    None
+                }
+            };
+            drop(retired);
+        }
+        Ok(())
+    }
+
     /// Allocate an immutable declaration without changing native constraints availability.
     /// Failed preparation leaves an empty endpoint available for retry.
     pub(crate) fn declare(&self, profile: Profile, dimensions: [u32; 2]) -> Result {
+        self.refresh_generation()?;
         let draft = Arc::new(Draft::new(self.access.clone(), profile, dimensions)?, GFP_KERNEL)?;
         let pool = Pool::new()?;
         let mut state = self.state.lock();
@@ -67,9 +117,11 @@ impl Endpoint {
             State::Closed => return Err(EKEYREVOKED),
             _ => return Err(EALREADY),
         }
-        self.access.with_output(|| Ok(()))?;
-        *state = State::Draft { draft, pool };
-        Ok(())
+        let interval = draft.interval();
+        self.access.with_output_interval(interval, || {
+            *state = State::Draft { draft, pool };
+            Ok(())
+        })
     }
 
     pub(crate) fn register_image(
@@ -78,6 +130,7 @@ impl Endpoint {
         dimensions: [u32; 2],
         buffers: &[ARef<DmaBuf>],
     ) -> Result {
+        self.refresh_generation()?;
         let mut state = self.state.lock();
         match &mut *state {
             State::Draft { draft, pool } => {
@@ -113,6 +166,7 @@ impl Endpoint {
     }
 
     pub(crate) fn submit_probe(&self, completion: Option<ARef<Fence>>) -> Result {
+        self.refresh_generation()?;
         let draft = {
             let state = self.state.lock();
             match &*state {
@@ -127,6 +181,7 @@ impl Endpoint {
 
     /// Report terminal native failure separately from retryable private preparation.
     pub(crate) fn check_probe(&self) -> Result {
+        self.refresh_generation()?;
         use kernel::dma_fence::Status;
         let state = self.state.lock();
         match &*state {
@@ -150,6 +205,7 @@ impl Endpoint {
     /// No fallible operation follows successful listing. The reply callback follows Offer's
     /// restrictions; closing concurrently cannot leave a ready unowned native entry.
     pub(crate) fn publish(&self, reply: impl FnOnce(u64) -> Result) -> Result {
+        self.refresh_generation()?;
         let resources = {
             let mut state = self.state.lock();
             match &*state {
@@ -181,7 +237,12 @@ impl Endpoint {
         };
         let result = offer.publish(&registered, reply);
         match result {
-            Ok(()) => *state = State::Ready { offer, pool, source: stream::Stream::new() },
+            Ok(()) => *state = State::Ready {
+                offer,
+                pool,
+                source: stream::Stream::new(),
+                output: output::Stream::new(),
+            },
             Err(error) => {
                 drop(state);
                 pending.resources = Some(State::Draft { draft, pool });
@@ -199,20 +260,19 @@ impl Endpoint {
     }
 
     pub(crate) fn describe(&self) -> Result<Description> {
+        self.refresh_generation()?;
         let state = self.state.lock();
-        self.access.with_output(|| {
-            let (phase, constraints_id) = match &*state {
-                State::Closed => return Err(EKEYREVOKED),
-                State::Empty => (Phase::Empty, 0),
-                State::Draft { .. } => (Phase::Draft, 0),
-                State::Publishing => (Phase::Publishing, 0),
-                State::Ready { offer, .. } => (
-                    if offer.is_live() { Phase::Published } else { Phase::Withdrawn },
-                    offer.entry().id(),
-                ),
-            };
-            Ok(Description { phase, constraints_id })
-        })
+        let (phase, constraints_id) = match &*state {
+            State::Closed => return Err(EKEYREVOKED),
+            State::Empty => (Phase::Empty, 0),
+            State::Draft { .. } => (Phase::Draft, 0),
+            State::Publishing => (Phase::Publishing, 0),
+            State::Ready { offer, .. } => (
+                if offer.is_live() { Phase::Published } else { Phase::Withdrawn },
+                offer.entry().id(),
+            ),
+        };
+        Ok(Description { phase, constraints_id })
     }
 
     /// Stop new selection and admission without closing the outstanding release channel.

@@ -9,7 +9,7 @@ use kernel::{
 };
 
 pub(crate) const MAX_IMAGES: usize = 128;
-const MAX_BYTES: usize = 512 * 1024 * 1024;
+pub(crate) const MAX_BYTES: usize = 512 * 1024 * 1024;
 const MAX_BUFFERS: usize = 4;
 
 /// Independently bounded storage stages sharing one alias ledger.

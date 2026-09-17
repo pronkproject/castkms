@@ -12,7 +12,7 @@ mod cases {
         let display = CastKms::new_constraints(c"castkms-native-host-images", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
-            let grantor = delegated_authority::grant(&file, crtc, connector)?;
+            let grantor = capture_grant(&file, crtc, connector)?;
             let capture = grantor.capture();
             let description = capture.describe_stream()?;
             let stream = description.create_stream(1)?;

@@ -7,7 +7,6 @@ mod publications;
 use super::{
     private_image::Image,
     private_pool::RegistrationSet,
-    probe::Source, //
 };
 use crate::execution::{
     capabilities::Profile,
@@ -37,7 +36,7 @@ pub(crate) struct Worker {
     output: crate::output::Identity,
     interval: crate::authority::Interval,
     profile: Profile,
-    source: Source,
+    outputs: Arc<super::output_broker::Broker>,
     live: AtomicBool,
     #[pin]
     resources: Mutex<Option<Resources>>,
@@ -53,7 +52,7 @@ struct Resources {
 pub(crate) struct Owner {
     worker: Arc<Worker>,
     authority: kernel::sync::aref::ARef<kernel::drm::capture::Authority<Worker>>,
-    permission: Option<crate::authority::grants::Registration>,
+    permission: Option<super::permission::WorkerRegistration>,
 }
 
 // SAFETY: The module retains the worker callback and destructor through native revocation.
@@ -64,7 +63,6 @@ unsafe impl kernel::drm::capture::Policy for Worker {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Owner {
     /// Preparation supplies owned registrations and a successfully completed native probe.
     pub(super) fn new(
@@ -73,7 +71,6 @@ impl Owner {
         profile: &Profile,
         dimensions: [u32; 2],
         registrations: RegistrationSet,
-        source: Source,
     ) -> Result<Self> {
         let mut limits = *profile.limits();
         if (0..2).any(|axis| {
@@ -97,12 +94,13 @@ impl Owner {
         formats.extend_from_slice(profile.formats(), GFP_KERNEL)?;
         let profile = Profile::new(limits, formats)?;
         let publications = publications::Publications::new()?;
+        let outputs = super::output_broker::Broker::new()?;
         let worker = Arc::pin_init(
             pin_init!(Worker {
                 output,
                 interval,
                 profile,
-                source,
+                outputs,
                 live: AtomicBool::new(true),
                 resources <- kernel::new_mutex!(Some(Resources {
                     registrations,
@@ -149,7 +147,6 @@ pub(crate) struct Ready<'a> {
     resources: MutexGuard<'a, Option<Resources>>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Worker {
     /// Advisory availability only; source admission still holds the readiness guard.
     pub(super) fn is_live(&self) -> bool {
@@ -168,8 +165,8 @@ impl Worker {
         &self.profile
     }
 
-    pub(crate) fn probe_source(&self) -> Source {
-        self.source
+    pub(crate) fn outputs(&self) -> &Arc<super::output_broker::Broker> {
+        &self.outputs
     }
 
     /// Advisory validation, safe inside a callback while installation holds the Ready guard.
@@ -212,6 +209,7 @@ impl Worker {
             resources.take()
         };
         if let Some(Resources { registrations, publications }) = retired {
+            self.outputs.close();
             publications.withdraw();
             drop(registrations);
         }

@@ -4,7 +4,6 @@
 
 use crate::{
     display_control::Current,
-    execution::Description,
     output::Identity,
     scene::{Configuration, ContentSerial, Scene, MAX_PLANES},
     Driver,
@@ -25,7 +24,6 @@ pub(super) struct Evidence {
     output: Identity,
     configuration: Configuration,
     owner: Option<MasterRef<Driver>>,
-    execution: Option<Description>,
     constraints: Option<ARef<kernel::drm::constraints::OpaqueEntry>>,
     content: Option<ContentSerial>,
     producers: [Option<Arc<Dependencies>>; MAX_PLANES],
@@ -35,7 +33,6 @@ impl Evidence {
     pub(super) fn new(
         current: &Current<'_>,
         scene: &Scene,
-        execution: Option<Description>,
     ) -> Self {
         let mut producers = core::array::from_fn(|_| None);
         for (slot, layer) in producers.iter_mut().zip(scene.layers()) {
@@ -45,7 +42,6 @@ impl Evidence {
             output: current.output_identity().clone(),
             configuration: current.configuration().clone(),
             owner: scene.owner().cloned(),
-            execution,
             constraints: scene.constraints().map(ARef::from),
             content: scene.content_serial(),
             producers,
@@ -73,7 +69,6 @@ pub(crate) struct Released {
     cpu_completed_at: Option<Instant<Monotonic>>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Released {
     fn fences(&self) -> impl Iterator<Item = &Fence> {
         Iterator::chain(
@@ -125,21 +120,15 @@ impl Released {
         self.evidence.content
     }
 
-    /// Observe eligibility under the caller's current display and renderer exclusion.
-    /// Success grants no capture authority and reserves no later operation.
-    pub(crate) fn check(&self, current: &Current<'_>, execution: Description) -> Result {
-        self.check_identity(current, Some(execution))
-    }
-
     /// Native accepted-entry identity supplies execution attribution without a second tag.
     pub(crate) fn check_bound(&self, current: &Current<'_>) -> Result {
         if self.evidence.constraints.is_none() {
             return Err(EINVAL);
         }
-        self.check_identity(current, None)
+        self.check_identity(current)
     }
 
-    fn check_identity(&self, current: &Current<'_>, execution: Option<Description>) -> Result {
+    fn check_identity(&self, current: &Current<'_>) -> Result {
         current.check_scene_owner()?;
         if self.evidence.output != *current.output_identity()
             || self.evidence.owner.as_ref() != Some(current.master())
@@ -147,9 +136,7 @@ impl Released {
             return Err(EACCES);
         }
         current.check_constraints(self.evidence.constraints.as_deref())?;
-        if self.evidence.configuration != *current.configuration()
-            || self.evidence.execution != execution
-        {
+        if self.evidence.configuration != *current.configuration() {
             return Err(ESTALE);
         }
         match self.status() {

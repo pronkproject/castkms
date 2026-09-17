@@ -83,7 +83,8 @@ impl Stream {
         destination: Arc<Image>,
         reuse: Option<ARef<Fence>>,
     ) -> Result<Output> {
-        if destination.layout() != self.delivery.layout() {
+        let (width, height) = self.delivery.layout().dimensions();
+        if destination.dimensions() != [width, height] {
             return Err(EINVAL);
         }
         if !destination.buffer().is_writable() {

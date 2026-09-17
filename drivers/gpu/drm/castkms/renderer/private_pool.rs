@@ -38,7 +38,6 @@ impl Drop for PinnedImage {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl RegistrationSet {
     /// Exact registrations, not a promise of current write availability or valid pixels.
     pub(crate) fn images(&self) -> impl Iterator<Item = (u64, &Image)> {
@@ -54,7 +53,6 @@ pub(crate) struct Pool {
     last_id: u64,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Pool {
     pub(crate) fn new() -> Result<Self> {
         Ok(Self {
@@ -163,6 +161,10 @@ impl Pool {
             .completed
             .clone()
             .ok_or(ENODATA)
+    }
+
+    pub(crate) fn first_completed(&self) -> Option<Arc<Rendered>> {
+        self.entries.iter().find_map(|entry| entry.completed.clone())
     }
 
     /// Return the previous retention for destruction outside endpoint exclusion.

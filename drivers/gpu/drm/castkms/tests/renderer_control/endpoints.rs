@@ -179,4 +179,33 @@ mod cases {
             Ok(())
         })
     }
+
+    #[test]
+    fn same_master_reacquisition_reuses_endpoint_with_a_fresh_generation() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-reactivate", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = prepared(device, &owner)?;
+            endpoint.publish(|_| Ok(()))?;
+            let old = endpoint.constraints_id()?;
+            let master = file.file().master_snapshot().ok_or(EINVAL)?;
+
+            <Driver as kernel::drm::Driver>::master_changed(device, None);
+            check(endpoint.describe().err() == Some(EACCES))?;
+            <Driver as kernel::drm::Driver>::master_changed(
+                device,
+                Some(master.master().clone()),
+            );
+
+            check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Empty)?;
+            check(device.constraints_output(crtc)?.lookup(old).err() == Some(ESTALE))?;
+            endpoint.declare(private_images::profile()?, [640, 480])?;
+            endpoint.register_image(2, [640, 480], &[
+                private_images::buffer(device, ExportAccess::ReadWrite)?,
+            ])?;
+            endpoint.submit_probe(None)?;
+            endpoint.publish(|_| Ok(()))?;
+            check(endpoint.constraints_id()? != old)
+        })
+    }
 }
