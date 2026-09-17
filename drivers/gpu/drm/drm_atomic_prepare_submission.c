@@ -64,7 +64,7 @@ static int observe_submission(struct drm_atomic_commit *state,
 			      unsigned int capacity)
 {
 	struct drm_crtc *crtc;
-	struct drm_crtc_state *old;
+	struct drm_crtc_state *old __maybe_unused;
 	u32 mask = 0;
 	int i;
 
