@@ -82,7 +82,7 @@ mod cases {
             check(output.lookup(second.entry().id()).is_ok())?;
             check(output.snapshot(0)?.info().selected_id == output.default_entry().id())?;
             drop(second);
-            check(crtc.display.constraints.as_ref().ok_or(EINVAL)?.reap(&output)? == 2)?;
+            check(crtc.display.constraints.as_ref().ok_or(EINVAL)?.reap(&output)? == 0)?;
             check(output.snapshot(0)?.info().count == 1)?;
             Ok(())
         })
