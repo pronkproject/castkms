@@ -180,9 +180,9 @@ mod cases {
         layer.geometry.destination = [2; 2];
         scene.set_layer(0, Some(Arc::new(layer, GFP_KERNEL)?));
         let mut limits = limits();
-        check(profile(limits, &image)?.check(&scene, [640, 480]) == Err(EOPNOTSUPP))?;
+        check(matches!(profile(limits, &image), Err(EINVAL)))?;
         limits.color.yuv_encodings = [true; 3];
-        check(profile(limits, &image)?.check(&scene, [640, 480]) == Err(EOPNOTSUPP))?;
+        check(matches!(profile(limits, &image), Err(EINVAL)))?;
         limits.color.yuv_ranges = [true; 2];
         profile(limits, &image)?.check(&scene, [640, 480])?;
         Ok(())
