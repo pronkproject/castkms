@@ -81,12 +81,15 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 	for (i = 0; i < count; i++) {
 		if (!formats[i].plane_id || !__drm_format_info(formats[i].format) ||
 		    formats[i].modifier == DRM_FORMAT_MOD_INVALID ||
+		    (formats[i].flags & ~DRM_CONSTRAINTS_FORMAT_IMPLICIT) ||
+		    (formats[i].flags && formats[i].modifier) ||
 		    !size_valid(&formats[i].size))
 			return ERR_PTR(-EINVAL);
 		for (j = 0; j < i; j++) {
 			if (formats[i].plane_id == formats[j].plane_id &&
 			    formats[i].format == formats[j].format &&
-			    formats[i].modifier == formats[j].modifier)
+			    formats[i].modifier == formats[j].modifier &&
+			    formats[i].flags == formats[j].flags)
 				return ERR_PTR(-EEXIST);
 		}
 	}

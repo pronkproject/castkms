@@ -237,7 +237,7 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 		if (!fb)
 			return -EINVAL;
 		for (j = 0; j < count; j++) {
-			if (formats[j].plane_id == plane->base.id &&
+			if (!formats[j].flags && formats[j].plane_id == plane->base.id &&
 			    formats[j].format == fb->format->format &&
 			    formats[j].modifier == fb->modifier &&
 			    size_matches(&formats[j].size, fb->width, fb->height))

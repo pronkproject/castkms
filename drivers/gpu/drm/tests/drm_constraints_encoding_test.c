@@ -28,12 +28,14 @@ static void put_list(void *data) { drm_constraints_list_put(data); }
 static void put_snapshot(void *data) { drm_constraints_snapshot_put(data); }
 static void free_buffer(void *data) { kvfree(data); }
 
-static struct encoding_fixture *new_fixture(struct kunit *test)
+static struct encoding_fixture *new_fixture_with_layout(struct kunit *test, bool implicit)
 {
 	const struct drm_constraints_size output = { 640, 360, 1920, 1080 };
 	const struct drm_constraints_format format = {
-		.plane_id = 7, .format = DRM_FORMAT_XRGB8888, .modifier = I915_FORMAT_MOD_X_TILED,
+		.plane_id = 7, .format = DRM_FORMAT_XRGB8888,
+		.modifier = implicit ? 0 : I915_FORMAT_MOD_X_TILED,
 		.size = { 64, 32, 3840, 2160 },
+		.flags = implicit ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0,
 	};
 	struct drm_constraints_property property;
 	struct encoding_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
@@ -60,6 +62,11 @@ static struct encoding_fixture *new_fixture(struct kunit *test)
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->list);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_list, f->list), 0);
 	return f;
+}
+
+static struct encoding_fixture *new_fixture(struct kunit *test)
+{
+	return new_fixture_with_layout(test, false);
 }
 
 static struct drm_constraints_snapshot *snapshot(struct kunit *test,
@@ -169,6 +176,21 @@ static void size_discovery_and_short_buffers_write_no_partial_payload(struct kun
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, before + 1, 256, &required), 0);
 	KUNIT_EXPECT_EQ(test, before[0], 0xa5);
 	KUNIT_EXPECT_MEMEQ(test, before + 1, buffer, 256);
+}
+
+static void implicit_layout_is_not_encoded_as_explicit_linear(struct kunit *test)
+{
+	struct encoding_fixture *f = new_fixture_with_layout(test, true);
+	struct drm_constraints_snapshot *view = snapshot(test, f->list);
+	u8 buffer[32], before[32];
+	size_t required = 123;
+
+	memset(buffer, 0xa5, sizeof(buffer));
+	memcpy(before, buffer, sizeof(buffer));
+	KUNIT_EXPECT_EQ(test, drm_constraints_snapshot_encode(view, buffer, sizeof(buffer),
+							     &required), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, required, 123);
+	KUNIT_EXPECT_MEMEQ(test, buffer, before, sizeof(buffer));
 }
 
 static void encoded_snapshot_remains_coherent_after_list_closure(struct kunit *test)
@@ -290,6 +312,7 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 static struct kunit_case drm_constraints_encoding_tests[] = {
 	KUNIT_CASE(encoding_preserves_native_metadata_without_padding),
 	KUNIT_CASE(size_discovery_and_short_buffers_write_no_partial_payload),
+	KUNIT_CASE(implicit_layout_is_not_encoded_as_explicit_linear),
 	KUNIT_CASE(encoded_snapshot_remains_coherent_after_list_closure),
 	KUNIT_CASE(maximum_native_list_fits_bounded_encoding),
 	{}
