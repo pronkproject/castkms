@@ -39,6 +39,7 @@ mod cases {
             let second = provider.prepare(ready.worker())?;
             provider.publish(&control, &first)?;
             provider.publish(&control, &second)?;
+            check(control.snapshot(0)?.info().suggested_id == second.id())?;
             device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&first))?;
             control.suggest(second.id())?;
             let retained = control.snapshot(0)?;
