@@ -15,6 +15,7 @@ mod native_constraints;
 mod offer_drafts;
 mod offer_lifetimes;
 mod offer_reaping;
+mod offer_publication;
 
 use super::*;
 use crate::renderer::{

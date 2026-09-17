@@ -149,6 +149,14 @@ impl Access {
         self.policy.permission.target.display()
     }
 
+    /// Static topology only; no continuing authority follows from this borrow.
+    pub(super) fn constraints_output<'a>(
+        &'a self,
+        registered: &'a Device<Driver, Registered>,
+    ) -> Result<kernel::drm::kms::constraints::Output<'a, Driver>> {
+        self.policy.permission.target.constraints_output(registered)
+    }
+
     /// Authorize a control operation without requiring ownership of the displayed image.
     ///
     /// Native master, object-ID and accepted-output locks precede the revocation lock.
