@@ -110,16 +110,18 @@ rejected before private preparation.
 When scaling is absent, both source-to-destination ratio bounds are exactly
 1.0 in unsigned 16.16 representation.
 Published generic KMS constraints carry the same per-format allocation limits,
-so a compositor can choose storage before selecting the offer. They also carry
-scalar rules for restricted destination position, source origin, and usable YUV
-encoding and range values when those rules apply to every allocation on a
-plane. Mixed RGB/YUV declarations retain conditional YUV restrictions only in
-complete-scene validation because generic scalar records are unconditional.
+so a compositor can choose storage before selecting the offer. Per-plane
+geometry records expose cropping, fractional source coordinates, destination
+position and scale ratios for every plane with allocation choices. Scalar
+rules expose usable YUV encoding and range values when those rules apply to
+every allocation on a plane. Mixed RGB/YUV declarations retain conditional
+YUV restrictions only in complete-scene validation because generic scalar
+records are unconditional.
 Overlapping active-plane limits express both the declaration's total layer
 ceiling and any narrower role ceiling across the actual planes for that output.
-Geometry relationships, fractional-coordinate requirements, and color-pipeline
-contents cannot be represented as independent records, so complete atomic
-validation remains authoritative for the whole scene.
+Cross-plane geometry relationships and color-pipeline contents cannot be
+represented as independent records, so complete atomic validation remains
+authoritative for the whole scene.
 
 The static KMS envelope is 16384 by 16384 with primary/overlay formats
 including binary16 RGB. Cursor remains ARGB8888, at most 512 by 512.

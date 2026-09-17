@@ -17,6 +17,7 @@ use kernel::{
         constraints::{
             Description,
             Format,
+            PlaneGeometry,
             PlaneLimit as ActivePlaneLimit,
             Property,
             Size, //
@@ -32,6 +33,9 @@ const _: () = assert!(
     crate::execution::capabilities::MAX_FORMATS * crate::scene::MAX_PLANES
         <= kernel_bindings::DRM_CONSTRAINTS_MAX_FORMATS as usize
 );
+const _: () = assert!(
+    crate::scene::MAX_PLANES <= kernel_bindings::DRM_CONSTRAINTS_MAX_PLANE_GEOMETRIES as usize
+);
 
 /// Existing plane identity and role; native publication validates output membership.
 pub(crate) struct Plane {
@@ -42,24 +46,13 @@ pub(crate) struct Plane {
 
 #[derive(Clone, Copy)]
 struct PlaneProperties {
-    crtc_x: u32,
-    crtc_y: u32,
-    source_x: u32,
-    source_y: u32,
     color_encoding: u32,
     color_range: u32,
 }
 
 impl PlaneProperties {
-    fn ids(self) -> [u32; 6] {
-        [
-            self.crtc_x,
-            self.crtc_y,
-            self.source_x,
-            self.source_y,
-            self.color_encoding,
-            self.color_range,
-        ]
+    fn ids(self) -> [u32; 2] {
+        [self.color_encoding, self.color_range]
     }
 }
 
@@ -70,10 +63,6 @@ impl Plane {
             id: plane.object_id(),
             kind,
             properties: PlaneProperties {
-                crtc_x: required(SceneProperty::CrtcX)?,
-                crtc_y: required(SceneProperty::CrtcY)?,
-                source_x: required(SceneProperty::SourceX)?,
-                source_y: required(SceneProperty::SourceY)?,
                 color_encoding: required(SceneProperty::ColorEncoding)?,
                 color_range: required(SceneProperty::ColorRange)?,
             },
@@ -207,14 +196,6 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
             continue;
         }
         let ids = plane.properties;
-        if !limits.geometry.position {
-            properties.push(Property::signed_range(plane.id, ids.crtc_x, 0, 0), GFP_KERNEL)?;
-            properties.push(Property::signed_range(plane.id, ids.crtc_y, 0, 0), GFP_KERNEL)?;
-        }
-        if !limits.geometry.crop {
-            properties.push(Property::unsigned_range(plane.id, ids.source_x, 0, 0), GFP_KERNEL)?;
-            properties.push(Property::unsigned_range(plane.id, ids.source_y, 0, 0), GFP_KERNEL)?;
-        }
         let supports_yuv = profile
             .formats()
             .iter()
@@ -268,6 +249,22 @@ fn bounds(minimum: [u32; 2], maximum: [u32; 2], ceiling: u32) -> Option<Size> {
     Some(Size::new(minimum[0], minimum[1], maximum[0], maximum[1]))
 }
 
+fn host_geometry(plane: &Plane) -> PlaneGeometry {
+    PlaneGeometry::new(plane.id, true, true, true, 1 << 12, 1 << 20)
+}
+
+fn renderer_geometry(profile: &Profile, plane: &Plane) -> PlaneGeometry {
+    let geometry = profile.limits().geometry;
+    PlaneGeometry::new(
+        plane.id,
+        geometry.crop,
+        geometry.fractional,
+        geometry.position,
+        geometry.min_scale,
+        geometry.max_scale,
+    )
+}
+
 /// Describe allocations for the built-in compositor on the supplied existing planes.
 ///
 /// Both implicit layout and explicit linear layout are accepted. The framebuffer validator
@@ -277,6 +274,7 @@ pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Des
     check_planes(planes)?;
     let output = Size::new(1, 1, super::host::MAX_WIDTH, super::host::MAX_HEIGHT);
     let mut formats = KVec::new();
+    let mut geometries = KVec::new();
     for plane in planes {
         let size = if plane.kind == Kind::Cursor {
             Size::new(
@@ -298,17 +296,18 @@ pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Des
                 GFP_KERNEL,
             )?;
         }
+        geometries.push(host_geometry(plane), GFP_KERNEL)?;
     }
-    Description::new(output, &formats, properties, &[])
+    Description::new_with_geometry(output, &formats, properties, &[], &geometries)
 }
 
 /// Describe the profile's allocation choices within the fixed KMS object envelope.
 ///
 /// Geometry is intersected with native allocation limits, including the cursor limit.
 /// Unsupported roles and formats contribute no allocations. An empty intersection fails;
-/// it does not become unrestricted. Representable scalar restrictions are derived from the
-/// profile; relational geometry, color pipelines and other whole-scene limits remain subject to
-/// final validation.
+/// it does not become unrestricted. Per-plane geometry and representable scalar restrictions are
+/// derived from the profile; color pipelines and other whole-scene limits remain subject to final
+/// validation.
 /// Native publication still checks object membership, and the retained profile must validate
 /// complete scenes, layer counts and color operations at acceptance.
 /// This operation allocates metadata only; it neither establishes readiness nor grants access.
@@ -322,18 +321,18 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
     )
     .ok_or(EOPNOTSUPP)?;
     let mut formats = KVec::new();
+    let mut geometries = KVec::new();
     for plane in planes {
-        let role = role(plane);
-        if limits.roles[role] == 0 {
+        if !plane_supported(profile, plane) {
             continue;
         }
-        let Some(size) = bounds(
+        let size = bounds(
             limits.geometry.min_source,
             limits.geometry.source,
             source_ceiling(plane),
-        ) else {
-            continue;
-        };
+        )
+        .ok_or(EOPNOTSUPP)?;
+        geometries.push(renderer_geometry(profile, plane), GFP_KERNEL)?;
         for format in profile.formats() {
             if !format_supported(plane, format, limits.geometry.min_source[0]) {
                 continue;
@@ -365,11 +364,12 @@ pub(crate) fn renderer(profile: &Profile, planes: &[Plane]) -> Result<ARef<Descr
             plane_limits.push(ActivePlaneLimit::new(maximum as u32, group)?, GFP_KERNEL)?;
         }
     }
-    Description::new(
+    Description::new_with_geometry(
         output,
         &formats,
         &renderer_properties(profile, planes)?,
         &plane_limits,
+        &geometries,
     )
 }
 
@@ -444,10 +444,6 @@ mod tests {
                 id: 7,
                 kind: Kind::Primary,
                 properties: PlaneProperties {
-                    crtc_x: 17,
-                    crtc_y: 18,
-                    source_x: 19,
-                    source_y: 20,
                     color_encoding: 21,
                     color_range: 22,
                 },
@@ -456,10 +452,6 @@ mod tests {
                 id: 8,
                 kind: Kind::Overlay,
                 properties: PlaneProperties {
-                    crtc_x: 17,
-                    crtc_y: 18,
-                    source_x: 19,
-                    source_y: 20,
                     color_encoding: 23,
                     color_range: 24,
                 },
@@ -468,10 +460,6 @@ mod tests {
                 id: 9,
                 kind: Kind::Cursor,
                 properties: PlaneProperties {
-                    crtc_x: 17,
-                    crtc_y: 18,
-                    source_x: 19,
-                    source_y: 20,
                     color_encoding: 25,
                     color_range: 26,
                 },
@@ -497,14 +485,23 @@ mod tests {
         assert_eq!(formats[6].size().maximum(), (512, 512));
         assert!(description.properties().is_empty());
         assert!(description.plane_limits().is_empty());
+        let geometries = description.plane_geometries();
+        assert_eq!(geometries.len(), 3);
+        assert_eq!(geometries[0].plane_id(), 7);
+        assert_eq!(geometries[0].operations(), (true, true, true));
+        assert_eq!(geometries[0].scale(), (1 << 12, 1 << 20));
         Ok(())
     }
 
     #[test]
-    fn profile_restrictions_become_plane_property_rules() -> Result {
+    fn profile_restrictions_become_geometry_and_color_rules() -> Result {
         let mut limits = limits();
         limits.geometry.position = false;
         limits.geometry.crop = false;
+        limits.geometry.fractional = false;
+        limits.geometry.scale = false;
+        limits.geometry.min_scale = 1 << 16;
+        limits.geometry.max_scale = 1 << 16;
         limits.color.yuv_encodings = [false, true, false];
         limits.color.yuv_ranges = [false, true];
         limits.roles = [1, 0, 0];
@@ -525,24 +522,24 @@ mod tests {
         let profile = Profile::new(limits, formats)?;
         let description = renderer(&profile, &planes())?;
         let properties = description.properties();
-        assert_eq!(properties.len(), 6);
+        assert_eq!(properties.len(), 2);
         assert!(properties.iter().all(|property| property.object_id() == 7));
-        for (property, expected) in properties.iter().zip([17, 18, 19, 20, 21, 22]) {
+        for (property, expected) in properties.iter().zip([21, 22]) {
             assert_eq!(property.property_id(), expected);
         }
-        for property in &properties[..4] {
-            assert_eq!(property.bounds(), (0, 0));
-            assert!(property.matches(0));
-            assert!(!property.matches(1));
-        }
         assert_eq!(
-            properties[4].mask(),
+            properties[0].mask(),
             1 << kernel_bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT709
         );
         assert_eq!(
-            properties[5].mask(),
+            properties[1].mask(),
             1 << kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE
         );
+        let geometries = description.plane_geometries();
+        assert_eq!(geometries.len(), 1);
+        assert_eq!(geometries[0].plane_id(), 7);
+        assert_eq!(geometries[0].operations(), (false, false, false));
+        assert_eq!(geometries[0].scale(), (1 << 16, 1 << 16));
         Ok(())
     }
 
@@ -659,10 +656,6 @@ mod tests {
                     id,
                     kind: Kind::Overlay,
                     properties: PlaneProperties {
-                        crtc_x: 17,
-                        crtc_y: 18,
-                        source_x: 19,
-                        source_y: 20,
                         color_encoding,
                         color_range: color_encoding + 1,
                     },
@@ -781,9 +774,9 @@ mod tests {
         planes[1].id = 0;
         assert!(matches!(renderer(&profile, &planes), Err(EINVAL)));
         planes[1].id = 8;
-        planes[1].properties.crtc_y = planes[1].properties.crtc_x;
+        planes[1].properties.color_range = planes[1].properties.color_encoding;
         assert!(matches!(renderer(&profile, &planes), Err(EINVAL)));
-        planes[1].properties.crtc_y = 0;
+        planes[1].properties.color_range = 0;
         assert!(matches!(renderer(&profile, &planes), Err(EINVAL)));
         Ok(())
     }
@@ -795,6 +788,11 @@ mod tests {
         assert_eq!(description.output().minimum(), (1, 1));
         assert_eq!(description.output().maximum(), (8192, 8192));
         assert_eq!(description.properties()[0].bounds(), (1, 30));
+        assert_eq!(description.plane_geometries().len(), 3);
+        for geometry in description.plane_geometries() {
+            assert_eq!(geometry.operations(), (true, true, true));
+            assert_eq!(geometry.scale(), (1 << 12, 1 << 20));
+        }
         let formats = description.formats();
         assert_eq!(formats.len(), 4 * super::super::host::FORMATS.len() + 2);
         for pair in formats.chunks_exact(2) {

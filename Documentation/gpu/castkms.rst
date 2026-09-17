@@ -163,9 +163,11 @@ renderer control. A changed selection requires an ordinary compatible atomic
 update with ALLOW_MODESET; omission retains accepted state.
 
 The fixed HOST contract accepts CPU-readable linear formats through 8192 by
-8192 with checked allocation/layout bounds. Renderer offers describe independent
-whole-scene restrictions, including exact private-pool dimensions and supported
-format/modifier/storage tuples, scalar geometry and YUV restrictions, and
+8192 with checked allocation/layout bounds. Its per-plane records permit
+cropping, fractional source coordinates, positioning, and scale ratios from
+1:16 through 16:1. Renderer offers describe independent whole-scene
+restrictions, including exact private-pool dimensions and supported
+format/modifier/storage tuples, per-plane geometry and YUV restrictions, and
 overlapping total-layer and per-role plane limits. The vendor-neutral static
 plane envelope also includes packed RGB layouts which only a selected renderer
 may accept; its modifier list remains linear. Static plane properties are not
