@@ -7,6 +7,19 @@ use kernel::drm::gem::ExportAccess;
 #[kunit_tests(rust_castkms_endpoint_outputs)]
 mod cases {
     use super::*;
+    use crate::renderer::endpoint::Endpoint;
+
+    #[test]
+    fn output_poll_is_idle_before_publication() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-output-idle", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = Endpoint::new(owner.access(), device.to_registered_ref())?;
+            check(!endpoint.output_readable()?)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            check(!endpoint.output_readable()?)
+        })
+    }
 
     #[test]
     fn delegated_capture_uses_an_independent_private_to_recipient_claim() -> Result {
