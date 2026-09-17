@@ -159,11 +159,11 @@ impl Owner {
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(super) fn new_outputs(count: u32) -> Result<Self> {
-        Self::new_features(count, false, false, false)
+        Self::new_configuration(count, false, false, false, false)
     }
 
     pub(super) fn new_features(count: u32, enable_cursor: bool, enable_overlay: bool, enable_plane_pipeline: bool) -> Result<Self> {
-        Self::new_configuration(count, enable_cursor, enable_overlay, enable_plane_pipeline, false)
+        Self::new_configuration(count, enable_cursor, enable_overlay, enable_plane_pipeline, true)
     }
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
@@ -171,7 +171,7 @@ impl Owner {
         Self::new_configuration(count, true, true, true, true)
     }
 
-    fn new_configuration(count: u32, enable_cursor: bool, enable_overlay: bool,
+    pub(super) fn new_configuration(count: u32, enable_cursor: bool, enable_overlay: bool,
         enable_plane_pipeline: bool, constraints_enabled: bool) -> Result<Self> {
         if count == 0 || count > MAX_OUTPUTS {
             return Err(EINVAL);

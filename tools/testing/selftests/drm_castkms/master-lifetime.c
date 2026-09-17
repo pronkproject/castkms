@@ -186,9 +186,9 @@ int main(int argc, char **argv)
 	expect_framebuffer(first, &d, creator.fb);
 
 	CHECK(drmDropMaster(first) == 0);
-	CHECK(drmSetMaster(second) == 0);
+	acquire_master(second);
 	CHECK(drmIsMaster(first) == 0 && drmIsMaster(second) == 1);
-	select_framebuffer(second, &d, creator.fb);
+	enable(second, &d, creator.fb);
 	unaccepted_replacement(second, &d, creator.fb, associated.fb);
 	select_framebuffer(second, &d, associated.fb);
 	select_framebuffer(second, &d, associated.fb);
@@ -196,8 +196,8 @@ int main(int argc, char **argv)
 	select_framebuffer(second, &d, replacement.fb);
 
 	CHECK(drmDropMaster(second) == 0);
-	CHECK(drmSetMaster(first) == 0);
-	select_framebuffer(first, &d, replacement.fb);
+	acquire_master(first);
+	enable(first, &d, replacement.fb);
 	select_framebuffer(first, &d, associated.fb);
 	/* CLOSEFB drops the file's reference without disabling the active plane. */
 	CHECK(drmModeCloseFB(peer, associated.fb) == 0);
@@ -222,9 +222,10 @@ int main(int argc, char **argv)
 	CHECK(drmIsMaster(successor) == 0);
 	CHECK(drmModeDestroyPropertyBlob(first, d.mode_blob) == 0);
 	CHECK(close(first) == 0);
-	CHECK(drmSetMaster(successor) == 0);
-	expect_framebuffer(successor, &d, retained.fb);
-	select_framebuffer(successor, &d, retained.fb);
+	acquire_master(successor);
+	/* Recovery drops accepted source ownership before admitting the next master. */
+	expect_framebuffer(successor, &d, 0);
+	expect_gone(successor, retained.fb);
 	disable(successor, &d);
 	expect_gone(successor, retained.fb);
 	CHECK(close(successor) == 0);

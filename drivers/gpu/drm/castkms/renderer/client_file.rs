@@ -1,24 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Anonymous renderer endpoint retaining access without its revocation owner.
+//! Anonymous renderer transport over a kernel-callable immutable offer endpoint.
 
-use super::session::Session;
-use super::job::Completion;
-use crate::{execution::Profile, CastKms};
-use core::{ffi::c_void, ptr::NonNull};
+use super::{
+    endpoint::{Endpoint, Phase},
+    job::Completion,
+};
+use crate::CastKms;
+use core::{ffi::c_void, mem::size_of, ptr::NonNull};
 use kernel::{
     bindings,
     dma_fence::Fence,
     error::from_err_ptr,
-    drm::fourcc,
-    fs::{
-        file::FileDescriptorReservation,
-        File,
-        LocalFile, //
-    },
+    fs::{File, LocalFile},
     module::this_module,
     prelude::*,
-    sync::{aref::ARef, Arc}, //
+    sync::{aref::ARef, poll::PollTable, Arc},
     transmute::{AsBytes, FromBytes},
     uaccess::{UserPtr, UserSlice},
     uapi,
@@ -27,100 +24,59 @@ use kernel::{
 #[repr(C)]
 struct Query {
     version: u32,
-    flags: u32,
-    profile: u32,
-    reserved: u32,
-    generation: u64,
+    state: u32,
+    constraints_id: u64,
+    reserved: [u64; 2],
 }
-
-// SAFETY: Query contains only integers and has no padding.
+// SAFETY: Every byte belongs to an initialized integer, with no padding.
 unsafe impl AsBytes for Query {}
 
 #[repr(C)]
-struct Begin {
-    expected_generation: u64,
+struct Prepare {
+    profile: u64,
+    profile_size: u32,
+    flags: u32,
+    width: u32,
+    height: u32,
+    reserved: [u64; 3],
+}
+// SAFETY: All fields are integers accepting every bit pattern.
+unsafe impl FromBytes for Prepare {}
+
+#[repr(C)]
+struct Publish {
     result: u64,
+    flags: u32,
+    reserved: u32,
+    padding: [u64; 2],
+}
+// SAFETY: All fields are integers accepting every bit pattern.
+unsafe impl FromBytes for Publish {}
+
+#[repr(C)]
+struct Published {
+    constraints_id: u64,
+    reserved: [u64; 3],
+}
+// SAFETY: Every byte belongs to an initialized integer, with no padding.
+unsafe impl AsBytes for Published {}
+
+#[repr(C)]
+struct Withdraw {
     flags: u32,
     reserved: [u32; 3],
 }
-
-// SAFETY: Every bit pattern is valid for Begin's integer fields.
-unsafe impl FromBytes for Begin {}
-
-#[repr(C)]
-struct BeginResult {
-    candidate_id: u64,
-    execution_generation: u64,
-    profile: u32,
-    width: u32,
-    height: u32,
-    refresh_millihz: u32,
-    mode_flags: u32,
-    reserved: u32,
-}
-
-// SAFETY: BeginResult contains only integers and has no padding.
-unsafe impl AsBytes for BeginResult {}
-
-#[repr(C)]
-struct Abort {
-    candidate_id: u64,
-    flags: u32,
-    reserved: u32,
-}
-
-// SAFETY: Every bit pattern is valid for Abort's integer fields.
-unsafe impl FromBytes for Abort {}
-
-#[repr(C)]
-struct GetSnapshot {
-    candidate_id: u64,
-    result: u64,
-    flags: u32,
-    reserved: [u32; 3],
-}
-
-// SAFETY: Every bit pattern is valid for GetSnapshot's integer fields.
-unsafe impl FromBytes for GetSnapshot {}
-
-#[repr(C)]
-struct SnapshotResult {
-    dma_buf_fd: i32,
-    format: u32,
-    modifier: u64,
-    width: u32,
-    height: u32,
-    pitch: u32,
-    offset: u32,
-    content_serial: u64,
-    flags: u32,
-    reserved: u32,
-}
-
-// SAFETY: SnapshotResult contains only integers and has no padding.
-unsafe impl AsBytes for SnapshotResult {}
+// SAFETY: All fields are integers accepting every bit pattern.
+unsafe impl FromBytes for Withdraw {}
 
 #[repr(C)]
 struct SubmitProbe {
-    candidate_id: u64,
     completion_fd: i32,
-    source: u32,
     flags: u32,
-    reserved: [u32; 3],
+    reserved: [u64; 3],
 }
-
-// SAFETY: Every bit pattern is valid for SubmitProbe's integer fields.
+// SAFETY: All fields are integers accepting every bit pattern.
 unsafe impl FromBytes for SubmitProbe {}
-
-#[repr(C)]
-struct CommitTakeover {
-    candidate_id: u64,
-    flags: u32,
-    reserved: u32,
-}
-
-// SAFETY: Every bit pattern is valid for CommitTakeover's integer fields.
-unsafe impl FromBytes for CommitTakeover {}
 
 #[repr(C)]
 struct ReleaseSource {
@@ -130,28 +86,48 @@ struct ReleaseSource {
     flags: u32,
     reserved: [u32; 3],
 }
-
-// SAFETY: Every bit pattern is valid for ReleaseSource's integer fields.
+// SAFETY: All fields are integers accepting every bit pattern.
 unsafe impl FromBytes for ReleaseSource {}
 
+const _: () = {
+    assert!(size_of::<Query>() == size_of::<uapi::drm_castkms_renderer_query>());
+    assert!(size_of::<Prepare>() == size_of::<uapi::drm_castkms_renderer_prepare_offer>());
+    assert!(size_of::<Publish>() == size_of::<uapi::drm_castkms_renderer_publish_offer>());
+    assert!(size_of::<Published>() == size_of::<uapi::drm_castkms_renderer_offer_result>());
+    assert!(size_of::<Withdraw>() == size_of::<uapi::drm_castkms_renderer_withdraw_offer>());
+    assert!(size_of::<SubmitProbe>() == size_of::<uapi::drm_castkms_renderer_submit_probe>());
+    assert!(size_of::<ReleaseSource>() == size_of::<uapi::drm_castkms_renderer_release_source>());
+};
+
+fn read<T: FromBytes>(arg: usize) -> Result<T> {
+    UserSlice::new(UserPtr::from_addr(arg), size_of::<T>())
+        .reader()
+        .read::<T>()
+}
+
+fn fence(fd: i32) -> Result<ARef<Fence>> {
+    let file = LocalFile::fget(fd.try_into().map_err(|_| EBADF)?).map_err(|_| EBADF)?;
+    Fence::from_sync_file(&file)
+}
+
 struct ClientFile {
-    session: Arc<Session>,
+    endpoint: Arc<Endpoint>,
 }
 
 impl ClientFile {
     const OPS: bindings::file_operations = bindings::file_operations {
         owner: this_module::<CastKms>().as_ptr(),
         release: Some(Self::release),
+        poll: Some(Self::poll),
         unlocked_ioctl: Some(Self::ioctl),
         #[cfg(CONFIG_COMPAT)]
         compat_ioctl: bindings::compat_ptr_ioctl,
         ..pin_init::zeroed()
     };
 
-    fn new(session: Arc<Session>) -> Result<ARef<File>> {
-        let holder = KBox::into_raw(KBox::new(Self { session }, GFP_KERNEL)?);
-        // SAFETY: The immutable operations table belongs to this module and describes
-        // the exact allocation transferred as private data.
+    fn new(endpoint: Arc<Endpoint>) -> Result<ARef<File>> {
+        let holder = KBox::into_raw(KBox::new(Self { endpoint }, GFP_KERNEL)?);
+        // SAFETY: The module-owned operations describe the exact private allocation.
         let file = from_err_ptr(unsafe {
             bindings::anon_inode_getfile(
                 c"[castkms-renderer]".as_char_ptr(),
@@ -161,13 +137,10 @@ impl ClientFile {
             )
         });
         match file {
-            Ok(file) => {
-                // SAFETY: Creation transfers one initialized unpublished file reference,
-                // with no concurrent file-position operation.
-                Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(file.cast())) })
-            }
+            // SAFETY: Successful creation transfers one initialized unpublished file reference.
+            Ok(file) => Ok(unsafe { ARef::from_raw(NonNull::new_unchecked(file.cast())) }),
             Err(error) => {
-                // SAFETY: Native failure did not consume private data.
+                // SAFETY: Failure did not consume the private allocation.
                 drop(unsafe { KBox::from_raw(holder) });
                 Err(error)
             }
@@ -175,37 +148,76 @@ impl ClientFile {
     }
 
     unsafe extern "C" fn release(_: *mut bindings::inode, file: *mut bindings::file) -> i32 {
-        // SAFETY: Successful creation transfers one ClientFile allocation and final
-        // release returns its private data exactly once.
+        // SAFETY: Final VFS release returns the one allocation installed at creation.
         let holder = unsafe { KBox::from_raw((*file).private_data.cast::<Self>()) };
-        holder.session.close();
+        holder.endpoint.close();
         drop(holder);
         0
     }
 
-    unsafe extern "C" fn ioctl(file: *mut bindings::file, cmd: u32, arg: usize) -> isize {
-        // SAFETY: Native dispatch retains the file throughout this callback, and successful
-        // creation installed an initialized ClientFile as its immutable private data.
+    unsafe extern "C" fn poll(
+        file: *mut bindings::file,
+        table: *mut bindings::poll_table_struct,
+    ) -> bindings::__poll_t {
+        // SAFETY: VFS retains the file and its private allocation throughout this callback.
         let holder = unsafe { &*(*file).private_data.cast::<Self>() };
-        holder
-            .dispatch(cmd, arg)
-            .map_or_else(|error| error.to_errno() as isize, |_| 0)
+        // SAFETY: Both pointers have their VFS callback lifetimes. Register before observing.
+        unsafe {
+            PollTable::from_raw(table)
+                .register_wait(File::from_raw_file(file), holder.endpoint.changed())
+        };
+        match holder.endpoint.source_readable() {
+            Ok(true) => (bindings::POLLIN | bindings::POLLRDNORM) as _,
+            Ok(false) => 0,
+            Err(_) => (bindings::POLLHUP | bindings::POLLERR) as _,
+        }
+    }
+
+    unsafe extern "C" fn ioctl(file: *mut bindings::file, cmd: u32, arg: usize) -> isize {
+        // SAFETY: VFS retains the initialized private allocation throughout dispatch.
+        let holder = unsafe { &*(*file).private_data.cast::<Self>() };
+        holder.dispatch(cmd, arg).map_or_else(
+            |error| {
+                // libdrm retries EAGAIN internally; readiness is a caller-controlled retry.
+                let error = if error == EAGAIN { EBUSY } else { error };
+                error.to_errno() as isize
+            },
+            |_| 0,
+        )
     }
 
     fn dispatch(&self, cmd: u32, arg: usize) -> Result {
         match cmd {
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE => super::image_file::register(&self.session, arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE => super::image_file::unregister(&self.session, arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE => super::profile_file::register(&self.session, arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_QUERY_CAPABILITIES => super::capability_file::query(&self.session, arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_QUERY => self.query(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER => self.begin(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER => self.abort(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT => self.get_snapshot(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE => self.submit_probe(arg),
-            uapi::DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER => self.commit_takeover(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER => self.prepare(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER => self.publish(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER => {
+                let request = read::<Withdraw>(arg)?;
+                if request.flags != 0 || request.reserved != [0; 3] {
+                    return Err(EINVAL);
+                }
+                self.endpoint.withdraw()
+            }
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE => {
+                let request = read::<SubmitProbe>(arg)?;
+                if request.flags != 0 || request.reserved != [0; 3] {
+                    return Err(EINVAL);
+                }
+                let completion = if request.completion_fd == -1 {
+                    None
+                } else {
+                    Some(fence(request.completion_fd)?)
+                };
+                self.endpoint.submit_probe(completion)
+            }
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE => {
+                super::image_file::register(&self.endpoint, arg)
+            }
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE => {
+                super::image_file::unregister(&self.endpoint, arg)
+            }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE => {
-                super::scene_file::dequeue(&self.session, arg)
+                super::scene_file::dequeue(&self.endpoint, arg)
             }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE => self.release_source(arg),
             _ => Err(ENOTTY),
@@ -213,202 +225,68 @@ impl ClientFile {
     }
 
     fn query(&self, arg: usize) -> Result {
-        const {
-            assert!(
-                core::mem::size_of::<Query>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_query>()
-            )
-        };
-        let description = self.session.description()?;
+        let description = self.endpoint.describe()?;
         let query = Query {
             version: uapi::DRM_CASTKMS_RENDERER_VERSION,
-            flags: 0,
-            profile: profile_value(description.profile),
-            reserved: 0,
-            generation: description.generation,
+            state: match description.phase {
+                Phase::Empty => uapi::DRM_CASTKMS_RENDERER_STATE_EMPTY,
+                Phase::Draft => uapi::DRM_CASTKMS_RENDERER_STATE_DRAFT,
+                Phase::Publishing => uapi::DRM_CASTKMS_RENDERER_STATE_PUBLISHING,
+                Phase::Published => uapi::DRM_CASTKMS_RENDERER_STATE_PUBLISHED,
+                Phase::Withdrawn => uapi::DRM_CASTKMS_RENDERER_STATE_WITHDRAWN,
+            },
+            constraints_id: description.constraints_id,
+            reserved: [0; 2],
         };
-        UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of_val(&query))
+        UserSlice::new(UserPtr::from_addr(arg), size_of::<Query>())
             .writer()
             .write(&query)
     }
 
-    fn begin(&self, arg: usize) -> Result {
-        const {
-            assert!(
-                core::mem::size_of::<Begin>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_begin_takeover>()
-            );
-            assert!(
-                core::mem::size_of::<BeginResult>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_takeover>()
-            )
-        };
-        let mut reader =
-            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Begin>()).reader();
-        let request = reader.read::<Begin>()?;
-        if request.expected_generation == 0
-            || request.result == 0
+    fn prepare(&self, arg: usize) -> Result {
+        let request = read::<Prepare>(arg)?;
+        if request.profile == 0 || request.flags != 0 || request.reserved != [0; 3] {
+            return Err(EINVAL);
+        }
+        if request.profile_size as usize > super::capability_description::MAX_BYTES {
+            return Err(E2BIG);
+        }
+        let pointer = usize::try_from(request.profile).map_err(|_| EOVERFLOW)?;
+        let mut bytes = KVec::with_capacity(request.profile_size as usize, GFP_KERNEL)?;
+        bytes.resize(request.profile_size as usize, 0, GFP_KERNEL)?;
+        UserSlice::new(UserPtr::from_addr(pointer), bytes.len())
+            .reader()
+            .read_slice(&mut bytes)?;
+        let profile = super::capability_description::decode(&bytes)?;
+        self.endpoint
+            .declare(profile, [request.width, request.height])
+    }
+
+    fn publish(&self, arg: usize) -> Result {
+        let request = read::<Publish>(arg)?;
+        if request.result == 0
             || request.flags != 0
-            || request.reserved.iter().any(|field| *field != 0)
+            || request.reserved != 0
+            || request.padding != [0; 2]
         {
             return Err(EINVAL);
         }
-        let pending = self.session.begin(request.expected_generation)?;
-        let configuration = pending.configuration()?;
-        let execution = pending.execution()?;
-        let result = BeginResult {
-            candidate_id: pending.id(),
-            execution_generation: execution.generation,
-            profile: profile_value(execution.profile),
-            width: configuration.dimensions()[0],
-            height: configuration.dimensions()[1],
-            refresh_millihz: configuration.refresh_millihz(),
-            mode_flags: configuration.mode_flags(),
-            reserved: 0,
-        };
-        let address = request.result.try_into().map_err(|_| EOVERFLOW)?;
-        UserSlice::new(UserPtr::from_addr(address), core::mem::size_of_val(&result))
-            .writer()
-            .write(&result)?;
-        pending.publish()
-    }
-
-    fn abort(&self, arg: usize) -> Result {
-        const {
-            assert!(
-                core::mem::size_of::<Abort>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_abort_takeover>()
-            )
-        };
-        let mut reader =
-            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Abort>()).reader();
-        let request = reader.read::<Abort>()?;
-        if request.candidate_id == 0 || request.flags != 0 || request.reserved != 0 {
-            return Err(EINVAL);
-        }
-        self.session.abort(request.candidate_id)
-    }
-
-    fn get_snapshot(&self, arg: usize) -> Result {
-        const {
-            assert!(
-                core::mem::size_of::<GetSnapshot>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_get_snapshot>()
-            );
-            assert!(
-                core::mem::size_of::<SnapshotResult>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_snapshot>()
-            )
-        };
-        let mut reader =
-            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<GetSnapshot>()).reader();
-        let request = reader.read::<GetSnapshot>()?;
-        if request.candidate_id == 0
-            || request.result == 0
-            || request.flags != 0
-            || request.reserved.iter().any(|field| *field != 0)
-        {
-            return Err(EINVAL);
-        }
-        let candidate = self.session.candidate(request.candidate_id)?;
-        let snapshot = candidate.snapshot_current()?;
-        let file = snapshot.export_file()?;
-        let descriptor = FileDescriptorReservation::get_unused_fd_flags(
-            kernel::fs::file::flags::O_CLOEXEC,
-        )?;
-        let layout = snapshot.layout();
-        let (width, height) = layout.dimensions();
-        let result = SnapshotResult {
-            dma_buf_fd: descriptor
-                .reserved_fd()
-                .try_into()
-                .map_err(|_| EOVERFLOW)?,
-            format: fourcc::XRGB8888,
-            modifier: fourcc::FORMAT_MOD_LINEAR,
-            width,
-            height,
-            pitch: layout.pitch().try_into().map_err(|_| EOVERFLOW)?,
-            offset: 0,
-            content_serial: snapshot.content_serial_value(),
-            flags: 0,
-            reserved: 0,
-        };
-        let address = request.result.try_into().map_err(|_| EOVERFLOW)?;
-        UserSlice::new(UserPtr::from_addr(address), core::mem::size_of_val(&result))
-            .writer()
-            .write(&result)?;
-        candidate.publish_snapshot(&snapshot, || descriptor.fd_install(file))?;
-        Ok(())
-    }
-
-    fn submit_probe(&self, arg: usize) -> Result {
-        const {
-            assert!(
-                core::mem::size_of::<SubmitProbe>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_submit_probe>()
-            )
-        };
-        let mut reader =
-            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<SubmitProbe>()).reader();
-        let request = reader.read::<SubmitProbe>()?;
-        if request.candidate_id == 0
-            || request.completion_fd < -1
-            || request.flags != 0
-            || request.reserved.iter().any(|field| *field != 0)
-        {
-            return Err(EINVAL);
-        }
-        let startup_image = match request.source {
-            uapi::DRM_CASTKMS_RENDERER_PROBE_PRIVATE => false,
-            uapi::DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE => true,
-            _ => return Err(EINVAL),
-        };
-        let candidate = self.session.candidate(request.candidate_id)?;
-        let completion = if request.completion_fd == -1 {
-            None
-        } else {
-            let file = LocalFile::fget(request.completion_fd.try_into().map_err(|_| EBADF)?)
-                .map_err(|_| EBADF)?;
-            Some(Fence::from_sync_file(&file)?)
-        };
-        if startup_image {
-            candidate.submit_snapshot_probe(completion)
-        } else {
-            candidate.submit_private_probe(completion)
-        }
-    }
-
-    fn commit_takeover(&self, arg: usize) -> Result {
-        const {
-            assert!(
-                core::mem::size_of::<CommitTakeover>()
-                    == core::mem::size_of::<uapi::drm_castkms_renderer_commit_takeover>()
-            )
-        };
-        let mut reader = UserSlice::new(
-            UserPtr::from_addr(arg),
-            core::mem::size_of::<CommitTakeover>(),
-        )
-        .reader();
-        let request = reader.read::<CommitTakeover>()?;
-        if request.candidate_id == 0 || request.flags != 0 || request.reserved != 0 {
-            return Err(EINVAL);
-        }
-        self.session.activate(request.candidate_id).map(|_| ())
+        let pointer = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
+        self.endpoint.check_probe()?;
+        self.endpoint.publish(|constraints_id| {
+            let reply = Published {
+                constraints_id,
+                reserved: [0; 3],
+            };
+            UserSlice::new(UserPtr::from_addr(pointer), size_of::<Published>())
+                .writer()
+                .write(&reply)
+        })
     }
 
     fn release_source(&self, arg: usize) -> Result {
-        const {
-            assert!(core::mem::size_of::<ReleaseSource>()
-                == core::mem::size_of::<uapi::drm_castkms_renderer_release_source>())
-        };
-        let mut reader =
-            UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<ReleaseSource>()).reader();
-        let request = reader.read::<ReleaseSource>()?;
-        if request.job_id == 0
-            || request.flags != 0
-            || request.reserved.iter().any(|field| *field != 0)
-        {
+        let request = read::<ReleaseSource>(arg)?;
+        if request.job_id == 0 || request.flags != 0 || request.reserved != [0; 3] {
             return Err(EINVAL);
         }
         let completion = match request.kind {
@@ -419,23 +297,14 @@ impl ClientFile {
                 Completion::Cpu
             }
             uapi::DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED if request.completion_fd >= 0 => {
-                let file = LocalFile::fget(request.completion_fd.try_into().map_err(|_| EBADF)?)
-                    .map_err(|_| EBADF)?;
-                Completion::Submitted(Fence::from_sync_file(&file)?)
+                Completion::Submitted(fence(request.completion_fd)?)
             }
             _ => return Err(EINVAL),
         };
-        self.session.release_source(request.job_id, completion)
+        self.endpoint.release_source(request.job_id, completion)
     }
 }
 
-fn profile_value(profile: Profile) -> u32 {
-    match profile {
-        Profile::HostV1 => uapi::DRM_CASTKMS_EXECUTION_HOST_V1,
-        Profile::GpuV1 => uapi::DRM_CASTKMS_EXECUTION_GPU_V1,
-    }
-}
-
-pub(super) fn create(session: Arc<Session>) -> Result<ARef<File>> {
-    ClientFile::new(session)
+pub(super) fn create(endpoint: Arc<Endpoint>) -> Result<ARef<File>> {
+    ClientFile::new(endpoint)
 }

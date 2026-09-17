@@ -2,7 +2,7 @@
 
 //! Private-image descriptor import above renderer admission and storage policy.
 
-use super::session::Session;
+use super::endpoint::Endpoint;
 use kernel::{
     dma_buf::DmaBuf,
     prelude::*,
@@ -35,7 +35,7 @@ struct Unregister {
 // SAFETY: All fields are integers accepting every bit pattern.
 unsafe impl FromBytes for Unregister {}
 
-pub(super) fn register(session: &Session, arg: usize) -> Result {
+pub(super) fn register(endpoint: &Endpoint, arg: usize) -> Result {
     const {
         assert!(
             core::mem::size_of::<Register>()
@@ -64,10 +64,10 @@ pub(super) fn register(session: &Session, arg: usize) -> Result {
     for _ in 0..request.num_buffers {
         buffers.push(DmaBuf::from_fd(reader.read::<i32>()?)?, GFP_KERNEL)?;
     }
-    session.register_image(request.image_id, [request.width, request.height], &buffers)
+    endpoint.register_image(request.image_id, [request.width, request.height], &buffers)
 }
 
-pub(super) fn unregister(session: &Session, arg: usize) -> Result {
+pub(super) fn unregister(endpoint: &Endpoint, arg: usize) -> Result {
     const {
         assert!(
             core::mem::size_of::<Unregister>()
@@ -80,5 +80,5 @@ pub(super) fn unregister(session: &Session, arg: usize) -> Result {
     if request.image_id == 0 || request.flags != 0 || request.reserved != 0 {
         return Err(EINVAL);
     }
-    session.unregister_image(request.image_id)
+    endpoint.unregister_image(request.image_id)
 }

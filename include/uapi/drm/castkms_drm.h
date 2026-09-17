@@ -8,26 +8,12 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 2
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
-#define DRM_CASTKMS_RENDERER_VERSION 9
-
-/*
- * Request-only unsigned CRTC property. Zero means an ordinary update. A nonzero
- * value identifies a pending transition on that output; atomic checking and
- * final installation validate both contracts. TEST_ONLY installs no gate.
- * Successful installation binds the gate to the accepted configuration.
- * Readback is always zero and state duplication never carries the tag forward.
- * A token is metadata, not permission to render or access source buffers.
- */
-#define DRM_CASTKMS_TRANSITION_PROPERTY "CASTKMS_TRANSITION"
-#define DRM_CASTKMS_EXECUTION_PROPERTY "CASTKMS_EXECUTION"
+#define DRM_CASTKMS_RENDERER_VERSION 10
 
 #define DRM_CASTKMS_CAPABILITY_VERSION 2
-#define DRM_CASTKMS_CAPABILITY_KIND_HOST 1
 #define DRM_CASTKMS_CAPABILITY_KIND_RENDERER 2
 #define DRM_CASTKMS_CAPABILITY_MAX_FORMATS 256
 #define DRM_CASTKMS_CAPABILITY_MAX_BYTES (128U + 32U * 256U)
-#define DRM_CASTKMS_CAPABILITY_QUERY_MAX_BYTES \
-	(72U + 2U * DRM_CASTKMS_CAPABILITY_MAX_BYTES)
 
 #define DRM_CASTKMS_CAPABILITY_PROFILE_CROP (1U << 0)
 #define DRM_CASTKMS_CAPABILITY_PROFILE_FRACTIONAL (1U << 1)
@@ -56,10 +42,8 @@
 /*
  * Native-endian immutable whole-scene contract. Exactly format_count records
  * follow this 128-byte header. Unknown flags and reserved fields must be zero.
- * HOST selects the fixed HOST-v1 policy: all fields after kind must be zero.
- * That kind denotes the fixed CPU contract for this encoding version, not
- * an extensible all-zero feature set. A different HOST policy needs a new
- * capability kind or encoding version; reserved words are not an extension.
+ * kind must be DRM_CASTKMS_CAPABILITY_KIND_RENDERER. Fixed default constraints
+ * are discovered through generic KMS listing, not supplied by the worker.
  * RENDERER limits apply to every role; advertise the intersection if roles have
  * different restrictions. Dimensions and scale limits are positive; scales are
  * inclusive unsigned 16.16 source/destination ratios. Roles are primary,
@@ -110,78 +94,6 @@ struct drm_castkms_capability_format {
 	__u32 offset_alignment;
 	__u32 max_pitch;
 };
-
-/*
- * Register one immutable target for an existing BEGIN_TAKEOVER candidate.
- * profile points to exactly profile_size bytes of capability encoding.
- * result points to drm_castkms_renderer_profile_result; flags and reserved
- * must be zero.
- * HOST requires no userspace probe; a RENDERER target requires normal probe
- * completion. Registration does not change KMS acceptance. Include transition
- * in CASTKMS_TRANSITION on an ordinary compatible atomic update, then invoke
- * COMMIT_TAKEOVER. ABORT_TAKEOVER cancels the pending profile and gate.
- * A reply-copy fault may leave registration committed: query to reconcile it.
- * Repeating registration while a proposal exists returns EBUSY, not a new token.
- */
-struct drm_castkms_renderer_register_profile {
-	__u64 candidate_id;
-	__u64 profile;
-	__u64 result;
-	__u32 profile_size;
-	__u32 flags;
-	__u64 reserved[2];
-};
-
-struct drm_castkms_renderer_profile_result {
-	__u64 transition;
-	__u64 capability_generation;
-	__u64 execution_generation;
-	__u64 reserved;
-};
-
-#define DRM_CASTKMS_CAPABILITY_STATE_PENDING (1U << 0)
-#define DRM_CASTKMS_CAPABILITY_STATE_GATED (1U << 1)
-
-/*
- * A coherent native-endian snapshot followed by active and optional pending
- * capability encodings. Offsets are relative to this 72-byte header. Without a
- * live pending transition, pending fields, transition and pending flags are zero.
- * Capability generation identifies an immutable contract; validation_epoch also
- * changes when a gate is installed or lifted. Neither identifies source content.
- * Size includes the entire snapshot. Output fields grant no continuing authority.
- */
-struct drm_castkms_renderer_capabilities {
-	__u32 version;
-	__u32 size;
-	__u32 execution_profile;
-	__u32 flags;
-	__u64 execution_generation;
-	__u64 active_generation;
-	__u64 pending_generation;
-	__u64 transition;
-	__u64 validation_epoch;
-	__u32 active_offset;
-	__u32 active_size;
-	__u32 pending_offset;
-	__u32 pending_size;
-};
-
-/*
- * result points to capacity writable bytes. Capacity must be at least 72.
- * On ENOSPC only the header is written, including the required total size;
- * retry for a fresh coherent snapshot. Copy faults may partially write output.
- * flags and reserved must be zero. Queries work with disabled video, but still
- * require live output authority. They never reserve a transition or source read.
- */
-struct drm_castkms_renderer_query_capabilities {
-	__u64 result;
-	__u32 capacity;
-	__u32 flags;
-	__u64 reserved;
-};
-
-#define DRM_CASTKMS_RENDERER_PROBE_PRIVATE 1
-#define DRM_CASTKMS_RENDERER_PROBE_STARTUP_IMAGE 2
 
 #define DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS 1
 #define DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE 2
@@ -261,9 +173,10 @@ struct drm_castkms_monitor_detach {
  * @renderer_fd: close-on-exec renderer file descriptor
  * @revoke_fd: close-on-exec revocation file descriptor
  *
- * Final close of the revocation descriptor permanently rejects further
- * operations through every duplicate of the renderer descriptor. Closing a
- * renderer descriptor releases only that reference.
+ * Final revoker close stops new admission through every duplicate renderer
+ * descriptor. RELEASE_SOURCE and UNREGISTER_IMAGE remain available for cleanup
+ * until final renderer-file close, which ends the reporting channel. Closing
+ * one duplicated renderer descriptor releases only that file reference.
  */
 struct drm_castkms_renderer_files {
 	__s32 renderer_fd;
@@ -296,184 +209,99 @@ struct drm_castkms_create_renderer_control {
 	__u32 reserved[3];
 };
 
-/**
- * struct drm_castkms_renderer_query - query current renderer control
- * @version: returned DRM_CASTKMS_RENDERER_VERSION
- * @flags: returned capability flags; currently zero
- * @profile: current DRM_CASTKMS_EXECUTION_* profile
- * @reserved: must be zero
- * @generation: current nonzero execution generation
+/*
+ * Each renderer file owns one immutable draft and at most one published offer.
+ * The file identifies its draft; constraints_id identifies the generic native
+ * offer. Preparation works with disabled video and changes no KMS state.
+ * Replacement uses an independent renderer file. Publication requires a
+ * runnable worker, completed private probe and registered private images.
+ * Only ordinary atomic CONSTRAINTS_ID selection changes the accepted backend.
  *
- * Query succeeds only while this renderer capability, its issuing master
- * interval, and its exact output remain current, including disabled video.
- * A successful query is
- * an observation; it does not reserve a later takeover or source operation.
+ * No renderer ioctl returns EAGAIN for readiness. ENODATA means no submitted
+ * probe, required storage, or changed scene; EBUSY means retry is caller-driven.
+ * poll prompts source dequeue, never carries descriptors or proves GPU work
+ * complete. Readability does not reserve a scene or a particular private image.
+ * Withdrawal reports POLLHUP|POLLERR but leaves release/cleanup operations usable.
+ */
+#define DRM_CASTKMS_RENDERER_STATE_EMPTY 0
+#define DRM_CASTKMS_RENDERER_STATE_DRAFT 1
+#define DRM_CASTKMS_RENDERER_STATE_PUBLISHING 2
+#define DRM_CASTKMS_RENDERER_STATE_PUBLISHED 3
+#define DRM_CASTKMS_RENDERER_STATE_WITHDRAWN 4
+
+/*
+ * Advisory endpoint state under live issuer authority. PUBLISHED means a ready
+ * offer was listed, not that KMS selected it. constraints_id is zero until
+ * publication, and retained after withdrawal. Reserved output is zero.
+ * Query reconciles a lost successful publication reply without creating another
+ * offer. Revoked issuer authority returns an error; cleanup remains available.
  */
 struct drm_castkms_renderer_query {
 	__u32 version;
-	__u32 flags;
-	__u32 profile;
-	__u32 reserved;
-	__u64 generation;
+	__u32 state;
+	__u64 constraints_id;
+	__u64 reserved[2];
 };
 
-/**
- * struct drm_castkms_renderer_takeover - published candidate description
- * @candidate_id: nonzero name for later operations on this candidate
- * @execution_generation: execution generation observed while reserving
- * @profile: current DRM_CASTKMS_EXECUTION_* profile
- * @width: current output width in pixels
- * @height: current output height in pixels
- * @refresh_millihz: current display refresh in millihertz
- * @mode_flags: current DRM_MODE_FLAG_* values
- * @reserved: returned as zero
- *
- * This is configuration metadata, not permission to access source pixels.
+/*
+ * Prepare exactly one immutable whole-scene declaration on an empty endpoint.
+ * profile points to profile_size capability bytes. width/height are the exact
+ * private-pool target within the declared output bounds; they need not match
+ * the current mode. Flags/reserved must be zero. Success changes only the draft.
+ * Failure leaves an empty endpoint retryable; a second declaration is EALREADY.
  */
-struct drm_castkms_renderer_takeover {
-	__u64 candidate_id;
-	__u64 execution_generation;
-	__u32 profile;
+struct drm_castkms_renderer_prepare_offer {
+	__u64 profile;
+	__u32 profile_size;
+	__u32 flags;
 	__u32 width;
 	__u32 height;
-	__u32 refresh_millihz;
-	__u32 mode_flags;
-	__u32 reserved;
+	__u64 reserved[3];
 };
 
-/**
- * struct drm_castkms_renderer_begin_takeover - reserve candidate startup
- * @expected_generation: current execution generation from query
- * @result: pointer to writable struct drm_castkms_renderer_takeover storage
- * @flags: must be zero
- * @reserved: must be zero
- *
- * Only one candidate may be reserved for an output. The old execution remains
- * active. BEGIN requires enabled video; a later tagged update may disable it.
- * Success returns a candidate description after all fallible
- * user-memory access. Failure publishes no candidate; output memory may have
- * been partially written and must not be used.
- */
-struct drm_castkms_renderer_begin_takeover {
-	__u64 expected_generation;
-	__u64 result;
-	__u32 flags;
-	__u32 reserved[3];
-};
-
-/**
- * struct drm_castkms_renderer_abort_takeover - release one candidate
- * @candidate_id: candidate returned by BEGIN_TAKEOVER
- * @flags: must be zero
- * @reserved: must be zero
- *
- * Aborting never changes the active execution profile.
- */
-struct drm_castkms_renderer_abort_takeover {
-	__u64 candidate_id;
-	__u32 flags;
-	__u32 reserved;
-};
-
-/**
- * struct drm_castkms_renderer_snapshot - independent HOST startup image
- * @dma_buf_fd: returned close-on-exec, read-only DMA-BUF descriptor
- * @format: returned DRM_FORMAT_* value
- * @modifier: returned DRM_FORMAT_MOD_* value
- * @width: returned width in pixels
- * @height: returned height in pixels
- * @pitch: returned byte stride
- * @offset: returned first-pixel byte offset; currently zero
- * @content_serial: historical nonzero content identity, or zero for a blank image
- * @flags: returned as zero
- * @reserved: returned as zero
- *
- * The backing allocation is a fresh immutable copy. It is never a compositor
- * source or reusable HOST image, and retaining it cannot delay source release.
- */
-struct drm_castkms_renderer_snapshot {
-	__s32 dma_buf_fd;
-	__u32 format;
-	__u64 modifier;
-	__u32 width;
-	__u32 height;
-	__u32 pitch;
-	__u32 offset;
-	__u64 content_serial;
-	__u32 flags;
-	__u32 reserved;
-};
-
-/**
- * struct drm_castkms_renderer_get_snapshot - copy an optional HOST startup image
- * @candidate_id: active candidate returned by BEGIN_TAKEOVER
- * @result: pointer to writable struct drm_castkms_renderer_snapshot storage
- * @flags: must be zero
- * @reserved: must be zero
- *
- * The operation copies only the newest retained HOST result that still belongs
- * to the candidate's display and authority interval. It returns ENODATA when no
- * eligible result exists. Success copies the result before installing its
- * descriptor. Failure installs no descriptor; output memory may have been
- * partially written and must not be used.
- */
-struct drm_castkms_renderer_get_snapshot {
-	__u64 candidate_id;
-	__u64 result;
-	__u32 flags;
-	__u32 reserved[3];
-};
-
-/**
- * struct drm_castkms_renderer_submit_probe - publish candidate test work
- * @candidate_id: active candidate returned by BEGIN_TAKEOVER
- * @completion_fd: sync_file for submitted native work, or -1 when already done
- * @source: one DRM_CASTKMS_RENDERER_PROBE_* value
- * @flags: must be zero
- * @reserved: must be zero
- *
- * A private probe uses only renderer-owned storage and carries no display
- * content identity. A startup-image probe additionally requires one successful
- * GET_SNAPSHOT on the same candidate; the kernel retains the identity that it
- * delivered rather than accepting content metadata from userspace.
- *
- * The completion fence must cover every native access made by the probe. A
- * value of -1 declares that all access completed before this ioctl. Success
- * records exactly one submission without activating delegated execution or
- * granting access to live compositor sources. Fence failure later makes the
- * probe unsuccessful.
+/*
+ * Submit one private probe, never display-source work. completion_fd is an
+ * already-materialized native sync_file whose submitted work runs independently
+ * of userspace, or -1 after all CPU access and coherency operations ended.
+ * Flags/reserved must be zero. A probe is not display content or KMS activation.
  */
 struct drm_castkms_renderer_submit_probe {
-	__u64 candidate_id;
 	__s32 completion_fd;
-	__u32 source;
 	__u32 flags;
-	__u32 reserved[3];
+	__u64 reserved[3];
 };
 
-/**
- * struct drm_castkms_renderer_commit_takeover - activate delegated execution
- * @candidate_id: ready GPU candidate or a registered HOST candidate
- * @flags: must be zero
- * @reserved: must be zero
- *
- * Success atomically transfers the candidate into active-renderer ownership,
- * publishes a new GPU execution generation, and closes new HOST source-read
- * admission. Work admitted before the transition retires normally.
- * REGISTER_PROFILE and a published tagged update must first install the
- * two-contract gate. An unregistered candidate returns EINVAL.
- * A HOST target needs no probe and publishes HOST execution instead.
- * Pending gate/publication readiness returns EAGAIN. Use a fresh
- * endpoint for replacement or HOST handback; retain the old endpoint to drain.
- *
- * Repeating the operation for the same active candidate succeeds so a caller
- * can reconcile a lost reply. A pending probe returns EAGAIN; a failed probe
- * returns its exact completion error. Other stale candidates are rejected.
+/*
+ * result points to drm_castkms_renderer_offer_result. Flags, reserved and
+ * padding must be zero. The complete result is copied before native listing;
+ * any failure leaves no new selectable offer and copied output must be ignored.
+ * Success permanently publishes the draft; repeating publication is EALREADY.
+ * QUERY returns its identity without publishing again. Pending probes return
+ * EBUSY; failed probes return EREMOTEIO (native status remains on the submitted
+ * sync_file). Publication never selects an offer or acknowledges a modeset.
  */
-struct drm_castkms_renderer_commit_takeover {
-	__u64 candidate_id;
+struct drm_castkms_renderer_publish_offer {
+	__u64 result;
 	__u32 flags;
 	__u32 reserved;
+	__u64 padding[2];
+};
+
+struct drm_castkms_renderer_offer_result {
+	__u64 constraints_id;
+	__u64 reserved[3];
+};
+
+/*
+ * Idempotently stop selection and new admission for the endpoint's published
+ * offer. Flags/reserved must be zero. Accepted state remains retained, and
+ * outstanding reads still require RELEASE_SOURCE. Unpublished drafts return
+ * ENODATA. Withdrawal neither restores default KMS state nor completes native
+ * accesses. Closing the renderer file instead ends the reporting channel.
+ */
+struct drm_castkms_renderer_withdraw_offer {
+	__u32 flags;
+	__u32 reserved[3];
 };
 
 /**
@@ -540,7 +368,7 @@ struct drm_castkms_renderer_release_source {
  * ENOSPC without consuming the scene. Flags and reserved fields must be zero.
  * Empty/unchanged scenes return ENODATA, and an outstanding job returns EBUSY.
  */
-#define DRM_CASTKMS_RENDERER_SCENE_VERSION 1
+#define DRM_CASTKMS_RENDERER_SCENE_VERSION 2
 #define DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES 65536
 #define DRM_CASTKMS_RENDERER_SCENE_MAX_LAYERS 24
 #define DRM_CASTKMS_RENDERER_SCENE_MAX_COLOR_OPS 16
@@ -564,10 +392,9 @@ struct drm_castkms_renderer_dequeue_scene {
 /* Private storage is readable/writable only by the trusted renderer. Registration
  * retains one to four distinct DMA-BUFs, not their native format interpretation.
  * The renderer validates layout and import compatibility against its own profile.
- * Before activation, a registered renderer profile is required and dimensions
- * must satisfy its inclusive output bounds, independently of the current mode.
- * After activation, dimensions must match the active output. Registration alone
- * does not make a proposed renderer ready or authorize live source access.
+ * Registration requires a draft and its exact private-pool dimensions. A
+ * published offer pins the complete registration set; no further registrations
+ * may extend it. Registration alone authorizes no display-source access.
  * New names are positive and increasing;
  * rejected registration does not consume a name. Flags/reserved must be zero.
  * Registration maps no pixels and authorizes no source or destination access.
@@ -583,10 +410,12 @@ struct drm_castkms_renderer_register_image {
 	__u64 reserved[2];
 };
 
-/* Remove a name, not native work. Publishing/claimed source jobs return EBUSY.
- * After release, removal is allowed while submitted native work retains storage
- * and accounting. Successful removal is not a buffer-reuse or completion signal.
- * Cleanup remains available after renderer revocation. Names are never reused.
+/* Remove a name, not native work. A live offer pins its registrations. After
+ * withdrawal/revocation, publishing or claimed source jobs still return EBUSY.
+ * Once released, submitted native work independently retains storage and its
+ * accounting. Successful removal is not a reuse or completion signal. Cleanup
+ * remains available after issuer revocation until final renderer-file close.
+ * Names are never reused within the endpoint.
  */
 struct drm_castkms_renderer_unregister_image {
 	__u64 image_id;
@@ -598,6 +427,7 @@ struct drm_castkms_renderer_scene {
 	__u32 version;
 	__u32 bytes;
 	__u64 job_id;
+	__u64 constraints_id; /* Exact accepted native entry, not continuing authority. */
 	__u64 content_serial;
 	__u32 width;
 	__u32 height;
@@ -716,32 +546,32 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_MONITOR_ATTACH 0x02
 #define DRM_CASTKMS_MONITOR_DETACH 0x03
 #define DRM_CASTKMS_RENDERER_QUERY 0x04
-#define DRM_CASTKMS_RENDERER_BEGIN_TAKEOVER 0x05
-#define DRM_CASTKMS_RENDERER_ABORT_TAKEOVER 0x06
-#define DRM_CASTKMS_RENDERER_GET_SNAPSHOT 0x07
+#define DRM_CASTKMS_RENDERER_PREPARE_OFFER 0x05
+#define DRM_CASTKMS_RENDERER_WITHDRAW_OFFER 0x06
+#define DRM_CASTKMS_RENDERER_PUBLISH_OFFER 0x09
 #define DRM_CASTKMS_RENDERER_SUBMIT_PROBE 0x08
-#define DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER 0x09
 #define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x0b
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x0c
-#define DRM_CASTKMS_RENDERER_REGISTER_PROFILE 0x0d
-#define DRM_CASTKMS_RENDERER_QUERY_CAPABILITIES 0x0e
 #define DRM_CASTKMS_RENDERER_REGISTER_IMAGE 0x0f
 #define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x10
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
+	DRM_IOCTL_CASTKMS_RENDERER_PREPARE_OFFER =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_PREPARE_OFFER,
+			struct drm_castkms_renderer_prepare_offer),
+	DRM_IOCTL_CASTKMS_RENDERER_PUBLISH_OFFER =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_PUBLISH_OFFER,
+			struct drm_castkms_renderer_publish_offer),
+	DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_WITHDRAW_OFFER,
+			struct drm_castkms_renderer_withdraw_offer),
 	DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_IMAGE,
 			struct drm_castkms_renderer_register_image),
 	DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE,
 			struct drm_castkms_renderer_unregister_image),
-	DRM_IOCTL_CASTKMS_RENDERER_REGISTER_PROFILE =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_REGISTER_PROFILE,
-			struct drm_castkms_renderer_register_profile),
-	DRM_IOCTL_CASTKMS_RENDERER_QUERY_CAPABILITIES =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY_CAPABILITIES,
-			struct drm_castkms_renderer_query_capabilities),
 	DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_DEQUEUE_SCENE,
 			struct drm_castkms_renderer_dequeue_scene),
@@ -769,65 +599,12 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY,
 			struct drm_castkms_renderer_query),
-	DRM_IOCTL_CASTKMS_RENDERER_BEGIN_TAKEOVER =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_BEGIN_TAKEOVER,
-			struct drm_castkms_renderer_begin_takeover),
-	DRM_IOCTL_CASTKMS_RENDERER_ABORT_TAKEOVER =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_ABORT_TAKEOVER,
-			struct drm_castkms_renderer_abort_takeover),
-	DRM_IOCTL_CASTKMS_RENDERER_GET_SNAPSHOT =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_GET_SNAPSHOT,
-			struct drm_castkms_renderer_get_snapshot),
 	DRM_IOCTL_CASTKMS_RENDERER_SUBMIT_PROBE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_SUBMIT_PROBE,
 			 struct drm_castkms_renderer_submit_probe),
-	DRM_IOCTL_CASTKMS_RENDERER_COMMIT_TAKEOVER =
-		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_COMMIT_TAKEOVER,
-			 struct drm_castkms_renderer_commit_takeover),
 	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_SOURCE,
 			 struct drm_castkms_renderer_release_source),
-};
-
-#define DRM_CASTKMS_EXECUTION_VERSION 1
-#define DRM_CASTKMS_EXECUTION_HOST_V1 1
-#define DRM_CASTKMS_EXECUTION_GPU_V1 2
-
-/**
- * struct drm_castkms_execution - CASTKMS_EXECUTION connector blob
- * @version: Description layout version, DRM_CASTKMS_EXECUTION_VERSION.
- * @profile: Active DRM_CASTKMS_EXECUTION_* profile.
- * @generation: Nonzero execution generation within the connector lifetime.
- *
- * The read-only blob describes the renderer, not capture permission or completion.
- * All fields use native byte order. Version 1 has exactly 16 bytes. Unknown
- * versions or profiles must not be interpreted as permission to import buffers.
- * Reading the description reserves neither a generation nor an atomic commit.
- *
- * HOST_V1 identifies the built-in CPU compositor. Its current implementation
- * accepts CPU-supported linear RGB, monochrome and YUV through 8192x8192,
- * with at most 512 MiB per source allocation and checked per-plane row bounds.
- * It supports positioned, cropped and scaled layers, cursor/overlay planes,
- * and the advertised output and plane color operations. Imports additionally
- * require usable exporter CPU-access and mapping support.
- * Disabled outputs and blank active outputs require no source allocation.
- * Successful PRIME import alone does not establish HOST usability. Public
- * capture destinations have separate format and allocation limits.
- *
- * HOST_V1 and GPU_V1 are coarse execution identities, not admission policies.
- * The blob is not a whole-scene capability table. Use renderer QUERY_CAPABILITIES
- * for active/pending contracts; plane properties are only a static baseline.
- * Do not infer geometry limits or negotiated modifier support from this blob.
- *
- * GPU_V1 identifies one activated userspace renderer. New HOST source reads are
- * rejected while that renderer owns execution; work admitted before activation
- * retires normally. Renderer operations define the accepted delegated work and
- * completion contract independently of final-image capture permission.
- */
-struct drm_castkms_execution {
-	__u32 version;
-	__u32 profile;
-	__u64 generation;
 };
 
 #endif

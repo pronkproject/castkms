@@ -2,7 +2,7 @@
 
 //! Anonymous revocation endpoint retaining the renderer permission owner.
 
-use super::{permission::Owner, session::Session};
+use super::permission::Owner;
 use crate::CastKms;
 use core::{ffi::c_void, ptr::NonNull};
 use kernel::{
@@ -11,12 +11,11 @@ use kernel::{
     fs::File,
     module::this_module,
     prelude::*,
-    sync::{aref::ARef, Arc}, //
+    sync::aref::ARef, //
 };
 
 struct RevokerFile {
     owner: Owner,
-    session: Arc<Session>,
 }
 
 impl RevokerFile {
@@ -26,8 +25,8 @@ impl RevokerFile {
         ..pin_init::zeroed()
     };
 
-    fn new(owner: Owner, session: Arc<Session>) -> Result<ARef<File>> {
-        let holder = KBox::into_raw(KBox::new(Self { owner, session }, GFP_KERNEL)?);
+    fn new(owner: Owner) -> Result<ARef<File>> {
+        let holder = KBox::into_raw(KBox::new(Self { owner }, GFP_KERNEL)?);
         // SAFETY: The immutable operations table belongs to this module and describes
         // the exact allocation transferred as private data.
         let file = from_err_ptr(unsafe {
@@ -57,12 +56,11 @@ impl RevokerFile {
         // release returns its private data exactly once.
         let holder = unsafe { KBox::from_raw((*file).private_data.cast::<Self>()) };
         holder.owner.revoke();
-        holder.session.close();
         drop(holder);
         0
     }
 }
 
-pub(super) fn create(owner: Owner, session: Arc<Session>) -> Result<ARef<File>> {
-    RevokerFile::new(owner, session)
+pub(super) fn create(owner: Owner) -> Result<ARef<File>> {
+    RevokerFile::new(owner)
 }

@@ -13,16 +13,15 @@ use kernel::{
         UnregisteredConnector, //
     },
     prelude::*,
-    uapi, //
 };
 
 pub(super) fn encode(description: Description) -> [u8; 16] {
     let mut bytes = [0; 16];
     let profile = match description.profile {
-        Profile::HostV1 => uapi::DRM_CASTKMS_EXECUTION_HOST_V1,
-        Profile::GpuV1 => uapi::DRM_CASTKMS_EXECUTION_GPU_V1,
+        Profile::HostV1 => 1u32,
+        Profile::GpuV1 => 2u32,
     };
-    bytes[0..4].copy_from_slice(&uapi::DRM_CASTKMS_EXECUTION_VERSION.to_ne_bytes());
+    bytes[0..4].copy_from_slice(&1u32.to_ne_bytes());
     bytes[4..8].copy_from_slice(&profile.to_ne_bytes());
     bytes[8..16].copy_from_slice(&description.generation.to_ne_bytes());
     bytes
@@ -33,6 +32,5 @@ pub(super) fn attach(
     connector: &UnregisteredConnector<Connector>,
     description: Description,
 ) -> Result<ReadOnlyBlobProperty<Connector>> {
-    const { assert!(core::mem::size_of::<uapi::drm_castkms_execution>() == 16) };
     connector.attach_readonly_blob_property(c"CASTKMS_EXECUTION", &encode(description))
 }

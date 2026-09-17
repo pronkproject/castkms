@@ -810,7 +810,9 @@ impl KmsDriver for Driver {
                 display.monitor.clone(),
             )?;
             connector.attach_edid_property();
-            display.execution.attach(connector)?;
+            if !dev.constraints_enabled {
+                display.execution.attach(connector)?;
+            }
             connector.attach_encoder(encoder)?;
         }
         if dev.enable_overlay {

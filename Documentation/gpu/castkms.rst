@@ -148,37 +148,21 @@ restores the standalone monitor and emits another hotplug event. Device removal
 instead makes the monitor terminally disconnected; a retained capability
 cannot recreate it.
 
-Execution description
----------------------
+Accepted constraints
+--------------------
 
-The read-only ``CASTKMS_EXECUTION`` connector property contains a single
-``drm_castkms_execution`` blob. Each output starts with the built-in renderer's
-HOST_V1 profile at generation 1. Successful renderer takeover publishes GPU_V1
-with a new generation and closes new HOST source-read admission; previously
-admitted work retires normally. Clients read version, profile and generation
-together through the standard DRM property interface. Reading it grants no
-capture permission and does not reserve acceptance of a later display update.
+Each output exposes persistent atomic ``CONSTRAINTS_ID`` state. Generic KMS
+listing describes its fixed default and any published renderer offers.
+Discovery requires current modesetting authority, but grants no pixels or
+renderer control. A changed selection requires an ordinary compatible atomic
+update with ALLOW_MODESET; omission retains accepted state.
 
-HOST_V1 currently accepts the CPU compositor's linear source formats,
-with dimensions through 8192 by 8192 and at most 512 MiB per source allocation.
-Checked sampling supports cropping, positioning and scaling; cursor, overlays
-and color operations are described above. Imported storage additionally needs
-usable CPU-access and mapping support. Atomic layout validation alone does not
-qualify an exporter's runtime mapping or synchronization behavior.
-
-The execution blob describes coarse renderer identity, not scene admission.
-Clients must query the active capability contract rather than branch on
-HOST_V1 versus GPU_V1 to decide whether a scene is supported. Plane
-properties describe a static baseline, not the complete negotiated modifier
-set. The renderer protocol exposes immutable active and pending profiles,
-tagged transition scenes and negotiated HOST handback; see
-:doc:`castkms-renderer` for the protocol and its remaining limits.
-GPU_V1 alone does not promise a complete GPU capture path or
-support for arbitrary modifiers and scene operations.
-
-``execution`` defines eligibility without acquiring a mapping or reading pixels.
-Its property adapter serializes a kernel-accessible description; neither the
-eligibility check nor the renderer needs to impersonate a userspace caller.
+The fixed HOST contract accepts CPU-readable linear formats through 8192 by
+8192 with checked allocation/layout bounds. Renderer offers describe independent
+whole-scene restrictions, including exact private-pool dimensions and supported
+format/modifier tuples. Static plane properties are not the complete admission
+contract. See :doc:`castkms-renderer` for preparation, publication, ordinary KMS
+selection and outstanding read lifetimes.
 
 Code boundaries
 ---------------
@@ -266,7 +250,7 @@ the advertised maximum of 64 KiB for the result. Insufficient capacity returns
 if userspace memory was partially written. Blank scenes and content already
 reported as composed or submitted return ``ENODATA``.
 
-The version-one result contains a header followed by back-to-front layer
+The version-two result contains a header followed by back-to-front layer
 records and output color records. Each layer includes its role, stacking
 position, format/modifier, memory planes, fractional source rectangle, signed
 destination position and scaled destination size. Its color records describe
@@ -281,8 +265,8 @@ bounds do not advertise additional KMS planes or enable new renderer profiles.
 All buffer descriptors and the combined producer fence remain tied to one
 source-read claim. The renderer must check producer success before reading,
 then release with no access, completed CPU access or a submitted native fence
-covering source reads and private-image writes. Renderer protocol version 9
-uses capability encoding 2 to negotiate supported scenes and transitions;
+covering source reads and private-image writes. Renderer protocol version 10
+uses capability encoding 2 to publish immutable offers for KMS selection;
 neither interface delivers GPU capture destinations. See
 :doc:`castkms-renderer` for private-image registration, internal recipient
 queues and the remaining output-transport boundary.
@@ -473,9 +457,8 @@ do not grant permission to deliver the image.
 One output's snapshot budget is limited to 512 MiB independently of the host
 pool. Current and retired copies must share it; each allocation keeps its
 credit until final native release. Exhaustion rejects the optional copy
-without waiting or reserving a compositor source. Renderer GET_SNAPSHOT can
-export an independently owned copy after recipient authorization; copying or
-exporting it does not itself activate a userspace renderer.
+without waiting or reserving a compositor source. Independent copying does
+not publish a renderer offer or change its accepted KMS binding.
 
 These scanout and private-storage bounds are not public capture destination
 limits. The current HOST destination path accepts single-plane linear XRGB8888
@@ -800,12 +783,9 @@ defaults. Tests select the primary plane by type and CRTC routing, not by the
 total plane count. The separately documented ``audio-multi`` fixture requires
 eight outputs.
 
-The execution test compares the immutable ``CASTKMS_EXECUTION`` description
-through a master file and a separate read-only, non-master file. Both must
-report the same HOST profile and generation. It also checks that the master
-cannot change the description. The test needs an unused node so its first
-file acquires master; reading the description itself does not require master,
-a capture grant or an active display. Neither file receives pixel access.
+The execution test discovers the fixed default constraints on a disabled
+output through the current master and verifies that a non-master file cannot
+list them. Neither file receives pixel access.
 
 The monitor-control test creates the anonymous capability through the current
 DRM master and checks that a non-master cannot do so. It verifies descriptor

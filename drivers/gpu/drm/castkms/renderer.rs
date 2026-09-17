@@ -11,8 +11,6 @@ pub(crate) mod offer;
 pub(crate) mod endpoint;
 pub(crate) mod content;
 mod capability_description;
-mod capability_file;
-mod profile_file;
 pub(crate) mod description;
 mod client_file;
 pub(crate) mod files;
