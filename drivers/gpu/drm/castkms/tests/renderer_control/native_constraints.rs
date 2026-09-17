@@ -19,7 +19,6 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let access = owner.access();
             let candidate = Arc::new(Candidate::begin(access.clone())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -29,8 +28,8 @@ mod cases {
                 )
             })?;
             candidate.submit_private_probe(None)?;
-            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
-            let other = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let ready = proposal.prepare_worker(&pool, [640, 480])?;
+            let other = proposal.prepare_worker(&pool, [640, 480])?;
             let worker = ready.worker();
             let first = provider.prepare(worker.clone())?;
             let second = provider.prepare(worker.clone())?;
