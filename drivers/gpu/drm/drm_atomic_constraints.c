@@ -225,6 +225,7 @@ static int check_properties(struct constraints_update *update,
 	for (i = 0; i < count; i++) {
 		struct drm_mode_object *object = NULL;
 		struct drm_property *property;
+		struct drm_plane_state *rule_plane_state = NULL;
 		u64 value;
 
 		if (rules[i].object_id == update->crtc->crtc->base.id) {
@@ -234,11 +235,16 @@ static int check_properties(struct constraints_update *update,
 				if (plane->base.id == rules[i].object_id &&
 				    plane_state->crtc == update->crtc->crtc) {
 					object = &plane->base;
+					rule_plane_state = plane_state;
 					break;
 				}
 			}
 		}
 		if (!object)
+			continue;
+		if ((rules[i].flags & DRM_CONSTRAINTS_PROPERTY_PLANE_YUV) &&
+		    (!rule_plane_state || !rule_plane_state->fb ||
+		     !rule_plane_state->fb->format->is_yuv))
 			continue;
 		property = drm_mode_obj_find_prop_id(object, rules[i].property_id);
 		ret = drm_atomic_get_property_from_state(update->state, object, property, &value);

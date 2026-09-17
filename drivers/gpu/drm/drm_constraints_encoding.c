@@ -155,6 +155,9 @@ static size_t encode_description(struct drm_constraints_description *description
 			.object_id = properties[i].object_id,
 			.property_id = properties[i].property_id,
 			.type = properties[i].type,
+			.applicability_flags =
+				properties[i].flags & DRM_CONSTRAINTS_PROPERTY_PLANE_YUV ?
+				DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV : 0,
 			.minimum = properties[i].minimum, .maximum = properties[i].maximum,
 			.mask = properties[i].mask,
 		};

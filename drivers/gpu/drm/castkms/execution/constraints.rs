@@ -203,22 +203,14 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
                 format_supported(plane, format, limits.geometry.min_source[0])
                     && crate::formats::is_yuv(format.fourcc)
             });
-        let supports_rgb = profile
-            .formats()
-            .iter()
-            .any(|format| {
-                format_supported(plane, format, limits.geometry.min_source[0])
-                    && !crate::formats::is_yuv(format.fourcc)
-            });
-        // Encoding and range are meaningful only for YUV framebuffers, while a generic
-        // scalar property rule applies unconditionally to every use of this plane.
-        if supports_yuv && !supports_rgb {
+        if supports_yuv {
             properties.push(
-                Property::enum_values(plane.id, ids.color_encoding, encoding_mask),
+                Property::enum_values(plane.id, ids.color_encoding, encoding_mask)
+                    .for_yuv_plane(),
                 GFP_KERNEL,
             )?;
             properties.push(
-                Property::enum_values(plane.id, ids.color_range, range_mask),
+                Property::enum_values(plane.id, ids.color_range, range_mask).for_yuv_plane(),
                 GFP_KERNEL,
             )?;
         }
@@ -535,6 +527,10 @@ mod tests {
             properties[1].mask(),
             1 << kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE
         );
+        assert!(properties.iter().all(|property| {
+            property.applicability_flags()
+                == kernel_bindings::DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV
+        }));
         let geometries = description.plane_geometries();
         assert_eq!(geometries.len(), 1);
         assert_eq!(geometries[0].plane_id(), 7);
@@ -567,7 +563,11 @@ mod tests {
         }
 
         let description = renderer(&Profile::new(limits, formats)?, &planes())?;
-        assert!(description.properties().is_empty());
+        assert_eq!(description.properties().len(), 2);
+        assert!(description.properties().iter().all(|property| {
+            property.applicability_flags()
+                == kernel_bindings::DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV
+        }));
         assert_eq!(description.formats().len(), 2);
         Ok(())
     }
@@ -684,7 +684,7 @@ mod tests {
         restricted.geometry.crop = false;
         restricted.geometry.position = false;
         restricted.layers = 1;
-        restricted.roles = [1, 1, 0];
+        restricted.roles = [1, 1, 1];
 
         let broad = renderer(&profile(limits())?, &planes())?;
         let narrow = renderer(&profile(restricted)?, &planes())?;

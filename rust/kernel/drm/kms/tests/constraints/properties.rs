@@ -51,12 +51,14 @@ mod cases {
                     id,
                     encoding,
                     1 << bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT709,
-                ),
+                )
+                .for_yuv_plane(),
                 Property::enum_values(
                     id,
                     range,
                     1 << bindings::drm_color_range_DRM_COLOR_YCBCR_LIMITED_RANGE,
-                ),
+                )
+                .for_yuv_plane(),
                 Property::unsigned_range(id, crtc_width, 640, 640),
                 Property::unsigned_range(id, source_width, 640 << 16, 640 << 16),
             ],

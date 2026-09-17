@@ -113,10 +113,8 @@ Published generic KMS constraints carry the same per-format allocation limits,
 so a compositor can choose storage before selecting the offer. Per-plane
 geometry records expose cropping, fractional source coordinates, destination
 position and scale ratios for every plane with allocation choices. Scalar
-rules expose usable YUV encoding and range values when those rules apply to
-every allocation on a plane. Mixed RGB/YUV declarations retain conditional
-YUV restrictions only in complete-scene validation because generic scalar
-records are unconditional.
+rules expose usable YUV encoding and range values with YUV-plane applicability,
+including for declarations that mix RGB and YUV allocations.
 Overlapping active-plane limits express both the declaration's total layer
 ceiling and any narrower role ceiling across the actual planes for that output.
 Cross-plane geometry relationships and color-pipeline contents cannot be

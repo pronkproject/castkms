@@ -27,6 +27,8 @@ static int property_valid(const struct drm_constraints_property *property)
 {
 	if (!property->object_id || !property->property_id)
 		return -EINVAL;
+	if (property->flags & ~DRM_CONSTRAINTS_PROPERTY_FLAGS)
+		return -EINVAL;
 	switch (property->type) {
 	case DRM_MODE_PROP_RANGE:
 		return !property->mask && property->minimum <= property->maximum ? 0 : -EINVAL;
@@ -316,7 +318,8 @@ static bool property_covers(const struct drm_constraints_property *candidate,
 {
 	if (candidate->object_id != required->object_id ||
 	    candidate->property_id != required->property_id ||
-	    candidate->type != required->type)
+	    candidate->type != required->type ||
+	    candidate->flags != required->flags)
 		return false;
 
 	switch (candidate->type) {

@@ -421,13 +421,14 @@ static void property_rules_require_attached_supported_domains(struct kunit *test
 	};
 	entry = new_property_entry(test, fixture, &rule);
 	KUNIT_ASSERT_EQ(test, drm_constraints_crtc_init(fixture->crtc, entry, 4, &output_ops), 0);
-	for (i = 0; i < 7; i++) {
+	for (i = 0; i < 8; i++) {
 		struct drm_constraints_property invalid = rule;
 		int expected = -EINVAL;
 
 		switch (i) {
 		case 0:
 			invalid.object_id = fixture->crtc->base.id;
+			invalid.flags = DRM_CONSTRAINTS_PROPERTY_PLANE_YUV;
 			break;
 		case 1:
 			invalid.property_id = U32_MAX;
@@ -455,6 +456,9 @@ static void property_rules_require_attached_supported_domains(struct kunit *test
 			invalid.type = DRM_MODE_PROP_SIGNED_RANGE;
 			invalid.minimum = invalid.maximum = U64_MAX;
 			expected = -EOPNOTSUPP;
+			break;
+		case 7:
+			invalid.flags = DRM_CONSTRAINTS_PROPERTY_PLANE_YUV;
 			break;
 		}
 		entry = new_property_entry(test, fixture, &invalid);
