@@ -142,6 +142,19 @@ mod cases {
         profile(limits, &image)?.check(&blank, [640, 480])?;
         limits.color.output_matrix = false;
         check(profile(limits, &image)?.check(&blank, [640, 480]) == Err(EOPNOTSUPP))?;
+        let entries = [
+            ColorLut::new(0, 0, 0),
+            ColorLut::new(65535, 65535, 65535),
+        ];
+        blank.output_color = crate::color::OutputColor::new(
+            Some(&entries),
+            Some(&ColorCtm::from_raw([0; 9])),
+            Some(&entries),
+        )?;
+        let mut limits = super::limits();
+        profile(limits, &image)?.check(&blank, [640, 480])?;
+        limits.color.operations = 2;
+        check(profile(limits, &image)?.check(&blank, [640, 480]) == Err(EOPNOTSUPP))?;
         Ok(())
     }
 

@@ -87,11 +87,13 @@ the published offer is narrowed to that exact target. Changing dimensions
 requires a separately prepared endpoint.
 
 The constraints bound crop, fractional coordinates, positioning, scale ratios,
-layer and role counts, LUT lengths and color operations. Limits apply to
-every role; advertise the intersection of per-role restrictions. Each format
-record names an exact fourcc/modifier/memory-plane-count tuple, native/imported
-provenance, and alignment/pitch bounds. Implicit layout is distinct from
-explicit LINEAR. A declaration proves neither import compatibility nor access.
+layer and role counts, LUT lengths and color operations. The operation ceiling
+applies independently to each plane pipeline and the output pipeline. Limits
+apply to every role; advertise the intersection of per-role restrictions. Each
+format record names an exact fourcc/modifier/memory-plane-count tuple,
+native/imported provenance, and alignment/pitch bounds. Implicit layout is
+distinct from explicit LINEAR. A declaration proves neither import
+compatibility nor access.
 When scaling is absent, both source-to-destination ratio bounds are exactly
 1.0 in unsigned 16.16 representation.
 Published generic KMS constraints carry the same per-format allocation limits,
