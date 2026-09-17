@@ -7,19 +7,19 @@ CastKMS is a virtual display that can compose images in the kernel or delegate
 complete scenes to an authorized userspace renderer. The Rust driver provides
 a display device and a CPU capture path for kernel callers and authorized
 userspace clients. Public final-image capture uses generic anonymous capture
-files. Renderer activation and source access are available, while delegated
-GPU delivery to final capture images remains under development.
+files. Renderer source and recipient access use independently fenced jobs;
+physical cross-GPU interoperability still requires platform qualification.
 
 Enable ``CONFIG_DRM_CASTKMS`` in a kernel with Rust support to create eight
 virtual outputs by default. The ``max_outputs`` parameter accepts one through
-eight. Without monitor controllers the outputs present always-connected
-development monitors. The driver accepts atomic modesetting and linear RGB,
+eight. Outputs begin disconnected and become visible only after an explicit
+monitor attachment. The driver accepts atomic modesetting and linear RGB,
 monochrome and YUV framebuffers, including CPU-mappable PRIME imports for HOST
 composition. Tiled storage is not supported by the in-kernel compositor.
 HOST modes and framebuffer sizes are supported through 8192 by 8192.
 Negotiated GPU execution has a static envelope through 16384 by 16384;
-the active renderer profile determines actual acceptance. Neither bound is
-a receiver or transport policy. Cursor planes, eight
+the accepted renderer constraints offer determines actual acceptance. Neither
+bound is a receiver or transport policy. Cursor planes, eight
 shared overlays and per-plane color pipelines are enabled by default. Their
 module parameters allow disabling them for focused testing.
 The virtual parent has DMA addressing configured before DRM registration so
@@ -78,14 +78,18 @@ The queue holds at most 65,536 frames. Overflow discards old queued audio so a
 slow reader does not accumulate unbounded delay, and delayed timer callbacks
 perform at most forty milliseconds of catch-up work.
 
-Only one live audio stream can capture an attachment. Detach, replacement,
-master loss, device removal and explicit revocation discard queued samples
-and make the old stream terminal. A retained descriptor never follows a new
-attachment. Disabling the CRTC suspends frame delivery and discards queued
-samples without revoking the audio capability. Re-enabling allows delivery
-again; applications must prepare interrupted ALSA playback before restarting
-it. A black image on an active CRTC does not stop audio. Existing ALSA files
-are disconnected on detach without waiting for their owners to close them.
+Only one active audio stream can capture an attachment. Master loss suspends
+the retained capability with ``EAGAIN``, retires its tap and discards queued
+samples. This leaves the attachment available to the new master. If the bound
+``drm_master`` later becomes current again, the same descriptor opens a fresh
+tap; no samples from its old interval survive. Detach, replacement, device
+removal and explicit revocation remain terminal, and a retained descriptor
+never follows a new attachment. Disabling the CRTC suspends frame delivery and
+discards queued samples without revoking the audio capability. Re-enabling
+allows delivery again; applications must prepare interrupted ALSA playback
+before restarting it. A black image on an active CRTC does not stop audio.
+Existing ALSA files are disconnected on detach without waiting for their
+owners to close them.
 Audio capture does not depend on whether video is
 composed in the kernel or by a userspace renderer.
 
@@ -123,28 +127,29 @@ Virtual monitor control
 
 The current DRM master can issue one monitor-control capability per selected
 virtual connector with ``DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL``. Issuance
-requires the master to hold the connector and replaces the standalone monitor
-with a disconnected managed monitor. A second capability is rejected while
-the first remains open for that connector.
+requires the master to hold the connector. Connectors begin disconnected and
+remain disconnected until explicitly attached. A second capability is
+rejected while the first remains open for that connector.
 
-Monitor protocol version 2 uses an input-only creation request with a ``files``
+Monitor protocol version 1 uses an input-only creation request with a ``files``
 pointer to ``drm_castkms_monitor_files``. Both descriptor numbers are copied
 before the managed monitor is published and the descriptors are installed.
-Failure installs neither file and leaves the standalone monitor unchanged;
+Failure installs neither file and leaves the connector disconnected;
 callers must discard all output bytes on failure, including partial copyout.
 
 The anonymous close-on-exec control file supports only query, attach and detach
 operations. Attach accepts either a complete validated EDID or no EDID, in
-which case the driver publishes its fallback modes. Each successful change
-emits a normal DRM hotplug event. The capability does not expose DRM objects,
+which case the driver publishes fallback modes with 1920 by 1080 preferred.
+Each successful change emits a normal DRM hotplug event. The capability does
+not expose DRM objects,
 framebuffers, capture images, modesetting, or renderer control. A second
 close-on-exec file lets the issuer revoke the capability without retaining its
 control endpoint.
 
 The control file itself carries authority after issuance. It can be passed to
 the display service and remains usable across later DRM master changes. Final
-control-file close or revocation-file close disconnects the managed interval,
-restores the standalone monitor and emits another hotplug event. Device removal
+control-file close or revocation-file close disconnects the monitor and emits
+another hotplug event. Device removal
 instead makes the monitor terminally disconnected; a retained capability
 cannot recreate it.
 
@@ -190,38 +195,26 @@ different interval. Those observations require native control to be stabilized
 separately; they neither grant access nor replace scene provenance. Exhausting
 the interval counter closes tracking rather than reviving an old observation.
 
-``renderer/permission.rs`` binds exact display control to one such interval and
-a separate revocation owner. Retained renderer handles do not retain the issuer's
-authority after revocation. Their callbacks permit control operations without
+``renderer/permission.rs`` binds exact display control to one native master
+identity and a separate revocation owner. Renderer workers and jobs retain the
+interval in which they were created, so reacquisition can reactivate the
+capability without reviving old work. Retained renderer handles do not retain
+the issuer's authority after revocation. Their callbacks permit operations without
 requiring a capturable image, but expose no source storage, image exports or
 execution activation. Revocation waits for authorization callbacks to leave;
 owners of individual operations remain responsible for their resource cleanup.
 There is no conversion from a final-image capture grant to renderer permission.
 
-``renderer/candidate.rs`` combines that permission with one private startup
-reservation and the accepted mode/route interval. Reservation happens outside
-policy locks and validation runs on both sides. Ordinary content updates leave
-the candidate valid; a changed configuration, revoked issuer, canceled reservation
-or shutdown does not. The retained description is historical metadata rather
-than an activation token. HOST remains active, and the candidate has no live
-source claim. Canceling or dropping the operation releases its reservation;
-revoking its issuer stops authorization but does not replace operation cleanup.
+``renderer/endpoint.rs`` serializes one immutable native constraints offer per
+master interval and its private image namespace. A completed private probe
+makes the worker ready before publication; ordinary KMS ``CONSTRAINTS_ID``
+state selects it. The
+accepted native entry, rather than a mutable driver-side route, identifies the
+worker for source and capture admission. Endpoint withdrawal prevents new
+selection without inventing completion for accepted work.
 
-The candidate may request a fresh private copy of a completed host image.
-That operation additionally checks pixel ownership and the image's original
-output and configuration. Copying runs outside the locks that protect display
-and permission changes; the operation repeats its checks afterward while those
-locks are held again. Revocation, cancellation or a changed display interval
-discards the private result and returns its storage credit. Ordinary content
-updates do not relabel or invalidate an otherwise authorized earlier image.
-Returning a copy neither installs a descriptor nor activates execution;
-exposing it requires a separate decision about its recipient at descriptor
-installation.
-
-After a candidate's private probe completes, activation publishes one GPU
-execution generation and transfers the startup reservation into a terminal
-renderer incarnation. The active session claims changed scenes and may retry a
-scene after releasing it without access, while source admission remains open.
+The selected endpoint claims changed scenes and may retry a scene after
+releasing it without access, while source admission remains open.
 Each kernel job owns both retained scene metadata and its preparation read
 claim; the framebuffer reference alone does not delay source reuse.
 The renderer registers its independent private-image backing before dequeue.
@@ -250,7 +243,7 @@ the advertised maximum of 64 KiB for the result. Insufficient capacity returns
 if userspace memory was partially written. Blank scenes and content already
 reported as composed or submitted return ``ENODATA``.
 
-The version-two result contains a header followed by back-to-front layer
+The version-one result contains a header followed by back-to-front layer
 records and output color records. Each layer includes its role, stacking
 position, format/modifier, memory planes, fractional source rectangle, signed
 destination position and scaled destination size. Its color records describe
@@ -261,15 +254,14 @@ neighbor, and output color operations follow layer composition.
 
 Metadata is bounded to 24 layers, four memory planes per layer, sixteen plane
 color operations and 256 entries per output lookup table. These transport
-bounds do not advertise additional KMS planes or enable new renderer profiles.
+bounds do not advertise additional KMS planes or enable new renderer offers.
 All buffer descriptors and the combined producer fence remain tied to one
 source-read claim. The renderer must check producer success before reading,
 then release with no access, completed CPU access or a submitted native fence
-covering source reads and private-image writes. Renderer protocol version 10
-uses capability encoding 2 to publish immutable offers for KMS selection;
-neither interface delivers GPU capture destinations. See
-:doc:`castkms-renderer` for private-image registration, internal recipient
-queues and the remaining output-transport boundary.
+covering source reads and private-image writes. Renderer protocol version 1
+publishes version 1 constraints offers for KMS selection. See
+:doc:`castkms-renderer` for private-image registration and the independent
+private-image-to-recipient output jobs.
 
 The job also exports a sync-file wait for the exact producer dependencies
 captured when KMS accepted the scene. An already failed producer rejects
@@ -288,9 +280,10 @@ unplugs DRM and shuts down atomic state before releasing the parent. Display
 objects may remain allocated while existing DRM references are being released;
 their data does not borrow the module's registration storage.
 
-``monitor.rs`` owns the kernel-facing monitor state machine. Its exclusive
-control object replaces and restores the standalone monitor independently of
-how that object is transported. ``monitor_file.rs`` is only the UAPI adapter:
+``monitor.rs`` owns the kernel-facing monitor state machine. Outputs begin
+disconnected; its exclusive control object publishes and removes an attached
+monitor independently of how that object is transported. ``monitor_file.rs``
+is only the UAPI adapter:
 it checks master authority when issuing an anonymous capability and translates
 validated requests into control-object operations. Neither layer owns a
 capture stream or renderer permission.
@@ -438,46 +431,16 @@ A completed private image retains its layout, content serial and attribution,
 but not the source framebuffer, mapping or claim. Keeping that image therefore
 does not prevent the compositor from reusing its source buffer.
 
-The completed image's layout remains valid after worker replacement or device
-shutdown. Its packed pixel byte count excludes the page padding included in
-allocation accounting. A full copy requires an exact-size destination and
-rejects a size mismatch before changing any destination bytes. It creates an
-independent host result without exporting the private image or reacquiring the
-source. The caller remains responsible for recipient authorization before
-exposing the copied pixels; copying into generic capture job storage does not
-establish that permission.
+Public HOST destinations are single-plane linear XRGB8888. Each registered
+allocation and described image span may be at most 512 MiB, with 16 names per
+client. That limit covers every packed HOST mode and permits ordinary pitch
+padding; a larger bounded allocation may also back a smaller described view.
+All clients share the separate 512 MiB recipient-storage ledger, so current
+contention can still reject registration with ``EBUSY``.
 
-``host_snapshot.rs`` makes an independent immutable copy of a completed host
-image for renderer startup. It copies initialized pixels and clears allocation
-padding into fresh GEM storage; it never exports or retains the reusable host
-slot. The snapshot keeps the image's actual output identity, configuration,
-content serial and owner, even after the display changes. Those observations
-do not grant permission to deliver the image.
-
-One output's snapshot budget is limited to 512 MiB independently of the host
-pool. Current and retired copies must share it; each allocation keeps its
-credit until final native release. Exhaustion rejects the optional copy
-without waiting or reserving a compositor source. Independent copying does
-not publish a renderer offer or change its accepted KMS binding.
-
-These scanout and private-storage bounds are not public capture destination
-limits. The current HOST destination path accepts single-plane linear XRGB8888
-with at most 16 MiB per registered allocation and 16 registrations per client.
-An output can therefore be valid for scanout but too large for public HOST
-delivery. Larger capture destinations require separate implementation work.
-
-``renderer_startup.rs`` owns one candidate reservation and that snapshot
-budget for each output. Canceling a candidate frees the reservation, not the
-storage of copies that are still retained. A later candidate therefore sees
-the same outstanding allocation charges. Canceling or dropping an old
-candidate cannot cancel its replacement, and device shutdown permanently
-closes candidate admission before display resources are released.
-
-Making a copy checks the candidate on both sides of the operation and checks
-the image's output identity. Copying takes no startup lock and no compositor
-source claim. A canceled operation discards its private result, while a
-previously returned copy keeps its storage. These resource rules do not
-authorize a recipient, publish a new execution profile or activate a GPU.
+Delegated capture queues bind directly to the accepted worker. Their
+private-image-to-recipient jobs retain both allocations through native
+completion without extending a compositor source read.
 
 ``host_compositor/worker.rs`` coalesces queued requests onto one work item and
 retains the output publication, pool and latest attempt. Its unique shutdown
@@ -550,8 +513,8 @@ permit restarting work afterward. Already completed private images retain their
 own storage without retaining a claim on the displayed source.
 
 The composition helpers do not implement registered capture destinations,
-capture authorization, a display clock, or the transition to a userspace GPU
-executor. The capture layer supplies the separate authorization checks.
+capture authorization, a display clock, or userspace-renderer selection. The
+capture and execution layers supply those separate policy checks.
 The two-image host pool is a private-storage limit, not a receiver frame-rate
 policy or a limit on future GPU queues.
 
@@ -632,6 +595,11 @@ linear modifier, dimensions, row pitch, visible byte count and maximum
 private request count. It reserves no stream or image capacity, starts no
 compositor work and holds no source read claim. Reported limits are not a
 promise that budget will remain available when the caller opens a stream.
+The HOST maximum is reduced for the exact image size so the advertised count
+can fit by itself in the 512 MiB private-result budget; for example, packed 8K
+reports two requests rather than the protocol ceiling of eight. Concurrent
+streams may consume that device-wide budget before creation and produce
+``EBUSY``.
 
 The description retains its own capture handle and exact accepted display
 configuration. ``Description::create_stream()`` opens only for that pair;
@@ -646,7 +614,7 @@ shutdown still revoke descriptions retained by a caller.
 the same private compositor used by immediate kernel capture. Descriptions
 do not promise that a future source image is valid or host-readable; the
 executor still checks that image before composition. No source descriptor or
-GPU execution profile is exposed by these operations. The anonymous client
+GPU execution authority is exposed by these operations. The anonymous client
 separately assigns offer names for the public description interface.
 
 Grants across device shutdown
@@ -791,8 +759,8 @@ The monitor-control test creates the anonymous capability through the current
 DRM master and checks that a non-master cannot do so. It verifies descriptor
 flags, version discovery, request validation, exclusive issuance, EDID-backed
 attachment and explicit disconnection. The capability remains effective after
-DRM master handoff. Its final close must restore the standalone monitor, and a
-new current master must then be able to issue the next capability.
+DRM master handoff. Its final close must leave the connector disconnected, and
+a new current master must then be able to issue the next capability.
 
 The capture-grant test exercises public issuance and output descriptions
 without reading captured pixels. It checks master-file authority, distinct
@@ -823,8 +791,8 @@ That variant also imports a private system-heap allocation and creates an
 explicitly linear framebuffer without mapping or reading its pixels. It
 closes both the DMA-BUF descriptor and the imported buffer handle before
 submitting updates, so the framebuffer must retain the storage through
-teardown. The HOST profile accepts the CPU-mappable linear import through
-non-atomic modesets, page flips and atomic replacements. A test-only
+teardown. The fixed HOST constraints accept the CPU-mappable linear import
+through non-atomic modesets, page flips and atomic replacements. A test-only
 replacement preserves the active framebuffer; blocking and nonblocking
 acceptance select the imported framebuffer.
 
@@ -937,40 +905,18 @@ references through teardown without reading pixels. The shared export fixture
 has its own handle-cleanup and invalid-dimension tests. Those VM cases do not
 qualify a physical GPU's buffers or a userspace compositor's submission path.
 
-Checking the renderer transition contract
------------------------------------------
+Checking the renderer contract
+------------------------------
 
-The ``rust_castkms_renderer_publication`` KUnit suite exercises registered
-displays, profile registration, tagged atomic updates and renderer activation.
-GPU activation requires a published gate and a successful probe. A missing profile
-is rejected without changing execution or consuming the candidate. Tests check
-pending probes, retrying activation after a lost reply, source-read completion,
-renderer replacement and HOST handback. These checks use the kernel's display
-locks and publication paths; they do not establish physical GPU interoperability.
+The native constraints and endpoint KUnit suites exercise immutable offer
+publication, ordinary atomic selection, source release, delegated recipient
+claims, renderer replacement and HOST selection. These checks use the kernel's
+display locks and publication paths; they do not establish physical GPU
+interoperability.
 
 The ``renderer-control`` selftest exercises the file interface, including
 descriptor publication, continuous scene updates, retained source reads and
 orderly return to HOST execution. A successful probe is not a captured frame.
-
-A standalone model checks the ordering of return to built-in rendering::
-
-    tools/testing/selftests/drm_castkms/handback-model.py
-
-A handback request does not change accepted display capabilities. Installing
-its tagged host-compatible update installs the validation gate, while normal
-scene publication remains a separate event. CPU composition must not read the
-previous GPU-only scene between those events. Host publication rejects stale
-authority, worker identity, configuration and canceled requests, but does not
-require content to stop changing. Canceling a pending handback preserves the
-installed scene and lifts its gate in a new capability epoch.
-
-The model checks that host publication stops new GPU claims before the worker
-receives permission to stop. Existing claims still need release acknowledgment
-with complete native coverage; those native operations may finish afterward.
-Worker loss before acknowledgment is terminal rather than a successful return
-to host execution. The scheduler admits one update at a time through acceptance,
-installation and publication. That bound isolates the ordering decisions; it
-is not the driver's queue depth, a concurrent-locking proof, or GPU validation.
 
 Building without another display driver
 ---------------------------------------
