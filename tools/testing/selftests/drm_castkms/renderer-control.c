@@ -28,6 +28,7 @@ _Static_assert(sizeof(struct drm_castkms_renderer_output) == 72, "output layout"
 _Static_assert(sizeof(struct drm_castkms_renderer_release_output) == 32, "output release layout");
 _Static_assert(sizeof(struct drm_capture_queue_output) == 40, "capture queue layout");
 _Static_assert(sizeof(struct drm_capture_result) == 24, "capture result layout");
+_Static_assert(sizeof(struct drm_capture_cancel) == 24, "capture cancel layout");
 
 static void expect_error(int fd, unsigned long cmd, void *request, int error)
 {
@@ -290,6 +291,7 @@ int main(int argc, char **argv)
 		.stream = 1, .use_id = 1, .destination = 1, .reuse_fd = -1,
 	};
 	struct drm_capture_dequeue take_capture = { .stream = 1 };
+	struct drm_capture_cancel cancel_capture = { .stream = 1, .use_id = 3 };
 	struct drm_capture_result capture_result;
 	struct drm_capture_unregister_destination remove_destination = { .id = 1 };
 	struct drm_capture_destroy_stream destroy_stream = { .id = 1 };
@@ -463,7 +465,31 @@ int main(int argc, char **argv)
 	CHECK(capture_result.use_id == 2 && capture_result.status == 0);
 	CHECK(capture_result.completed_at_ns > 0 && !capture_result.reserved);
 	check_pixels(output_fd, &output, mode->hdisplay, mode->vdisplay, 0x33);
+
+	/* Cancellation does not revoke an output claim or permit early stream teardown. */
+	queue.use_id = 3;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
 	take_output.image_id = 2;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
+		&take_output) == 0);
+	CHECK(renderer_output.image_id == 2 && renderer_output.dma_buf_fd >= 0);
+	CHECK(fcntl(renderer_output.dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CANCEL,
+		&cancel_capture) == 0);
+	expect_error(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM,
+		&destroy_stream, EBUSY);
+	copy_linear(private_fd[1], private[1].dumb.size, private[1].dumb.pitch, 0,
+		    renderer_output.dma_buf_fd, output.dumb.size, renderer_output.pitch,
+		    renderer_output.offset, mode->hdisplay, mode->vdisplay);
+	release_output.job_id = renderer_output.job_id;
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT,
+		&release_output) == 0);
+	CHECK(close(renderer_output.dma_buf_fd) == 0);
+	wait_capture(capture_files.capture_fd);
+	memset(&capture_result, 0xa5, sizeof(capture_result));
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE, &take_capture) == 0);
+	CHECK(capture_result.use_id == 3 && capture_result.status == -ECANCELED);
+	CHECK(!capture_result.completed_at_ns && !capture_result.reserved);
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
 		&take_output, ENODATA);
 
