@@ -19,7 +19,8 @@ use kernel::{
             Property,
             Size, //
         },
-        fourcc, //
+        fourcc,
+        kms::plane::{RawPlane, SceneProperty}, //
     },
     prelude::*,
     sync::aref::ARef, //
@@ -29,12 +30,31 @@ use kernel::{
 pub(crate) struct Plane {
     pub(crate) id: u32,
     pub(crate) kind: Kind,
+    properties: [u32; 6],
 }
 
-/// Owned immutable plane identities for one output's allocation descriptions.
+impl Plane {
+    pub(crate) fn from_kms(plane: &impl RawPlane, kind: Kind) -> Result<Self> {
+        let required = |property| plane.scene_property_id(property).ok_or(EOPNOTSUPP);
+        Ok(Self {
+            id: plane.object_id(),
+            kind,
+            properties: [
+                required(SceneProperty::CrtcX)?,
+                required(SceneProperty::CrtcY)?,
+                required(SceneProperty::SourceX)?,
+                required(SceneProperty::SourceY)?,
+                required(SceneProperty::ColorEncoding)?,
+                required(SceneProperty::ColorRange)?,
+            ],
+        })
+    }
+}
+
+/// Owned immutable plane and property identities for one output's descriptions.
 ///
-/// The setup owner supplies existing planes eligible for that output. Numeric identities
-/// retain neither KMS objects nor authority; native publication still validates scope.
+/// The setup owner supplies existing planes eligible for that output. Numeric identities retain
+/// neither KMS objects nor authority; native publication still validates attachment and scope.
 pub(crate) struct Topology {
     planes: KVec<Plane>,
 }
@@ -56,6 +76,12 @@ fn check_planes(planes: &[Plane]) -> Result {
     }
     for (index, plane) in planes.iter().enumerate() {
         if plane.id == 0
+            || plane.properties.contains(&0)
+            || plane
+                .properties
+                .iter()
+                .enumerate()
+                .any(|(property, id)| plane.properties[..property].contains(id))
             || planes[..index]
                 .iter()
                 .any(|previous| previous.id == plane.id)
@@ -239,14 +265,17 @@ mod tests {
             Plane {
                 id: 7,
                 kind: Kind::Primary,
+                properties: [17, 18, 19, 20, 21, 22],
             },
             Plane {
                 id: 8,
                 kind: Kind::Overlay,
+                properties: [17, 18, 19, 20, 23, 24],
             },
             Plane {
                 id: 9,
                 kind: Kind::Cursor,
+                properties: [17, 18, 19, 20, 25, 26],
             },
         ]
     }
@@ -340,13 +369,18 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_plane_identity_is_rejected() -> Result {
+    fn ambiguous_topology_identity_is_rejected() -> Result {
         let profile = profile(limits())?;
         let mut planes = planes();
         assert!(matches!(renderer(&profile, &[], &[]), Err(EINVAL)));
         planes[1].id = planes[0].id;
         assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
         planes[1].id = 0;
+        assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
+        planes[1].id = 8;
+        planes[1].properties[1] = planes[1].properties[0];
+        assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
+        planes[1].properties[1] = 0;
         assert!(matches!(renderer(&profile, &planes, &[]), Err(EINVAL)));
         Ok(())
     }
