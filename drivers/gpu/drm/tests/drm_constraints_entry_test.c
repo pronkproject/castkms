@@ -49,6 +49,7 @@ static struct entry_fixture *new_fixture(struct kunit *test, unsigned int limit)
 		.modifier = DRM_FORMAT_MOD_LINEAR,
 		.size = size,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+		.width_alignment = 1, .height_alignment = 1,
 		.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
 	};
 	struct entry_fixture *fixture = kunit_kzalloc(test, sizeof(*fixture), GFP_KERNEL);

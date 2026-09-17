@@ -359,6 +359,8 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 			    formats[j].format == fb->format->format &&
 			    (implicit || formats[j].modifier == fb->modifier) &&
 			    size_matches(&formats[j].size, fb->width, fb->height) &&
+			    IS_ALIGNED(fb->width, formats[j].width_alignment) &&
+			    IS_ALIGNED(fb->height, formats[j].height_alignment) &&
 			    storage_matches(&formats[j], fb))
 				break;
 		}

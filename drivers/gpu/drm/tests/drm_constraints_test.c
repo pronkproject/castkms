@@ -15,6 +15,8 @@ static const struct drm_constraints_format linear = {
 	.size = { 1, 1, 8192, 8192 },
 	.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE |
 			 DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED,
+	.width_alignment = 1,
+	.height_alignment = 1,
 	.pitch_alignment = 1,
 	.offset_alignment = 1,
 	.max_pitch = U32_MAX,
@@ -236,6 +238,25 @@ static void drm_constraints_rejects_invalid_storage_rules(struct kunit *test)
 							       NULL, 0),
 			    ERR_PTR(-EINVAL));
 	format = linear;
+	format.width_alignment = 0;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
+	format.height_alignment = 3;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
+	format.size = (struct drm_constraints_size) { 1, 1, 63, 63 };
+	format.width_alignment = 64;
+	KUNIT_EXPECT_PTR_EQ(test,
+			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
+							       NULL, 0),
+			    ERR_PTR(-EINVAL));
+	format = linear;
 	format.pitch_alignment = 3;
 	KUNIT_EXPECT_PTR_EQ(test,
 			    drm_constraints_description_create(&output_size, &format, 1, NULL, 0,
@@ -429,10 +450,14 @@ static void drm_constraints_description_recognizes_structural_coverage(struct ku
 
 	required_format.size = (struct drm_constraints_size) { 64, 32, 1920, 1080 };
 	required_format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED;
+	required_format.width_alignment = 256;
+	required_format.height_alignment = 8;
 	required_format.pitch_alignment = 256;
 	required_format.offset_alignment = 4096;
 	required_format.max_pitch = 8192;
 	candidate_formats[0].size = (struct drm_constraints_size) { 1, 1, 8192, 8192 };
+	candidate_formats[0].width_alignment = 64;
+	candidate_formats[0].height_alignment = 4;
 	candidate_formats[0].pitch_alignment = 64;
 	candidate_formats[0].offset_alignment = 1024;
 	candidate_formats[0].max_pitch = 16384;
@@ -472,6 +497,8 @@ static void drm_constraints_description_rejects_incomplete_coverage(struct kunit
 	struct drm_constraints_description *required, *candidate;
 
 	required_format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED;
+	required_format.width_alignment = 256;
+	required_format.height_alignment = 8;
 	required_format.pitch_alignment = 256;
 	required_format.offset_alignment = 4096;
 	required_format.max_pitch = 8192;
@@ -485,6 +512,12 @@ static void drm_constraints_description_rejects_incomplete_coverage(struct kunit
 } while (0)
 	candidate_format = required_format;
 	candidate_format.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE;
+	EXPECT_INCOMPLETE();
+	candidate_format = required_format;
+	candidate_format.width_alignment = 512;
+	EXPECT_INCOMPLETE();
+	candidate_format = required_format;
+	candidate_format.height_alignment = 16;
 	EXPECT_INCOMPLETE();
 	candidate_format = required_format;
 	candidate_format.pitch_alignment = 512;

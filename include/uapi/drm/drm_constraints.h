@@ -270,6 +270,8 @@ struct drm_mode_constraints_output_size {
  * @layout_flags: Zero or DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT.
  * @storage_flags: Permitted DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_* origins.
  * @plane_count: Number of framebuffer memory planes.
+ * @width_alignment: Required framebuffer-width alignment in pixels.
+ * @height_alignment: Required framebuffer-height alignment in pixels.
  * @pitch_alignment: Required byte alignment of every plane pitch.
  * @offset_alignment: Required byte alignment of every plane offset.
  * @max_pitch: Maximum pitch in bytes for every plane.
@@ -282,9 +284,10 @@ struct drm_mode_constraints_output_size {
  * storage flags make the entry unsupported. NATIVE means storage created on
  * the queried DRM device, while IMPORTED means a PRIME-imported DMA-BUF. The
  * flags apply independently to every memory plane, so both flags also permit
- * framebuffers whose planes have mixed origins. Alignments are positive powers
- * of two, and max_pitch is at least pitch_alignment. Tuples of plane, format,
- * modifier and layout flags are unique within a description.
+ * framebuffers whose planes have mixed origins. Dimension and byte alignments
+ * are positive powers of two, and max_pitch is at least pitch_alignment.
+ * Tuples of plane, format, modifier and layout flags are unique within a
+ * description.
  *
  * These records do not rewrite IN_FORMATS. Target framebuffer construction
  * precedes selecting the target entry; constructing a framebuffer does not
@@ -302,6 +305,8 @@ struct drm_mode_constraints_plane_format {
 	__u32 layout_flags;
 	__u32 storage_flags;
 	__u32 plane_count;
+	__u32 width_alignment;
+	__u32 height_alignment;
 	__u32 pitch_alignment;
 	__u32 offset_alignment;
 	__u32 max_pitch;

@@ -38,6 +38,8 @@ static struct encoding_fixture *new_fixture_with_layout(struct kunit *test, bool
 		.size = { 64, 32, 3840, 2160 },
 		.flags = implicit ? DRM_CONSTRAINTS_FORMAT_IMPLICIT : 0,
 		.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED,
+		.width_alignment = 64,
+		.height_alignment = 4,
 		.pitch_alignment = 256,
 		.offset_alignment = 4096,
 		.max_pitch = 65536,
@@ -99,6 +101,15 @@ static struct drm_constraints_snapshot *snapshot(struct kunit *test,
 
 static void check_encoded_layout(struct kunit *test, bool implicit)
 {
+	enum { expected_bytes = sizeof(struct drm_mode_constraints_list) +
+				sizeof(struct drm_mode_constraints) +
+				sizeof(struct drm_mode_constraints_description) +
+				sizeof(struct drm_mode_constraints_output_size) +
+				sizeof(struct drm_mode_constraints_plane_format) +
+				sizeof(struct drm_mode_constraints_property) +
+				sizeof(struct drm_mode_constraints_plane_geometry) +
+				ALIGN(sizeof(struct drm_mode_constraints_plane_limit) +
+				      3 * sizeof(__u32), 8) };
 	struct encoding_fixture *f = new_fixture_with_layout(test, implicit);
 	struct drm_constraints_snapshot *view = snapshot(test, f->list);
 	struct drm_mode_constraints_list *header;
@@ -113,7 +124,7 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	u8 *buffer;
 
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
-	KUNIT_ASSERT_EQ(test, required, 352);
+	KUNIT_ASSERT_EQ(test, required, expected_bytes);
 	buffer = kunit_kmalloc(test, required, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, buffer);
 	memset(buffer, 0xa5, required);
@@ -160,6 +171,8 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	KUNIT_EXPECT_EQ(test, format->storage_flags,
 			DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_IMPORTED);
 	KUNIT_EXPECT_EQ(test, format->plane_count, 1);
+	KUNIT_EXPECT_EQ(test, format->width_alignment, 64);
+	KUNIT_EXPECT_EQ(test, format->height_alignment, 4);
 	KUNIT_EXPECT_EQ(test, format->pitch_alignment, 256);
 	KUNIT_EXPECT_EQ(test, format->offset_alignment, 4096);
 	KUNIT_EXPECT_EQ(test, format->max_pitch, 65536);
@@ -331,6 +344,7 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 			.plane_id = i + 1, .format = DRM_FORMAT_XRGB8888,
 			.modifier = DRM_FORMAT_MOD_LINEAR, .size = size,
 			.storage_flags = DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE,
+			.width_alignment = 1, .height_alignment = 1,
 			.pitch_alignment = 1, .offset_alignment = 1, .max_pitch = U32_MAX,
 		};
 	for (i = 0; i < DRM_CONSTRAINTS_MAX_PROPERTIES; i++)

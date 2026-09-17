@@ -50,13 +50,14 @@ Framebuffer bounds concern allocation, not the fractional source rectangle.
 Each allocation record names an existing plane and a standard DRM
 format/modifier pair. It also states whether framebuffer memory may originate
 on the queried DRM device, arrive through PRIME DMA-BUF import, or use either
-origin. A memory plane's pitch and offset must satisfy the stated byte
-alignments, and its pitch must not exceed the advertised maximum. The record
-includes the format's memory-plane count so an allocator can size the complete
-framebuffer. Tiled layouts are not restricted to software-compositor
-capabilities. Common atomic validation checks these requirements on every
-framebuffer memory plane; a missing optional GEM object is native storage, while
-an attached imported GEM object is imported storage.
+origin. Framebuffer width and height must satisfy the stated pixel alignments.
+A memory plane's pitch and offset must satisfy the stated byte alignments, and
+its pitch must not exceed the advertised maximum. The record includes the
+format's memory-plane count so an allocator can size the complete framebuffer.
+Tiled layouts are not restricted to software-compositor capabilities. Common
+atomic validation checks dimension rules once per framebuffer and storage rules
+on every memory plane; a missing optional GEM object is native storage, while an
+attached imported GEM object is imported storage.
 
 Plane-geometry rules state whether each plane permits cropping, fractional
 source coordinates and nonzero destination positions. They also bound the
@@ -148,8 +149,8 @@ Kernel snapshot encoding
 a kernel buffer. The native-endian prototype layout uses fixed-width fields,
 explicit padding and aligned 64-bit values. List and description headers are
 versioned; entries have a stride, and descriptions contain length-delimited
-output-dimension, per-plane format/modifier, plane-geometry and scalar-property
-records.
+output-dimension, per-plane format/modifier/allocation-alignment,
+plane-geometry and scalar-property records.
 Every offset is relative to the start of the complete snapshot. Per-plane
 format records are alternatives; geometry rules, scalar rules and active-plane
 limits apply together. Unknown required records make an entry unusable, not
