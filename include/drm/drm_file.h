@@ -362,6 +362,18 @@ struct drm_file {
 	wait_queue_head_t event_wait;
 
 	/**
+	 * @event_space_wait:
+	 *
+	 * Kernel producers waiting for event queue capacity returned by a successful
+	 * read or cancellation. Wakeups are advisory; reservation still checks space.
+	 * Register before attempting reservation to avoid missing returned capacity.
+	 * Callbacks may run under &drm_device.event_lock or @event_read_lock and must
+	 * not reenter event operations or wait. Defer work instead. Waiters must be
+	 * detached before the owning file context is freed.
+	 */
+	wait_queue_head_t event_space_wait;
+
+	/**
 	 * @pending_event_list:
 	 *
 	 * List of pending &struct drm_pending_event, used to clean up pending
