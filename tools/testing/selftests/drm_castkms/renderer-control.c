@@ -796,6 +796,35 @@ int main(int argc, char **argv)
 						      gpu_buffer.dumb.width, gpu_buffer.dumb.height);
 	struct drm_castkms_renderer_capabilities pending_caps =
 		query_capabilities(next_files.renderer_fd);
+	private_buffer = create_buffer(peer, gpu_buffer.dumb.width,
+				       gpu_buffer.dumb.height, 0);
+	int private_fd;
+
+	CHECK(drmPrimeHandleToFD(peer, private_buffer.dumb.handle,
+				 DRM_CLOEXEC | DRM_RDWR, &private_fd) == 0);
+	struct drm_castkms_renderer_register_image private_image = {
+		.image_id = 1, .buffers = (uintptr_t)&private_fd,
+		.width = gpu_buffer.dumb.width, .height = gpu_buffer.dumb.height,
+		.num_buffers = 1,
+	};
+	private_image.flags = 1;
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+			   &private_image, EINVAL);
+	private_image.flags = 0;
+	private_image.buffers = 1;
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+			   &private_image, EFAULT);
+	private_image.buffers = (uintptr_t)&private_fd;
+	private_image.width++;
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+			   &private_image, EOPNOTSUPP);
+	private_image.width -= 2;
+	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+			   &private_image, EOPNOTSUPP);
+	private_image.width++;
+	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
+		    &private_image) == 0);
+	CHECK(close(private_fd) == 0);
 	tag_transition(peer, request.crtc_id, transition, true);
 	CHECK(query_capabilities(next_files.renderer_fd).flags == DRM_CASTKMS_CAPABILITY_STATE_PENDING);
 	commit.candidate_id = candidate.candidate_id;
@@ -826,28 +855,6 @@ int main(int argc, char **argv)
 		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
 		.image_id = 1,
 	};
-	private_buffer = create_buffer(peer, gpu_buffer.dumb.width,
-				       gpu_buffer.dumb.height, 0);
-	int private_fd;
-
-	CHECK(drmPrimeHandleToFD(peer, private_buffer.dumb.handle,
-				 DRM_CLOEXEC | DRM_RDWR, &private_fd) == 0);
-	struct drm_castkms_renderer_register_image private_image = {
-		.image_id = 1, .buffers = (uintptr_t)&private_fd,
-		.width = gpu_buffer.dumb.width, .height = gpu_buffer.dumb.height,
-		.num_buffers = 1,
-	};
-	private_image.flags = 1;
-	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
-			   &private_image, EINVAL);
-	private_image.flags = 0;
-	private_image.buffers = 1;
-	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
-			   &private_image, EFAULT);
-	private_image.buffers = (uintptr_t)&private_fd;
-	CHECK(ioctl(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_REGISTER_IMAGE,
-		    &private_image) == 0);
-	CHECK(close(private_fd) == 0);
 	struct drm_castkms_renderer_unregister_image remove_image = { .image_id = 1 };
 	expect_ioctl_error(next_files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_SCENE,
 			   &scene_request, EINVAL);

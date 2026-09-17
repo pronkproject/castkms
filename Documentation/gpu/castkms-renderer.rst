@@ -218,9 +218,12 @@ Private images
 --------------
 
 ``REGISTER_IMAGE`` retains one to four distinct readable/writable DMA-BUFs
-under a positive, increasing endpoint-local image name. Dimensions must match
-the active output. Failed registration does not consume the name. Registering
-storage neither accesses pixels nor excludes arbitrary external submissions.
+under a positive, increasing endpoint-local image name. Before activation,
+register a renderer profile first; image dimensions must satisfy its inclusive
+output bounds and may differ from the current mode. After activation, dimensions
+must match the active output. Failed registration does not consume the name.
+Registering storage neither accesses pixels nor excludes arbitrary external
+submissions, establishes renderer readiness or authorizes live source access.
 
 ``DEQUEUE_SCENE`` reserves the selected image for a source-to-private job.
 It withdraws any retained content from that image before attempting reuse.

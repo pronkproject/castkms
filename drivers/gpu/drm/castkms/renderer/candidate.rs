@@ -410,6 +410,42 @@ impl Candidate {
                 })
             })
         };
+        self.register_image_checked(dimensions, buffers, check)
+    }
+
+    /// Prepare target storage before selection without admitting live source access.
+    pub(super) fn register_pending_image(
+        &self,
+        proposal: &crate::execution::proposal::Registration,
+        dimensions: [u32; 2],
+        buffers: &[ARef<DmaBuf>],
+    ) -> Result<Arc<Image>> {
+        let check = || {
+            self.with_current_control(|current| {
+                proposal.check()?;
+                let crate::execution::validation::Contract::Renderer(profile) =
+                    &proposal.description().profile
+                else {
+                    return Err(EOPNOTSUPP);
+                };
+                profile.check_output(dimensions)?;
+                for buffer in buffers {
+                    if current.uses_reservation(buffer.reservation())? {
+                        return Err(EINVAL);
+                    }
+                }
+                Ok(())
+            })
+        };
+        self.register_image_checked(dimensions, buffers, check)
+    }
+
+    fn register_image_checked(
+        &self,
+        dimensions: [u32; 2],
+        buffers: &[ARef<DmaBuf>],
+        check: impl Fn() -> Result,
+    ) -> Result<Arc<Image>> {
         check()?;
         let image = Image::new(
             &self.access.device().image_storage,

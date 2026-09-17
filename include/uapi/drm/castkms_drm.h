@@ -564,7 +564,11 @@ struct drm_castkms_renderer_dequeue_scene {
 /* Private storage is readable/writable only by the trusted renderer. Registration
  * retains one to four distinct DMA-BUFs, not their native format interpretation.
  * The renderer validates layout and import compatibility against its own profile.
- * Dimensions must match the active output. New names are positive and increasing;
+ * Before activation, a registered renderer profile is required and dimensions
+ * must satisfy its inclusive output bounds, independently of the current mode.
+ * After activation, dimensions must match the active output. Registration alone
+ * does not make a proposed renderer ready or authorize live source access.
+ * New names are positive and increasing;
  * rejected registration does not consume a name. Flags/reserved must be zero.
  * Registration maps no pixels and authorizes no source or destination access.
  * Known source, recipient and registered allocation aliases are rejected.

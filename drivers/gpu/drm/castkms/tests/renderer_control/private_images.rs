@@ -70,6 +70,88 @@ mod cases {
     use super::*;
 
     #[test]
+    fn pending_images_use_target_geometry_without_live_source_access() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let session = crate::renderer::session::Session::new(
+                owner.access(), device.to_registered_ref(),
+            )?;
+            let result = (|| {
+                let pending = session.begin(device.execution.describe().generation)?;
+                let candidate = pending.id();
+                pending.publish()?;
+                let backing = shmem::Object::<gem::Object>::new(
+                    device, (800usize * 600 * 4).next_multiple_of(kernel::page::PAGE_SIZE),
+                    Default::default(), Default::default(),
+                )?.export_dma_buf(ExportAccess::ReadWrite)?;
+                let buffers = core::slice::from_ref(&backing);
+                check(session.register_image(1, [800, 600], buffers) == Err(EOPNOTSUPP))?;
+                let reference = profile()?;
+                let mut limits = *reference.limits();
+                limits.geometry.min_output = [800, 600];
+                limits.geometry.output = [800, 600];
+                let mut formats = KVec::new();
+                for format in reference.formats() {
+                    formats.push(*format, GFP_KERNEL)?;
+                }
+                session.propose_profile(candidate, Profile::new(limits, formats)?)?;
+                for dimensions in [[640, 480], [799, 600], [801, 600], [800, 599], [800, 601]] {
+                    check(session.register_image(1, dimensions, buffers) == Err(EOPNOTSUPP))?;
+                }
+                session.register_image(1, [800, 600], buffers)?;
+                check(session.begin_source(1).err() == Some(EOPNOTSUPP))?;
+                check(device.execution.describe().profile == crate::execution::Profile::HostV1)?;
+                session.unregister_image(1)?;
+                owner.revoke();
+                check(session.register_image(2, [800, 600], buffers) == Err(EKEYREVOKED))?;
+                Ok(())
+            })();
+            session.close_for_test();
+            result
+        })
+    }
+
+    #[test]
+    fn cancelled_profile_cannot_register_target_storage() -> Result {
+        with_display(|device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let proposal = candidate.propose_profile(profile()?)?;
+            proposal.cancel();
+            check(proposal.register_image(
+                [640, 480], &[buffer(device, ExportAccess::ReadWrite)?],
+            ).err() == Some(ESTALE))
+        })
+    }
+
+    #[test]
+    fn pending_storage_cannot_render_a_different_output_size() -> Result {
+        with_display(|device, crtc, connector, scanout, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
+            let proposal = candidate.propose_profile(profile()?)?;
+            let source = scanout.framebuffer.object_at(0)?
+                .export_dma_buf(ExportAccess::ReadWrite)?;
+            check(proposal.register_image([640, 480], &[source]).err() == Some(EINVAL))?;
+            let backing = shmem::Object::<gem::Object>::new(
+                device, (800usize * 600 * 4).next_multiple_of(kernel::page::PAGE_SIZE),
+                Default::default(), Default::default(),
+            )?.export_dma_buf(ExportAccess::ReadWrite)?;
+            let image = proposal.register_image([800, 600], &[backing])?;
+            candidate.submit_private_probe(None)?;
+            device.atomic_update(|transaction| {
+                transaction.add_crtc_state(crtc)?.tag_transition(proposal.describe().transition);
+                Ok(())
+            })?;
+            let (active, _, execution) = proposal.activate(device)?;
+            check(candidate.claim_render(&active, execution, None, image.prepare(1)?).err()
+                == Some(ESTALE))?;
+            drop(image.prepare(2)?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn retained_host_destinations_cannot_be_registered_as_private_images() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let grantor = super::super::delegated_authority::grant(&file, crtc, connector)?;

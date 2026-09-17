@@ -460,15 +460,18 @@ impl Session {
         if state.closed {
             return Err(EKEYREVOKED);
         }
-        let State { slot, images, .. } = &mut *state;
-        let Slot::Renderer {
-            candidate, active, ..
-        } = slot
-        else {
-            return Err(EOPNOTSUPP);
-        };
-        images.as_mut().ok_or(ESHUTDOWN)?.insert(id, || {
-            candidate.register_private_image(active, dimensions, buffers)
+        let State {
+            slot, images, proposal, ..
+        } = &mut *state;
+        images.as_mut().ok_or(ESHUTDOWN)?.insert(id, || match slot {
+            Slot::Active { .. } => proposal
+                .as_ref()
+                .ok_or(EOPNOTSUPP)?
+                .register_image(dimensions, buffers),
+            Slot::Renderer { candidate, active, .. } => {
+                candidate.register_private_image(active, dimensions, buffers)
+            }
+            _ => Err(EOPNOTSUPP),
         })
     }
 

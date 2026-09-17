@@ -52,6 +52,8 @@ fn with_session_display(
         pending.publish()?;
         session.candidate(candidate)?.submit_private_probe(None)?;
         let proposal = session.propose_profile(candidate, profile()?)?;
+        let private = buffer(device, ExportAccess::ReadWrite)?;
+        session.register_image(1, [640, 480], core::slice::from_ref(&private))?;
         device.atomic_update(|transaction| {
             transaction
                 .add_crtc_state(crtc)?
@@ -69,8 +71,6 @@ fn with_session_display(
             2560,
             0,
         )?;
-        let private = buffer(device, ExportAccess::ReadWrite)?;
-        session.register_image(1, [640, 480], core::slice::from_ref(&private))?;
         let pending = session.begin_source(1)?;
         let id = pending.id();
         pending.publish(|| {})?;

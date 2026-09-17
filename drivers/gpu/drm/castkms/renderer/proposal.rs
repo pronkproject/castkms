@@ -35,6 +35,16 @@ impl Proposal {
         self.registration.cancel();
     }
 
+    /// Register private target storage without selecting the proposed capabilities.
+    pub(crate) fn register_image(
+        &self,
+        dimensions: [u32; 2],
+        buffers: &[kernel::sync::aref::ARef<kernel::dma_buf::DmaBuf>],
+    ) -> Result<Arc<super::private_image::Image>> {
+        self.candidate
+            .register_pending_image(&self.registration, dimensions, buffers)
+    }
+
     pub(crate) fn activate(
         &self,
         device: &kernel::drm::Device<crate::Driver, kernel::drm::device::Registered>,
