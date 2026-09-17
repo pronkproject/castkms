@@ -120,9 +120,18 @@ int drm_constraints_snapshot_encode(const struct drm_constraints_snapshot *snaps
 	offset = size_add(sizeof(header), size_mul(info->count,
 						  sizeof(struct drm_constraints_encoded_entry)));
 	length = offset;
-	for (i = 0; i < info->count; i++)
-		length = size_add(length,
-			description_size(drm_constraints_entry_description(entries[i].entry)));
+	for (i = 0; i < info->count; i++) {
+		struct drm_constraints_description *description =
+			drm_constraints_entry_description(entries[i].entry);
+		const struct drm_constraints_format *formats;
+		unsigned int count, j;
+
+		formats = drm_constraints_description_formats(description, &count);
+		for (j = 0; j < count; j++)
+			if (formats[j].flags)
+				return -EOPNOTSUPP;
+		length = size_add(length, description_size(description));
+	}
 	if (length > DRM_CONSTRAINTS_ENCODING_MAX_SIZE)
 		return -E2BIG;
 	*required = length;

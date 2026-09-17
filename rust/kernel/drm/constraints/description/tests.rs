@@ -26,7 +26,7 @@ mod cases {
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].plane_id(), 7);
         assert_eq!(stored[0].format(), fourcc::XRGB8888);
-        assert_eq!(stored[0].modifier(), fourcc::FORMAT_MOD_LINEAR);
+        assert_eq!(stored[0].modifier(), Some(fourcc::FORMAT_MOD_LINEAR));
         assert_eq!(stored[0].size().minimum(), (128, 64));
         assert_eq!(stored[0].size().maximum(), (128, 64));
         Ok(())
@@ -61,7 +61,7 @@ mod cases {
             Format::new(7, fourcc::ARGB8888, X_TILED, Size::exact(256, 128)),
         ];
         let description = Description::new(Size::exact(128, 64), &formats, &[])?;
-        assert_eq!(description.formats()[1].modifier(), X_TILED);
+        assert_eq!(description.formats()[1].modifier(), Some(X_TILED));
         assert_eq!(description.formats()[1].size().minimum(), (256, 128));
         assert_eq!(description.formats()[1].size().maximum(), (256, 128));
         Ok(())

@@ -67,6 +67,7 @@ impl Format {
             format,
             modifier,
             size: size.0,
+            flags: 0,
         })
     }
 
@@ -80,9 +81,13 @@ impl Format {
         self.0.format
     }
 
-    /// DRM format modifier, including linear.
-    pub const fn modifier(&self) -> u64 {
-        self.0.modifier
+    /// Explicit DRM format modifier, or `None` for implicit framebuffer layout.
+    pub const fn modifier(&self) -> Option<u64> {
+        if self.0.flags & bindings::DRM_CONSTRAINTS_FORMAT_IMPLICIT != 0 {
+            None
+        } else {
+            Some(self.0.modifier)
+        }
     }
 
     /// Inclusive framebuffer allocation bounds, not fractional source-rectangle bounds.

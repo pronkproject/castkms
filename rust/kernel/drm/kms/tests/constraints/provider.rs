@@ -135,7 +135,7 @@ pub(in crate::drm::kms::tests) fn prepare(
     if !binding.description().formats().iter().any(|format| {
         format.plane_id() == plane.plane().object_id()
             && format.format() == image.format()
-            && format.modifier() == fourcc::FORMAT_MOD_LINEAR
+            && format.modifier() == Some(fourcc::FORMAT_MOD_LINEAR)
     }) || image
         .modifier()
         .is_some_and(|modifier| modifier != fourcc::FORMAT_MOD_LINEAR)

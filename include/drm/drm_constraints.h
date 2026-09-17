@@ -9,6 +9,7 @@ struct drm_constraints_description;
 /* Kernel prototype limits, not an allocated userspace ABI. */
 #define DRM_CONSTRAINTS_MAX_FORMATS 4096
 #define DRM_CONSTRAINTS_MAX_PROPERTIES 64
+#define DRM_CONSTRAINTS_FORMAT_IMPLICIT (1U << 0)
 
 /**
  * struct drm_constraints_size - inclusive integer pixel dimensions
@@ -31,14 +32,20 @@ struct drm_constraints_size {
  * struct drm_constraints_format - one plane's framebuffer allocation limits
  * @plane_id: existing DRM plane object ID
  * @format: DRM fourcc
- * @modifier: DRM format modifier, including linear
+ * @modifier: explicit DRM format modifier, or zero for implicit layout
  * @size: permitted framebuffer dimensions for this format/modifier pair
+ * @flags: DRM_CONSTRAINTS_FORMAT_IMPLICIT for layout without FB_MODIFIERS, or zero
+ *
+ * Implicit layout does not promise linear storage. A zero modifier with zero
+ * flags describes explicit LINEAR; the same modifier with IMPLICIT describes
+ * framebuffer creation without DRM_MODE_FB_MODIFIERS. Other flags are invalid.
  */
 struct drm_constraints_format {
 	u32 plane_id;
 	u32 format;
 	u64 modifier;
 	struct drm_constraints_size size;
+	u32 flags;
 };
 
 /**
@@ -70,7 +77,7 @@ struct drm_constraints_property {
 /*
  * Immutable, independently referenced allocation information. Creation copies
  * all input before returning; the caller retains ownership of its input.
- * Formats must contain distinct (plane_id, format, modifier) tuples. These
+ * Formats must contain distinct (plane_id, format, modifier, flags) tuples. These
  * limits are necessary, not sufficient, for display: provider atomic checks
  * still validate complete scenes, standard properties and shared resources.
  * This object neither authorizes access nor retains the referenced KMS objects.

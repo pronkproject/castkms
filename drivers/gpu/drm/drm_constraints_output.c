@@ -108,6 +108,8 @@ static int validate_scope(struct drm_crtc *crtc, struct drm_constraints_entry *e
 	description = drm_constraints_entry_description(entry);
 	formats = drm_constraints_description_formats(description, &count);
 	for (i = 0; i < count; i++) {
+		if (formats[i].flags)
+			return -EOPNOTSUPP;
 		found = false;
 		drm_for_each_plane(plane, crtc->dev) {
 			if (plane->base.id == formats[i].plane_id &&

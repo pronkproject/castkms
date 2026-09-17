@@ -153,6 +153,44 @@ static void drm_constraints_bounds_input_before_access(struct kunit *test)
 		ERR_PTR(-EINVAL));
 }
 
+static void drm_constraints_distinguishes_implicit_layout(struct kunit *test)
+{
+	struct drm_constraints_format formats[] = { linear, linear };
+	struct drm_constraints_description *description;
+	const struct drm_constraints_format *view;
+	unsigned int count;
+
+	formats[1].flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT;
+	formats[1].size = output_size;
+	description = create_description(test, &output_size, formats, 2);
+	view = drm_constraints_description_formats(description, &count);
+	KUNIT_ASSERT_EQ(test, count, 2);
+	KUNIT_EXPECT_EQ(test, view[0].flags, 0);
+	KUNIT_EXPECT_EQ(test, view[1].flags, DRM_CONSTRAINTS_FORMAT_IMPLICIT);
+	KUNIT_EXPECT_EQ(test, view[0].modifier, view[1].modifier);
+	KUNIT_EXPECT_EQ(test, view[0].size.min_width, 1);
+	KUNIT_EXPECT_EQ(test, view[1].size.min_width, 1920);
+	formats[0] = formats[1];
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, formats, 2, NULL, 0),
+		ERR_PTR(-EEXIST));
+}
+
+static void drm_constraints_rejects_ambiguous_layout_flags(struct kunit *test)
+{
+	struct drm_constraints_format format = linear;
+
+	format.flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT << 1;
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+		ERR_PTR(-EINVAL));
+	format.flags = DRM_CONSTRAINTS_FORMAT_IMPLICIT;
+	format.modifier = I915_FORMAT_MOD_X_TILED;
+	KUNIT_EXPECT_PTR_EQ(test,
+		drm_constraints_description_create(&output_size, &format, 1, NULL, 0),
+		ERR_PTR(-EINVAL));
+}
+
 static void drm_constraints_copies_bounded_property_rules(struct kunit *test)
 {
 	struct drm_constraints_property rules[] = {
@@ -244,6 +282,8 @@ static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_rejects_invalid_dimensions),
 	KUNIT_CASE(drm_constraints_rejects_invalid_formats),
 	KUNIT_CASE(drm_constraints_bounds_input_before_access),
+	KUNIT_CASE(drm_constraints_distinguishes_implicit_layout),
+	KUNIT_CASE(drm_constraints_rejects_ambiguous_layout_flags),
 	KUNIT_CASE(drm_constraints_copies_bounded_property_rules),
 	KUNIT_CASE(drm_constraints_rejects_malformed_property_rules),
 	{}
