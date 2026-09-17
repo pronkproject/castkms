@@ -36,7 +36,7 @@ pub use completion::Completion;
 pub use destination::{Destination, DestinationPlane};
 pub use client_stream::ClientStream;
 pub use client_destination::ClientDestination;
-pub use grant::Target;
+pub use grant::{Origin, Target};
 pub use authority::{
     Admission,
     Authority,

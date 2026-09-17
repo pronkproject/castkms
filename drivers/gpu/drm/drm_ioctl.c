@@ -318,6 +318,12 @@ static int drm_getcap(struct drm_device *dev, void *data, struct drm_file *file_
 		req->value = dev->mode_config.funcs &&
 			     dev->mode_config.funcs->create_capture_grant;
 		break;
+	case DRM_CAP_CAPTURE_GRANT_ADMIN:
+		req->value = dev->mode_config.funcs &&
+			     dev->mode_config.funcs->create_capture_grant &&
+			     (dev->mode_config.funcs->capture_grant_flags &
+			      DRM_CAPTURE_GRANT_CREATE_ADMIN);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -732,7 +738,7 @@ static const struct drm_ioctl_desc drm_ioctls[] = {
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_RMFB, drm_mode_rmfb_ioctl, 0),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CLOSEFB, drm_mode_closefb_ioctl, 0),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_PREPARE_REPLACE, drm_mode_prepare_replace_ioctl, DRM_MASTER),
-	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, drm_mode_create_capture_grant_ioctl, DRM_MASTER),
+	DRM_IOCTL_DEF(DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, drm_mode_create_capture_grant_ioctl, 0),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_LIST_CONSTRAINTS, drm_mode_list_constraints_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_PAGE_FLIP, drm_mode_page_flip_ioctl, DRM_MASTER),
 	DRM_IOCTL_DEF(DRM_IOCTL_MODE_DIRTYFB, drm_mode_dirtyfb_ioctl, DRM_MASTER),

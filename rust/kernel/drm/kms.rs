@@ -264,8 +264,9 @@ pub trait KmsDriver: Driver<Kms = Self> + Sized {
 
     /// Issue creator-bound final-image capture through an open DRM file.
     ///
-    /// Implementations must validate current master-file role and both target objects,
-    /// retain policy for later capture checks, and preserve creator-close revocation.
+    /// Implementations must validate the explicit issuance origin and both target objects,
+    /// retain policy for later capture checks, and preserve creator-close revocation. An
+    /// administrative origin is delivered only when advertised by `CAPTURE_GRANT_FLAGS`.
     /// The callback holds registration but no modeset or authority admission lock. It
     /// returns checked files without installing descriptors; no source read is implied.
     fn create_capture_grant(
@@ -273,9 +274,13 @@ pub trait KmsDriver: Driver<Kms = Self> + Sized {
         _data: &Self::RegistrationData<'_>,
         _file: &super::file::File<Self::File>,
         _target: super::capture::Target,
+        _origin: super::capture::Origin,
     ) -> Result<super::capture::FilePair> {
         Err(EOPNOTSUPP)
     }
+
+    /// Explicit capture-grant creation flags supported by this provider.
+    const CAPTURE_GRANT_FLAGS: u32 = 0;
 
     /// Driver metadata owned by each framebuffer. Use `()` if unused.
     type FramebufferData: Send + Sync;
@@ -358,6 +363,7 @@ impl<T: KmsDriver> private::KmsImpl for T {
 
     const MODE_CONFIG_OPS: Option<&'static ModeConfigOps> = Some(&ModeConfigOps {
         kms_vtable: bindings::drm_mode_config_funcs {
+            capture_grant_flags: Self::CAPTURE_GRANT_FLAGS,
             create_capture_grant: if Self::HAS_CREATE_CAPTURE_GRANT {
                 Some(super::capture::grant::create_callback::<Self>)
             } else {

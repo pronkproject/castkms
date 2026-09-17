@@ -19,6 +19,17 @@ the file and exact display objects, retains its capture policy, and ties
 revocation to the creating DRM file's final close. Providers remain responsible
 for current authorization when later image operations are admitted.
 
+``DRM_CAP_CAPTURE_GRANT_ADMIN`` separately reports provider support for
+``DRM_CAPTURE_GRANT_CREATE_ADMIN``. This explicit issuance mode requires
+``CAP_SYS_ADMIN`` in the initial user namespace. It does not grant DRM master
+or modesetting access: the provider binds the grant to its independently
+observed current top-level owner interval and must reject leased targets. The
+issuing file must not itself be the current master. Losing the bound interval
+permanently stales the grant; a later master acquisition does not reactivate
+it. Unsupported provider flags return ``EOPNOTSUPP``, while unrecognized UAPI
+flags return ``EINVAL``. A failed ordinary request is never upgraded to the
+administrative mode.
+
 The returned capture descriptor represents final-image authority, not raw
 planes or a primary DRM file. The separate control descriptor owns revocation
 and has no pixel operations. Both are close-on-exec. Duplicates refer to the
@@ -133,16 +144,20 @@ Kernel providers
 ================
 
 ``drm_capture_create_file_grant()`` performs the same issuance without
-reserving or installing descriptors. The dispatcher checks device association,
-provider participation and the identity of the returned file pair. The provider
-owns master, target and creator-lifetime policy; the transport does not grant
-permission merely because mode objects were found.
+reserving or installing descriptors. Its flags select the ordinary or an
+explicit provider-supported issuance origin; kernel callers are responsible
+for deciding who may request that origin. The dispatcher checks device
+association, provider participation and the identity of the returned file pair.
+The provider owns master, target and creator-lifetime policy; the transport does
+not grant permission merely because mode objects were found.
 
 Rust KMS providers implement the optional ``create_capture_grant`` callback,
 which receives registered device access and an open file of the nominated
-driver type. ``Device::create_capture_grant`` returns a checked ``FilePair``.
-Ordinary kernel capture consumers continue using authority, stream and request
-operations directly without manufacturing a DRM file or userspace descriptors.
+driver type. ``Device::create_capture_grant`` returns a checked ``FilePair``
+for ordinary current-master issuance. ``Device::create_capture_grant_from``
+accepts an explicit ``Origin`` for trusted in-kernel issuers. Ordinary kernel
+capture consumers continue using authority, stream and request operations
+directly without manufacturing a DRM file or userspace descriptors.
 
 Creator lifetime is available to C and Rust providers independently of files.
 ``drm_capture_creator_create()`` allocates a bounded collection of grants;

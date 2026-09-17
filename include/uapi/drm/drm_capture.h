@@ -5,7 +5,12 @@
 #include "drm.h"
 
 /* Experimental assignments for the capture development interface. */
+/* Current-master capture-grant issuance is available. */
 #define DRM_CAP_CAPTURE_GRANT 0x17
+/* Explicit administrative capture-grant issuance is available. */
+#define DRM_CAP_CAPTURE_GRANT_ADMIN 0x18
+
+#define DRM_CAPTURE_GRANT_CREATE_ADMIN (1U << 0)
 
 /**
  * struct drm_capture_grant_files - separate capture and revocation descriptors
@@ -28,14 +33,23 @@ struct drm_capture_grant_files {
  * @crtc_id: Nonzero CRTC object ID on the issuing device.
  * @connector_id: Nonzero connector object ID on that same device.
  * @files: Pointer to writable struct drm_capture_grant_files output storage.
- * @flags: Must be zero.
+ * @flags: Zero, or DRM_CAPTURE_GRANT_CREATE_ADMIN.
  * @reserved: Must be zero.
  *
- * Requires the current master file and provider support, reported by
- * DRM_CAP_CAPTURE_GRANT. The provider validates the exact output and retains
- * policy for later capture. Issuance does not itself read pixels, grant access
- * to raw planes or authorize all future display content. Unsupported devices
- * return EOPNOTSUPP; invalid or inaccessible target IDs return ENOENT.
+ * With zero flags, requires the current master file and provider support,
+ * reported by DRM_CAP_CAPTURE_GRANT. DRM_CAPTURE_GRANT_CREATE_ADMIN requires
+ * CAP_SYS_ADMIN in the initial user namespace and provider opt-in reported by
+ * DRM_CAP_CAPTURE_GRANT_ADMIN. It binds to the provider's independently
+ * observed current owner interval; it does not make the caller DRM master.
+ * Providers must reject targets delegated through a DRM lease. The issuing
+ * file must be distinct from the current master file. Loss of that owner
+ * interval permanently stales the administrative grant; reacquiring master
+ * does not reactivate it.
+ *
+ * The provider validates the exact output and retains policy for later capture.
+ * Issuance does not itself read pixels, grant access to raw planes or authorize
+ * all future display content. Unsupported issuance modes return EOPNOTSUPP;
+ * invalid or inaccessible target IDs return ENOENT.
  *
  * All request fields are input. Success returns zero after copying both output
  * descriptor numbers and installing their files. On failure neither descriptor

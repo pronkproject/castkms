@@ -11,6 +11,7 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
 #include <kunit/test.h>
+#include <uapi/drm/drm_capture.h>
 
 /* Dispatch-only objects: no registration, modeset or real pixel authorization. */
 struct grant_context {
@@ -21,6 +22,7 @@ struct grant_context {
 	struct file *capture;
 	struct file *control;
 	struct drm_capture_target observed;
+	u32 observed_flags;
 	unsigned int calls;
 	int status;
 	bool swapped;
@@ -52,12 +54,14 @@ static void grant_file_put(void *data)
 }
 
 static int grant_create(struct drm_device *dev, struct drm_file *file,
-			const struct drm_capture_target *target, struct drm_capture_files *files)
+			const struct drm_capture_target *target, u32 flags,
+			struct drm_capture_files *files)
 {
 	struct grant_context *context = dev->dev_private;
 
 	context->calls++;
 	context->observed = *target;
+	context->observed_flags = flags;
 	files->capture = context->error_pointer ? ERR_PTR(-ENOMEM) :
 		get_file(context->swapped ? context->control : context->capture);
 	if (!context->partial)
@@ -66,6 +70,7 @@ static int grant_create(struct drm_device *dev, struct drm_file *file,
 }
 
 static const struct drm_mode_config_funcs grant_funcs = {
+	.capture_grant_flags = DRM_CAPTURE_GRANT_CREATE_ADMIN,
 	.create_capture_grant = grant_create,
 };
 
@@ -105,30 +110,34 @@ static void drm_capture_grant_validates_target_and_participation(struct kunit *t
 	struct grant_context *context = grant_fixture(test);
 	struct drm_capture_target target = { .crtc_id = 7, .connector_id = 9 };
 	struct drm_capture_files result = {};
+	int ret;
 
 	context->dev.mode_config.funcs = NULL;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EOPNOTSUPP);
+		&target, 0, &result), -EOPNOTSUPP);
 	context->dev.mode_config.funcs = &grant_funcs;
 	context->dev.driver_features = 0;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EOPNOTSUPP);
+		&target, 0, &result), -EOPNOTSUPP);
 	context->dev.driver_features = DRIVER_MODESET;
 	context->dev.unplugged = true;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -ENODEV);
+		&target, 0, &result), -ENODEV);
 	context->dev.unplugged = false;
 	context->dev.registered = false;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -ENODEV);
+		&target, 0, &result), -ENODEV);
 	context->dev.registered = true;
 	context->minor.dev = NULL;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EINVAL);
+		&target, 0, &result), -EINVAL);
 	context->minor.dev = &context->dev;
+	ret = drm_capture_create_file_grant(&context->dev, &context->file, &target,
+					    DRM_CAPTURE_GRANT_CREATE_ADMIN << 1, &result);
+	KUNIT_EXPECT_EQ(test, ret, -EOPNOTSUPP);
 	target.connector_id = 0;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EINVAL);
+		&target, 0, &result), -EINVAL);
 	KUNIT_EXPECT_EQ(test, context->calls, 0);
 	KUNIT_EXPECT_PTR_EQ(test, result.capture, NULL);
 	KUNIT_EXPECT_PTR_EQ(test, result.control, NULL);
@@ -141,10 +150,11 @@ static void drm_capture_grant_transfers_matching_owned_endpoints(struct kunit *t
 	struct drm_capture_files result = {};
 
 	KUNIT_ASSERT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), 0);
+		&target, DRM_CAPTURE_GRANT_CREATE_ADMIN, &result), 0);
 	KUNIT_EXPECT_EQ(test, context->calls, 1);
 	KUNIT_EXPECT_EQ(test, context->observed.crtc_id, 7);
 	KUNIT_EXPECT_EQ(test, context->observed.connector_id, 9);
+	KUNIT_EXPECT_EQ(test, context->observed_flags, DRM_CAPTURE_GRANT_CREATE_ADMIN);
 	KUNIT_EXPECT_PTR_EQ(test, result.capture, context->capture);
 	KUNIT_EXPECT_PTR_EQ(test, result.control, context->control);
 	KUNIT_EXPECT_EQ(test, file_count(context->capture), 2);
@@ -165,15 +175,15 @@ static void drm_capture_grant_rejects_invalid_provider_replies(struct kunit *tes
 
 	context->swapped = true;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EINVAL);
+		&target, 0, &result), -EINVAL);
 	context->swapped = false;
 	context->status = 1;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EINVAL);
+		&target, 0, &result), -EINVAL);
 	context->status = 0;
 	context->error_pointer = true;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EINVAL);
+		&target, 0, &result), -EINVAL);
 	KUNIT_EXPECT_PTR_EQ(test, result.capture, ERR_PTR(-EBUSY));
 	KUNIT_EXPECT_PTR_EQ(test, result.control, NULL);
 	KUNIT_EXPECT_EQ(test, file_count(context->capture), 1);
@@ -190,7 +200,7 @@ static void drm_capture_grant_releases_partial_error_results(struct kunit *test)
 	context->partial = true;
 	context->status = -EACCES;
 	KUNIT_EXPECT_EQ(test, drm_capture_create_file_grant(&context->dev, &context->file,
-		&target, &result), -EACCES);
+		&target, 0, &result), -EACCES);
 	KUNIT_EXPECT_EQ(test, file_count(context->capture), 1);
 	KUNIT_EXPECT_EQ(test, file_count(context->control), 1);
 	KUNIT_EXPECT_PTR_EQ(test, result.capture, ERR_PTR(-EBUSY));

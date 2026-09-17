@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
-#include <linux/fcntl.h>
+#include <linux/capability.h>
 #include <linux/dma-buf.h>
+#include <linux/fcntl.h>
 #include <linux/file.h>
 #include <linux/sync_file.h>
 #include <linux/uaccess.h>
+#include <linux/user_namespace.h>
+
+#include <drm/drm_auth.h>
 #include <drm/drm_capture_completion.h>
 #include <drm/drm_capture_destination.h>
 #include <drm/drm_capture_grant.h>
@@ -218,9 +222,16 @@ int drm_mode_create_capture_grant_ioctl(struct drm_device *dev, void *data,
 	struct drm_capture_files files = {};
 	int ret;
 
-	if (!target.crtc_id || !target.connector_id || arg->flags ||
+	if (!target.crtc_id || !target.connector_id ||
+	    (arg->flags & ~DRM_CAPTURE_GRANT_CREATE_ADMIN) ||
 	    arg->reserved[0] || arg->reserved[1] || arg->reserved[2])
 		return -EINVAL;
+	if ((arg->flags & DRM_CAPTURE_GRANT_CREATE_ADMIN) &&
+	    !ns_capable(&init_user_ns, CAP_SYS_ADMIN))
+		return -EACCES;
+	if (!(arg->flags & DRM_CAPTURE_GRANT_CREATE_ADMIN) &&
+	    !drm_is_current_master(file))
+		return -EACCES;
 	descriptors.capture_fd = get_unused_fd_flags(O_CLOEXEC);
 	if (descriptors.capture_fd < 0)
 		return descriptors.capture_fd;
@@ -229,7 +240,7 @@ int drm_mode_create_capture_grant_ioctl(struct drm_device *dev, void *data,
 		ret = descriptors.control_fd;
 		goto put_capture_fd;
 	}
-	ret = drm_capture_create_file_grant(dev, file, &target, &files);
+	ret = drm_capture_create_file_grant(dev, file, &target, arg->flags, &files);
 	if (ret)
 		goto put_control_fd;
 	if (copy_to_user(u64_to_user_ptr(arg->files), &descriptors, sizeof(descriptors))) {

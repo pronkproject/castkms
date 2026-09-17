@@ -38,18 +38,20 @@ void drm_capture_files_put(struct drm_capture_files *files);
 
 /*
  * Dispatch optional provider issuance of a creator-bound final-image grant.
- * The provider authorizes the file, target, rights and creator-close lifetime.
+ * The provider authorizes the file, target, explicit issuance flags, rights and
+ * creator-close lifetime.
  * This helper checks device association and returned endpoint identity only;
  * it neither impersonates a master nor authorizes framebuffer pixels.
  *
  * Caller retains the registered dev and its open file, holding no locks needed
  * by provider issuance or cleanup. Success transfers a matching pair into result.
  * Failure leaves result untouched and releases any references returned by the
- * provider. No descriptor
- * is reserved or installed. Nonparticipating devices return -EOPNOTSUPP.
+ * provider. No descriptor is reserved or installed. Nonparticipating devices
+ * return -EOPNOTSUPP.
  */
 int drm_capture_create_file_grant(struct drm_device *dev, struct drm_file *file,
 				  const struct drm_capture_target *target,
+				  u32 flags,
 				  struct drm_capture_files *result);
 
 #endif
