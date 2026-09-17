@@ -75,6 +75,15 @@ impl Target {
         self.crtc.drm_dev()
     }
 
+    /// Borrow static provider topology without taking authority or modeset locks.
+    /// This permits retirement cleanup outside locks; callers authorize publication separately.
+    pub(crate) fn constraints_output<'a>(
+        &'a self,
+        registered: &'a Device<Driver, Registered>,
+    ) -> Result<kernel::drm::kms::constraints::Output<'a, Driver>> {
+        registered.constraints_output(self.crtc.crtc())
+    }
+
     /// Stabilize ownership of one static output pair without requiring an active video mode.
     ///
     /// Metadata and audio authority may survive disabled video. No scene,
