@@ -17,6 +17,7 @@ mod offer_lifetimes;
 mod offer_reaping;
 mod offer_publication;
 mod offer_sources;
+mod endpoints;
 
 use super::*;
 use crate::renderer::{

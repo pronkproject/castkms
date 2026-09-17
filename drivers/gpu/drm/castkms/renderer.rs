@@ -7,6 +7,8 @@ pub(crate) mod candidate;
 pub(crate) mod draft;
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) mod offer;
+#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
+pub(crate) mod endpoint;
 pub(crate) mod content;
 mod capability_description;
 mod capability_file;
