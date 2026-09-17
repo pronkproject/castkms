@@ -155,6 +155,65 @@ mod cases {
     }
 
     #[test]
+    fn mixed_format_offer_does_not_apply_yuv_values_to_rgb_scanout() -> Result {
+        use crate::execution::capabilities::{Format, Profile};
+
+        let display = CastKms::new_constraints(c"castkms-native-mixed-color", 1)?;
+        with_registered_display(&display, |device, crtc, connector, scanout, file| {
+            let provider = crtc.display.constraints.as_ref().ok_or(EINVAL)?;
+            let control = device.constraints_output(crtc)?;
+            let owner = owner(&file, crtc, connector)?;
+            let mut limits = *private_images::profile()?.limits();
+            limits.color.yuv_encodings = [false, true, false];
+            limits.color.yuv_ranges = [false, true];
+            let mut formats = KVec::new();
+            for (fourcc, planes) in [(drm::fourcc::XRGB8888, 1), (drm::fourcc::NV12, 2)] {
+                formats.push(
+                    Format {
+                        fourcc,
+                        modifier: None,
+                        planes,
+                        native: true,
+                        imported: true,
+                        pitch_alignment: 1,
+                        offset_alignment: 1,
+                        max_pitch: u32::MAX,
+                    },
+                    GFP_KERNEL,
+                )?;
+            }
+            let draft = crate::renderer::draft::Draft::new(
+                owner.access(), Profile::new(limits, formats)?, [640, 480],
+            )?;
+            let mut pool = Pool::new()?;
+            pool.insert(1, || {
+                draft.register_image(
+                    &[private_images::buffer(device, ExportAccess::ReadWrite)?],
+                )
+            })?;
+            draft.submit_probe(None)?;
+            let ready = draft.prepare_worker(&pool)?;
+            let entry = provider.prepare(ready.worker())?;
+            provider.publish(&control, &entry)?;
+
+            device.atomic_update(|mut state| {
+                state.as_mut().set_crtc_config(crtc, Some(scanout))?;
+                state.add_crtc_state(crtc)?.set_constraints(&entry)
+            })?;
+            check(core::ptr::eq(&*control.selected(), &**entry))?;
+
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            control.restore_default()?;
+            control.withdraw(entry.id())?;
+            control.forget(entry.id())?;
+            drop(provider.remove(&entry));
+            drop(ready);
+            drop(pool.remove(1)?);
+            Ok(())
+        })
+    }
+
+    #[test]
     fn exact_tiled_worker_admits_tiled_scanout() -> Result {
         let display = CastKms::new_constraints(c"castkms-native-tiled", 1)?;
         with_registered_display(&display, |device, crtc, connector, scanout, file| {
