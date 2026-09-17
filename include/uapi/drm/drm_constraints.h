@@ -19,6 +19,36 @@
 #define DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT (1U << 0)
 
 /**
+ * struct drm_mode_list_constraints - Copy one output's constraints snapshot
+ * @crtc_id: Output CRTC object ID.
+ * @flags: Must be zero.
+ * @generation: Expected generation or zero; returned snapshot generation.
+ * @data: Userspace address for the snapshot, or zero for size discovery.
+ * @size: Buffer capacity on input; required snapshot bytes on output.
+ * @pad: Must be zero.
+ * @reserved: Must be zero.
+ *
+ * Set both data and size to zero for size discovery. Otherwise both must be
+ * nonzero. A nonzero expected generation must match or the operation returns
+ * ESTALE. Success and ENOSPC report generation and required size. ENOSPC does
+ * not modify the snapshot buffer. Other errors provide no usable snapshot or
+ * output metadata; discard any partial payload on EFAULT. Only the required
+ * bytes are copied, irrespective of a larger advertised capacity.
+ *
+ * Neither size discovery nor a successful fetch reserves an entry for later
+ * selection. Identifiers and descriptions grant no modesetting or pixel access.
+ */
+struct drm_mode_list_constraints {
+	__u32 crtc_id;
+	__u32 flags;
+	__aligned_u64 generation;
+	__aligned_u64 data;
+	__u32 size;
+	__u32 pad;
+	__aligned_u64 reserved[2];
+};
+
+/**
  * struct drm_mode_constraints_list - One consistent constraints snapshot
  * @version: DRM_MODE_CONSTRAINTS_VERSION.
  * @length: Total snapshot bytes, at most DRM_MODE_CONSTRAINTS_MAX_BYTES.

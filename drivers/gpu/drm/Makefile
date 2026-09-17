@@ -94,6 +94,7 @@ drm-y := \
 	drm_constraints_entry.o \
 	drm_constraints_list.o \
 	drm_constraints_encoding.o \
+	drm_constraints_query.o \
 	drm_constraints_device.o \
 	drm_constraints_recovery.o \
 	drm_constraints_owner.o \
