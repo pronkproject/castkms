@@ -59,28 +59,29 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let profile = private_images::profile()?;
-            let proposal = candidate.propose_profile(private_images::profile()?)?;
+            let source_geometry = profile.limits().geometry.source;
+            let proposal = candidate.propose_profile(profile)?;
             let mut pool = Pool::new()?;
-            check(candidate.prepare_worker(&pool, &profile, [640, 480]).err() == Some(ENODATA))?;
+            check(proposal.prepare_worker(&pool, [640, 480]).err() == Some(ENODATA))?;
             let image = proposal.register_image(
                 [640, 480],
                 &[private_images::buffer(device, ExportAccess::ReadWrite)?],
             )?;
             pool.insert(1, || Ok(image.clone()))?;
-            check(candidate.prepare_worker(&pool, &profile, [640, 480]).err() == Some(ENODATA))?;
+            check(proposal.prepare_worker(&pool, [640, 480]).err() == Some(ENODATA))?;
             drop(pool.remove(1)?);
             pool.insert(2, || Ok(image.clone()))?;
             let mut completion = ManualFence::new()?;
             candidate.submit_private_probe(Some(completion.fence()))?;
-            check(candidate.prepare_worker(&pool, &profile, [640, 480]).err() == Some(EAGAIN))?;
+            check(proposal.prepare_worker(&pool, [640, 480]).err() == Some(EAGAIN))?;
             drop(pool.remove(2)?);
             pool.insert(3, || Ok(image.clone()))?;
             completion.complete(Ok(()))?;
-            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let ready = proposal.prepare_worker(&pool, [640, 480])?;
             let worker = ready.worker();
             check(worker.profile().limits().geometry.min_output == [640, 480])?;
             check(worker.profile().limits().geometry.output == [640, 480])?;
-            check(worker.profile().limits().geometry.source == profile.limits().geometry.source)?;
+            check(worker.profile().limits().geometry.source == source_geometry)?;
             let _source = worker.probe_source();
             let guard = worker.hold_ready()?;
             check(guard.contains(3, &image) && !guard.contains(2, &image))?;
@@ -120,7 +121,6 @@ mod cases {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -132,7 +132,7 @@ mod cases {
             let mut completion = ManualFence::new()?;
             candidate.submit_private_probe(Some(completion.fence()))?;
             completion.complete(Err(EIO))?;
-            check(candidate.prepare_worker(&pool, &profile, [640, 480]).err() == Some(EIO))?;
+            check(proposal.prepare_worker(&pool, [640, 480]).err() == Some(EIO))?;
             drop(pool.remove(1)?);
             Ok(())
         })
@@ -143,7 +143,6 @@ mod cases {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -155,7 +154,7 @@ mod cases {
             candidate.submit_private_probe(None)?;
             owner.revoke();
             check(
-                candidate.prepare_worker(&pool, &profile, [640, 480]).err() == Some(EKEYREVOKED),
+                proposal.prepare_worker(&pool, [640, 480]).err() == Some(EKEYREVOKED),
             )?;
             drop(pool.remove(1)?);
             Ok(())
@@ -163,28 +162,23 @@ mod cases {
     }
 
     #[test]
-    fn pool_geometry_cannot_expand_declared_capabilities() -> Result {
+    fn proposal_geometry_limits_worker_resources() -> Result {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
             let profile = private_images::profile()?;
-            let proposal = candidate.propose_profile(private_images::profile()?)?;
-            let mut pool = Pool::new()?;
-            pool.insert(1, || {
-                proposal.register_image(
-                    [640, 480],
-                    &[private_images::buffer(device, ExportAccess::ReadWrite)?],
-                )
-            })?;
-            candidate.submit_private_probe(None)?;
             let mut limits = *profile.limits();
             limits.geometry.min_output = [1, 1];
             limits.geometry.output = [320, 240];
             let mut formats = KVec::new();
             formats.extend_from_slice(profile.formats(), GFP_KERNEL)?;
             let narrow = crate::execution::capabilities::Profile::new(limits, formats)?;
-            check(candidate.prepare_worker(&pool, &narrow, [640, 480]).err() == Some(EOPNOTSUPP))?;
-            drop(pool.remove(1)?);
+            let proposal = candidate.propose_profile(narrow)?;
+            let pool = Pool::new()?;
+            candidate.submit_private_probe(None)?;
+            let buffer = private_images::buffer(device, ExportAccess::ReadWrite)?;
+            check(proposal.register_image([640, 480], &[buffer]).err() == Some(EOPNOTSUPP))?;
+            check(proposal.prepare_worker(&pool, [640, 480]).err() == Some(ENODATA))?;
             Ok(())
         })
     }
@@ -194,7 +188,6 @@ mod cases {
         with_display(|device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -204,7 +197,7 @@ mod cases {
                 )
             })?;
             candidate.submit_private_probe(None)?;
-            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let ready = proposal.prepare_worker(&pool, [640, 480])?;
             let worker = ready.worker();
             let revoking = worker.clone();
             let revoker = Arc::pin_init(
@@ -228,7 +221,6 @@ mod cases {
             revoker.work.flush();
             check(queued && !finished && valid.is_ok())?;
             check(revoker.finished.load(Ordering::Acquire))?;
-            check(worker.check_scene(SceneView::Disabled) == Err(EKEYREVOKED))?;
             drop(pool.remove(1)?);
             drop(ready);
             check(

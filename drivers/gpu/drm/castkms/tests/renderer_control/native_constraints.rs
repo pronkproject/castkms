@@ -100,7 +100,6 @@ mod cases {
             check(core::ptr::eq(&*control.selected(), &**provider.initial()))?;
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -110,7 +109,7 @@ mod cases {
                 )
             })?;
             candidate.submit_private_probe(None)?;
-            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let ready = proposal.prepare_worker(&pool, [640, 480])?;
             let entry = provider.prepare(ready.worker())?;
             check(entry.description().output().minimum() == (640, 480))?;
             check(entry.description().output().maximum() == (640, 480))?;
@@ -165,7 +164,6 @@ mod cases {
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -175,7 +173,7 @@ mod cases {
                 )
             })?;
             candidate.submit_private_probe(None)?;
-            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let ready = proposal.prepare_worker(&pool, [640, 480])?;
             let entry = provider.prepare(ready.worker())?;
             drop(ready);
             check(provider.publish(&control, &entry) == Err(EKEYREVOKED))?;
@@ -194,7 +192,6 @@ mod cases {
             let control = device.constraints_output(crtc)?;
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -204,7 +201,7 @@ mod cases {
                 )
             })?;
             candidate.submit_private_probe(None)?;
-            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let ready = proposal.prepare_worker(&pool, [640, 480])?;
             let entry = provider.prepare(ready.worker())?;
             // Inject native membership without provider membership to force add failure.
             control.add(&entry)?;
@@ -239,7 +236,6 @@ mod cases {
             let other = other.constraints.as_ref().ok_or(EINVAL)?;
             let owner = owner(&file, crtc, connector)?;
             let candidate = Arc::new(Candidate::begin(owner.access())?, GFP_KERNEL)?;
-            let profile = private_images::profile()?;
             let proposal = candidate.propose_profile(private_images::profile()?)?;
             let mut pool = Pool::new()?;
             pool.insert(1, || {
@@ -249,7 +245,7 @@ mod cases {
                 )
             })?;
             candidate.submit_private_probe(None)?;
-            let ready = candidate.prepare_worker(&pool, &profile, [640, 480])?;
+            let ready = proposal.prepare_worker(&pool, [640, 480])?;
             check(other.prepare(ready.worker()).err() == Some(EINVAL))?;
             let entry = provider.prepare(ready.worker())?;
             provider.publish(&device.constraints_output(crtc)?, &entry)?;
