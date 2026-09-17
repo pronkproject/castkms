@@ -5,6 +5,7 @@
 
 #include <drm_fourcc.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -70,7 +71,8 @@ static void check_static_envelope(int fd, uint32_t plane)
 	drmModeFreePropertyBlob(blob);
 }
 
-static uint64_t selected(int fd, uint32_t crtc, uint32_t count)
+static uint64_t selected(int fd, uint32_t crtc, uint32_t count,
+			 uint64_t *generation)
 {
 	struct drm_mode_list_constraints query = { .crtc_id = crtc };
 	struct drm_mode_constraints_list *list;
@@ -83,9 +85,36 @@ static uint64_t selected(int fd, uint32_t crtc, uint32_t count)
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_LIST_CONSTRAINTS, &query) == 0);
 	CHECK(list->version == DRM_MODE_CONSTRAINTS_VERSION);
 	CHECK(list->count_entries == count && list->selected_id);
+	CHECK(list->generation);
+	if (generation)
+		*generation = list->generation;
 	id = list->selected_id;
 	free(list);
 	return id;
+}
+
+static uint64_t constraints_event(int fd, uint32_t crtc, uint64_t after)
+{
+	struct drm_event_kms_constraints_list_changed event;
+	struct pollfd waiter = { .fd = fd, .events = POLLIN };
+
+	CHECK(poll(&waiter, 1, 2000) == 1);
+	CHECK(waiter.revents & POLLIN);
+	CHECK(!(waiter.revents & (POLLERR | POLLHUP | POLLNVAL)));
+	CHECK(read(fd, &event, sizeof(event)) == sizeof(event));
+	CHECK(event.base.type == DRM_EVENT_KMS_CONSTRAINTS_LIST_CHANGED);
+	CHECK(event.base.length == sizeof(event));
+	CHECK(event.crtc_id == crtc);
+	CHECK(!event.flags && !event.reserved);
+	CHECK(event.generation > after);
+	return event.generation;
+}
+
+static void expect_no_constraints_event(int fd)
+{
+	struct pollfd waiter = { .fd = fd, .events = POLLIN };
+
+	CHECK(poll(&waiter, 1, 0) == 0);
 }
 
 static uint32_t property_id(int fd, uint32_t object, const char *name)
@@ -493,7 +522,7 @@ int main(int argc, char **argv)
 	struct monitor_control monitor;
 	struct buffer linear, tiled, rgbx, imported = { 0 }, private;
 	struct multiplane_buffer nv12;
-	uint64_t host, worker;
+	uint64_t host, worker, generation, event_generation;
 	uint64_t content_serial, job_id;
 	uint32_t plane;
 	int fd, private_fd;
@@ -511,7 +540,7 @@ int main(int argc, char **argv)
 	create.crtc_id = resources->crtcs[0];
 	create.connector_id = resources->connectors[0];
 	monitor = attach_fallback_monitor(fd, create.connector_id);
-	host = selected(fd, create.crtc_id, 1);
+	host = selected(fd, create.crtc_id, 1, &generation);
 	connector = drmModeGetConnector(fd, create.connector_id);
 	CHECK(connector && connector->count_modes);
 	mode = &connector->modes[0];
@@ -537,7 +566,7 @@ int main(int argc, char **argv)
 	CHECK(drmModeSetCrtc(fd, create.crtc_id, linear.fb, 0, 0,
 			     &create.connector_id, 1, mode) == 0);
 	reject_host_framebuffer(fd, plane, tiled.fb);
-	CHECK(selected(fd, create.crtc_id, 1) == host);
+	CHECK(selected(fd, create.crtc_id, 1, NULL) == host);
 
 	/* The published offer must narrow broad implementation limits to this pool. */
 	constraints.header.min_output[0] = 1;
@@ -568,7 +597,9 @@ int main(int argc, char **argv)
 	worker = result.constraints_id;
 	CHECK(worker && worker != host && !result.reserved[0] &&
 	      !result.reserved[1] && !result.reserved[2]);
-	CHECK(selected(fd, create.crtc_id, 2) == host);
+	event_generation = constraints_event(fd, create.crtc_id, generation);
+	CHECK(selected(fd, create.crtc_id, 2, &generation) == host);
+	CHECK(generation == event_generation);
 	check_offer_format(fd, create.crtc_id, worker, plane, DRM_FORMAT_XRGB8888,
 			   I915_FORMAT_MOD_4_TILED, 1,
 			   DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE |
@@ -584,7 +615,9 @@ int main(int argc, char **argv)
 			   mode->hdisplay, mode->vdisplay);
 	check_offer_rules(fd, create.crtc_id, worker, plane);
 	select_framebuffer(fd, create.crtc_id, plane, tiled.fb, worker);
-	CHECK(selected(fd, create.crtc_id, 2) == worker);
+	event_generation = constraints_event(fd, create.crtc_id, generation);
+	CHECK(selected(fd, create.crtc_id, 2, &generation) == worker);
+	CHECK(generation == event_generation);
 
 	scene = calloc(1, dequeue.capacity);
 	CHECK(scene);
@@ -618,6 +651,7 @@ int main(int argc, char **argv)
 	release.job_id = scene->job_id;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE,
 		    &release) == 0);
+	expect_no_constraints_event(fd);
 
 	select_framebuffer(fd, create.crtc_id, plane, nv12.fb, worker);
 	memset(scene, 0, dequeue.capacity);
@@ -728,8 +762,14 @@ int main(int argc, char **argv)
 	}
 
 	select_framebuffer(fd, create.crtc_id, plane, linear.fb, host);
+	event_generation = constraints_event(fd, create.crtc_id, generation);
+	CHECK(selected(fd, create.crtc_id, 2, &generation) == host);
+	CHECK(generation == event_generation);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW_OFFER,
 		    &withdraw) == 0);
+	event_generation = constraints_event(fd, create.crtc_id, generation);
+	CHECK(selected(fd, create.crtc_id, 2, &generation) == host);
+	CHECK(generation == event_generation);
 	CHECK(close(files.revoke_fd) == 0);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_UNREGISTER_IMAGE,
 		    &remove) == 0);
