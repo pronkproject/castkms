@@ -6,6 +6,9 @@ TEST_PROGS := handback-model.py
 TEST_FILES := standalone.config
 TEST_GEN_PROGS += audio audio-pipewire audio-multi
 LOCAL_HDRS := fixture.h audio-fixture.h
+LOCAL_HDRS += ../../../../include/uapi/drm/castkms_drm.h \
+	../../../../include/uapi/drm/drm_capture.h \
+	../../../../include/uapi/drm/drm_constraints.h
 include ../lib.mk
 
 $(OUTPUT)/modeset: fixture.c import.c
