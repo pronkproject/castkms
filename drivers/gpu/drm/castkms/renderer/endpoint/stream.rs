@@ -51,6 +51,30 @@ impl Stream {
 }
 
 impl Endpoint {
+    /// Advisory source availability. An unselected offer is idle, not revoked.
+    pub(crate) fn source_readable(&self) -> Result<bool> {
+        let state = self.state.lock();
+        self.access.with_output(|| Ok(()))?;
+        match &*state {
+            State::Closed => Err(EKEYREVOKED),
+            State::Ready { offer, source, .. } => {
+                if !offer.is_live() {
+                    return Err(EKEYREVOKED);
+                }
+                if !matches!(source.slot, Slot::Ready) {
+                    return Ok(false);
+                }
+                match offer.control().with_current(|current| {
+                    current.changed_content(source.last_serial).map(|_| true)
+                }) {
+                    Err(ESTALE | EAGAIN | ENODATA | ENODEV) => Ok(false),
+                    result => result,
+                }
+            }
+            _ => Ok(false),
+        }
+    }
+
     /// Reserve independent private storage, then claim only the selected live offer's scene.
     /// All fallible encoding and descriptor preparation must finish before Pending::publish.
     pub(crate) fn begin_source(&self, image_id: u64) -> Result<Pending<'_>> {
@@ -232,5 +256,6 @@ impl Drop for Pending<'_> {
         if let Some(job) = job {
             job.release(Completion::WithoutAccess);
         }
+        self.endpoint.changed().notify_all();
     }
 }
