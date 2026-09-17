@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 CFLAGS += $(shell pkg-config --cflags libdrm) -Wall -Wextra
 LDLIBS += $(shell pkg-config --libs libdrm)
-TEST_GEN_PROGS := modeset master-lifetime execution monitor-control renderer-control renderer-tiled renderer-multi-output capture-grant capture-stream capture-destination capture-output
+TEST_GEN_PROGS := modeset master-lifetime execution monitor-control renderer-control renderer-admin renderer-tiled renderer-multi-output capture-grant capture-stream capture-destination capture-output
 TEST_FILES := standalone.config
 TEST_GEN_PROGS += audio audio-pipewire audio-multi
 LOCAL_HDRS := fixture.h audio-fixture.h
@@ -14,6 +14,7 @@ $(OUTPUT)/modeset: fixture.c import.c
 $(OUTPUT)/master-lifetime: fixture.c
 $(OUTPUT)/monitor-control: fixture.c
 $(OUTPUT)/renderer-control: fixture.c
+$(OUTPUT)/renderer-admin: fixture.c
 $(OUTPUT)/renderer-tiled: fixture.c import.c
 $(OUTPUT)/renderer-multi-output: fixture.c
 $(OUTPUT)/capture-grant: fixture.c

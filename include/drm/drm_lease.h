@@ -23,6 +23,8 @@ bool _drm_lease_held(struct drm_file *file_priv, int id);
 
 bool drm_master_holds_object_locked(struct drm_master *master,
 				    const struct drm_mode_object *object);
+bool drm_master_holds_object_exclusively_locked(struct drm_master *master,
+						const struct drm_mode_object *object);
 
 void drm_lease_revoke(struct drm_master *master);
 

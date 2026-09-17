@@ -118,6 +118,24 @@ impl<D: KmsDriver> CurrentMasterGuard<'_, D> {
             )
         }
     }
+
+    /// Check current top-level control without an overlapping descendant lease.
+    ///
+    /// This is stricter than [`Self::holds_object`]. It is suitable for administrative
+    /// authority which must not be issued over an independently controlled leased object.
+    pub fn exclusively_holds_object<O: ModeObject<Driver = D>>(&self, object: &O) -> bool {
+        if self.master.dev.as_raw() != object.drm_dev().as_raw() {
+            return false;
+        }
+        // SAFETY: The object belongs to the retained device and remains borrowed. The guard
+        // holds the master and object-ID locks protecting registration and lease membership.
+        unsafe {
+            bindings::drm_master_holds_object_exclusively_locked(
+                self.master.raw.as_ptr(),
+                object.raw_mode_obj(),
+            )
+        }
+    }
 }
 
 impl<D: KmsDriver> Drop for CurrentMasterGuard<'_, D> {

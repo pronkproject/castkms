@@ -240,6 +240,51 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_object_access_rejects_descendant_leases() -> Result {
+        let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
+        let parent = faux::Registration::new(c"rust-master-exclusive-access", None)?;
+        let dev = create(parent.as_ref(), &counts, false)?;
+        let owner = HandleClient::new(&dev)?;
+        let lessee = HandleClient::new(&dev)?;
+        make_current(&owner)?;
+        associate_lessee(&lessee, &owner)?;
+        // SAFETY: The initialized device owns this CRTC throughout the test.
+        let crtc = unsafe { crtc::Crtc::<TestCrtc>::from_raw(dev.crtc.load(Ordering::Relaxed)) };
+        // SAFETY: Both private files and their master identities remain live. The object-ID lock
+        // serializes the synthetic lease update exactly like native lease construction.
+        let id = unsafe { (*crtc.as_raw()).base.id };
+        let raw_dev = owner.file().device_raw();
+        let lease = unsafe { (*lessee.file().as_raw()).master };
+        unsafe { bindings::mutex_lock(&raw mut (*raw_dev).mode_config.idr_mutex) };
+        // SAFETY: The lease owns an initialized empty IDR and the registered CRTC stays live.
+        let added = unsafe {
+            bindings::idr_alloc(
+                &raw mut (*lease).leases,
+                crtc.as_raw().cast(),
+                id as i32,
+                id.saturating_add(1) as i32,
+                GFP_KERNEL.as_raw(),
+            )
+        };
+        unsafe { bindings::mutex_unlock(&raw mut (*raw_dev).mode_config.idr_mutex) };
+        check(added == id as i32)?;
+        let master = owner.file().associated_master().ok_or(EINVAL)?;
+        {
+            let guard = master.lock_current().ok_or(EINVAL)?;
+            check(guard.holds_object(crtc))?;
+            check(!guard.exclusively_holds_object(crtc))?;
+        }
+        // SAFETY: The same private lease and device remain live, and no guard holds the lock.
+        unsafe {
+            bindings::mutex_lock(&raw mut (*raw_dev).mode_config.idr_mutex);
+            bindings::idr_remove(&raw mut (*lease).leases, id as usize);
+            bindings::mutex_unlock(&raw mut (*raw_dev).mode_config.idr_mutex);
+        }
+        let guard = master.lock_current().ok_or(EINVAL)?;
+        check(guard.exclusively_holds_object(crtc))
+    }
+
+    #[test]
     fn returning_an_error_releases_both_native_locks() -> Result {
         let counts = Arc::new(Counts::default(), GFP_KERNEL)?;
         let parent = faux::Registration::new(c"rust-master-access-error", None)?;

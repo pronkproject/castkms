@@ -10,6 +10,31 @@
 
 use crate::{bindings, sync::aref::AlwaysRefCounted, task::Kuid, types::Opaque};
 
+/// Linux capabilities accepted by safe kernel interfaces.
+#[derive(Clone, Copy)]
+pub enum Capability {
+    /// System administration in the relevant user namespace.
+    SysAdmin,
+}
+
+impl Capability {
+    fn raw(self) -> core::ffi::c_int {
+        match self {
+            Self::SysAdmin => bindings::CAP_SYS_ADMIN as core::ffi::c_int,
+        }
+    }
+}
+
+/// Check a capability specifically in the initial user namespace.
+///
+/// Container-root credentials do not satisfy this check unless they also carry the
+/// capability in the host's initial namespace.
+pub fn capable_in_initial_user_namespace(capability: Capability) -> bool {
+    // SAFETY: `init_user_ns` has static lifetime and `ns_capable` only inspects the
+    // current task's credentials against the supplied namespace and capability number.
+    unsafe { bindings::ns_capable(&raw mut bindings::init_user_ns, capability.raw()) }
+}
+
 /// Wraps the kernel's `struct cred`.
 ///
 /// Credentials are used for various security checks in the kernel.
