@@ -36,7 +36,7 @@
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_OVERLAY (1U << 1)
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_CURSOR (1U << 2)
 
-/* Scene values and the corresponding capability-mask bits share one namespace. */
+/* Job-plane values and the corresponding capability-mask bits share one namespace. */
 #define DRM_CASTKMS_YUV_ENCODING_BT601 0
 #define DRM_CASTKMS_YUV_ENCODING_BT709 1
 #define DRM_CASTKMS_YUV_ENCODING_BT2020 2 /* Nonconstant luminance. */
@@ -51,7 +51,7 @@
 #define DRM_CASTKMS_RENDERER_CREATE_ADMIN (1U << 0)
 
 /*
- * Native-endian immutable whole-scene contract. Exactly format_count records
+ * Native-endian immutable whole-state execution contract. Exactly format_count records
  * follow this 128-byte header. Unknown flags and reserved fields must be zero.
  * kind must be DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND. Fixed default constraints
  * are discovered through generic KMS listing, not supplied by the worker.
@@ -59,15 +59,15 @@
  * intersection if roles have different restrictions. Dimensions and scale limits are
  * inclusive unsigned 16.16 source/destination ratios. Roles are primary,
  * overlay and cursor. Without the SCALE flag, both scale limits must equal
- * 1.0 (1 << 16). YUV masks use bit positions from the scene encoding.
+ * 1.0 (1 << 16). YUV masks use bit positions from the job encoding.
  * Sampling is nearest-neighbor, blending is premultiplied source-over and
- * stacking follows the scene description. Constraints grant no buffer access.
+ * stacking follows the job description. Constraints grant no buffer access.
  * min_output/min_source and max_output/max_source bound width and height
  * inclusively.
  * RENDERER bounds must be positive with min <= max on each axis. Equal bounds
  * express exact geometry, e.g. min_output == max_output for a fixed-size pool.
  * Source bounds describe full framebuffers, not cropped extents; output bounds
- * describe the composed image, not an individual layer's destination rectangle.
+ * describe the composed image, not an individual plane's CRTC rectangle.
  * max_color_operations applies independently to each plane color pipeline and
  * to the output color pipeline.
  * Header and 56-byte format-record layouts are fixed within a version;
@@ -82,7 +82,7 @@ struct drm_castkms_renderer_constraints {
 	__u32 max_source[2];
 	__u32 min_scale;
 	__u32 max_scale;
-	__u32 max_layers;
+	__u32 max_planes;
 	__u32 max_roles[3];
 	__u32 max_color_operations;
 	__u32 max_lut_entries;
@@ -94,7 +94,7 @@ struct drm_castkms_renderer_constraints {
 };
 
 /*
- * Exact fourcc/modifier/plane-count tuple. Without EXPLICIT_MODIFIER, modifier
+ * Exact fourcc/modifier/memory-plane-count tuple. Without EXPLICIT_MODIFIER, modifier
  * must be zero and denotes implicit layout, distinct from explicit LINEAR.
  * At least one provenance flag is required. width_alignment and
  * height_alignment are positive powers of two in pixels. The byte alignments
@@ -110,7 +110,7 @@ struct drm_castkms_renderer_constraints {
  */
 struct drm_castkms_renderer_constraints_format {
 	__u32 fourcc;
-	__u32 plane_count;
+	__u32 memory_plane_count;
 	__u64 modifier;
 	__u32 flags;
 	__u32 roles;
@@ -126,7 +126,7 @@ struct drm_castkms_renderer_constraints_format {
 #define DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS 1
 #define DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE 2
 #define DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED 3
-#define DRM_CASTKMS_RENDERER_MAX_PLANES 4
+#define DRM_CASTKMS_RENDERER_MAX_MEMORY_PLANES 4
 
 /**
  * struct drm_castkms_create_monitor_control - create virtual monitor control
@@ -262,9 +262,9 @@ struct drm_castkms_create_renderer {
  * Only ordinary atomic CONSTRAINTS_ID selection changes the accepted backend.
  *
  * No renderer ioctl returns EAGAIN for readiness. ENODATA means missing
- * required storage or changed scene; EBUSY means retry is caller-driven.
+ * required storage or changed job; EBUSY means retry is caller-driven.
  * poll prompts job acquisition, never carries descriptors or proves GPU work
- * complete. Readability does not reserve a scene or a particular private image.
+ * complete. Readability does not reserve a job or a particular private image.
  * Withdrawal reports POLLHUP|POLLERR but leaves release/cleanup operations usable.
  */
 #define DRM_CASTKMS_RENDERER_STATE_EMPTY 0
@@ -288,7 +288,7 @@ struct drm_castkms_renderer_query {
 };
 
 /*
- * Configure exactly one immutable whole-scene declaration on an empty endpoint.
+ * Configure exactly one immutable whole-state declaration on an empty endpoint.
  * constraints points to constraints_size bytes. width/height are the exact
  * private-pool target within the declared output bounds; they need not match
  * the current mode. Flags/reserved must be zero. Success changes only the
@@ -343,13 +343,13 @@ struct drm_castkms_renderer_withdraw {
 };
 
 /**
- * struct drm_castkms_renderer_source_plane - one source memory plane
+ * struct drm_castkms_renderer_memory_plane - one source image memory plane
  * @dma_buf_fd: returned close-on-exec DMA-BUF descriptor
  * @pitch: byte stride for this plane
  * @offset: byte offset to this plane in the DMA-BUF
  * @reserved: returned as zero
  */
-struct drm_castkms_renderer_source_plane {
+struct drm_castkms_renderer_memory_plane {
 	__s32 dma_buf_fd;
 	__u32 pitch;
 	__u32 offset;
@@ -360,7 +360,7 @@ struct drm_castkms_renderer_source_plane {
 /**
  * struct drm_castkms_renderer_release_job - resolve a source-to-private job
  * @job_id: job returned by RENDERER_ACQUIRE_JOB
- * @completion_fd: sync_file descriptor for SUBMITTED, otherwise -1
+ * @release_fence_fd: sync_file descriptor for SUBMITTED, otherwise -1
  * @kind: one DRM_CASTKMS_RENDERER_RELEASE_* value
  * @flags: must be zero
  * @reserved: must be zero
@@ -370,13 +370,13 @@ struct drm_castkms_renderer_source_plane {
  * a native fence covering every submitted source read and private-image write
  * and promises no later submission under this job. Repeating the accepted
  * release for the latest job succeeds. NO_ACCESS produces no private image
- * and leaves the scene eligible for another acquisition under a new job ID.
+ * and leaves the accepted state eligible for another acquisition under a new job ID.
  * That retry still requires current authority and open source-read admission;
  * it cannot reopen a source sealed or held by display preparation.
  */
 struct drm_castkms_renderer_release_job {
 	__u64 job_id;
-	__s32 completion_fd;
+	__s32 release_fence_fd;
 	__u32 kind;
 	__u32 flags;
 	__u32 reserved[3];
@@ -411,7 +411,7 @@ struct drm_castkms_renderer_acquire_output {
  * @width: visible destination width
  * @height: visible destination height
  * @format: DRM fourcc destination format
- * @plane_count: number of destination planes; one in version 1
+ * @memory_plane_count: number of destination planes; one in version 1
  * @modifier: destination DRM format modifier
  * @dma_buf_fd: returned close-on-exec writable DMA-BUF descriptor
  * @pitch: destination row pitch in bytes
@@ -424,7 +424,7 @@ struct drm_castkms_renderer_output {
 	__u32 width;
 	__u32 height;
 	__u32 format;
-	__u32 plane_count;
+	__u32 memory_plane_count;
 	__u64 modifier;
 	__s32 dma_buf_fd;
 	__u32 pitch;
@@ -435,7 +435,7 @@ struct drm_castkms_renderer_output {
 /**
  * struct drm_castkms_renderer_release_output - resolve private-to-recipient access
  * @job_id: job returned by RENDERER_ACQUIRE_OUTPUT
- * @completion_fd: sync_file descriptor for SUBMITTED, otherwise -1
+ * @release_fence_fd: sync_file descriptor for SUBMITTED, otherwise -1
  * @kind: one DRM_CASTKMS_RENDERER_RELEASE_* value
  * @flags: must be zero
  * @reserved: must be zero
@@ -446,14 +446,14 @@ struct drm_castkms_renderer_output {
  */
 struct drm_castkms_renderer_release_output {
 	__u64 job_id;
-	__s32 completion_fd;
+	__s32 release_fence_fd;
 	__u32 kind;
 	__u32 flags;
 	__u32 reserved[3];
 };
 
-/* Complete-scene stream, native byte order. All records are eight-byte aligned.
- * ACQUIRE_JOB binds one complete scene to a registered private image until
+/* Complete-job stream, native byte order. All records are eight-byte aligned.
+ * ACQUIRE_JOB binds accepted KMS plane state to a registered private image until
  * RELEASE_JOB. target_image_id names renderer-private storage registered on this
  * endpoint. It must not alias any source or recipient allocation. The worker
  * must isolate native source queues and mappings from downstream output waits.
@@ -461,37 +461,37 @@ struct drm_castkms_renderer_release_output {
  * acquisition withdraws retained content from the selected image before attempting
  * reuse; it never ends outstanding native access. Failed descriptor publication
  * admits no userspace access and permits retry with the same target_image_id.
- * The result consists of a scene header, layer records with their color records,
- * then output color records. Layer order is back-to-front, with zpos ties in
+ * The result consists of a job header, plane records with their color-op records,
+ * then output color-op records. Plane order is back-to-front, with zpos ties in
  * KMS plane creation order. Source rectangles use unsigned 16.16 pixels;
  * signed destination positions permit clipping. Sampling is nearest-neighbor.
- * Layers use premultiplied pixel alpha (opaque for formats without alpha), source
+ * Planes use premultiplied pixel alpha (opaque for formats without alpha), source
  * over an opaque black background. Plane color precedes blending; output color
  * follows blending. All unused memory-plane records contain fd -1 and zeros.
  * A producer already completed with an error makes acquisition return EREMOTEIO;
  * its native errno is never interpreted as queue readiness. No files or source
- * claim are published on that failure. The failed scene is discarded; another
- * acquisition returns ENODATA until a new scene is accepted.
- * The producer fd covers all layers and must complete successfully before any
- * source read; -1 denotes no outstanding producer fence. Retaining ordinary
+ * claim are published on that failure. The failed job is discarded; another
+ * acquisition returns ENODATA until new state is accepted.
+ * The acquire fence covers all planes and must complete successfully before any
+ * source read; -1 denotes no outstanding acquire fence. Retaining ordinary
  * DMA-BUF fds does not authorize reads after RELEASE_JOB.
  * No descriptor is installed on failure, even after a partial metadata copy.
- * Allocate SCENE_MAX_BYTES for the result; a smaller capacity may return
- * ENOSPC without consuming the scene. Flags and reserved fields must be zero.
- * Empty/unchanged scenes return ENODATA, and an outstanding job returns EBUSY.
+ * Allocate JOB_MAX_BYTES for the result; a smaller capacity may return
+ * ENOSPC without consuming the job. Flags and reserved fields must be zero.
+ * Empty/unchanged jobs return ENODATA, and an outstanding job returns EBUSY.
  */
-#define DRM_CASTKMS_RENDERER_SCENE_VERSION 1
-#define DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES 65536
-#define DRM_CASTKMS_RENDERER_SCENE_MAX_LAYERS 24
-#define DRM_CASTKMS_RENDERER_SCENE_MAX_COLOR_OPS 16
-#define DRM_CASTKMS_RENDERER_LAYER_PRIMARY 0
-#define DRM_CASTKMS_RENDERER_LAYER_OVERLAY 1
-#define DRM_CASTKMS_RENDERER_LAYER_CURSOR 2
-#define DRM_CASTKMS_RENDERER_COLOR_BYPASS 0
-#define DRM_CASTKMS_RENDERER_COLOR_SRGB_EOTF 1
-#define DRM_CASTKMS_RENDERER_COLOR_SRGB_INVERSE_EOTF 2
-#define DRM_CASTKMS_RENDERER_COLOR_MATRIX 3
-#define DRM_CASTKMS_RENDERER_COLOR_LUT 4
+#define DRM_CASTKMS_RENDERER_JOB_VERSION 1
+#define DRM_CASTKMS_RENDERER_JOB_MAX_BYTES 65536
+#define DRM_CASTKMS_RENDERER_JOB_MAX_PLANES 24
+#define DRM_CASTKMS_RENDERER_JOB_MAX_COLOR_OPS 16
+#define DRM_CASTKMS_RENDERER_PLANE_PRIMARY 0
+#define DRM_CASTKMS_RENDERER_PLANE_OVERLAY 1
+#define DRM_CASTKMS_RENDERER_PLANE_CURSOR 2
+#define DRM_CASTKMS_RENDERER_COLOR_OP_BYPASS 0
+#define DRM_CASTKMS_RENDERER_COLOR_OP_SRGB_EOTF 1
+#define DRM_CASTKMS_RENDERER_COLOR_OP_SRGB_INVERSE_EOTF 2
+#define DRM_CASTKMS_RENDERER_COLOR_OP_MATRIX 3
+#define DRM_CASTKMS_RENDERER_COLOR_OP_LUT 4
 
 struct drm_castkms_renderer_acquire_job {
 	__u64 result;
@@ -536,7 +536,7 @@ struct drm_castkms_renderer_unregister_image {
 	__u32 reserved;
 };
 
-struct drm_castkms_renderer_scene {
+struct drm_castkms_renderer_job {
 	__u32 version;
 	__u32 bytes;
 	__u64 job_id;
@@ -544,31 +544,37 @@ struct drm_castkms_renderer_scene {
 	__u64 content_serial;
 	__u32 width;
 	__u32 height;
-	__u32 layer_count;
-	__s32 producer_fd;
-	__u32 output_color_count;
+	__u32 plane_count;
+	__s32 acquire_fence_fd;
+	__u32 output_color_op_count;
 	__u32 reserved;
 };
 
-struct drm_castkms_renderer_layer {
-	__u32 bytes; /* Includes following color records. */
-	__u32 kind;
+struct drm_castkms_renderer_plane {
+	__u32 bytes; /* Includes following color-op records. */
+	__u32 role;
 	__u32 zpos;
 	__u32 format;
 	__u64 modifier;
 	__u32 width;
 	__u32 height;
-	__u32 source[4];
-	__s32 position[2];
-	__u32 destination[2];
+	__u32 src_x;
+	__u32 src_y;
+	__u32 src_w;
+	__u32 src_h;
+	__s32 crtc_x;
+	__s32 crtc_y;
+	__u32 crtc_w;
+	__u32 crtc_h;
 	__u32 color_encoding; /* DRM_CASTKMS_YUV_ENCODING_* value, not a mask. */
 	__u32 color_range; /* DRM_CASTKMS_YUV_RANGE_* value, not a mask. */
-	__u32 plane_count;
-	__u32 color_count;
-	struct drm_castkms_renderer_source_plane planes[4];
+	__u32 memory_plane_count;
+	__u32 color_op_count;
+	struct drm_castkms_renderer_memory_plane
+		memory_planes[DRM_CASTKMS_RENDERER_MAX_MEMORY_PLANES];
 };
 
-/* Each color record starts with kind and payload_bytes. Curves and bypass
+/* Each color-op record starts with kind and payload_bytes. Curves and bypass
  * have no payload. MATRIX has twelve u64 S31.32 sign-magnitude coefficients
  * (three rows of four, including offsets); LUT has 1..256 entries containing
  * u16 red, green, blue, zero. LUT input/output range is 0..65535 with linear
@@ -577,7 +583,7 @@ struct drm_castkms_renderer_layer {
  * same channel units, not normalized 0..1 units. Output operations are applied
  * in degamma-LUT, matrix, gamma-LUT order, omitting absent operations.
  */
-struct drm_castkms_renderer_color {
+struct drm_castkms_renderer_color_op {
 	__u32 kind;
 	__u32 payload_bytes;
 };

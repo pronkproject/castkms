@@ -126,10 +126,10 @@ static void publish(int fd, struct output *output)
 			.version = DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION,
 			.kind = DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND, .format_count = 1,
 			.min_scale = 1U << 16, .max_scale = 1U << 16,
-			.max_layers = 1, .max_roles = { 1, 0, 0 },
+			.max_planes = 1, .max_roles = { 1, 0, 0 },
 		},
 		.format = {
-			.fourcc = DRM_FORMAT_XRGB8888, .plane_count = 1,
+			.fourcc = DRM_FORMAT_XRGB8888, .memory_plane_count = 1,
 			.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE,
 			.roles = DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_PRIMARY,
 			.width_alignment = 1, .height_alignment = 1,
@@ -210,50 +210,50 @@ static void open_capture(int fd, struct output *output)
 
 static void deliver(struct output *output, unsigned char value)
 {
-	struct drm_castkms_renderer_scene *scene = calloc(1, DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES);
+	struct drm_castkms_renderer_job *job = calloc(1, DRM_CASTKMS_RENDERER_JOB_MAX_BYTES);
 	struct drm_castkms_renderer_acquire_job acquire = {
-		.result = (uintptr_t)scene, .target_image_id = 1,
-		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
+		.result = (uintptr_t)job, .target_image_id = 1,
+		.capacity = DRM_CASTKMS_RENDERER_JOB_MAX_BYTES,
 	};
-	struct drm_castkms_renderer_layer *layer;
+	struct drm_castkms_renderer_plane *job_plane;
 	struct drm_castkms_renderer_release_job source = {
-		.completion_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
+		.release_fence_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
 	};
 	struct drm_castkms_renderer_output recipient;
 	struct drm_castkms_renderer_acquire_output take = {
 		.result = (uintptr_t)&recipient, .image_id = 1,
 	};
 	struct drm_castkms_renderer_release_output release = {
-		.completion_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
+		.release_fence_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
 	};
 	struct drm_capture_result result;
 	struct drm_capture_dequeue capture = { .stream = 1, .result = (uintptr_t)&result };
 	struct pollfd event = { .fd = output->capture.capture_fd, .events = POLLIN };
 
-	CHECK(scene);
+	CHECK(job);
 	CHECK(ioctl(output->renderer.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB, &acquire) == 0);
-	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
-	CHECK(scene->constraints_id == output->worker && scene->layer_count == 1);
-	CHECK(scene->producer_fd == -1);
-	CHECK(scene->width == output->mode.hdisplay &&
-	      scene->height == output->mode.vdisplay);
-	CHECK(!scene->output_color_count && !scene->reserved);
-	layer = (void *)(scene + 1);
-	CHECK(layer->bytes == sizeof(*layer));
-	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
-	CHECK(layer->format == DRM_FORMAT_XRGB8888 && layer->plane_count == 1);
-	CHECK(layer->modifier == DRM_FORMAT_MOD_INVALID);
-	CHECK(!layer->color_count && !layer->planes[0].reserved);
-	CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
-	copy_image(layer->planes[0].dma_buf_fd, output->source.dumb.size,
-		   layer->planes[0].pitch, layer->planes[0].offset,
+	CHECK(job->version == DRM_CASTKMS_RENDERER_JOB_VERSION);
+	CHECK(job->bytes == sizeof(*job) + sizeof(*job_plane));
+	CHECK(job->constraints_id == output->worker && job->plane_count == 1);
+	CHECK(job->acquire_fence_fd == -1);
+	CHECK(job->width == output->mode.hdisplay &&
+	      job->height == output->mode.vdisplay);
+	CHECK(!job->output_color_op_count && !job->reserved);
+	job_plane = (void *)(job + 1);
+	CHECK(job_plane->bytes == sizeof(*job_plane));
+	CHECK(job_plane->role == DRM_CASTKMS_RENDERER_PLANE_PRIMARY);
+	CHECK(job_plane->format == DRM_FORMAT_XRGB8888 && job_plane->memory_plane_count == 1);
+	CHECK(job_plane->modifier == DRM_FORMAT_MOD_INVALID);
+	CHECK(!job_plane->color_op_count && !job_plane->memory_planes[0].reserved);
+	CHECK(fcntl(job_plane->memory_planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	copy_image(job_plane->memory_planes[0].dma_buf_fd, output->source.dumb.size,
+		   job_plane->memory_planes[0].pitch, job_plane->memory_planes[0].offset,
 		   output->private_fd, output->private.dumb.size,
 		   output->private.dumb.pitch, 0, output->mode.hdisplay,
 		   output->mode.vdisplay);
-	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
-	source.job_id = scene->job_id;
+	CHECK(close(job_plane->memory_planes[0].dma_buf_fd) == 0);
+	source.job_id = job->job_id;
 	CHECK(ioctl(output->renderer.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB, &source) == 0);
 	memset(&recipient, 0xa5, sizeof(recipient));
@@ -262,7 +262,7 @@ static void deliver(struct output *output, unsigned char value)
 	CHECK(recipient.job_id && recipient.image_id == 1 &&
 	      recipient.width == output->mode.hdisplay &&
 	      recipient.height == output->mode.vdisplay);
-	CHECK(recipient.format == DRM_FORMAT_XRGB8888 && recipient.plane_count == 1 &&
+	CHECK(recipient.format == DRM_FORMAT_XRGB8888 && recipient.memory_plane_count == 1 &&
 	      recipient.modifier == DRM_FORMAT_MOD_LINEAR);
 	CHECK(!recipient.reserved[0] && !recipient.reserved[1]);
 	CHECK(fcntl(recipient.dma_buf_fd, F_GETFD) == FD_CLOEXEC);
@@ -280,7 +280,7 @@ static void deliver(struct output *output, unsigned char value)
 	CHECK(result.use_id == 1 && result.status == 0 && result.completed_at_ns > 0 &&
 	      !result.reserved);
 	check_pixels(output, value);
-	free(scene);
+	free(job);
 }
 
 static void cleanup(int fd, struct output *output)

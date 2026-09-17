@@ -72,7 +72,7 @@ unsafe impl FromBytes for Withdraw {}
 #[repr(C)]
 struct ReleaseJob {
     job_id: u64,
-    completion_fd: i32,
+    release_fence_fd: i32,
     kind: u32,
     flags: u32,
     reserved: [u32; 3],
@@ -81,7 +81,7 @@ struct ReleaseJob {
 #[repr(C)]
 struct ReleaseOutput {
     job_id: u64,
-    completion_fd: i32,
+    release_fence_fd: i32,
     kind: u32,
     flags: u32,
     reserved: [u32; 3],
@@ -208,7 +208,7 @@ impl ClientFile {
                 super::image_file::unregister(&self.endpoint, arg)
             }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB => {
-                super::scene_file::acquire(&self.endpoint, arg)
+                super::job_file::acquire(&self.endpoint, arg)
             }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB => self.release_job(arg),
             uapi::DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT => {
@@ -288,14 +288,14 @@ impl ClientFile {
             return Err(EINVAL);
         }
         let completion = match request.kind {
-            uapi::DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS if request.completion_fd == -1 => {
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS if request.release_fence_fd == -1 => {
                 Completion::WithoutAccess
             }
-            uapi::DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE if request.completion_fd == -1 => {
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE if request.release_fence_fd == -1 => {
                 Completion::Cpu
             }
-            uapi::DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED if request.completion_fd >= 0 => {
-                Completion::Submitted(fence(request.completion_fd)?)
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED if request.release_fence_fd >= 0 => {
+                Completion::Submitted(fence(request.release_fence_fd)?)
             }
             _ => return Err(EINVAL),
         };
@@ -308,14 +308,14 @@ impl ClientFile {
             return Err(EINVAL);
         }
         let completion = match request.kind {
-            uapi::DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS if request.completion_fd == -1 => {
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS if request.release_fence_fd == -1 => {
                 Completion::WithoutAccess
             }
-            uapi::DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE if request.completion_fd == -1 => {
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE if request.release_fence_fd == -1 => {
                 Completion::Cpu
             }
-            uapi::DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED if request.completion_fd >= 0 => {
-                Completion::Submitted(fence(request.completion_fd)?)
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED if request.release_fence_fd >= 0 => {
+                Completion::Submitted(fence(request.release_fence_fd)?)
             }
             _ => return Err(EINVAL),
         };

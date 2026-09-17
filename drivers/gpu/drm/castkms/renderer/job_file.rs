@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Bounded complete-scene encoding and transactional descriptor publication.
+//! Bounded renderer-job encoding and transactional descriptor publication.
 
 use super::{job::Plane, endpoint::Endpoint};
 use crate::scene::Kind;
@@ -20,7 +20,7 @@ use kernel::{
     uapi,
 };
 
-const MAX_BYTES: usize = uapi::DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES as usize;
+const MAX_BYTES: usize = uapi::DRM_CASTKMS_RENDERER_JOB_MAX_BYTES as usize;
 
 const _: () = {
     assert!(
@@ -30,10 +30,10 @@ const _: () = {
             + 104
             <= MAX_BYTES
     );
-    assert!(super::description::MAX_LAYERS == uapi::DRM_CASTKMS_RENDERER_SCENE_MAX_LAYERS as usize);
+    assert!(super::description::MAX_LAYERS == uapi::DRM_CASTKMS_RENDERER_JOB_MAX_PLANES as usize);
     assert!(
         super::description::MAX_COLOR_OPERATIONS
-            == uapi::DRM_CASTKMS_RENDERER_SCENE_MAX_COLOR_OPS as usize
+            == uapi::DRM_CASTKMS_RENDERER_JOB_MAX_COLOR_OPS as usize
     );
 };
 
@@ -87,7 +87,7 @@ impl Encoding {
     }
 
     fn matrix(&mut self, matrix: &[u64; 12]) -> Result {
-        self.word(uapi::DRM_CASTKMS_RENDERER_COLOR_MATRIX)?;
+        self.word(uapi::DRM_CASTKMS_RENDERER_COLOR_OP_MATRIX)?;
         self.word(96)?;
         for value in matrix {
             self.wide(*value)?;
@@ -97,9 +97,9 @@ impl Encoding {
 
     fn operation(&mut self, operation: &Operation) -> Result {
         let kind = match operation {
-            Operation::Bypass => uapi::DRM_CASTKMS_RENDERER_COLOR_BYPASS,
-            Operation::SrgbEotf => uapi::DRM_CASTKMS_RENDERER_COLOR_SRGB_EOTF,
-            Operation::SrgbInverseEotf => uapi::DRM_CASTKMS_RENDERER_COLOR_SRGB_INVERSE_EOTF,
+            Operation::Bypass => uapi::DRM_CASTKMS_RENDERER_COLOR_OP_BYPASS,
+            Operation::SrgbEotf => uapi::DRM_CASTKMS_RENDERER_COLOR_OP_SRGB_EOTF,
+            Operation::SrgbInverseEotf => uapi::DRM_CASTKMS_RENDERER_COLOR_OP_SRGB_INVERSE_EOTF,
             Operation::Matrix(matrix) => return self.matrix(matrix),
         };
         self.word(kind)?;
@@ -110,7 +110,7 @@ impl Encoding {
         if entries.is_empty() || entries.len() > 256 {
             return Err(E2BIG);
         }
-        self.word(uapi::DRM_CASTKMS_RENDERER_COLOR_LUT)?;
+        self.word(uapi::DRM_CASTKMS_RENDERER_COLOR_OP_LUT)?;
         self.word((entries.len() * 8) as u32)?;
         for entry in entries {
             for channel in entry {
@@ -142,8 +142,8 @@ pub(super) fn acquire(endpoint: &Endpoint, arg: usize) -> Result {
             core::mem::size_of::<Request>()
                 == core::mem::size_of::<uapi::drm_castkms_renderer_acquire_job>()
         );
-        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_scene>() == 56);
-        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_layer>() == 144);
+        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_job>() == 56);
+        assert!(core::mem::size_of::<uapi::drm_castkms_renderer_plane>() == 144);
     }
     let request = UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<Request>())
         .reader()
@@ -158,15 +158,15 @@ pub(super) fn acquire(endpoint: &Endpoint, arg: usize) -> Result {
     }
     let address = usize::try_from(request.result).map_err(|_| EOVERFLOW)?;
     let mut pending = endpoint.begin_source(request.target_image_id)?;
-    let producer = pending.producer_completion()?;
+    let acquire_fence = pending.producer_completion()?;
     let scene = pending.scene_description()?;
     let mut encoded = Encoding::new()?;
     let mut outputs = KVec::with_capacity(scene.layers.len() * 4 + 1, GFP_KERNEL)?;
-    let producer = match producer {
+    let acquire_fence_fd = match acquire_fence {
         Some(fence) => reserve(&mut outputs, fence.create_sync_file()?)?,
         None => -1,
     };
-    encoded.word(uapi::DRM_CASTKMS_RENDERER_SCENE_VERSION)?;
+    encoded.word(uapi::DRM_CASTKMS_RENDERER_JOB_VERSION)?;
     encoded.word(0)?;
     encoded.wide(pending.id())?;
     encoded.wide(pending.constraints_id())?;
@@ -175,7 +175,7 @@ pub(super) fn acquire(endpoint: &Endpoint, arg: usize) -> Result {
         encoded.word(dimension)?;
     }
     encoded.word(scene.layers.len() as u32)?;
-    encoded.word(producer as u32)?;
+    encoded.word(acquire_fence_fd as u32)?;
     encoded.word(0)?;
     encoded.word(0)?;
     // Retain one export per distinct GEM object, including aliases across layers.
@@ -190,9 +190,9 @@ pub(super) fn acquire(endpoint: &Endpoint, arg: usize) -> Result {
             .map_or(&[][..], |color| color.operations());
         encoded.word(0)?;
         encoded.word(match layer.kind {
-            Kind::Primary => 0,
-            Kind::Overlay => 1,
-            Kind::Cursor => 2,
+            Kind::Primary => uapi::DRM_CASTKMS_RENDERER_PLANE_PRIMARY,
+            Kind::Overlay => uapi::DRM_CASTKMS_RENDERER_PLANE_OVERLAY,
+            Kind::Cursor => uapi::DRM_CASTKMS_RENDERER_PLANE_CURSOR,
         })?;
         encoded.word(layer.zpos)?;
         encoded.word(framebuffer.format())?;
@@ -282,7 +282,7 @@ pub(super) fn acquire(endpoint: &Endpoint, arg: usize) -> Result {
 }
 
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-#[kunit_tests(rust_castkms_scene_encoding)]
+#[kunit_tests(rust_castkms_job_encoding)]
 mod tests {
     use super::*;
 

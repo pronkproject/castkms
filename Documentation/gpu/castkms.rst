@@ -256,39 +256,39 @@ content serial is not claimed again. A no-access report produces no private
 image and leaves that scene retryable under a new job ID; preparation holds
 and seals still reject new reads.
 
-Complete-scene renderer descriptions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Renderer job descriptions
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``RENDERER_ACQUIRE_JOB`` is the only source-job acquisition operation and uses
 ``RENDERER_RELEASE_JOB`` to resolve the source-to-private job. Acquisition names
 an image retained by ``RENDERER_REGISTER_IMAGE``. A renderer should allocate
 the advertised maximum of 64 KiB for the result. Insufficient capacity returns
-``ENOSPC``; failure does not consume the scene or install any descriptors, even
-if userspace memory was partially written. Blank scenes and content already
+``ENOSPC``; failure does not consume the job or install any descriptors, even
+if userspace memory was partially written. Blank states and content already
 reported as composed or submitted return ``ENODATA``.
 
-The version-one result contains a header followed by back-to-front layer
-records and output color records. Each layer includes its role, stacking
-position, format/modifier, memory planes, fractional source rectangle, signed
-destination position and scaled destination size. Its color records describe
-the selected sRGB curves and sign-magnitude matrices. Output records describe
-degamma and gamma tables and the output matrix. Equal stacking positions retain
-KMS plane creation order. Pixel alpha is premultiplied, sampling is nearest
-neighbor, and output color operations follow layer composition.
+The version-one result contains a job header followed by back-to-front plane
+records and output color-op records. Each plane record includes its role,
+stacking position, format/modifier, memory planes, fractional ``src_*``
+rectangle and signed ``crtc_*`` geometry. Its color-op records describe the
+selected sRGB curves and sign-magnitude matrices. Output records describe
+degamma and gamma tables and the output matrix. Equal stacking positions
+retain KMS plane creation order. Pixel alpha is premultiplied, sampling is
+nearest neighbor, and output color operations follow plane composition.
 
-Metadata is bounded to 24 layers, four memory planes per layer, sixteen plane
+Metadata is bounded to 24 KMS planes, four memory planes per image, sixteen plane
 color operations and 256 entries per output lookup table. These transport
 bounds do not advertise additional KMS planes or enable new renderer backends.
-All buffer descriptors and the combined producer fence remain tied to one
-source-read claim. The renderer must check producer success before reading,
-then release with no access, completed CPU access or a submitted native fence
-covering source reads and private-image writes. Renderer protocol version 1
+All buffer descriptors and the combined acquire fence remain tied to one
+source-read claim. The renderer must check acquire-fence success before
+reading, then release with no access, completed CPU access or a submitted
+``release_fence_fd`` covering source reads and private-image writes. Renderer protocol version 1
 publishes version 1 constraints entries for KMS selection. See
 :doc:`castkms-renderer` for private-image registration and the independent
 private-image-to-recipient output jobs.
 
-The job also exports a sync-file wait for the exact producer dependencies
-captured when KMS accepted the scene. An already failed producer rejects
+The job's ``acquire_fence_fd`` is a sync-file for the exact producer dependencies
+captured when KMS accepted the state. An already failed producer rejects
 acquisition with its completion error; pending producer work remains represented by
 the retained native fence and does not make descriptor preparation wait.
 
@@ -297,7 +297,7 @@ native work. The submitted form transfers a concrete sync-file fence and a
 promise that no later access will be submitted under the job. Dropping a
 published job without a release instead records terminal service failure.
 Source descriptors are non-revocable storage references; retaining one after
-release grants no access to a later scene generation.
+release grants no access to a later content generation.
 
 ``castkms.rs`` owns the virtual parent device and DRM registration. Destruction
 unplugs DRM and shuts down atomic state before releasing the parent. Display

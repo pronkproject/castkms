@@ -264,7 +264,7 @@ static void check_backend_rules(int fd, uint32_t crtc, uint64_t id, uint32_t pla
 
 static void check_backend_format(int fd, uint32_t crtc, uint64_t id,
 				 uint32_t plane, uint32_t fourcc, uint64_t modifier,
-			       uint32_t plane_count, uint32_t storage_flags,
+			       uint32_t memory_plane_count, uint32_t storage_flags,
 			       uint32_t width, uint32_t height)
 {
 	struct drm_mode_list_constraints query = { .crtc_id = crtc };
@@ -327,7 +327,7 @@ static void check_backend_format(int fd, uint32_t crtc, uint64_t id,
 				    format->modifier == modifier) {
 					CHECK(!format->layout_flags);
 					CHECK(format->storage_flags == storage_flags);
-					CHECK(format->plane_count == plane_count);
+					CHECK(format->plane_count == memory_plane_count);
 					CHECK(format->pitch_alignment == 1);
 					CHECK(format->offset_alignment == 1);
 					CHECK(format->min_pitch == 256);
@@ -450,7 +450,7 @@ int main(int argc, char **argv)
 			.format_count = 3,
 			.min_scale = 1U << 16,
 			.max_scale = 1U << 16,
-			.max_layers = 1,
+			.max_planes = 1,
 			.max_roles = { 1, 1, 0 },
 			.yuv_encodings = DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT601 |
 				 DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_ENCODING_BT709 |
@@ -461,7 +461,7 @@ int main(int argc, char **argv)
 		.formats = {
 			{
 				.fourcc = DRM_FORMAT_XRGB8888,
-				.plane_count = 1,
+				.memory_plane_count = 1,
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED |
@@ -477,7 +477,7 @@ int main(int argc, char **argv)
 			},
 			{
 				.fourcc = DRM_FORMAT_NV12,
-				.plane_count = 2,
+				.memory_plane_count = 2,
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
@@ -491,7 +491,7 @@ int main(int argc, char **argv)
 			},
 			{
 				.fourcc = DRM_FORMAT_RGBX8888,
-				.plane_count = 1,
+				.memory_plane_count = 1,
 				.modifier = I915_FORMAT_MOD_4_TILED,
 				.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE |
 					 DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER,
@@ -518,15 +518,15 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_unregister_image remove = { .image_id = 1 };
 	struct drm_castkms_renderer_acquire_job acquire = {
 		.target_image_id = 1,
-		.capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
+		.capacity = DRM_CASTKMS_RENDERER_JOB_MAX_BYTES,
 	};
 	struct drm_castkms_renderer_release_job release = {
-		.completion_fd = -1,
+		.release_fence_fd = -1,
 		.kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS,
 	};
 	struct drm_castkms_renderer_withdraw withdraw = { 0 };
-	struct drm_castkms_renderer_scene *scene;
-	struct drm_castkms_renderer_layer *layer;
+	struct drm_castkms_renderer_job *job;
+	struct drm_castkms_renderer_plane *job_plane;
 	drmModeRes *resources;
 	drmModeConnector *connector;
 	drmModeModeInfo *mode;
@@ -628,144 +628,145 @@ int main(int argc, char **argv)
 	CHECK(selected(fd, create.crtc_id, 2, &generation) == worker);
 	CHECK(generation == event_generation);
 
-	scene = calloc(1, acquire.capacity);
-	CHECK(scene);
-	acquire.result = (uintptr_t)scene;
+	job = calloc(1, acquire.capacity);
+	CHECK(job);
+	acquire.result = (uintptr_t)job;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
 		    &acquire) == 0);
-	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-	CHECK(scene->constraints_id == worker && scene->layer_count == 1);
-	CHECK(scene->width == mode->hdisplay && scene->height == mode->vdisplay);
-	CHECK(scene->producer_fd == -1 && !scene->output_color_count && !scene->reserved);
-	layer = (void *)(scene + 1);
-	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
-	CHECK(layer->bytes == sizeof(*layer) && layer->plane_count == 1);
-	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
-	CHECK(layer->format == DRM_FORMAT_XRGB8888);
-	CHECK(layer->modifier == I915_FORMAT_MOD_4_TILED);
-	CHECK(layer->width == mode->hdisplay && layer->height == mode->vdisplay);
-	CHECK(!layer->source[0] && !layer->source[1]);
-	CHECK(layer->source[2] == (uint32_t)mode->hdisplay << 16);
-	CHECK(layer->source[3] == (uint32_t)mode->vdisplay << 16);
-	CHECK(!layer->position[0] && !layer->position[1]);
-	CHECK(layer->destination[0] == mode->hdisplay &&
-	      layer->destination[1] == mode->vdisplay);
-	CHECK(!layer->color_count && !layer->planes[0].offset &&
-	      !layer->planes[0].reserved);
-	CHECK(layer->planes[0].pitch == tiled.dumb.pitch);
-	CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
-	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
-	content_serial = scene->content_serial;
-	job_id = scene->job_id;
-	release.job_id = scene->job_id;
+	CHECK(job->version == DRM_CASTKMS_RENDERER_JOB_VERSION);
+	CHECK(job->constraints_id == worker && job->plane_count == 1);
+	CHECK(job->width == mode->hdisplay && job->height == mode->vdisplay);
+	CHECK(job->acquire_fence_fd == -1 && !job->output_color_op_count && !job->reserved);
+	job_plane = (void *)(job + 1);
+	CHECK(job->bytes == sizeof(*job) + sizeof(*job_plane));
+	CHECK(job_plane->bytes == sizeof(*job_plane) && job_plane->memory_plane_count == 1);
+	CHECK(job_plane->role == DRM_CASTKMS_RENDERER_PLANE_PRIMARY);
+	CHECK(job_plane->format == DRM_FORMAT_XRGB8888);
+	CHECK(job_plane->modifier == I915_FORMAT_MOD_4_TILED);
+	CHECK(job_plane->width == mode->hdisplay && job_plane->height == mode->vdisplay);
+	CHECK(!job_plane->src_x && !job_plane->src_y);
+	CHECK(job_plane->src_w == (uint32_t)mode->hdisplay << 16);
+	CHECK(job_plane->src_h == (uint32_t)mode->vdisplay << 16);
+	CHECK(!job_plane->crtc_x && !job_plane->crtc_y);
+	CHECK(job_plane->crtc_w == mode->hdisplay &&
+	      job_plane->crtc_h == mode->vdisplay);
+	CHECK(!job_plane->color_op_count && !job_plane->memory_planes[0].offset &&
+	      !job_plane->memory_planes[0].reserved);
+	CHECK(job_plane->memory_planes[0].pitch == tiled.dumb.pitch);
+	CHECK(fcntl(job_plane->memory_planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(close(job_plane->memory_planes[0].dma_buf_fd) == 0);
+	content_serial = job->content_serial;
+	job_id = job->job_id;
+	release.job_id = job->job_id;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 		    &release) == 0);
 	expect_no_constraints_event(fd);
 
 	select_framebuffer(fd, create.crtc_id, plane, nv12.fb, worker);
-	memset(scene, 0, acquire.capacity);
+	memset(job, 0, acquire.capacity);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
 		    &acquire) == 0);
-	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-	CHECK(scene->constraints_id == worker && scene->layer_count == 1);
-	CHECK(scene->content_serial > content_serial && scene->job_id != job_id);
-	CHECK(scene->width == mode->hdisplay && scene->height == mode->vdisplay);
-	CHECK(scene->producer_fd == -1 && !scene->output_color_count && !scene->reserved);
-	layer = (void *)(scene + 1);
-	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
-	CHECK(layer->bytes == sizeof(*layer) && layer->plane_count == 2);
-	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
-	CHECK(layer->format == DRM_FORMAT_NV12);
-	CHECK(layer->modifier == I915_FORMAT_MOD_4_TILED);
-	CHECK(layer->width == mode->hdisplay && layer->height == mode->vdisplay);
-	CHECK(!layer->source[0] && !layer->source[1]);
-	CHECK(layer->source[2] == (uint32_t)mode->hdisplay << 16);
-	CHECK(layer->source[3] == (uint32_t)mode->vdisplay << 16);
-	CHECK(!layer->position[0] && !layer->position[1]);
-	CHECK(layer->destination[0] == mode->hdisplay &&
-	      layer->destination[1] == mode->vdisplay);
-	CHECK(layer->color_encoding == DRM_CASTKMS_YUV_ENCODING_BT601);
-	CHECK(layer->color_range == DRM_CASTKMS_YUV_RANGE_FULL);
-	CHECK(!layer->color_count);
-	CHECK(layer->planes[0].pitch == nv12.dumb[0].pitch);
-	CHECK(layer->planes[1].pitch == nv12.dumb[1].pitch);
-	CHECK(layer->planes[0].dma_buf_fd != layer->planes[1].dma_buf_fd);
+	CHECK(job->version == DRM_CASTKMS_RENDERER_JOB_VERSION);
+	CHECK(job->constraints_id == worker && job->plane_count == 1);
+	CHECK(job->content_serial > content_serial && job->job_id != job_id);
+	CHECK(job->width == mode->hdisplay && job->height == mode->vdisplay);
+	CHECK(job->acquire_fence_fd == -1 && !job->output_color_op_count && !job->reserved);
+	job_plane = (void *)(job + 1);
+	CHECK(job->bytes == sizeof(*job) + sizeof(*job_plane));
+	CHECK(job_plane->bytes == sizeof(*job_plane) && job_plane->memory_plane_count == 2);
+	CHECK(job_plane->role == DRM_CASTKMS_RENDERER_PLANE_PRIMARY);
+	CHECK(job_plane->format == DRM_FORMAT_NV12);
+	CHECK(job_plane->modifier == I915_FORMAT_MOD_4_TILED);
+	CHECK(job_plane->width == mode->hdisplay && job_plane->height == mode->vdisplay);
+	CHECK(!job_plane->src_x && !job_plane->src_y);
+	CHECK(job_plane->src_w == (uint32_t)mode->hdisplay << 16);
+	CHECK(job_plane->src_h == (uint32_t)mode->vdisplay << 16);
+	CHECK(!job_plane->crtc_x && !job_plane->crtc_y);
+	CHECK(job_plane->crtc_w == mode->hdisplay &&
+	      job_plane->crtc_h == mode->vdisplay);
+	CHECK(job_plane->color_encoding == DRM_CASTKMS_YUV_ENCODING_BT601);
+	CHECK(job_plane->color_range == DRM_CASTKMS_YUV_RANGE_FULL);
+	CHECK(!job_plane->color_op_count);
+	CHECK(job_plane->memory_planes[0].pitch == nv12.dumb[0].pitch);
+	CHECK(job_plane->memory_planes[1].pitch == nv12.dumb[1].pitch);
+	CHECK(job_plane->memory_planes[0].dma_buf_fd != job_plane->memory_planes[1].dma_buf_fd);
 	for (unsigned int i = 0; i < 2; i++) {
-		CHECK(!layer->planes[i].offset && !layer->planes[i].reserved);
-		CHECK(fcntl(layer->planes[i].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
-		CHECK(close(layer->planes[i].dma_buf_fd) == 0);
+		CHECK(!job_plane->memory_planes[i].offset && !job_plane->memory_planes[i].reserved);
+		CHECK(fcntl(job_plane->memory_planes[i].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+		CHECK(close(job_plane->memory_planes[i].dma_buf_fd) == 0);
 	}
-	for (unsigned int i = 2; i < DRM_CASTKMS_RENDERER_MAX_PLANES; i++)
-		CHECK(layer->planes[i].dma_buf_fd == -1 && !layer->planes[i].pitch &&
-		      !layer->planes[i].offset && !layer->planes[i].reserved);
-	content_serial = scene->content_serial;
-	job_id = scene->job_id;
-	release.job_id = scene->job_id;
+	for (unsigned int i = 2; i < DRM_CASTKMS_RENDERER_MAX_MEMORY_PLANES; i++)
+		CHECK(job_plane->memory_planes[i].dma_buf_fd == -1 &&
+		      !job_plane->memory_planes[i].pitch &&
+		      !job_plane->memory_planes[i].offset && !job_plane->memory_planes[i].reserved);
+	content_serial = job->content_serial;
+	job_id = job->job_id;
+	release.job_id = job->job_id;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 		    &release) == 0);
 
 	select_framebuffer(fd, create.crtc_id, plane, rgbx.fb, worker);
-	memset(scene, 0, acquire.capacity);
+	memset(job, 0, acquire.capacity);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
 		    &acquire) == 0);
-	layer = (void *)(scene + 1);
-	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-	CHECK(scene->constraints_id == worker && scene->layer_count == 1);
-	CHECK(scene->content_serial > content_serial && scene->job_id != job_id);
-	CHECK(scene->width == mode->hdisplay && scene->height == mode->vdisplay);
-	CHECK(scene->producer_fd == -1 && !scene->output_color_count && !scene->reserved);
-	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
-	CHECK(layer->bytes == sizeof(*layer) && layer->plane_count == 1);
-	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
-	CHECK(layer->format == DRM_FORMAT_RGBX8888);
-	CHECK(layer->modifier == I915_FORMAT_MOD_4_TILED);
-	CHECK(layer->width == mode->hdisplay && layer->height == mode->vdisplay);
-	CHECK(!layer->source[0] && !layer->source[1]);
-	CHECK(layer->source[2] == (uint32_t)mode->hdisplay << 16);
-	CHECK(layer->source[3] == (uint32_t)mode->vdisplay << 16);
-	CHECK(!layer->position[0] && !layer->position[1]);
-	CHECK(layer->destination[0] == mode->hdisplay &&
-	      layer->destination[1] == mode->vdisplay);
-	CHECK(!layer->color_count && !layer->planes[0].offset &&
-	      !layer->planes[0].reserved);
-	CHECK(layer->planes[0].pitch == rgbx.dumb.pitch);
-	CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
-	CHECK(close(layer->planes[0].dma_buf_fd) == 0);
-	content_serial = scene->content_serial;
-	job_id = scene->job_id;
-	release.job_id = scene->job_id;
+	job_plane = (void *)(job + 1);
+	CHECK(job->version == DRM_CASTKMS_RENDERER_JOB_VERSION);
+	CHECK(job->constraints_id == worker && job->plane_count == 1);
+	CHECK(job->content_serial > content_serial && job->job_id != job_id);
+	CHECK(job->width == mode->hdisplay && job->height == mode->vdisplay);
+	CHECK(job->acquire_fence_fd == -1 && !job->output_color_op_count && !job->reserved);
+	CHECK(job->bytes == sizeof(*job) + sizeof(*job_plane));
+	CHECK(job_plane->bytes == sizeof(*job_plane) && job_plane->memory_plane_count == 1);
+	CHECK(job_plane->role == DRM_CASTKMS_RENDERER_PLANE_PRIMARY);
+	CHECK(job_plane->format == DRM_FORMAT_RGBX8888);
+	CHECK(job_plane->modifier == I915_FORMAT_MOD_4_TILED);
+	CHECK(job_plane->width == mode->hdisplay && job_plane->height == mode->vdisplay);
+	CHECK(!job_plane->src_x && !job_plane->src_y);
+	CHECK(job_plane->src_w == (uint32_t)mode->hdisplay << 16);
+	CHECK(job_plane->src_h == (uint32_t)mode->vdisplay << 16);
+	CHECK(!job_plane->crtc_x && !job_plane->crtc_y);
+	CHECK(job_plane->crtc_w == mode->hdisplay &&
+	      job_plane->crtc_h == mode->vdisplay);
+	CHECK(!job_plane->color_op_count && !job_plane->memory_planes[0].offset &&
+	      !job_plane->memory_planes[0].reserved);
+	CHECK(job_plane->memory_planes[0].pitch == rgbx.dumb.pitch);
+	CHECK(fcntl(job_plane->memory_planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+	CHECK(close(job_plane->memory_planes[0].dma_buf_fd) == 0);
+	content_serial = job->content_serial;
+	job_id = job->job_id;
+	release.job_id = job->job_id;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 		    &release) == 0);
 	if (argc == 3) {
 		select_framebuffer(fd, create.crtc_id, plane, imported.fb, worker);
-		memset(scene, 0, acquire.capacity);
+		memset(job, 0, acquire.capacity);
 		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
 			    &acquire) == 0);
-		layer = (void *)(scene + 1);
-		CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-		CHECK(scene->constraints_id == worker && scene->layer_count == 1);
-		CHECK(scene->content_serial > content_serial && scene->job_id != job_id);
-		CHECK(scene->width == mode->hdisplay && scene->height == mode->vdisplay);
-		CHECK(scene->producer_fd == -1 && !scene->output_color_count &&
-		      !scene->reserved);
-		CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
-		CHECK(layer->bytes == sizeof(*layer) && layer->plane_count == 1);
-		CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
-		CHECK(layer->format == DRM_FORMAT_XRGB8888);
-		CHECK(layer->modifier == I915_FORMAT_MOD_4_TILED);
-		CHECK(layer->width == mode->hdisplay && layer->height == mode->vdisplay);
-		CHECK(!layer->source[0] && !layer->source[1]);
-		CHECK(layer->source[2] == (uint32_t)mode->hdisplay << 16);
-		CHECK(layer->source[3] == (uint32_t)mode->vdisplay << 16);
-		CHECK(!layer->position[0] && !layer->position[1]);
-		CHECK(layer->destination[0] == mode->hdisplay &&
-		      layer->destination[1] == mode->vdisplay);
-		CHECK(!layer->color_count && !layer->planes[0].offset &&
-		      !layer->planes[0].reserved);
-		CHECK(layer->planes[0].pitch == mode->hdisplay * 4);
-		CHECK(fcntl(layer->planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
-		CHECK(close(layer->planes[0].dma_buf_fd) == 0);
-		release.job_id = scene->job_id;
+		job_plane = (void *)(job + 1);
+		CHECK(job->version == DRM_CASTKMS_RENDERER_JOB_VERSION);
+		CHECK(job->constraints_id == worker && job->plane_count == 1);
+		CHECK(job->content_serial > content_serial && job->job_id != job_id);
+		CHECK(job->width == mode->hdisplay && job->height == mode->vdisplay);
+		CHECK(job->acquire_fence_fd == -1 && !job->output_color_op_count &&
+		      !job->reserved);
+		CHECK(job->bytes == sizeof(*job) + sizeof(*job_plane));
+		CHECK(job_plane->bytes == sizeof(*job_plane) && job_plane->memory_plane_count == 1);
+		CHECK(job_plane->role == DRM_CASTKMS_RENDERER_PLANE_PRIMARY);
+		CHECK(job_plane->format == DRM_FORMAT_XRGB8888);
+		CHECK(job_plane->modifier == I915_FORMAT_MOD_4_TILED);
+		CHECK(job_plane->width == mode->hdisplay && job_plane->height == mode->vdisplay);
+		CHECK(!job_plane->src_x && !job_plane->src_y);
+		CHECK(job_plane->src_w == (uint32_t)mode->hdisplay << 16);
+		CHECK(job_plane->src_h == (uint32_t)mode->vdisplay << 16);
+		CHECK(!job_plane->crtc_x && !job_plane->crtc_y);
+		CHECK(job_plane->crtc_w == mode->hdisplay &&
+		      job_plane->crtc_h == mode->vdisplay);
+		CHECK(!job_plane->color_op_count && !job_plane->memory_planes[0].offset &&
+		      !job_plane->memory_planes[0].reserved);
+		CHECK(job_plane->memory_planes[0].pitch == mode->hdisplay * 4);
+		CHECK(fcntl(job_plane->memory_planes[0].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
+		CHECK(close(job_plane->memory_planes[0].dma_buf_fd) == 0);
+		release.job_id = job->job_id;
 		CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 			    &release) == 0);
 	}
@@ -792,7 +793,7 @@ int main(int argc, char **argv)
 	if (argc == 3)
 		destroy_buffer(fd, &imported);
 	destroy_buffer(fd, &private);
-	free(scene);
+	free(job);
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
 	close_monitor(&monitor);

@@ -22,7 +22,13 @@ _Static_assert(sizeof(struct drm_castkms_renderer_configure) == 48, "configure l
 _Static_assert(sizeof(struct drm_castkms_renderer_publish) == 32, "publish layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_publish_result) == 32, "result layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_withdraw) == 16, "withdraw layout");
-_Static_assert(sizeof(struct drm_castkms_renderer_scene) == 56, "scene layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_constraints) == 128, "constraints layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_constraints_format) == 56, "format layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_job) == 56, "job layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_plane) == 144, "plane layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_memory_plane) == 16, "memory plane layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_color_op) == 8, "color op layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_release_job) == 32, "job release layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_acquire_output) == 32, "output acquire layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_output) == 72, "output layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_release_output) == 32, "output release layout");
@@ -113,50 +119,51 @@ static void hung_up(int fd)
 	CHECK(!(pollfd.revents & POLLNVAL));
 }
 
-static void close_scene(struct drm_castkms_renderer_scene *scene)
+static void close_job(struct drm_castkms_renderer_job *job)
 {
-	char *cursor = (char *)(scene + 1);
+	char *cursor = (char *)(job + 1);
 
-	if (scene->producer_fd >= 0) {
-		CHECK(fcntl(scene->producer_fd, F_GETFD) == FD_CLOEXEC);
-		CHECK(close(scene->producer_fd) == 0);
+	if (job->acquire_fence_fd >= 0) {
+		CHECK(fcntl(job->acquire_fence_fd, F_GETFD) == FD_CLOEXEC);
+		CHECK(close(job->acquire_fence_fd) == 0);
 	}
-	for (uint32_t i = 0; i < scene->layer_count; i++) {
-		struct drm_castkms_renderer_layer *layer = (void *)cursor;
+	for (uint32_t i = 0; i < job->plane_count; i++) {
+		struct drm_castkms_renderer_plane *job_plane = (void *)cursor;
 
-		CHECK(layer->bytes >= sizeof(*layer) && layer->plane_count <= 4);
-		for (uint32_t plane = 0; plane < layer->plane_count; plane++) {
-			CHECK(fcntl(layer->planes[plane].dma_buf_fd, F_GETFD) == FD_CLOEXEC);
-			CHECK(close(layer->planes[plane].dma_buf_fd) == 0);
+		CHECK(job_plane->bytes >= sizeof(*job_plane) && job_plane->memory_plane_count <= 4);
+		for (uint32_t plane = 0; plane < job_plane->memory_plane_count; plane++) {
+			CHECK(fcntl(job_plane->memory_planes[plane].dma_buf_fd,
+				    F_GETFD) == FD_CLOEXEC);
+			CHECK(close(job_plane->memory_planes[plane].dma_buf_fd) == 0);
 		}
-		cursor += layer->bytes;
-		CHECK(cursor <= (char *)scene + scene->bytes);
+		cursor += job_plane->bytes;
+		CHECK(cursor <= (char *)job + job->bytes);
 	}
 }
 
-static struct drm_castkms_renderer_layer *single_layer(
-	struct drm_castkms_renderer_scene *scene, uint64_t constraints_id,
-	uint32_t width, uint32_t height, uint64_t previous)
+static struct drm_castkms_renderer_plane *
+single_plane(struct drm_castkms_renderer_job *job, uint64_t constraints_id,
+	     uint32_t width, uint32_t height, uint64_t previous)
 {
-	struct drm_castkms_renderer_layer *layer = (void *)(scene + 1);
+	struct drm_castkms_renderer_plane *job_plane = (void *)(job + 1);
 
-	CHECK(scene->version == DRM_CASTKMS_RENDERER_SCENE_VERSION);
-	CHECK(scene->constraints_id == constraints_id && scene->content_serial > previous);
-	CHECK(scene->bytes == sizeof(*scene) + sizeof(*layer));
-	CHECK(scene->width == width && scene->height == height);
-	CHECK(scene->layer_count == 1 && scene->producer_fd == -1);
-	CHECK(!scene->output_color_count && !scene->reserved);
-	CHECK(layer->bytes == sizeof(*layer));
-	CHECK(layer->kind == DRM_CASTKMS_RENDERER_LAYER_PRIMARY);
-	CHECK(layer->format == DRM_FORMAT_XRGB8888);
-	CHECK(layer->modifier == DRM_FORMAT_MOD_INVALID && layer->plane_count == 1);
-	CHECK(layer->width == width && layer->height == height);
-	CHECK(layer->source[0] == 0 && layer->source[1] == 0);
-	CHECK(layer->source[2] == width << 16 && layer->source[3] == height << 16);
-	CHECK(layer->position[0] == 0 && layer->position[1] == 0);
-	CHECK(layer->destination[0] == width && layer->destination[1] == height);
-	CHECK(!layer->color_count && !layer->planes[0].reserved);
-	return layer;
+	CHECK(job->version == DRM_CASTKMS_RENDERER_JOB_VERSION);
+	CHECK(job->constraints_id == constraints_id && job->content_serial > previous);
+	CHECK(job->bytes == sizeof(*job) + sizeof(*job_plane));
+	CHECK(job->width == width && job->height == height);
+	CHECK(job->plane_count == 1 && job->acquire_fence_fd == -1);
+	CHECK(!job->output_color_op_count && !job->reserved);
+	CHECK(job_plane->bytes == sizeof(*job_plane));
+	CHECK(job_plane->role == DRM_CASTKMS_RENDERER_PLANE_PRIMARY);
+	CHECK(job_plane->format == DRM_FORMAT_XRGB8888);
+	CHECK(job_plane->modifier == DRM_FORMAT_MOD_INVALID && job_plane->memory_plane_count == 1);
+	CHECK(job_plane->width == width && job_plane->height == height);
+	CHECK(job_plane->src_x == 0 && job_plane->src_y == 0);
+	CHECK(job_plane->src_w == width << 16 && job_plane->src_h == height << 16);
+	CHECK(job_plane->crtc_x == 0 && job_plane->crtc_y == 0);
+	CHECK(job_plane->crtc_w == width && job_plane->crtc_h == height);
+	CHECK(!job_plane->color_op_count && !job_plane->memory_planes[0].reserved);
+	return job_plane;
 }
 
 static void check_layout(size_t size, uint64_t offset, uint32_t pitch,
@@ -225,25 +232,25 @@ static void wait_capture(int fd)
 }
 
 static void render_one(int renderer, struct drm_castkms_renderer_acquire_job *acquire,
-		       struct drm_castkms_renderer_scene *scene,
+		       struct drm_castkms_renderer_job *job,
 		       struct drm_castkms_renderer_release_job *release,
 		       uint64_t constraints_id, uint64_t *previous,
 		       int private_fd, const struct buffer *private)
 {
-	struct drm_castkms_renderer_layer *layer;
+	struct drm_castkms_renderer_plane *job_plane;
 
 	readable(renderer, 1);
 	CHECK(ioctl(renderer, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB, acquire) == 0);
-	layer = single_layer(scene, constraints_id, private->dumb.width,
-			     private->dumb.height, *previous);
-	*previous = scene->content_serial;
-	release->job_id = scene->job_id;
+	job_plane = single_plane(job, constraints_id, private->dumb.width,
+				 private->dumb.height, *previous);
+	*previous = job->content_serial;
+	release->job_id = job->job_id;
 	expect_error(renderer, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB, acquire, EBUSY);
-	copy_linear(layer->planes[0].dma_buf_fd, private->dumb.size,
-		    layer->planes[0].pitch, layer->planes[0].offset,
+	copy_linear(job_plane->memory_planes[0].dma_buf_fd, private->dumb.size,
+		    job_plane->memory_planes[0].pitch, job_plane->memory_planes[0].offset,
 		    private_fd, private->dumb.size, private->dumb.pitch, 0,
 		    private->dumb.width, private->dumb.height);
-	close_scene(scene);
+	close_job(job);
 	release->kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE;
 	CHECK(ioctl(renderer, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB, release) == 0);
 }
@@ -260,10 +267,10 @@ int main(int argc, char **argv)
 			.version = DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION,
 			.kind = DRM_CASTKMS_RENDERER_CONSTRAINTS_KIND, .format_count = 1,
 			.min_scale = 1U << 16, .max_scale = 1U << 16,
-			.max_layers = 1, .max_roles = { 1, 0, 0 },
+			.max_planes = 1, .max_roles = { 1, 0, 0 },
 		},
 		.format = {
-			.fourcc = DRM_FORMAT_XRGB8888, .plane_count = 1,
+			.fourcc = DRM_FORMAT_XRGB8888, .memory_plane_count = 1,
 			.flags = DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE,
 			.roles = DRM_CASTKMS_RENDERER_CONSTRAINTS_ROLE_PRIMARY,
 			.width_alignment = 1, .height_alignment = 1,
@@ -283,15 +290,15 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_register_image image = { .image_id = 1, .num_buffers = 1 };
 	struct drm_castkms_renderer_unregister_image remove = { .image_id = 1 };
 	struct drm_castkms_renderer_acquire_job acquire = {
-		.target_image_id = 1, .capacity = DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES,
+		.target_image_id = 1, .capacity = DRM_CASTKMS_RENDERER_JOB_MAX_BYTES,
 	};
 	struct drm_castkms_renderer_release_job release = {
-		.completion_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS,
+		.release_fence_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS,
 	};
 	struct drm_castkms_renderer_acquire_output take_output = { .image_id = 1 };
 	struct drm_castkms_renderer_output renderer_output;
 	struct drm_castkms_renderer_release_output release_output = {
-		.completion_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
+		.release_fence_fd = -1, .kind = DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE,
 	};
 	struct drm_capture_grant_files capture_files = { .capture_fd = -1, .control_fd = -1 };
 	struct drm_mode_create_capture_grant grant = { .files = (uintptr_t)&capture_files };
@@ -309,7 +316,7 @@ int main(int argc, char **argv)
 	struct drm_capture_result capture_result;
 	struct drm_capture_unregister_destination remove_destination = { .id = 1 };
 	struct drm_capture_destroy_stream destroy_stream = { .id = 1 };
-	struct drm_castkms_renderer_scene *scene;
+	struct drm_castkms_renderer_job *job;
 	drmModeRes *resources;
 	drmModeConnector *connector;
 	drmModeModeInfo *mode;
@@ -423,14 +430,14 @@ int main(int argc, char **argv)
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_REGISTER_DESTINATION,
 		&destination) == 0);
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
-	scene = calloc(1, acquire.capacity);
-	CHECK(scene);
+	job = calloc(1, acquire.capacity);
+	CHECK(job);
 	acquire.result = (uintptr_t)fault;
 	baseline = open_files();
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB, &acquire, EFAULT);
 	CHECK(open_files() == baseline);
-	acquire.result = (uintptr_t)scene;
-	render_one(files.renderer_fd, &acquire, scene, &release, worker, &previous,
+	acquire.result = (uintptr_t)job;
+	render_one(files.renderer_fd, &acquire, job, &release, worker, &previous,
 		   private_fd[0], &private[0]);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB,
 		    &release) == 0);
@@ -454,7 +461,8 @@ int main(int argc, char **argv)
 		    &take_output) == 0);
 	CHECK(renderer_output.image_id == 1 && renderer_output.width == mode->hdisplay);
 	CHECK(renderer_output.height == mode->vdisplay);
-	CHECK(renderer_output.format == DRM_FORMAT_XRGB8888 && renderer_output.plane_count == 1);
+	CHECK(renderer_output.format == DRM_FORMAT_XRGB8888 &&
+	      renderer_output.memory_plane_count == 1);
 	CHECK(renderer_output.modifier == DRM_FORMAT_MOD_LINEAR);
 	CHECK(renderer_output.dma_buf_fd >= 0);
 	CHECK(fcntl(renderer_output.dma_buf_fd, F_GETFD) == FD_CLOEXEC);
@@ -463,7 +471,7 @@ int main(int argc, char **argv)
 	/* A held E-to-D claim must not retain A-to-E source access. */
 	flip(fd, plane, source[1].fb);
 	acquire.target_image_id = 2;
-	render_one(files.renderer_fd, &acquire, scene, &release, worker, &previous,
+	render_one(files.renderer_fd, &acquire, job, &release, worker, &previous,
 		   private_fd[1], &private[1]);
 	copy_linear(private_fd[0], private[0].dumb.size, private[0].dumb.pitch, 0,
 		    renderer_output.dma_buf_fd, output.dumb.size, renderer_output.pitch,
@@ -513,7 +521,7 @@ int main(int argc, char **argv)
 	for (unsigned int frame = 2; frame < 24; frame++) {
 		flip(fd, plane, source[frame % 2].fb);
 		acquire.target_image_id = frame % 2 + 1;
-		render_one(files.renderer_fd, &acquire, scene, &release, worker, &previous,
+		render_one(files.renderer_fd, &acquire, job, &release, worker, &previous,
 			   private_fd[frame % 2], &private[frame % 2]);
 		expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
 			     &acquire, ENODATA);
@@ -526,8 +534,8 @@ int main(int argc, char **argv)
 	flip(fd, plane, source[0].fb);
 	acquire.target_image_id = 1;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB, &acquire) == 0);
-	release.job_id = scene->job_id;
-	close_scene(scene);
+	release.job_id = job->job_id;
+	close_job(job);
 	take_output.image_id = 2;
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT,
 		    &take_output) == 0);
@@ -577,12 +585,12 @@ int main(int argc, char **argv)
 	for (unsigned int i = 0; i < 2; i++)
 		destroy_buffer(fd, &private[i]);
 	destroy_buffer(fd, &output);
-	free(scene);
+	free(job);
 	CHECK(munmap(fault, 4096) == 0);
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
 	close_monitor(&monitor);
 	CHECK(close(fd) == 0);
-	puts("PASS: renderer scenes, independent output delivery, 24 frames and cleanup");
+	puts("PASS: renderer jobs, independent output delivery, 24 frames and cleanup");
 	return 0;
 }

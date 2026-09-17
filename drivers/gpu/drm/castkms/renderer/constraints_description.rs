@@ -24,7 +24,7 @@ struct Header {
     max_source: [u32; 2],
     min_scale: u32,
     max_scale: u32,
-    max_layers: u32,
+    max_planes: u32,
     max_roles: [u32; 3],
     max_color_operations: u32,
     max_lut_entries: u32,
@@ -44,7 +44,7 @@ unsafe impl AsBytes for Header {}
 #[repr(C)]
 struct Storage {
     fourcc: u32,
-    plane_count: u32,
+    memory_plane_count: u32,
     modifier: u64,
     flags: u32,
     roles: u32,
@@ -137,7 +137,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
                 fourcc: format.fourcc,
                 modifier: (format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_EXPLICIT_MODIFIER != 0)
                     .then_some(format.modifier),
-                planes: format.plane_count,
+                planes: format.memory_plane_count,
                 native: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE != 0,
                 imported: format.flags & uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED != 0,
                 roles: core::array::from_fn(|role| format.roles & (1 << role) != 0),
@@ -175,7 +175,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Profile> {
                 yuv_encodings: core::array::from_fn(|bit| header.yuv_encodings & (1 << bit) != 0),
                 yuv_ranges: core::array::from_fn(|bit| header.yuv_ranges & (1 << bit) != 0),
             },
-            layers: header.max_layers as usize,
+            layers: header.max_planes as usize,
             roles: header.max_roles.map(|count| count as usize),
         },
         tuples,
@@ -221,7 +221,7 @@ fn encode(profile: &Profile) -> Result<KVec<u8>> {
         header.min_source = geometry.min_source;
         header.min_scale = geometry.min_scale;
         header.max_scale = geometry.max_scale;
-        header.max_layers = limits.layers as u32;
+        header.max_planes = limits.layers as u32;
         header.max_roles = limits.roles.map(|count| count as u32);
         header.max_color_operations = color.operations as u32;
         header.max_lut_entries = color.lut_entries as u32;
@@ -241,7 +241,7 @@ fn encode(profile: &Profile) -> Result<KVec<u8>> {
         for format in profile.formats() {
             let storage = Storage {
                 fourcc: format.fourcc,
-                plane_count: format.planes,
+                memory_plane_count: format.planes,
                 modifier: format.modifier.unwrap_or(0),
                 flags: u32::from(format.native) * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_NATIVE
                     | u32::from(format.imported) * uapi::DRM_CASTKMS_RENDERER_CONSTRAINTS_FORMAT_IMPORTED

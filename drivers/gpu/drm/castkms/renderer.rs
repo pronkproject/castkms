@@ -20,6 +20,6 @@ pub(crate) mod ready;
 pub(crate) mod render_job;
 pub(crate) mod output_broker;
 mod revoker_file;
-mod scene_file;
+mod job_file;
 mod output_file;
 mod image_file;

@@ -8,7 +8,7 @@ Integration boundary
 ====================
 
 The experimental interface in ``include/uapi/drm/castkms_drm.h`` uses version 1
-for the renderer endpoint, renderer constraints and complete-scene encoding.
+for the renderer endpoint, renderer constraints and complete-job encoding.
 Use the header from the same revision and reject unsupported versions.
 The executable fake-worker example is
 ``tools/testing/selftests/drm_castkms/renderer-control.c``.
@@ -83,7 +83,7 @@ Repeating publication returns ``EALREADY``; ``QUERY`` reconciles its identity
 without publishing again. Query state is advisory and requires live issuer
 authority. A published backend need not be selected.
 
-Whole-scene declarations
+Whole-state declarations
 ========================
 
 Renderer constraints consist of a 128-byte native-endian header and up to
@@ -99,7 +99,7 @@ the published backend is narrowed to that exact target. Changing dimensions
 requires a separately prepared endpoint.
 
 The constraints bound crop, fractional coordinates, positioning, scale ratios,
-layer and role counts, LUT lengths and color operations. The operation ceiling
+plane and role counts, LUT lengths and color operations. The operation ceiling
 applies independently to each plane pipeline and the output pipeline. Limits
 other than format choices apply to every role; advertise the intersection of
 per-role restrictions. Each format record names an exact
@@ -119,11 +119,11 @@ geometry records expose cropping, fractional source coordinates, destination
 position and scale ratios for every plane with allocation choices. Scalar
 rules expose usable YUV encoding and range values with YUV-plane applicability,
 including for declarations that mix RGB and YUV allocations.
-Overlapping active-plane limits express both the declaration's total layer
+Overlapping active-plane limits express both the declaration's total plane
 ceiling and any narrower role ceiling across the actual planes for that output.
 Cross-plane geometry relationships and color-pipeline contents cannot be
 represented as independent records, so complete atomic validation remains
-authoritative for the whole scene.
+authoritative for the whole state.
 
 The static KMS envelope is 16384 by 16384 with primary/overlay formats
 including binary16 RGB. Cursor remains ARGB8888, at most 512 by 512.
@@ -137,31 +137,33 @@ Source jobs
 ===========
 
 ``ACQUIRE_JOB`` names a registered private image and provides
-``DRM_CASTKMS_RENDERER_SCENE_MAX_BYTES`` writable bytes. It reserves one
+``DRM_CASTKMS_RENDERER_JOB_MAX_BYTES`` writable bytes. It reserves one
 source-to-private job, retaining the exact accepted constraints ID, content
-serial, buffers and producer completion. Only the selected live worker can
+serial, source buffers and acquire dependency. Only the selected live worker can
 acquire source access. There is one outstanding job per endpoint.
 
-The scene includes primary, overlays and cursor in stable back-to-front order,
-source crop, destination geometry and ordered plane/output color operations.
+The job includes primary, overlay and cursor plane records in stable
+back-to-front order, with ``src_*`` crop, ``crtc_*`` geometry and ordered
+plane/output color-op records.
 Sampling is nearest-neighbor; blending is premultiplied source-over against
 opaque black. A producer already completed with an error makes acquisition return
 ``EREMOTEIO`` without publishing files or a source claim; its native error is
-not a queue-readiness result. The failed scene is discarded, so polling becomes
-idle and acquisition returns ``ENODATA`` until a new scene is accepted. The producer
-fence covers all layers and must complete successfully before reading. Each
-exported descriptor is close-on-exec.
+not a queue-readiness result. The failed job is discarded, so polling becomes
+idle and acquisition returns ``ENODATA`` until new state is accepted. The
+returned ``acquire_fence_fd`` covers all planes and must complete successfully
+before reading. Each exported descriptor is close-on-exec.
 Failed metadata copy or admission installs no descriptors and permits retry.
 
 ``poll`` is an advisory acquisition prompt, not a reservation or completion
 signal. An unselected backend is idle. An outstanding job or busy private image
-returns ``EBUSY``; no changed scene returns ``ENODATA``. Withdrawal reports
+returns ``EBUSY``; no changed job returns ``ENODATA``. Withdrawal reports
 ``POLLHUP|POLLERR`` without resolving outstanding access.
 
 ``RELEASE_JOB`` reports one of:
 
 * ``NO_ACCESS``: neither source nor private-image access occurred. The same
-  scene can be retried with a new job ID if authority and admission remain live.
+  accepted state can be retried with a new job ID if authority and admission
+  remain live.
 * ``CPU_DONE``: all CPU accesses and coherency operations ended.
 * ``SUBMITTED``: a materialized native sync_file covers every source read
   and private-image write, with no later submission under that job.
@@ -201,7 +203,7 @@ meanings as source release, but its fence covers private-image reads and
 recipient writes only. Capture publishes a terminal result after that native
 work completes. Cancellation suppresses a successful result but cannot revoke
 an already claimed write. Renderer loss quarantines an unresolved destination
-rather than fabricating completion. ``poll`` reports either a changed scene or
+rather than fabricating completion. ``poll`` reports either a changed job or
 a ready recipient claim; it remains advisory and never reserves the job.
 
 Withdrawal and replacement
@@ -219,7 +221,7 @@ native work retains storage independently after namespace removal.
 Successful unregister is not permission to reuse storage before completion.
 
 To return to HOST, the KMS client selects the listed fixed default with a
-compatible complete atomic scene. To replace a worker, configure and publish
+compatible complete atomic state. To replace a worker, configure and publish
 another endpoint, then select it atomically. Keep old reporting channels until
 their admitted work is resolved. Multi-output atomic selection uses ordinary
 KMS transaction semantics, with independent endpoint read accounting.
