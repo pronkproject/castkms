@@ -10,6 +10,7 @@ mod delegated_requests;
 mod delegated_outputs;
 mod delegated_geometry;
 mod session_outputs;
+mod ready_worker;
 
 use super::*;
 use crate::renderer::{
