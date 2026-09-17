@@ -391,6 +391,65 @@ out:
 }
 EXPORT_SYMBOL_GPL(drm_constraints_list_accept);
 
+int drm_constraints_lists_accept(const struct drm_constraints_selection *selections,
+				 unsigned int count, int (*install)(void *), void *data)
+{
+	unsigned int held = 0, i, j;
+	int ret = 0;
+
+	if (!install || (count && !selections))
+		return -EINVAL;
+	for (i = 0; i < count; i++) {
+		if (!selections[i].list || !selections[i].entry)
+			return -EINVAL;
+		for (j = 0; j < i; j++)
+			if (selections[i].list == selections[j].list)
+				return -EINVAL;
+	}
+	for (i = 0; i < count; i++) {
+		struct drm_constraints_list *list = selections[i].list;
+		struct drm_constraints_entry *entry = selections[i].entry;
+		bool changed;
+
+		/* Never wait with another same-class list mutex held. */
+		if (!mutex_trylock(&list->lock)) {
+			ret = -EBUSY;
+			goto out;
+		}
+		held++;
+		if (selections[i].quiesce) {
+			int index = find_entry(list, list->info.selected_id);
+
+			ret = list->entries[index].entry == entry ? 0 : -ESTALE;
+		} else {
+			ret = validate_entry(list, entry);
+		}
+		if (ret)
+			goto out;
+		changed = list->info.selected_id != drm_constraints_entry_id(entry);
+		if (changed && list->info.generation == U64_MAX) {
+			ret = -EOVERFLOW;
+			goto out;
+		}
+	}
+	ret = install(data);
+	if (ret)
+		goto out;
+	for (i = 0; i < count; i++) {
+		struct drm_constraints_list *list = selections[i].list;
+		u64 id = drm_constraints_entry_id(selections[i].entry);
+
+		if (list->info.selected_id != id) {
+			list->info.selected_id = id;
+			advance_generation(list);
+		}
+	}
+out:
+	while (held)
+		mutex_unlock(&selections[--held].list->lock);
+	return ret > 0 ? -EINVAL : ret;
+}
+
 struct drm_constraints_snapshot *
 drm_constraints_list_snapshot(struct drm_constraints_list *list, u64 generation)
 {
