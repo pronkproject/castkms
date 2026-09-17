@@ -2,6 +2,8 @@
 
 //! Serialized preparation and publication of one immutable renderer endpoint.
 
+mod stream;
+
 use super::{draft::Draft, offer::Offer, permission::Access, private_pool::Pool};
 use crate::{execution::capabilities::Profile, Driver};
 use kernel::{
@@ -16,7 +18,7 @@ enum State {
     Empty,
     Draft { draft: Arc<Draft>, pool: Pool },
     Publishing,
-    Ready { offer: Offer, pool: Pool },
+    Ready { offer: Offer, pool: Pool, source: stream::Stream },
     Closed,
 }
 
@@ -79,7 +81,13 @@ impl Endpoint {
         let retired = {
             let mut state = self.state.lock();
             match &mut *state {
-                State::Draft { pool, .. } | State::Ready { pool, .. } => pool.remove(id)?,
+                State::Draft { pool, .. } => pool.remove(id)?,
+                State::Ready { pool, source, .. } => {
+                    if source.references(id) {
+                        return Err(EBUSY);
+                    }
+                    pool.remove(id)?
+                }
                 State::Closed => return Err(EKEYREVOKED),
                 State::Empty => return Err(ENODATA),
                 State::Publishing => return Err(EBUSY),
@@ -137,7 +145,7 @@ impl Endpoint {
         };
         let result = offer.publish(&registered, reply);
         match result {
-            Ok(()) => *state = State::Ready { offer, pool },
+            Ok(()) => *state = State::Ready { offer, pool, source: stream::Stream::new() },
             Err(error) => {
                 drop(state);
                 pending.resources = Some(State::Draft { draft, pool });

@@ -132,7 +132,7 @@ mod cases {
     }
 
     #[test]
-    fn replacement_endpoint_cannot_extend_the_selected_workers_lifetime() -> Result {
+    fn replacement_preserves_owner_scope() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-replace", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             let owner = owner(&file, crtc, connector)?;
