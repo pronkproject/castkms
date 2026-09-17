@@ -187,4 +187,40 @@ mod cases {
         profile(limits, &image)?.check(&scene, [640, 480])?;
         Ok(())
     }
+
+    #[test]
+    fn exact_tiled_profile_is_independent_of_host_layouts() -> Result {
+        let fixture = Fixture::new()?;
+        let linear = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        let object = linear.object_at(0)?;
+        let tiled = fixture.drm.framebuffer(
+            &FramebufferLayout {
+                width: 640,
+                height: 480,
+                format: drm::fourcc::XRGB8888,
+                modifier: Some(drm::fourcc::I915_FORMAT_MOD_4_TILED),
+                interlaced: false,
+                planes: &[FramebufferPlane {
+                    object,
+                    pitch: 640 * 4,
+                    offset: 0,
+                }],
+            },
+            provenance::Provenance::from_snapshot(None),
+        )?;
+        let mut scene = scene(&fixture, &linear)?;
+        let mut layer = scene.primary().ok_or(EINVAL)?.clone();
+
+        layer.framebuffer = tiled.clone();
+        scene.set_layer(0, Some(Arc::new(layer, GFP_KERNEL)?));
+        profile(limits(), &tiled)?.check(&scene, [640, 480])?;
+        check(profile(limits(), &linear)?.check(&scene, [640, 480]) == Err(EOPNOTSUPP))?;
+        check(
+            execution::host::check_framebuffer(
+                &tiled,
+                scene.primary().ok_or(EINVAL)?.geometry(),
+            ) == Err(EINVAL),
+        )?;
+        Ok(())
+    }
 }
