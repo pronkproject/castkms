@@ -13,6 +13,7 @@ use crate::{
     types::Opaque, //
 };
 use core::{
+    marker::PhantomData,
     ptr::NonNull,
     slice, //
 };
@@ -164,6 +165,44 @@ impl Format {
     }
 }
 
+/// One overlapping maximum for simultaneously used KMS planes.
+///
+/// The description copies the borrowed plane IDs. Every supplied limit applies, allowing an
+/// overall scene ceiling and narrower resource-group ceilings to coexist.
+#[repr(transparent)]
+pub struct PlaneLimit<'a> {
+    inner: bindings::drm_constraints_plane_limit,
+    _plane_ids: PhantomData<&'a [u32]>,
+}
+
+impl<'a> PlaneLimit<'a> {
+    /// Describe a nonempty group of distinct plane IDs and its positive active ceiling.
+    pub fn new(max_active: u32, plane_ids: &'a [u32]) -> Result<Self> {
+        if plane_ids.len() > u32::MAX as usize {
+            return Err(E2BIG);
+        }
+        Ok(Self {
+            inner: bindings::drm_constraints_plane_limit {
+                max_active,
+                count: plane_ids.len() as u32,
+                plane_ids: plane_ids.as_ptr(),
+            },
+            _plane_ids: PhantomData,
+        })
+    }
+
+    /// Maximum number of simultaneously used planes from this group.
+    pub const fn max_active(&self) -> u32 {
+        self.inner.max_active
+    }
+
+    /// Borrow the input plane IDs for this construction record.
+    pub fn plane_ids(&self) -> &'a [u32] {
+        // SAFETY: Construction records the borrowed slice and the lifetime prevents its removal.
+        unsafe { slice::from_raw_parts(self.inner.plane_ids, self.inner.count as usize) }
+    }
+}
+
 /// Independently referenced, immutable allocation and scalar property description.
 ///
 /// These bounds are necessary, not sufficient, for displaying a scene. Construction and final
@@ -202,17 +241,30 @@ impl Description {
     /// layouts.
     /// Scalar rules must be valid and distinct by object/property ID; an empty rule list is valid.
     pub fn new(output: Size, formats: &[Format], properties: &[Property]) -> Result<ARef<Self>> {
+        Self::new_with_plane_limits(output, formats, properties, &[])
+    }
+
+    /// Validate and copy allocation metadata, scalar rules and active-plane ceilings.
+    pub fn new_with_plane_limits(
+        output: Size,
+        formats: &[Format],
+        properties: &[Property],
+        plane_limits: &[PlaneLimit<'_>],
+    ) -> Result<ARef<Self>> {
         let count = formats.len().try_into().map_err(|_| E2BIG)?;
         let property_count = properties.len().try_into().map_err(|_| E2BIG)?;
+        let plane_limit_count = plane_limits.len().try_into().map_err(|_| E2BIG)?;
         // SAFETY: Transparent wrappers have native layout, all inputs remain readable for the
         // call, and native construction copies all input without retaining borrowed pointers.
         let raw = from_err_ptr(unsafe {
-            bindings::drm_constraints_description_create(
+            bindings::drm_constraints_description_create_with_plane_limits(
                 &output.0,
                 formats.as_ptr().cast(),
                 count,
                 properties.as_ptr().cast(),
                 property_count,
+                plane_limits.as_ptr().cast(),
+                plane_limit_count,
             )
         })?;
         // SAFETY: Successful construction transfers one non-null initialized native reference.
@@ -249,6 +301,21 @@ impl Description {
         }
         // SAFETY: Nonempty native arrays are initialized, non-null and retained by this borrow.
         // Property transparently represents one native record.
+        unsafe { slice::from_raw_parts(ptr.cast(), count as usize) }
+    }
+
+    /// Borrow immutable overlapping active-plane ceilings.
+    pub fn plane_limits(&self) -> &[PlaneLimit<'_>] {
+        let mut count = 0;
+        // SAFETY: The description owns the bounded record array and every nested ID array. The
+        // returned records and their ID views cannot outlive this description borrow.
+        let ptr = unsafe {
+            bindings::drm_constraints_description_plane_limits(self.0.get(), &mut count)
+        };
+        if count == 0 {
+            return &[];
+        }
+        // SAFETY: A nonempty native array is initialized, non-null and retained by the borrow.
         unsafe { slice::from_raw_parts(ptr.cast(), count as usize) }
     }
 }

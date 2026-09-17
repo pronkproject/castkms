@@ -16,6 +16,7 @@ pub use property::Property;
 pub use description::{
     Description,
     Format,
+    PlaneLimit,
     Size, //
 };
 

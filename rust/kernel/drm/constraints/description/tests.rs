@@ -173,4 +173,41 @@ mod cases {
         ));
         Ok(())
     }
+
+    #[test]
+    fn overlapping_plane_limits_are_owned_and_bounded() -> Result {
+        let size = Size::exact(128, 64);
+        let formats = [Format::new(7, fourcc::XRGB8888, 0, size)];
+        let all = [7, 8, 9];
+        let overlays = [8, 9];
+        let limits = [PlaneLimit::new(2, &all)?, PlaneLimit::new(1, &overlays)?];
+        let description =
+            Description::new_with_plane_limits(size, &formats, &[], &limits)?;
+        let stored = description.plane_limits();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[0].max_active(), 2);
+        assert_eq!(stored[0].plane_ids(), [7, 8, 9]);
+        assert_eq!(stored[1].max_active(), 1);
+        assert_eq!(stored[1].plane_ids(), [8, 9]);
+        assert!(Description::new(size, &formats, &[])?.plane_limits().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn native_validation_rejects_invalid_plane_limits() -> Result {
+        let size = Size::exact(128, 64);
+        let formats = [Format::new(7, fourcc::XRGB8888, 0, size)];
+        for (maximum, ids, error) in [
+            (0, &[7, 8][..], EINVAL),
+            (3, &[7, 8][..], EINVAL),
+            (1, &[][..], EINVAL),
+            (1, &[0][..], EINVAL),
+            (1, &[7, 7][..], EEXIST),
+        ] {
+            let limit = PlaneLimit::new(maximum, ids)?;
+            assert!(Description::new_with_plane_limits(size, &formats, &[], &[limit])
+                .is_err_and(|actual| actual == error));
+        }
+        Ok(())
+    }
 }

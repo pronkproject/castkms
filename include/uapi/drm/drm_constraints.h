@@ -41,12 +41,15 @@
 #define DRM_MODE_CONSTRAINTS_MAX_ENTRIES 64U
 #define DRM_MODE_CONSTRAINTS_MAX_FORMATS 4096U
 #define DRM_MODE_CONSTRAINTS_MAX_PROPERTIES 64U
+#define DRM_MODE_CONSTRAINTS_MAX_PLANE_LIMITS 64U
+#define DRM_MODE_CONSTRAINTS_MAX_PLANES_PER_LIMIT 64U
 
 #define DRM_MODE_CONSTRAINTS_SELECTABLE (1U << 0)
 #define DRM_MODE_CONSTRAINTS_RECORD_REQUIRED (1U << 0)
 #define DRM_MODE_CONSTRAINTS_RECORD_OUTPUT_SIZE 1U
 #define DRM_MODE_CONSTRAINTS_RECORD_PLANE_FORMAT 2U
 #define DRM_MODE_CONSTRAINTS_RECORD_PROPERTY 3U
+#define DRM_MODE_CONSTRAINTS_RECORD_PLANE_LIMIT 4U
 #define DRM_MODE_CONSTRAINTS_LAYOUT_IMPLICIT (1U << 0)
 #define DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_NATIVE (1U << 0)
 #define DRM_MODE_CONSTRAINTS_FORMAT_STORAGE_IMPORTED (1U << 1)
@@ -193,7 +196,9 @@ struct drm_mode_constraints {
  * records describe alternative framebuffer allocations for each named plane;
  * a plane with no format records must not be used. There are at most
  * DRM_MODE_CONSTRAINTS_MAX_FORMATS format records and
- * DRM_MODE_CONSTRAINTS_MAX_PROPERTIES property records per description.
+ * DRM_MODE_CONSTRAINTS_MAX_PROPERTIES property records and
+ * DRM_MODE_CONSTRAINTS_MAX_PLANE_LIMITS active-plane-limit records per
+ * description.
  * Property records all apply, but only to enabled CRTCs and used planes.
  * Absence of a property record preserves ordinary KMS property semantics.
  * Geometry relationships, blob contents and other full-scene restrictions
@@ -322,6 +327,28 @@ struct drm_mode_constraints_property {
 	__aligned_u64 minimum;
 	__aligned_u64 maximum;
 	__aligned_u64 mask;
+};
+
+/**
+ * struct drm_mode_constraints_plane_limit - Maximum active planes in one group
+ * @header: PLANE_LIMIT record header.
+ * @max_active: Maximum number of simultaneously used planes in this group.
+ * @count_planes: Number of plane object IDs following this header.
+ * @plane_ids: Plane IDs, each eligible for the described output.
+ *
+ * The complete record length includes @count_planes ``__u32`` IDs followed by
+ * zero padding to eight-byte alignment. IDs within a record are distinct.
+ * There are at most DRM_MODE_CONSTRAINTS_MAX_PLANES_PER_LIMIT IDs. Every limit
+ * applies, so overlapping groups can express both an overall layer ceiling and
+ * narrower resource or plane-role ceilings. A used plane counts once in every
+ * group containing it. Planes omitted from a group are unaffected by that
+ * record; planes without format records remain unusable.
+ */
+struct drm_mode_constraints_plane_limit {
+	struct drm_mode_constraints_record header;
+	__u32 max_active;
+	__u32 count_planes;
+	__u32 plane_ids[];
 };
 
 #endif /* _UAPI_DRM_CONSTRAINTS_H_ */

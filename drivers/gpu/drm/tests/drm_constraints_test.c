@@ -311,6 +311,67 @@ static void drm_constraints_rejects_malformed_property_rules(struct kunit *test)
 		ERR_PTR(-EINVAL));
 }
 
+static void drm_constraints_copies_overlapping_plane_limits(struct kunit *test)
+{
+	u32 all[] = { 17, 18, 19 };
+	u32 overlays[] = { 18, 19 };
+	struct drm_constraints_plane_limit limits[] = {
+		{ .max_active = 2, .count = ARRAY_SIZE(all), .plane_ids = all },
+		{ .max_active = 1, .count = ARRAY_SIZE(overlays), .plane_ids = overlays },
+	};
+	struct drm_constraints_description *description;
+	const struct drm_constraints_plane_limit *view;
+	unsigned int count;
+
+	description = drm_constraints_description_create_with_plane_limits(
+		&output_size, &linear, 1, NULL, 0, limits, ARRAY_SIZE(limits));
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put, description), 0);
+	memset(all, 0, sizeof(all));
+	memset(overlays, 0, sizeof(overlays));
+	memset(limits, 0, sizeof(limits));
+	view = drm_constraints_description_plane_limits(description, &count);
+	KUNIT_ASSERT_EQ(test, count, 2);
+	KUNIT_EXPECT_EQ(test, view[0].max_active, 2);
+	KUNIT_EXPECT_EQ(test, view[0].count, 3);
+	KUNIT_EXPECT_EQ(test, view[0].plane_ids[0], 17);
+	KUNIT_EXPECT_EQ(test, view[0].plane_ids[2], 19);
+	KUNIT_EXPECT_EQ(test, view[1].max_active, 1);
+	KUNIT_EXPECT_EQ(test, view[1].count, 2);
+	KUNIT_EXPECT_EQ(test, view[1].plane_ids[0], 18);
+}
+
+static void drm_constraints_rejects_malformed_plane_limits(struct kunit *test)
+{
+	u32 ids[] = { 17, 18 };
+	struct drm_constraints_plane_limit limit = {
+		.max_active = 1, .count = ARRAY_SIZE(ids), .plane_ids = ids,
+	};
+
+#define EXPECT_LIMIT_ERROR(error) \
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create_with_plane_limits( \
+		&output_size, &linear, 1, NULL, 0, &limit, 1), ERR_PTR(error))
+	limit.max_active = 0;
+	EXPECT_LIMIT_ERROR(-EINVAL);
+	limit.max_active = 3;
+	EXPECT_LIMIT_ERROR(-EINVAL);
+	limit.max_active = 1;
+	limit.count = 0;
+	EXPECT_LIMIT_ERROR(-EINVAL);
+	limit.count = ARRAY_SIZE(ids);
+	limit.plane_ids = NULL;
+	EXPECT_LIMIT_ERROR(-EINVAL);
+	limit.plane_ids = ids;
+	ids[0] = 0;
+	EXPECT_LIMIT_ERROR(-EINVAL);
+	ids[0] = ids[1];
+	EXPECT_LIMIT_ERROR(-EEXIST);
+	ids[0] = 17;
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create_with_plane_limits(
+		&output_size, &linear, 1, NULL, 0, NULL, 1), ERR_PTR(-EINVAL));
+#undef EXPECT_LIMIT_ERROR
+}
+
 static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_preserves_large_plane_modifier_matrix),
 	KUNIT_CASE(drm_constraints_copies_all_allocation_information),
@@ -323,6 +384,8 @@ static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_rejects_invalid_storage_rules),
 	KUNIT_CASE(drm_constraints_copies_bounded_property_rules),
 	KUNIT_CASE(drm_constraints_rejects_malformed_property_rules),
+	KUNIT_CASE(drm_constraints_copies_overlapping_plane_limits),
+	KUNIT_CASE(drm_constraints_rejects_malformed_plane_limits),
 	{}
 };
 

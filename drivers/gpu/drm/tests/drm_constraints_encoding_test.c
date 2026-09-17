@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
+#include <linux/align.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <drm/drm_constraints.h>
@@ -42,6 +43,10 @@ static struct encoding_fixture *new_fixture_with_layout(struct kunit *test, bool
 		.max_pitch = 65536,
 	};
 	struct drm_constraints_property property;
+	u32 plane_ids[] = { 7, 8, 9 };
+	const struct drm_constraints_plane_limit plane_limit = {
+		.max_active = 2, .count = ARRAY_SIZE(plane_ids), .plane_ids = plane_ids,
+	};
 	struct encoding_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
@@ -56,7 +61,8 @@ static struct encoding_fixture *new_fixture_with_layout(struct kunit *test, bool
 	f->domain = drm_constraints_domain_create(DRM_CONSTRAINTS_MAX_ENTRIES);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->domain);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_domain, f->domain), 0);
-	f->description = drm_constraints_description_create(&output, &format, 1, &property, 1);
+	f->description = drm_constraints_description_create_with_plane_limits(
+		&output, &format, 1, &property, 1, &plane_limit, 1);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, f->description), 0);
 	f->initial = drm_constraints_entry_create(f->domain, 19, f->description, &ops, NULL);
@@ -93,11 +99,12 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	struct drm_mode_constraints_output_size *output;
 	struct drm_mode_constraints_plane_format *format;
 	struct drm_mode_constraints_property *property;
+	struct drm_mode_constraints_plane_limit *plane_limit;
 	size_t required = 0;
 	u8 *buffer;
 
 	KUNIT_ASSERT_EQ(test, drm_constraints_snapshot_encode(view, NULL, 0, &required), 0);
-	KUNIT_ASSERT_EQ(test, required, 280);
+	KUNIT_ASSERT_EQ(test, required, 320);
 	buffer = kunit_kmalloc(test, required, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, buffer);
 	memset(buffer, 0xa5, required);
@@ -121,7 +128,7 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	description = (void *)((u8 *)entry + sizeof(*entry));
 	KUNIT_EXPECT_EQ(test, description->version, DRM_MODE_CONSTRAINTS_VERSION);
 	KUNIT_EXPECT_EQ(test, description->length, entry->description_length);
-	KUNIT_EXPECT_EQ(test, description->record_count, 3);
+	KUNIT_EXPECT_EQ(test, description->record_count, 4);
 	KUNIT_EXPECT_EQ(test, description->records_offset,
 			entry->description_offset + sizeof(*description));
 	output = (void *)((u8 *)description + sizeof(*description));
@@ -161,8 +168,18 @@ static void check_encoded_layout(struct kunit *test, bool implicit)
 	KUNIT_EXPECT_EQ(test, property->minimum, (u64)-10);
 	KUNIT_EXPECT_EQ(test, property->maximum, 20);
 	KUNIT_EXPECT_EQ(test, property->mask, 0);
+	plane_limit = (void *)((u8 *)property + sizeof(*property));
+	KUNIT_EXPECT_EQ(test, plane_limit->header.type, DRM_MODE_CONSTRAINTS_RECORD_PLANE_LIMIT);
+	KUNIT_EXPECT_EQ(test, plane_limit->header.length, 40);
+	KUNIT_EXPECT_EQ(test, plane_limit->header.flags, DRM_MODE_CONSTRAINTS_RECORD_REQUIRED);
+	KUNIT_EXPECT_EQ(test, plane_limit->max_active, 2);
+	KUNIT_EXPECT_EQ(test, plane_limit->count_planes, 3);
+	KUNIT_EXPECT_EQ(test, plane_limit->plane_ids[0], 7);
+	KUNIT_EXPECT_EQ(test, plane_limit->plane_ids[1], 8);
+	KUNIT_EXPECT_EQ(test, plane_limit->plane_ids[2], 9);
+	KUNIT_EXPECT_EQ(test, plane_limit->plane_ids[3], 0);
 	KUNIT_EXPECT_EQ(test, property->pad | property->header.pad |
-			format->header.pad | output->header.pad, 0);
+			plane_limit->header.pad | format->header.pad | output->header.pad, 0);
 }
 
 static void encoding_preserves_native_metadata_without_padding(struct kunit *test)
@@ -177,7 +194,9 @@ static void size_discovery_and_short_buffers_write_no_partial_payload(struct kun
 		       sizeof(struct drm_mode_constraints_description) +
 		       sizeof(struct drm_mode_constraints_output_size) +
 		       sizeof(struct drm_mode_constraints_plane_format) +
-		       sizeof(struct drm_mode_constraints_property) };
+		       sizeof(struct drm_mode_constraints_property) +
+		       ALIGN(sizeof(struct drm_mode_constraints_plane_limit) +
+			     3 * sizeof(__u32), 8) };
 	struct encoding_fixture *f = new_fixture(test);
 	struct drm_constraints_snapshot *view = snapshot(test, f->list);
 	u8 buffer[bytes + 1], before[bytes + 1];
@@ -261,6 +280,8 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 	struct drm_constraints_snapshot *view;
 	struct drm_constraints_format *formats;
 	struct drm_constraints_property *properties;
+	struct drm_constraints_plane_limit *plane_limits;
+	u32 *plane_ids;
 	struct drm_mode_constraints_list *header;
 	struct drm_mode_constraints *entries;
 	size_t required, expected;
@@ -269,8 +290,15 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 
 	formats = kunit_kcalloc(test, DRM_CONSTRAINTS_MAX_FORMATS, sizeof(*formats), GFP_KERNEL);
 	properties = kunit_kcalloc(test, DRM_CONSTRAINTS_MAX_PROPERTIES, sizeof(*properties), GFP_KERNEL);
+	plane_limits = kunit_kcalloc(test, DRM_CONSTRAINTS_MAX_PLANE_LIMITS,
+				      sizeof(*plane_limits), GFP_KERNEL);
+	plane_ids = kunit_kcalloc(test,
+		DRM_CONSTRAINTS_MAX_PLANE_LIMITS * DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT,
+		sizeof(*plane_ids), GFP_KERNEL);
 	KUNIT_ASSERT_NOT_NULL(test, formats);
 	KUNIT_ASSERT_NOT_NULL(test, properties);
+	KUNIT_ASSERT_NOT_NULL(test, plane_limits);
+	KUNIT_ASSERT_NOT_NULL(test, plane_ids);
 	for (i = 0; i < DRM_CONSTRAINTS_MAX_FORMATS; i++)
 		formats[i] = (struct drm_constraints_format) {
 			.plane_id = i + 1, .format = DRM_FORMAT_XRGB8888,
@@ -283,8 +311,21 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 			.object_id = 1, .property_id = i + 1,
 			.type = DRM_MODE_PROP_RANGE, .maximum = 4096,
 		};
-	description = drm_constraints_description_create(&size, formats, DRM_CONSTRAINTS_MAX_FORMATS,
-							 properties, DRM_CONSTRAINTS_MAX_PROPERTIES);
+	for (i = 0; i < DRM_CONSTRAINTS_MAX_PLANE_LIMITS; i++) {
+		unsigned int plane;
+
+		plane_limits[i] = (struct drm_constraints_plane_limit) {
+			.max_active = DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT,
+			.count = DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT,
+			.plane_ids = plane_ids + i * DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT,
+		};
+		for (plane = 0; plane < DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT; plane++)
+			plane_ids[i * DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT + plane] = plane + 1;
+	}
+	description = drm_constraints_description_create_with_plane_limits(
+		&size, formats, DRM_CONSTRAINTS_MAX_FORMATS,
+		properties, DRM_CONSTRAINTS_MAX_PROPERTIES,
+		plane_limits, DRM_CONSTRAINTS_MAX_PLANE_LIMITS);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, put_description, description), 0);
 	domain = drm_constraints_domain_create(DRM_CONSTRAINTS_MAX_ENTRIES);
@@ -310,7 +351,10 @@ static void maximum_native_list_fits_bounded_encoding(struct kunit *test)
 		(sizeof(*entries) + sizeof(struct drm_mode_constraints_description) +
 		 sizeof(struct drm_mode_constraints_output_size) +
 		 DRM_CONSTRAINTS_MAX_FORMATS * sizeof(struct drm_mode_constraints_plane_format) +
-		 DRM_CONSTRAINTS_MAX_PROPERTIES * sizeof(struct drm_mode_constraints_property));
+		 DRM_CONSTRAINTS_MAX_PROPERTIES * sizeof(struct drm_mode_constraints_property) +
+		 DRM_CONSTRAINTS_MAX_PLANE_LIMITS *
+		 ALIGN(sizeof(struct drm_mode_constraints_plane_limit) +
+		       DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT * sizeof(__u32), 8));
 	KUNIT_EXPECT_EQ(test, required, expected);
 	KUNIT_ASSERT_LE(test, required, DRM_MODE_CONSTRAINTS_MAX_BYTES);
 	buffer = kvzalloc(required + 1, GFP_KERNEL);
