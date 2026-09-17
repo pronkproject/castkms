@@ -66,7 +66,8 @@ impl Request {
     /// access block. Callers must isolate that access from queue and teardown operations.
     pub(crate) fn destination_ready(&self, destination: &Image, reuse: Option<&Fence>) -> Result<bool> {
         let layout = self.storage.layout();
-        if destination.layout() != layout {
+        let (width, height) = layout.dimensions();
+        if destination.dimensions() != [width, height] {
             return Err(EINVAL);
         }
         match self.status()? {

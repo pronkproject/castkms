@@ -43,7 +43,7 @@ pub(super) fn register(
     id: u64,
     image: &Image,
 ) -> Result<ClientDestination> {
-    let (width, height) = image.layout().dimensions();
+    let [width, height] = image.dimensions();
     let description = Destination::new(
         [width, height],
         fourcc::XRGB8888,

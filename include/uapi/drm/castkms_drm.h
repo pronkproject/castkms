@@ -198,8 +198,10 @@ struct drm_castkms_renderer_files {
  *
  * The calling DRM file must be the exact current master and hold both display
  * objects. The renderer descriptor grants no modesetting or capture access.
- * Its operations authorize delegated rendering for this output and master
- * interval.
+ * Its operations authorize delegated rendering for this output and bound
+ * drm_master identity. While that master is not current, control operations
+ * fail with EACCES. Reacquiring the same master reactivates the descriptor,
+ * but work and offers from the previous uninterrupted interval stay invalid.
  *
  * All request fields are input. Success returns zero after copying both output
  * descriptor numbers and installing their files. On failure neither descriptor
@@ -215,11 +217,14 @@ struct drm_castkms_create_renderer_control {
 };
 
 /*
- * Each renderer file owns one immutable draft and at most one published offer.
+ * Each renderer file owns one immutable draft and at most one published offer
+ * per uninterrupted master interval.
  * The file identifies its draft; constraints_id identifies the generic native
  * offer. Preparation works with disabled video and changes no KMS state.
- * Replacement uses an independent renderer file. Publication requires a
- * runnable worker, completed private probe and registered private images.
+ * Replacement within an interval uses an independent renderer file. After the
+ * bound master is reacquired, a drained endpoint becomes empty and may prepare
+ * a fresh generation. Publication requires a runnable worker, completed
+ * private probe and registered private images.
  * Only ordinary atomic CONSTRAINTS_ID selection changes the accepted backend.
  *
  * No renderer ioctl returns EAGAIN for readiness. ENODATA means no submitted
@@ -280,8 +285,9 @@ struct drm_castkms_renderer_submit_probe {
  * result points to drm_castkms_renderer_offer_result. Flags, reserved and
  * padding must be zero. The complete result is copied before native listing;
  * any failure leaves no new selectable offer and copied output must be ignored.
- * Success permanently publishes the draft; repeating publication is EALREADY.
- * QUERY returns its identity without publishing again. Pending probes return
+ * Success publishes the draft for the current master interval; repeating
+ * publication in that interval is EALREADY. QUERY returns its identity without
+ * publishing again. Pending probes return
  * EBUSY; failed probes return EREMOTEIO (native status remains on the submitted
  * sync_file). Publication never selects an offer or acknowledges a modeset.
  */
@@ -342,6 +348,76 @@ struct drm_castkms_renderer_source_plane {
  * it cannot reopen a source sealed or held by display preparation.
  */
 struct drm_castkms_renderer_release_source {
+	__u64 job_id;
+	__s32 completion_fd;
+	__u32 kind;
+	__u32 flags;
+	__u32 reserved[3];
+};
+
+/**
+ * struct drm_castkms_renderer_dequeue_output - claim recipient output for a private image
+ * @result: pointer to writable struct drm_castkms_renderer_output
+ * @image_id: completed renderer-private image to copy from
+ * @flags: must be zero
+ * @reserved: must be zero
+ * @padding: must be zero
+ *
+ * Claims one ready capture destination for an independent private-to-recipient
+ * stage. The private image must have completed RELEASE_SOURCE successfully.
+ * This operation acquires no compositor source read. ENODATA means no recipient
+ * is ready for this image; EBUSY means another output claim is outstanding.
+ * No descriptor is installed on failure. On success RELEASE_OUTPUT is required.
+ */
+struct drm_castkms_renderer_dequeue_output {
+	__u64 result;
+	__u64 image_id;
+	__u32 flags;
+	__u32 reserved;
+	__u64 padding;
+};
+
+/**
+ * struct drm_castkms_renderer_output - exact claimed recipient image
+ * @job_id: endpoint-local output job identity
+ * @image_id: private source image named by dequeue
+ * @width: visible destination width
+ * @height: visible destination height
+ * @format: DRM fourcc destination format
+ * @plane_count: number of destination planes; one in version 1
+ * @modifier: destination DRM format modifier
+ * @dma_buf_fd: returned close-on-exec writable DMA-BUF descriptor
+ * @pitch: destination row pitch in bytes
+ * @offset: destination byte offset
+ * @reserved: returned as zero
+ */
+struct drm_castkms_renderer_output {
+	__u64 job_id;
+	__u64 image_id;
+	__u32 width;
+	__u32 height;
+	__u32 format;
+	__u32 plane_count;
+	__u64 modifier;
+	__s32 dma_buf_fd;
+	__u32 pitch;
+	__u64 offset;
+	__u64 reserved[2];
+};
+
+/**
+ * struct drm_castkms_renderer_release_output - resolve private-to-recipient access
+ * @job_id: job returned by RENDERER_DEQUEUE_OUTPUT
+ * @completion_fd: sync_file descriptor for SUBMITTED, otherwise -1
+ * @kind: one DRM_CASTKMS_RENDERER_RELEASE_* value
+ * @flags: must be zero
+ * @reserved: must be zero
+ *
+ * SUBMITTED transfers a native fence covering every private-image read and
+ * recipient write. NO_ACCESS promises neither image was accessed. CPU_DONE
+ * includes all coherency work. Source release and output release are independent.
+ */
+struct drm_castkms_renderer_release_output {
 	__u64 job_id;
 	__s32 completion_fd;
 	__u32 kind;
@@ -563,6 +639,8 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_RENDERER_UNREGISTER_IMAGE 0x06
 #define DRM_CASTKMS_RENDERER_DEQUEUE_SCENE 0x07
 #define DRM_CASTKMS_RENDERER_RELEASE_SOURCE 0x08
+#define DRM_CASTKMS_RENDERER_DEQUEUE_OUTPUT 0x09
+#define DRM_CASTKMS_RENDERER_RELEASE_OUTPUT 0x0a
 
 /* This is an enum so that Rust bindgen resolves the ioctl values. */
 enum {
@@ -614,6 +692,12 @@ enum {
 	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_SOURCE,
 			 struct drm_castkms_renderer_release_source),
+	DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_DEQUEUE_OUTPUT,
+			struct drm_castkms_renderer_dequeue_output),
+	DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_RELEASE_OUTPUT,
+			struct drm_castkms_renderer_release_output),
 };
 
 #endif

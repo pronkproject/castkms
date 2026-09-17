@@ -7,6 +7,7 @@
 
 pub(crate) mod budget;
 pub(crate) mod client;
+mod client_queue;
 pub(crate) mod destination;
 pub(crate) mod host;
 pub(crate) mod host_stream;

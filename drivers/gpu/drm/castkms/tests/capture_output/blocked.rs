@@ -164,7 +164,7 @@ fn destination_with_gate(fixture: &Fixture, gate: Arc<Gate>) -> Result<(Image, A
     Ok((
         Image::new(
             buffer,
-            image.layout(),
+            Layout::new(640, 480)?,
             fourcc::XRGB8888,
             fourcc::FORMAT_MOD_LINEAR,
             2624,

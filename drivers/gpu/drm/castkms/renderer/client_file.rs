@@ -86,6 +86,16 @@ struct ReleaseSource {
     flags: u32,
     reserved: [u32; 3],
 }
+
+#[repr(C)]
+struct ReleaseOutput {
+    job_id: u64,
+    completion_fd: i32,
+    kind: u32,
+    flags: u32,
+    reserved: [u32; 3],
+}
+unsafe impl FromBytes for ReleaseOutput {}
 // SAFETY: All fields are integers accepting every bit pattern.
 unsafe impl FromBytes for ReleaseSource {}
 
@@ -97,6 +107,7 @@ const _: () = {
     assert!(size_of::<Withdraw>() == size_of::<uapi::drm_castkms_renderer_withdraw_offer>());
     assert!(size_of::<SubmitProbe>() == size_of::<uapi::drm_castkms_renderer_submit_probe>());
     assert!(size_of::<ReleaseSource>() == size_of::<uapi::drm_castkms_renderer_release_source>());
+    assert!(size_of::<ReleaseOutput>() == size_of::<uapi::drm_castkms_renderer_release_output>());
 };
 
 fn read<T: FromBytes>(arg: usize) -> Result<T> {
@@ -166,7 +177,9 @@ impl ClientFile {
             PollTable::from_raw(table)
                 .register_wait(File::from_raw_file(file), holder.endpoint.changed())
         };
-        match holder.endpoint.source_readable() {
+        match holder.endpoint.source_readable().and_then(|source| {
+            if source { Ok(true) } else { holder.endpoint.output_readable() }
+        }) {
             Ok(true) => (bindings::POLLIN | bindings::POLLRDNORM) as _,
             Ok(false) => 0,
             Err(_) => (bindings::POLLHUP | bindings::POLLERR) as _,
@@ -220,6 +233,10 @@ impl ClientFile {
                 super::scene_file::dequeue(&self.endpoint, arg)
             }
             uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_SOURCE => self.release_source(arg),
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_DEQUEUE_OUTPUT => {
+                super::output_file::dequeue(&self.endpoint, arg)
+            }
+            uapi::DRM_IOCTL_CASTKMS_RENDERER_RELEASE_OUTPUT => self.release_output(arg),
             _ => Err(ENOTTY),
         }
     }
@@ -302,6 +319,26 @@ impl ClientFile {
             _ => return Err(EINVAL),
         };
         self.endpoint.release_source(request.job_id, completion)
+    }
+
+    fn release_output(&self, arg: usize) -> Result {
+        let request = read::<ReleaseOutput>(arg)?;
+        if request.job_id == 0 || request.flags != 0 || request.reserved != [0; 3] {
+            return Err(EINVAL);
+        }
+        let completion = match request.kind {
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_NO_ACCESS if request.completion_fd == -1 => {
+                Completion::WithoutAccess
+            }
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_CPU_DONE if request.completion_fd == -1 => {
+                Completion::Cpu
+            }
+            uapi::DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED if request.completion_fd >= 0 => {
+                Completion::Submitted(fence(request.completion_fd)?)
+            }
+            _ => return Err(EINVAL),
+        };
+        self.endpoint.release_output(request.job_id, completion)
     }
 }
 

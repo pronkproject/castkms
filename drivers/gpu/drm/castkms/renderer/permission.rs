@@ -31,14 +31,13 @@ use kernel::{
     }, //
 };
 
-/// Exact display control for one uninterrupted master interval.
+/// Exact display control bound to one native master identity.
 ///
 /// Issuance needs a native control guard, not a capture capability. Constructing the
 /// permission alone grants neither raw pixel access nor the right to activate execution.
 /// Retained DRM objects must be released outside native master and modeset locks.
 pub(crate) struct Permission {
     target: Target,
-    interval: Interval,
 }
 
 impl Permission {
@@ -47,16 +46,13 @@ impl Permission {
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
     ) -> Result<Self> {
-        let target = Target::new(guard, crtc, connector)?;
-        let interval = target.device().authority.interval()?;
-        Ok(Self { target, interval })
+        Ok(Self { target: Target::new(guard, crtc, connector)? })
     }
 }
 
 #[pin_data]
 struct Policy {
     permission: Permission,
-    transition_owner: Arc<()>,
     workers: Arc<crate::authority::grants::Registry>,
     #[pin]
     revoked: Mutex<bool>,
@@ -68,7 +64,6 @@ unsafe impl kernel::drm::capture::Policy for Policy {
     fn revoke(&self) {
         let mut revoked = self.revoked.lock();
         *revoked = true;
-        self.permission.target.device().validation.revoke_owner(&self.transition_owner);
         drop(revoked);
         self.workers.close();
         self.permission.target.device().changed.notify_all();
@@ -89,12 +84,10 @@ pub(crate) struct Owner {
 impl Owner {
     /// Allocate the owner outside native master, object-ID and modeset locks.
     pub(crate) fn new(permission: Permission) -> Result<Self> {
-        let transition_owner = Arc::new((), GFP_KERNEL)?;
         let workers = crate::authority::grants::Registry::new()?;
         let policy = Arc::pin_init(
             pin_init!(Policy {
                 permission,
-                transition_owner,
                 workers,
                 revoked <- kernel::new_mutex!(false),
             }),
@@ -139,26 +132,30 @@ pub(crate) struct Access {
     policy: Arc<Policy>,
 }
 
+pub(crate) struct WorkerRegistration {
+    _permission: crate::authority::grants::Registration,
+    _device: crate::authority::grants::Registration,
+}
+
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Access {
-    pub(crate) fn interval(&self) -> Interval {
-        self.policy.permission.interval
+    /// Observe the current work generation while the bound master is current.
+    pub(crate) fn current_interval(&self) -> Result<Interval> {
+        self.policy.permission.target.with_output_objects(|| {
+            self.authorize_output(|| self.device().authority.interval())
+        })
     }
 
     /// Track worker cleanup without granting pixels or extending the issuer lifetime.
     pub(crate) fn track_worker(
         &self,
         revocation: &kernel::drm::capture::Revocation,
-    ) -> Result<crate::authority::grants::Registration> {
+    ) -> Result<WorkerRegistration> {
         self.with_output(|| Ok(()))?;
-        let registration = self.policy.workers.register(revocation)?;
+        let permission = self.policy.workers.register(revocation)?;
+        let device = self.device().renderer_workers.register(revocation)?;
         self.with_output(|| Ok(()))?;
-        Ok(registration)
-    }
-
-    /// Identity only, with no authority or retained DRM resources.
-    pub(crate) fn transition_owner(&self) -> Arc<()> {
-        self.policy.transition_owner.clone()
+        Ok(WorkerRegistration { _permission: permission, _device: device })
     }
 
     /// Borrow the allocation device without authorizing access to display pixels.
@@ -195,10 +192,24 @@ impl Access {
         self.policy.permission.target.with_output_objects(|| self.authorize_output(f))
     }
 
+    /// Authorize work for one exact uninterrupted master interval.
+    pub(crate) fn with_output_interval<R>(
+        &self,
+        interval: Interval,
+        f: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
+        self.policy.permission.target.with_output_objects(|| {
+            self.authorize_output(|| {
+                if self.device().authority.interval()? != interval {
+                    return Err(ESTALE);
+                }
+                f()
+            })
+        })
+    }
+
     fn authorize_output<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        if self.device().authority.interval()? != self.policy.permission.interval {
-            return Err(ESTALE);
-        }
+        let _ = self.device().authority.interval()?;
         let revoked = self.policy.revoked.lock();
         if *revoked {
             return Err(EKEYREVOKED);
@@ -211,19 +222,25 @@ impl Access {
     /// matching source admission even when no scene is currently published.
     pub(super) fn check_private_storage(
         &self,
+        interval: Interval,
         buffers: &[kernel::sync::aref::ARef<kernel::dma_buf::DmaBuf>],
     ) -> Result {
         self.policy.permission.target.with_output_objects(|| {
-            self.display().output.with_accepted(|accepted| self.authorize_output(|| {
-                if let Some(scene) = accepted.and_then(|accepted| accepted.scene) {
-                    for buffer in buffers {
-                        if scene.uses_reservation(buffer.reservation())? {
-                            return Err(EINVAL);
+            self.display().output.with_accepted(|accepted| {
+                self.authorize_output(|| {
+                    if self.device().authority.interval()? != interval {
+                        return Err(ESTALE);
+                    }
+                    if let Some(scene) = accepted.and_then(|accepted| accepted.scene) {
+                        for buffer in buffers {
+                            if scene.uses_reservation(buffer.reservation())? {
+                                return Err(EINVAL);
+                            }
                         }
                     }
-                }
-                Ok(())
-            }))
+                    Ok(())
+                })
+            })
         })
     }
 
@@ -244,39 +261,12 @@ impl Access {
             })
     }
 
-    pub(crate) fn with_installed_transition<R>(
-        &self,
-        registered: &Device<Driver, Registered>,
-        f: impl FnOnce(
-            crate::display_control::TransitionCurrent<'_>,
-            &LockedState<'_, Driver>,
-        ) -> Result<R>,
-    ) -> Result<R> {
-        self.policy
-            .permission
-            .target
-            .with_installed_transition(registered, |current, locked| {
-                let permission = &self.policy.permission;
-                if permission.target.device().authority.interval()? != permission.interval {
-                    return Err(ESTALE);
-                }
-                let revoked = self.policy.revoked.lock();
-                if *revoked {
-                    return Err(EKEYREVOKED);
-                }
-                f(current, locked)
-            })
-    }
-
     fn authorize<R>(
         &self,
         current: Current<'_>,
         f: impl FnOnce(Current<'_>) -> Result<R>,
     ) -> Result<R> {
-        let permission = &self.policy.permission;
-        if permission.target.device().authority.interval()? != permission.interval {
-            return Err(ESTALE);
-        }
+        let _ = self.device().authority.interval()?;
         let revoked = self.policy.revoked.lock();
         if *revoked {
             return Err(EKEYREVOKED);

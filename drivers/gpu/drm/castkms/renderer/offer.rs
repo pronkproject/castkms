@@ -40,14 +40,14 @@ impl Offer {
         pool: &Pool,
     ) -> Result<Self> {
         let access = draft.access();
-        access.with_output(|| Ok(()))?;
+        access.with_output_interval(draft.interval(), || Ok(()))?;
         let output = access.constraints_output(registered)?;
         let provider = access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
         // Cleanup can drop backend/device references, so it precedes all authority locks.
         provider.reap(&output)?;
         let owner = draft.prepare_worker(pool)?;
         let entry = provider.prepare(owner.worker())?;
-        access.with_output(|| Ok(()))?;
+        access.with_output_interval(draft.interval(), || Ok(()))?;
         Ok(Self {
             access: access.clone(), entry, _owner: owner,
             list: kernel::sync::aref::ARef::from(output.list()),
@@ -74,6 +74,10 @@ impl Offer {
         self._owner.worker().is_live()
     }
 
+    pub(super) fn interval(&self) -> crate::authority::Interval {
+        self._owner.worker().interval()
+    }
+
     /// Copy the reply before native publication while issuer authority is stable.
     /// On any error callers ignore the copied identity. The callback must not publish files,
     /// select this entry, revoke its owner, or reenter authority. Success lists a ready offer
@@ -85,7 +89,7 @@ impl Offer {
     ) -> Result {
         let output = self.access.constraints_output(registered)?;
         let provider = self.access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
-        self.access.with_output(|| {
+        self.access.with_output_interval(self.interval(), || {
             reply(self.entry.id())?;
             provider.publish(&output, &self.entry)
         })
@@ -104,6 +108,14 @@ impl Control {
         &self.entry
     }
 
+    pub(crate) fn worker(&self) -> Result<kernel::sync::Arc<ready::Worker>> {
+        let backend = self.entry.backend();
+        let Backend::Renderer(worker) = &*backend else {
+            return Err(EOPNOTSUPP);
+        };
+        Ok(worker.clone())
+    }
+
     /// Stabilize the accepted entry and live worker without acquiring a source read.
     /// Callbacks may not wait, revoke, reenter admission, or release native resources.
     pub(crate) fn with_current<R>(
@@ -115,6 +127,9 @@ impl Control {
             return Err(EINVAL);
         };
         self.access.with_current(|current| {
+            if worker.interval() != self.access.device().authority.interval()? {
+                return Err(ESTALE);
+            }
             let _ready = worker.hold_ready()?;
             current.check_constraints(Some(&self.entry))?;
             f(&current)

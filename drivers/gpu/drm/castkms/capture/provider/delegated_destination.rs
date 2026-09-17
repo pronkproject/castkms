@@ -20,7 +20,6 @@ use kernel::{
 
 /// Checked complete rows for the initial delegated output layout, not a source limit.
 #[derive(Clone, Copy)]
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) struct Layout {
     pub(crate) dimensions: [u32; 2],
     pub(crate) pitch: usize,
@@ -45,7 +44,6 @@ pub(crate) struct Image {
     state: Mutex<State>,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Delegated {
     /// Register destination storage without mapping it or authorizing a write.
     /// The trusted output stage must define every exposed pixel, padding byte and unused
@@ -103,7 +101,6 @@ impl Delegated {
     }
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Image {
     pub(super) fn scope(&self) -> &Delegated {
         &self.scope
@@ -117,16 +114,20 @@ impl Image {
         &self.storage.buffers()[0]
     }
 
+    pub(crate) fn format(&self) -> u32 {
+        fourcc::XRGB8888
+    }
+
+    pub(crate) fn modifier(&self) -> u64 {
+        fourcc::FORMAT_MOD_LINEAR
+    }
+
     /// Reserve exclusive destination use. Request names belong to individual queues;
     /// the retained use object identifies storage ownership across queue incarnations.
     /// Demand stays unbound to compositor sources.
     /// Explicit reuse covers all prior external users; a reservation snapshot alone cannot
     /// exclude racing native submissions or recover previously discarded error records.
     /// External users must stop submitting new work before reserving the destination.
-    pub(crate) fn reserve(self: &Arc<Self>, reuse: Option<ARef<Fence>>) -> Result<Arc<Use>> {
-        self.reserve_notified(reuse, None)
-    }
-
     pub(super) fn reserve_notified(
         self: &Arc<Self>,
         reuse: Option<ARef<Fence>>,
@@ -170,7 +171,6 @@ pub(crate) struct Use {
     active: AtomicBool,
 }
 
-#[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Use {
     pub(super) fn image(&self) -> &Image {
         &self.image

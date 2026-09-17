@@ -123,6 +123,20 @@ impl Scene {
         self.constraints.as_deref()
     }
 
+    pub(crate) fn renderer_worker(&self) -> Result<Arc<crate::renderer::ready::Worker>> {
+        match self.binding.as_ref().map(Binding::backend) {
+            Some(crate::execution::constraints::backend::BackendRef::Renderer(backend)) => {
+                match &*backend {
+                    crate::execution::constraints::backend::Backend::Renderer(worker) => {
+                        Ok(worker.clone())
+                    }
+                    _ => Err(EOPNOTSUPP),
+                }
+            }
+            _ => Err(EOPNOTSUPP),
+        }
+    }
+
     /// Compare backing reservations without mapping pixels or acquiring a source read.
     pub(super) fn uses_reservation(&self, reservation: &Reservation) -> Result<bool> {
         for primary in self.layers() {

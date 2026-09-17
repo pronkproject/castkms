@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Completed-image ownership can be checked without issuing either kind of grant.
+//! Completed-image ownership can be checked without issuing a capture grant.
 
 use super::*;
 use crate::{
@@ -9,10 +9,6 @@ use crate::{
         compose,
         layout::Layout,
         pool::Pool, //
-    },
-    host_snapshot::{
-        Budget,
-        Snapshot, //
     },
     image_access::Current, //
 };
@@ -29,7 +25,7 @@ mod cases {
     use super::*;
 
     #[test]
-    fn completed_images_and_private_copies_use_the_same_ownership_rules() -> Result {
+    fn completed_images_use_current_ownership_rules() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
         let file = fixture.drm.master_file()?;
@@ -41,13 +37,11 @@ mod cases {
         let layout = Layout::new(640, 480)?;
         let pool = Pool::new(fixture.drm.device(), &fixture.host_budget, layout)?;
         let image = compose::current(&fixture.drm.device().output, &pool)?.ok_or(EINVAL)?;
-        let snapshot = Snapshot::new(fixture.drm.device(), &Budget::new()?, &image)?;
         target.with_current(|control| {
             let current = Current::new(control)?;
             check(current.configuration() == image.configuration().ok_or(EINVAL)?)?;
             check(current.layout() == layout)?;
-            current.check_image(&image)?;
-            current.check_snapshot(&snapshot)
+            current.check_image(&image)
         })
     }
 

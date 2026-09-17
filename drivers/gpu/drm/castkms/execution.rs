@@ -7,32 +7,7 @@ pub(crate) mod potential;
 pub(crate) mod capabilities;
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 pub(crate) mod constraints;
-pub(crate) mod proposal;
 pub(crate) mod validation;
 pub(crate) mod coordinator;
 
 pub(crate) mod publication;
-mod prepared;
-pub(crate) use prepared::Prepared;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Profile {
-    /// In-kernel composition over the restricted HOST framebuffer profile.
-    HostV1,
-    /// An activated userspace renderer owns display execution.
-    GpuV1,
-}
-
-/// One coherent observation; it neither reserves execution nor authorizes capture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Description {
-    pub(crate) profile: Profile,
-    pub(crate) generation: u64,
-}
-
-const fn initial() -> Description {
-    Description {
-        profile: Profile::HostV1,
-        generation: 1,
-    }
-}

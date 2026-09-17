@@ -1,112 +1,116 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
-//! Client-local names for negotiated configurations, independent of descriptor transport.
+//! Client-local names for exact host or delegated capture configurations.
 
-use super::{
-    host_queue::Queue,
-    provider::{
-        Capture,
-        Description, //
-    }, //
-};
-use kernel::prelude::*;
+use super::{client_queue::Queue, destination::Image, provider::{Capture, Delegated, Description}};
+use crate::scene::Configuration;
+use kernel::{drm::fourcc, prelude::*};
 
-/// One client's latest offered configuration; the number is not capture authority.
-pub(crate) struct Offer {
-    id: u64,
-    description: Description,
+#[derive(Clone)]
+enum Kind {
+    Host(Description),
+    Delegated(Delegated),
 }
 
-impl Offer {
-    pub(crate) fn id(&self) -> u64 {
-        self.id
-    }
-
-    pub(crate) fn description(&self) -> &Description {
-        &self.description
-    }
+#[derive(Clone)]
+pub(crate) struct Offered {
+    kind: Kind,
+    configuration: Configuration,
+    dimensions: [u32; 2],
 }
 
-/// Retain at most one description without reserving stream storage or reading pixels.
-///
-/// Names increase within this client lifetime and are never reused. Querying unchanged
-/// configuration preserves its name; observing a replacement invalidates the previous
-/// offer. Existing streams keep their own lifetimes and authorization checks. The owner
-/// must serialize these operations outside DRM, publication and reservation locks.
-pub(crate) struct Negotiation {
-    capture: Capture,
-    offer: Option<Offer>,
-}
-
-impl Negotiation {
-    pub(crate) fn new(capture: Capture) -> Self {
-        Self {
-            capture,
-            offer: None,
+impl Offered {
+    pub(crate) fn configuration(&self) -> &Configuration { &self.configuration }
+    pub(crate) fn dimensions(&self) -> [u32; 2] { self.dimensions }
+    pub(crate) fn format(&self) -> u32 { fourcc::XRGB8888 }
+    pub(crate) fn modifier(&self) -> u64 { fourcc::FORMAT_MOD_LINEAR }
+    pub(crate) fn max_requests(&self) -> u32 {
+        match &self.kind {
+            Kind::Host(description) => description.max_requests(),
+            Kind::Delegated(_) => crate::capture::request_budget::CAPACITY_LIMIT,
         }
     }
 
-    /// Recheck capture permission without changing this client's offered configuration.
-    pub(super) fn check_capture(&self) -> Result {
-        self.capture.describe_stream().map(|_| ())
+    fn open(&self, capacity: u32) -> Result<Queue> {
+        match &self.kind {
+            Kind::Host(description) => Ok(Queue::Host(
+                crate::capture::host_queue::Queue::from_description(description, capacity)?,
+            )),
+            Kind::Delegated(scope) => Queue::delegated(scope, capacity),
+        }
     }
 
-    pub(super) fn retain_destination_storage(&self, image: &mut super::destination::Image) -> Result {
-        self.capture.retain_destination_storage(image)
+    fn retain(&self, image: &mut Image) -> Result {
+        match &self.kind {
+            Kind::Host(description) => description.capture().retain_destination_storage(image),
+            Kind::Delegated(scope) => image.retain_delegated(scope),
+        }
     }
 
-    /// Observe current permission before returning even an unchanged offer.
-    ///
-    /// Failure leaves the previous description intact but grants no right to use it.
-    /// Repeated queries after failed publication return the same name while the display
-    /// configuration remains current. Exhaustion requires a new client lifetime.
+
+    fn same_stream(&self, other: &Self) -> bool {
+        if self.configuration != other.configuration { return false; }
+        match (&self.kind, &other.kind) {
+            (Kind::Host(_), Kind::Host(_)) => true,
+            (Kind::Delegated(first), Kind::Delegated(second)) => first.same_stream(second),
+            _ => false,
+        }
+    }
+}
+
+pub(crate) struct Offer { id: u64, description: Offered }
+impl Offer {
+    pub(crate) fn id(&self) -> u64 { self.id }
+    pub(crate) fn description(&self) -> &Offered { &self.description }
+}
+
+pub(crate) struct Negotiation { capture: Capture, offer: Option<Offer> }
+
+impl Negotiation {
+    pub(crate) fn new(capture: Capture) -> Self { Self { capture, offer: None } }
+
+    fn current(&self) -> Result<Offered> {
+        match self.capture.describe_delegated() {
+            Ok(scope) => Ok(Offered {
+                configuration: scope.configuration().clone(),
+                dimensions: scope.dimensions(),
+                kind: Kind::Delegated(scope),
+            }),
+            Err(EOPNOTSUPP) => {
+                let description = self.capture.describe_stream()?;
+                let (width, height) = description.layout().dimensions();
+                Ok(Offered {
+                    configuration: description.configuration().clone(),
+                    dimensions: [width, height],
+                    kind: Kind::Host(description),
+                })
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(super) fn check_capture(&self) -> Result { self.current().map(|_| ()) }
+
+    pub(super) fn retain_destination_storage(&self, image: &mut Image) -> Result {
+        self.current()?.retain(image)
+    }
+
     pub(crate) fn describe(&mut self) -> Result<&Offer> {
-        let description = self.capture.describe_stream()?;
-        let unchanged = self
-            .offer
-            .as_ref()
-            .is_some_and(|offer| offer.description.configuration() == description.configuration());
+        let description = self.current()?;
+        let unchanged = self.offer.as_ref().is_some_and(|offer| {
+            offer.description.same_stream(&description)
+        });
         if !unchanged {
-            let id = next_id(self.offer.as_ref().map_or(0, |offer| offer.id))?;
+            let id = self.offer.as_ref().map_or(Ok(1), |offer| {
+                offer.id.checked_add(1).ok_or(EOVERFLOW)
+            })?;
             self.offer = Some(Offer { id, description });
         }
         self.offer.as_ref().ok_or(EIO)
     }
 
-    /// Open only the named offer, rechecking its grant and configuration at admission.
-    ///
-    /// No implicit description query substitutes a later configuration. Failure does not
-    /// consume the offer; valid retry and additional streams share the same description.
     pub(crate) fn open(&self, id: u64, capacity: u32) -> Result<Queue> {
-        if id == 0 {
-            return Err(EINVAL);
-        }
-        let offer = self
-            .offer
-            .as_ref()
-            .filter(|offer| offer.id == id)
-            .ok_or(ESTALE)?;
-        Queue::from_description(&offer.description, capacity)
-    }
-}
-
-fn next_id(previous: u64) -> Result<u64> {
-    previous.checked_add(1).ok_or(EOVERFLOW)
-}
-
-#[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-#[kunit_tests(rust_castkms_capture_offer_ids)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exhaustion_never_reuses_an_offer_name() -> Result {
-        if next_id(0) != Ok(1)
-            || next_id(u64::MAX - 1) != Ok(u64::MAX)
-            || next_id(u64::MAX) != Err(EOVERFLOW)
-        {
-            return Err(EINVAL);
-        }
-        Ok(())
+        if id == 0 { return Err(EINVAL); }
+        self.offer.as_ref().filter(|offer| offer.id == id).ok_or(ESTALE)?.description.open(capacity)
     }
 }

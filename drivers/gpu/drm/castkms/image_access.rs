@@ -8,7 +8,6 @@ use crate::{
         compose::Completed,
         layout::Layout, //
     },
-    host_snapshot::Snapshot,
     output::Identity,
     scene::Configuration,
     Driver, //
@@ -70,19 +69,6 @@ impl<'a> Current<'a> {
             image.configuration(),
             image.layout(),
             image.owner(),
-        )
-    }
-
-    /// Validate an independent copy against current access without relabeling its content.
-    ///
-    /// Like an ordinary completed image, a snapshot may contain earlier content within the
-    /// same authorized interval. Success applies only while this callback's guards are held.
-    pub(crate) fn check_snapshot(&self, snapshot: &Snapshot) -> Result {
-        self.check_origin(
-            snapshot.output_identity(),
-            snapshot.configuration(),
-            snapshot.layout(),
-            snapshot.owner(),
         )
     }
 

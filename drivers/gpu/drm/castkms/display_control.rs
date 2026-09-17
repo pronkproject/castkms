@@ -131,57 +131,6 @@ impl Target {
         })?
     }
 
-    /// Stabilize installed transition metadata, including an explicitly disabled output.
-    /// Unlike enabled control, this exposes no source storage or image authority.
-    pub(crate) fn with_installed_transition<R>(
-        &self,
-        registered: &Device<Driver, Registered>,
-        f: impl FnOnce(TransitionCurrent<'_>, &LockedState<'_, Driver>) -> Result<R>,
-    ) -> Result<R> {
-        let device: &Device<Driver> = registered;
-        if !core::ptr::eq(self.device(), device) {
-            return Err(EINVAL);
-        }
-        let identity = self.master.lock_current_identity().ok_or(EACCES)?;
-        registered.with_modeset_locks(|locked| {
-            let source = locked.preparation_source(self.crtc.crtc())?.ok_or(EAGAIN)?;
-            identity.with_objects(|guard| {
-                if !guard.holds_object(self.crtc.crtc())
-                    || !guard.holds_object(&*self.connector)
-                    || !kernel::sync::Arc::ptr_eq(
-                        &self.crtc.crtc().display.monitor,
-                        &self.connector.monitor,
-                    )
-                {
-                    return Err(EACCES);
-                }
-                self.display().output.with_accepted(|accepted| {
-                    let accepted = accepted.ok_or(EAGAIN)?;
-                    if !core::ptr::eq(source, accepted.source) {
-                        return Err(EAGAIN);
-                    }
-                    if accepted
-                        .configuration
-                        .as_ref()
-                        .is_some_and(|configuration| {
-                            configuration.connector_mask() & self.connector.mask() == 0
-                        })
-                    {
-                        return Err(EACCES);
-                    }
-                    f(
-                        TransitionCurrent {
-                            configuration: accepted.configuration.as_ref(),
-                            scene: accepted.scene,
-                            _task: NotThreadSafe,
-                        },
-                        locked,
-                    )
-                })
-            })
-        })?
-    }
-
     /// Inspect current control and configuration while excluding their replacement.
     ///
     /// Lock order is native master, object IDs, then accepted output. The callback must
@@ -222,33 +171,6 @@ impl Target {
 
     pub(crate) fn display(&self) -> &crate::device::Display {
         &self.crtc.crtc().display
-    }
-}
-
-/// Callback-local installed-and-published metadata, not permission to access storage.
-pub(crate) struct TransitionCurrent<'a> {
-    configuration: Option<&'a Configuration>,
-    scene: Option<&'a Scene>,
-    _task: NotThreadSafe,
-}
-
-impl TransitionCurrent<'_> {
-    pub(crate) fn configuration(&self) -> Option<&Configuration> {
-        self.configuration
-    }
-
-    pub(crate) fn check_contract(
-        &self,
-        contract: &crate::execution::validation::Contract,
-    ) -> Result {
-        use crate::execution::validation::SceneView;
-        contract.check(match self.configuration {
-            Some(configuration) => SceneView::Enabled {
-                scene: self.scene.ok_or(EAGAIN)?,
-                output: configuration.dimensions(),
-            },
-            None => SceneView::Disabled,
-        })
     }
 }
 
@@ -337,6 +259,12 @@ impl Current<'_> {
             return Err(ESTALE);
         }
         Ok(())
+    }
+
+    pub(crate) fn renderer_worker(
+        &self,
+    ) -> Result<kernel::sync::Arc<crate::renderer::ready::Worker>> {
+        self.scene.ok_or(EAGAIN)?.renderer_worker()
     }
 
     /// Claim and retain the current scene while its authority and generation are stable.

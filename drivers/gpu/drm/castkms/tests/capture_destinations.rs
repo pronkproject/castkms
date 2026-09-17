@@ -27,7 +27,7 @@ mod cases {
                 128,
             )?;
             check(core::ptr::eq(image.buffer(), &*buffer))?;
-            check(image.layout() == layout)?;
+            check(image.dimensions() == [13, 11])?;
             check(image.pitch() == 64)?;
             check(image.offset() == 128)?;
             drop(buffer);

@@ -125,7 +125,7 @@ unsafe impl ClientOwner for Client {
         self.stream(stream)?.dequeue(|completion| {
             publish(Completion::new(
                 completion.use_id,
-                completion.result.map(|frame| frame.metadata().completed_at()),
+                completion.result.map(|output| output.metadata().completed_at()),
             )?)
         })
     }
@@ -139,11 +139,10 @@ unsafe impl ClientOwner for Client {
             return Err(EOPNOTSUPP);
         }
         let [width, height] = destination.dimensions();
-        let layout = crate::host_compositor::layout::Layout::new(width, height)?;
         let plane = destination.plane(0).ok_or(EINVAL)?;
-        let image = Image::new(
+        let image = Image::new_dimensions(
             plane.buffer().into(),
-            layout,
+            [width, height],
             destination.format(),
             destination.modifier(),
             plane.stride() as usize,
@@ -167,7 +166,7 @@ unsafe impl ClientOwner for Client {
     fn describe(&mut self) -> Result<Description> {
         let offer = self.negotiation.describe()?;
         let image = offer.description();
-        let (width, height) = image.layout().dimensions();
+        let [width, height] = image.dimensions();
         Description::new(
             offer.id(),
             [width, height],

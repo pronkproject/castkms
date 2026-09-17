@@ -4,7 +4,7 @@
 
 use crate::capture::{
     budget::STREAM_LIMIT,
-    host_queue::Queue, //
+    client_queue::Queue,
 };
 use kernel::{
     drm::capture::{

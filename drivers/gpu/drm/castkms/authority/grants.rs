@@ -14,6 +14,7 @@ use kernel::{
 };
 
 const MAX_GRANTS: usize = 256;
+const MAX_DEVICE_WORKERS: usize = 512;
 
 struct Entry {
     revocation: ARef<Revocation>,
@@ -26,6 +27,7 @@ struct State {
 
 #[pin_data]
 pub(crate) struct Registry {
+    capacity: usize,
     #[pin]
     state: Mutex<State>,
     #[pin]
@@ -34,8 +36,17 @@ pub(crate) struct Registry {
 
 impl Registry {
     pub(crate) fn new() -> Result<Arc<Self>> {
+        Self::new_with_capacity(MAX_GRANTS)
+    }
+
+    pub(crate) fn new_device_workers() -> Result<Arc<Self>> {
+        Self::new_with_capacity(MAX_DEVICE_WORKERS)
+    }
+
+    fn new_with_capacity(capacity: usize) -> Result<Arc<Self>> {
         Arc::pin_init(
             pin_init!(Self {
+                capacity,
                 state <- kernel::new_mutex!(State { closed: false, grants: KVec::new() }),
                 cleanup_done <- Completion::new(),
             }),
@@ -66,7 +77,7 @@ impl Registry {
             {
                 return Err(EEXIST);
             }
-            if state.grants.len() == MAX_GRANTS {
+            if state.grants.len() == self.capacity {
                 return Err(EBUSY);
             }
             state.grants.push(entry.clone(), GFP_KERNEL)?;
@@ -77,8 +88,7 @@ impl Registry {
         })
     }
 
-    /// Revoke the observed generation, allowing new grants from a later master.
-    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    /// Revoke every tracked work generation without closing later registration.
     pub(crate) fn revoke_all(&self) {
         loop {
             let next = self

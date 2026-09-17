@@ -4,10 +4,7 @@
 
 use super::Topology;
 use crate::{
-    execution::validation::{
-        Contract,
-        SceneView, //
-    },
+    execution::validation::SceneView,
     output::Identity,
     renderer::ready::Worker, //
 };
@@ -108,7 +105,7 @@ impl Backend {
         scene: SceneView<'_>,
     ) -> Result {
         match self {
-            Self::Host => Contract::Host.check(scene),
+            Self::Host => crate::execution::validation::check_host(scene),
             Self::Renderer(worker) => {
                 if worker.output() != output {
                     return Err(EINVAL);
