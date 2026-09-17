@@ -145,6 +145,30 @@ static void suggestions_do_not_select_entries(struct kunit *test)
 	snapshot(test, fixture->list, info->generation);
 }
 
+static void suggested_add_is_one_observable_change(struct kunit *test)
+{
+	struct list_fixture *fixture = new_fixture(test, 2);
+	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	const struct drm_constraints_snapshot_info *info;
+	u64 id = drm_constraints_entry_id(target), generation;
+	int result;
+
+	result = drm_constraints_list_add_suggested(fixture->list, target);
+	KUNIT_ASSERT_EQ(test, result, 0);
+	info = drm_constraints_snapshot_info(snapshot(test, fixture->list, 0));
+	KUNIT_EXPECT_EQ(test, info->generation, 2);
+	KUNIT_EXPECT_EQ(test, info->selected_id,
+			drm_constraints_entry_id(fixture->initial));
+	KUNIT_EXPECT_EQ(test, info->suggested_id, id);
+	KUNIT_EXPECT_EQ(test, info->count, 2);
+	generation = info->generation;
+	result = drm_constraints_list_add_suggested(fixture->list, target);
+	KUNIT_EXPECT_EQ(test, result, -EEXIST);
+	info = drm_constraints_snapshot_info(snapshot(test, fixture->list, generation));
+	KUNIT_EXPECT_EQ(test, info->suggested_id, id);
+	KUNIT_EXPECT_EQ(test, info->count, 2);
+}
+
 static void removing_an_entry_preserves_other_identities(struct kunit *test)
 {
 	struct list_fixture *fixture = new_fixture(test, 3);
@@ -174,10 +198,13 @@ static void lists_reject_foreign_scope_and_overflow(struct kunit *test)
 	struct list_fixture *other = new_fixture(test, 1);
 	struct drm_constraints_entry *wrong_output = new_entry(test, fixture, 23);
 	struct drm_constraints_entry *target = new_entry(test, fixture, 19);
+	int result;
 
 	KUNIT_EXPECT_EQ(test, drm_constraints_list_add(fixture->list, other->initial), -EINVAL);
 	KUNIT_EXPECT_EQ(test, drm_constraints_list_add(fixture->list, wrong_output), -EINVAL);
 	KUNIT_EXPECT_EQ(test, drm_constraints_list_add(fixture->list, target), -ENOSPC);
+	result = drm_constraints_list_add_suggested(fixture->list, target);
+	KUNIT_EXPECT_EQ(test, result, -ENOSPC);
 	KUNIT_EXPECT_EQ(test, drm_constraints_list_add(fixture->list, fixture->initial), -EEXIST);
 	KUNIT_EXPECT_EQ(test, drm_constraints_list_withdraw(fixture->list, 0), -ENOENT);
 	snapshot(test, fixture->list, 1);
@@ -666,6 +693,7 @@ static struct kunit_case drm_constraints_list_tests[] = {
 	KUNIT_CASE(snapshots_retain_immutable_entries),
 	KUNIT_CASE(changes_invalidate_expected_generations),
 	KUNIT_CASE(suggestions_do_not_select_entries),
+	KUNIT_CASE(suggested_add_is_one_observable_change),
 	KUNIT_CASE(removing_an_entry_preserves_other_identities),
 	KUNIT_CASE(lists_reject_foreign_scope_and_overflow),
 	KUNIT_CASE(construction_requires_bounded_matching_scope),

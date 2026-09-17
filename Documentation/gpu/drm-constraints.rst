@@ -97,6 +97,10 @@ clears it. Withdrawing an offer excludes new selection but cannot undo an
 accepted scene. A withdrawn, unselected listing can be forgotten while
 independent references continue retaining the entry.
 
+Providers that publish a ready entry as their new suggestion use the combined
+add-and-suggest operation. The entry and advisory target then become visible in
+one generation change; failures publish neither change.
+
 ``drm_constraints_list_snapshot()`` returns a bounded immutable list with
 generation, selected ID, suggested ID and availability metadata. A nonzero
 expected generation must match or the call returns ``-ESTALE``. Snapshots

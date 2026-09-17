@@ -92,6 +92,8 @@ drm_constraints_list_lookup(struct drm_constraints_list *list, u64 id);
  */
 int drm_constraints_list_add(struct drm_constraints_list *list,
 			     struct drm_constraints_entry *entry);
+int drm_constraints_list_add_suggested(struct drm_constraints_list *list,
+				       struct drm_constraints_entry *entry);
 int drm_constraints_list_withdraw(struct drm_constraints_list *list, u64 id);
 int drm_constraints_list_forget(struct drm_constraints_list *list, u64 id);
 int drm_constraints_list_suggest(struct drm_constraints_list *list, u64 id);
