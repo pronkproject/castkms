@@ -2,6 +2,7 @@
 #ifndef __DRM_CONSTRAINTS_H__
 #define __DRM_CONSTRAINTS_H__
 
+#include <linux/bits.h>
 #include <linux/types.h>
 
 struct drm_constraints_description;
@@ -11,9 +12,16 @@ struct drm_constraints_description;
 #define DRM_CONSTRAINTS_MAX_PROPERTIES 64
 #define DRM_CONSTRAINTS_MAX_PLANE_LIMITS 64
 #define DRM_CONSTRAINTS_MAX_PLANES_PER_LIMIT 64
+#define DRM_CONSTRAINTS_MAX_PLANE_GEOMETRIES 64
 #define DRM_CONSTRAINTS_FORMAT_IMPLICIT (1U << 0)
 #define DRM_CONSTRAINTS_FORMAT_STORAGE_NATIVE 1U
 #define DRM_CONSTRAINTS_FORMAT_STORAGE_IMPORTED 2U
+#define DRM_CONSTRAINTS_GEOMETRY_CROP BIT(0)
+#define DRM_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE BIT(1)
+#define DRM_CONSTRAINTS_GEOMETRY_POSITION BIT(2)
+#define DRM_CONSTRAINTS_GEOMETRY_FLAGS (DRM_CONSTRAINTS_GEOMETRY_CROP | \
+					DRM_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE | \
+					DRM_CONSTRAINTS_GEOMETRY_POSITION)
 
 /**
  * struct drm_constraints_size - inclusive integer pixel dimensions
@@ -89,6 +97,25 @@ struct drm_constraints_property {
 };
 
 /**
+ * struct drm_constraints_plane_geometry - one plane's sampling restrictions
+ * @plane_id: existing DRM plane object ID
+ * @flags: permitted DRM_CONSTRAINTS_GEOMETRY_* operations
+ * @min_scale: minimum source extent / destination extent, unsigned 16.16
+ * @max_scale: maximum source extent / destination extent, unsigned 16.16
+ *
+ * An absent record adds no geometry restriction. Without CROP, the source
+ * rectangle covers the complete framebuffer. Without FRACTIONAL_SOURCE, every
+ * source coordinate and extent is integral. Without POSITION, CRTC_X and
+ * CRTC_Y are zero. Equal 1.0 scale bounds require identity scaling.
+ */
+struct drm_constraints_plane_geometry {
+	u32 plane_id;
+	u32 flags;
+	u32 min_scale;
+	u32 max_scale;
+};
+
+/**
  * struct drm_constraints_plane_limit - one overlapping active-plane ceiling
  * @max_active: maximum simultaneously used planes from this group
  * @count: number of distinct plane IDs
@@ -105,9 +132,9 @@ struct drm_constraints_plane_limit {
 };
 
 /*
- * Immutable, independently referenced allocation, scalar-property and
- * active-plane-limit information. Creation copies all input before returning;
- * the caller retains ownership of its input.
+ * Immutable, independently referenced allocation, plane-geometry,
+ * scalar-property and active-plane-limit information. Creation copies all
+ * input before returning; the caller retains ownership of its input.
  * Formats must contain distinct (plane_id, format, modifier, flags) tuples. These
  * limits are necessary, not sufficient, for display: provider atomic checks
  * still validate complete scenes, standard properties and shared resources.
@@ -124,6 +151,17 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 				   const struct drm_constraints_plane_limit *plane_limits,
 				   unsigned int plane_limit_count);
 struct drm_constraints_description *
+drm_constraints_description_create_with_geometry(
+	const struct drm_constraints_size *output,
+	const struct drm_constraints_format *formats,
+	unsigned int count,
+	const struct drm_constraints_property *properties,
+	unsigned int property_count,
+	const struct drm_constraints_plane_limit *plane_limits,
+	unsigned int plane_limit_count,
+	const struct drm_constraints_plane_geometry *plane_geometries,
+	unsigned int plane_geometry_count);
+struct drm_constraints_description *
 drm_constraints_description_get(struct drm_constraints_description *description);
 void drm_constraints_description_put(struct drm_constraints_description *description);
 
@@ -139,15 +177,19 @@ drm_constraints_description_properties(const struct drm_constraints_description 
 const struct drm_constraints_plane_limit *
 drm_constraints_description_plane_limits(const struct drm_constraints_description *description,
 					 unsigned int *count);
+const struct drm_constraints_plane_geometry *
+drm_constraints_description_plane_geometries(const struct drm_constraints_description *description,
+					     unsigned int *count);
 
 /*
  * Return whether @candidate supports every state described by @required.
  *
- * The comparison covers the common allocation, scalar-property and active-plane
- * metadata. Plane-limit implication is deliberately conservative: a nontrivial
- * candidate limit must have an identical plane set in @required with an equal or
- * tighter ceiling. True proves coverage of the represented metadata; false may
- * also mean that this bounded structural comparison cannot prove the relationship.
+ * The comparison covers common allocation, plane-geometry, scalar-property and
+ * active-plane metadata. Plane-limit implication is deliberately conservative:
+ * a nontrivial candidate limit must have an identical plane set in @required
+ * with an equal or tighter ceiling. True proves coverage of the represented
+ * metadata; false may also mean that this bounded structural comparison cannot
+ * prove the relationship.
  * Provider checks outside these descriptions remain separate.
  */
 bool drm_constraints_description_covers(const struct drm_constraints_description *candidate,

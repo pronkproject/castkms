@@ -277,6 +277,46 @@ static int check_plane_limits(struct constraints_update *update,
 	return 0;
 }
 
+static int check_plane_geometry(struct drm_constraints_description *description,
+				struct drm_plane *plane,
+				const struct drm_plane_state *state)
+{
+	const struct drm_constraints_plane_geometry *geometries;
+	const struct drm_constraints_plane_geometry *geometry = NULL;
+	u64 framebuffer_extent, source_extent, destination_extent;
+	unsigned int count, i, axis;
+
+	geometries = drm_constraints_description_plane_geometries(description, &count);
+	for (i = 0; i < count; i++)
+		if (geometries[i].plane_id == plane->base.id) {
+			geometry = &geometries[i];
+			break;
+		}
+	if (!geometry)
+		return 0;
+	if (!(geometry->flags & DRM_CONSTRAINTS_GEOMETRY_POSITION) &&
+	    (state->crtc_x || state->crtc_y))
+		return -EINVAL;
+	if (!(geometry->flags & DRM_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE) &&
+	    ((state->src_x | state->src_y | state->src_w | state->src_h) & 0xffff))
+		return -EINVAL;
+	for (axis = 0; axis < 2; axis++) {
+		u64 source_origin = axis ? state->src_y : state->src_x;
+
+		source_extent = axis ? state->src_h : state->src_w;
+		destination_extent = axis ? state->crtc_h : state->crtc_w;
+		framebuffer_extent = (u64)(axis ? state->fb->height : state->fb->width) << 16;
+		if (!source_extent || !destination_extent ||
+		    source_origin + source_extent > framebuffer_extent ||
+		    (!(geometry->flags & DRM_CONSTRAINTS_GEOMETRY_CROP) &&
+		     (source_origin || source_extent != framebuffer_extent)) ||
+		    source_extent < destination_extent * geometry->min_scale ||
+		    source_extent > destination_extent * geometry->max_scale)
+			return -EINVAL;
+	}
+	return 0;
+}
+
 static int check_scene(struct drm_constraints_entry *entry, void *data)
 {
 	struct constraints_update *update = data;
@@ -318,6 +358,9 @@ static int check_scene(struct drm_constraints_entry *entry, void *data)
 		}
 		if (j == count)
 			return -EINVAL;
+		ret = check_plane_geometry(description, plane, plane_state);
+		if (ret)
+			return ret;
 		mask |= drm_plane_mask(plane);
 	}
 	if (mask != update->crtc->plane_mask)

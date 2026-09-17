@@ -165,6 +165,64 @@ impl Format {
     }
 }
 
+/// Sampling and placement operations permitted for one KMS plane.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PlaneGeometry(bindings::drm_constraints_plane_geometry);
+
+impl PlaneGeometry {
+    /// Describe inclusive 16.16 source-to-destination scaling bounds.
+    ///
+    /// Bounds must be nonzero and ordered. Boolean arguments permit cropping,
+    /// fractional source coordinates and nonzero destination positions respectively.
+    pub const fn new(
+        plane_id: u32,
+        crop: bool,
+        fractional_source: bool,
+        position: bool,
+        min_scale: u32,
+        max_scale: u32,
+    ) -> Self {
+        Self(bindings::drm_constraints_plane_geometry {
+            plane_id,
+            flags: if crop {
+                bindings::DRM_MODE_CONSTRAINTS_GEOMETRY_CROP
+            } else {
+                0
+            } | if fractional_source {
+                bindings::DRM_MODE_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE
+            } else {
+                0
+            } | if position {
+                bindings::DRM_MODE_CONSTRAINTS_GEOMETRY_POSITION
+            } else {
+                0
+            },
+            min_scale,
+            max_scale,
+        })
+    }
+
+    /// Plane object ID named by this rule.
+    pub const fn plane_id(&self) -> u32 {
+        self.0.plane_id
+    }
+
+    /// Whether crop, fractional source coordinates and positioning are permitted.
+    pub const fn operations(&self) -> (bool, bool, bool) {
+        (
+            self.0.flags & bindings::DRM_MODE_CONSTRAINTS_GEOMETRY_CROP != 0,
+            self.0.flags & bindings::DRM_MODE_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE != 0,
+            self.0.flags & bindings::DRM_MODE_CONSTRAINTS_GEOMETRY_POSITION != 0,
+        )
+    }
+
+    /// Inclusive unsigned 16.16 source-to-destination scale bounds.
+    pub const fn scale(&self) -> (u32, u32) {
+        (self.0.min_scale, self.0.max_scale)
+    }
+}
+
 /// One overlapping maximum for simultaneously used KMS planes.
 ///
 /// The description copies the borrowed plane IDs. Every supplied limit applies, allowing an
@@ -239,21 +297,33 @@ impl Description {
     /// invalid modifiers, malformed storage rules and duplicate plane/format/modifier tuples.
     /// Arbitrary supported tiled modifiers are not restricted to the kernel compositor's linear
     /// layouts.
-    /// Scalar rules must be valid and distinct by object/property ID; empty rule and limit lists
-    /// are valid.
+    /// Scalar rules must be valid and distinct by object/property ID; empty rule, geometry and
+    /// limit lists are valid.
     pub fn new(
         output: Size,
         formats: &[Format],
         properties: &[Property],
         plane_limits: &[PlaneLimit<'_>],
     ) -> Result<ARef<Self>> {
+        Self::new_with_geometry(output, formats, properties, plane_limits, &[])
+    }
+
+    /// Validate and copy a description with explicit per-plane geometry restrictions.
+    pub fn new_with_geometry(
+        output: Size,
+        formats: &[Format],
+        properties: &[Property],
+        plane_limits: &[PlaneLimit<'_>],
+        plane_geometries: &[PlaneGeometry],
+    ) -> Result<ARef<Self>> {
         let count = formats.len().try_into().map_err(|_| E2BIG)?;
         let property_count = properties.len().try_into().map_err(|_| E2BIG)?;
         let plane_limit_count = plane_limits.len().try_into().map_err(|_| E2BIG)?;
+        let plane_geometry_count = plane_geometries.len().try_into().map_err(|_| E2BIG)?;
         // SAFETY: Transparent wrappers have native layout, all inputs remain readable for the
         // call, and native construction copies all input without retaining borrowed pointers.
         let raw = from_err_ptr(unsafe {
-            bindings::drm_constraints_description_create(
+            bindings::drm_constraints_description_create_with_geometry(
                 &output.0,
                 formats.as_ptr().cast(),
                 count,
@@ -261,6 +331,8 @@ impl Description {
                 property_count,
                 plane_limits.as_ptr().cast(),
                 plane_limit_count,
+                plane_geometries.as_ptr().cast(),
+                plane_geometry_count,
             )
         })?;
         // SAFETY: Successful construction transfers one non-null initialized native reference.
@@ -315,9 +387,23 @@ impl Description {
         unsafe { slice::from_raw_parts(ptr.cast(), count as usize) }
     }
 
+    /// Borrow immutable sampling restrictions. Missing planes have no added geometry rule.
+    pub fn plane_geometries(&self) -> &[PlaneGeometry] {
+        let mut count = 0;
+        // SAFETY: The description owns a bounded immutable array retained by this borrow.
+        let ptr = unsafe {
+            bindings::drm_constraints_description_plane_geometries(self.0.get(), &mut count)
+        };
+        if count == 0 {
+            return &[];
+        }
+        // SAFETY: A nonempty native array is initialized and has PlaneGeometry's representation.
+        unsafe { slice::from_raw_parts(ptr.cast(), count as usize) }
+    }
+
     /// Test whether this description structurally covers all of `required`.
     ///
-    /// A true result proves coverage of the common allocation, scalar-property and
+    /// A true result proves coverage of common allocation, plane-geometry, scalar-property and
     /// active-plane metadata. A false result can also mean that the conservative native
     /// comparison cannot prove an implication between differently shaped plane limits.
     /// Provider validation not represented by either description remains separate.

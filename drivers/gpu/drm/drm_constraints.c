@@ -18,6 +18,8 @@ struct drm_constraints_description {
 	struct drm_constraints_property *properties;
 	unsigned int plane_limit_count;
 	struct drm_constraints_plane_limit *plane_limits;
+	unsigned int plane_geometry_count;
+	struct drm_constraints_plane_geometry *plane_geometries;
 	struct drm_constraints_format formats[];
 };
 
@@ -67,13 +69,16 @@ static bool size_valid(const struct drm_constraints_size *size)
 }
 
 struct drm_constraints_description *
-drm_constraints_description_create(const struct drm_constraints_size *output,
-				   const struct drm_constraints_format *formats,
-				   unsigned int count,
-				   const struct drm_constraints_property *properties,
-				   unsigned int property_count,
-				   const struct drm_constraints_plane_limit *plane_limits,
-				   unsigned int plane_limit_count)
+drm_constraints_description_create_with_geometry(
+	const struct drm_constraints_size *output,
+	const struct drm_constraints_format *formats,
+	unsigned int count,
+	const struct drm_constraints_property *properties,
+	unsigned int property_count,
+	const struct drm_constraints_plane_limit *plane_limits,
+	unsigned int plane_limit_count,
+	const struct drm_constraints_plane_geometry *plane_geometries,
+	unsigned int plane_geometry_count)
 {
 	struct drm_constraints_description *description;
 	unsigned int i, j, copied_limits = 0;
@@ -83,7 +88,9 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 	    !size_valid(output) || property_count > DRM_CONSTRAINTS_MAX_PROPERTIES ||
 	    (property_count && !properties) ||
 	    plane_limit_count > DRM_CONSTRAINTS_MAX_PLANE_LIMITS ||
-	    (plane_limit_count && !plane_limits))
+	    (plane_limit_count && !plane_limits) ||
+	    plane_geometry_count > DRM_CONSTRAINTS_MAX_PLANE_GEOMETRIES ||
+	    (plane_geometry_count && !plane_geometries))
 		return ERR_PTR(-EINVAL);
 	for (i = 0; i < count; i++) {
 		if (!formats[i].plane_id || !__drm_format_info(formats[i].format) ||
@@ -132,6 +139,16 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 					return ERR_PTR(-EEXIST);
 		}
 	}
+	for (i = 0; i < plane_geometry_count; i++) {
+		if (!plane_geometries[i].plane_id ||
+		    (plane_geometries[i].flags & ~DRM_CONSTRAINTS_GEOMETRY_FLAGS) ||
+		    !plane_geometries[i].min_scale ||
+		    plane_geometries[i].min_scale > plane_geometries[i].max_scale)
+			return ERR_PTR(-EINVAL);
+		for (j = 0; j < i; j++)
+			if (plane_geometries[i].plane_id == plane_geometries[j].plane_id)
+				return ERR_PTR(-EEXIST);
+	}
 	description = kvzalloc(struct_size(description, formats, count), GFP_KERNEL);
 	if (!description)
 		return ERR_PTR(-ENOMEM);
@@ -158,11 +175,20 @@ drm_constraints_description_create(const struct drm_constraints_size *output,
 			copied_limits++;
 		}
 	}
+	if (plane_geometry_count) {
+		description->plane_geometries = kmemdup_array(plane_geometries,
+							      plane_geometry_count,
+							      sizeof(*plane_geometries),
+							      GFP_KERNEL);
+		if (!description->plane_geometries)
+			goto err_plane_limits;
+	}
 	kref_init(&description->ref);
 	description->output = *output;
 	description->count = count;
 	description->property_count = property_count;
 	description->plane_limit_count = plane_limit_count;
+	description->plane_geometry_count = plane_geometry_count;
 	memcpy(description->formats, formats, sizeof(*formats) * count);
 	return description;
 
@@ -174,6 +200,20 @@ err_properties:
 	kfree(description->properties);
 	kvfree(description);
 	return ERR_PTR(-ENOMEM);
+}
+EXPORT_SYMBOL_GPL(drm_constraints_description_create_with_geometry);
+
+struct drm_constraints_description *
+drm_constraints_description_create(const struct drm_constraints_size *output,
+				   const struct drm_constraints_format *formats,
+				   unsigned int count,
+				   const struct drm_constraints_property *properties,
+				   unsigned int property_count,
+				   const struct drm_constraints_plane_limit *plane_limits,
+				   unsigned int plane_limit_count)
+{
+	return drm_constraints_description_create_with_geometry(output, formats, count,
+			properties, property_count, plane_limits, plane_limit_count, NULL, 0);
 }
 EXPORT_SYMBOL_GPL(drm_constraints_description_create);
 
@@ -193,6 +233,7 @@ static void description_free(struct kref *ref)
 
 	for (i = 0; i < description->plane_limit_count; i++)
 		kfree(description->plane_limits[i].plane_ids);
+	kfree(description->plane_geometries);
 	kfree(description->plane_limits);
 	kfree(description->properties);
 	kvfree(description);
@@ -237,6 +278,15 @@ drm_constraints_description_plane_limits(const struct drm_constraints_descriptio
 	return description->plane_limits;
 }
 EXPORT_SYMBOL_GPL(drm_constraints_description_plane_limits);
+
+const struct drm_constraints_plane_geometry *
+drm_constraints_description_plane_geometries(const struct drm_constraints_description *description,
+					     unsigned int *count)
+{
+	*count = description->plane_geometry_count;
+	return description->plane_geometries;
+}
+EXPORT_SYMBOL_GPL(drm_constraints_description_plane_geometries);
 
 static bool size_covers(const struct drm_constraints_size *candidate,
 			const struct drm_constraints_size *required)
@@ -301,6 +351,15 @@ static bool plane_sets_equal(const struct drm_constraints_plane_limit *left,
 	return true;
 }
 
+static bool geometry_covers(const struct drm_constraints_plane_geometry *candidate,
+			    const struct drm_constraints_plane_geometry *required)
+{
+	return candidate->plane_id == required->plane_id &&
+		(candidate->flags & required->flags) == required->flags &&
+		candidate->min_scale <= required->min_scale &&
+		candidate->max_scale >= required->max_scale;
+}
+
 bool drm_constraints_description_covers(const struct drm_constraints_description *candidate,
 					const struct drm_constraints_description *required)
 {
@@ -340,6 +399,16 @@ bool drm_constraints_description_covers(const struct drm_constraints_description
 				break;
 		}
 		if (j == required->plane_limit_count)
+			return false;
+	}
+
+	/* A missing candidate rule leaves ordinary plane geometry unrestricted. */
+	for (i = 0; i < candidate->plane_geometry_count; i++) {
+		for (j = 0; j < required->plane_geometry_count; j++)
+			if (geometry_covers(&candidate->plane_geometries[i],
+					    &required->plane_geometries[j]))
+				break;
+		if (j == required->plane_geometry_count)
 			return false;
 	}
 	return true;

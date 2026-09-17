@@ -502,6 +502,69 @@ static void drm_constraints_description_rejects_incomplete_coverage(struct kunit
 #undef EXPECT_INCOMPLETE
 }
 
+static void drm_constraints_description_copies_plane_geometry(struct kunit *test)
+{
+	struct drm_constraints_plane_geometry geometries[] = {
+		{
+			.plane_id = 17,
+			.flags = DRM_CONSTRAINTS_GEOMETRY_CROP |
+				 DRM_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE,
+			.min_scale = 1 << 15,
+			.max_scale = 1 << 17,
+		},
+	};
+	struct drm_constraints_description *description;
+	const struct drm_constraints_plane_geometry *view;
+	unsigned int count;
+
+	description = drm_constraints_description_create_with_geometry(
+		&output_size, &linear, 1, NULL, 0, NULL, 0, geometries,
+		ARRAY_SIZE(geometries));
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, description);
+	KUNIT_ASSERT_EQ(test,
+		kunit_add_action_or_reset(test, description_put, description), 0);
+	memset(geometries, 0, sizeof(geometries));
+	view = drm_constraints_description_plane_geometries(description, &count);
+	KUNIT_ASSERT_EQ(test, count, 1);
+	KUNIT_EXPECT_EQ(test, view[0].plane_id, 17);
+	KUNIT_EXPECT_EQ(test, view[0].flags, DRM_CONSTRAINTS_GEOMETRY_CROP |
+			DRM_CONSTRAINTS_GEOMETRY_FRACTIONAL_SOURCE);
+	KUNIT_EXPECT_EQ(test, view[0].min_scale, 1 << 15);
+	KUNIT_EXPECT_EQ(test, view[0].max_scale, 1 << 17);
+}
+
+static void drm_constraints_description_rejects_bad_plane_geometry(struct kunit *test)
+{
+	struct drm_constraints_plane_geometry geometry = {
+		.plane_id = 17,
+		.min_scale = 1 << 16,
+		.max_scale = 1 << 16,
+	};
+	struct drm_constraints_plane_geometry duplicate[2];
+
+#define EXPECT_GEOMETRY_ERROR(expected) \
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create_with_geometry( \
+		&output_size, &linear, 1, NULL, 0, NULL, 0, &geometry, 1), \
+		ERR_PTR(expected))
+	geometry.plane_id = 0;
+	EXPECT_GEOMETRY_ERROR(-EINVAL);
+	geometry.plane_id = 17;
+	geometry.flags = BIT(3);
+	EXPECT_GEOMETRY_ERROR(-EINVAL);
+	geometry.flags = 0;
+	geometry.min_scale = 0;
+	EXPECT_GEOMETRY_ERROR(-EINVAL);
+	geometry.min_scale = 2 << 16;
+	EXPECT_GEOMETRY_ERROR(-EINVAL);
+	geometry.min_scale = 1 << 16;
+	duplicate[0] = geometry;
+	duplicate[1] = geometry;
+	KUNIT_EXPECT_PTR_EQ(test, drm_constraints_description_create_with_geometry(
+		&output_size, &linear, 1, NULL, 0, NULL, 0, duplicate, 2),
+		ERR_PTR(-EEXIST));
+#undef EXPECT_GEOMETRY_ERROR
+}
+
 static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_preserves_large_plane_modifier_matrix),
 	KUNIT_CASE(drm_constraints_copies_all_allocation_information),
@@ -518,6 +581,8 @@ static struct kunit_case drm_constraints_tests[] = {
 	KUNIT_CASE(drm_constraints_rejects_malformed_plane_limits),
 	KUNIT_CASE(drm_constraints_description_recognizes_structural_coverage),
 	KUNIT_CASE(drm_constraints_description_rejects_incomplete_coverage),
+	KUNIT_CASE(drm_constraints_description_copies_plane_geometry),
+	KUNIT_CASE(drm_constraints_description_rejects_bad_plane_geometry),
 	{}
 };
 
