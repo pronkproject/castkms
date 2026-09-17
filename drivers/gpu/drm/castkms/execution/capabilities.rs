@@ -214,7 +214,7 @@ impl Profile {
         Ok(())
     }
 
-    fn check_output(&self, output: [u32; 2]) -> Result {
+    pub(crate) fn check_output(&self, output: [u32; 2]) -> Result {
         if output.contains(&0)
             || (0..2).any(|axis| {
                 output[axis] < self.limits.geometry.min_output[axis]
