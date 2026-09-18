@@ -501,6 +501,48 @@ static void fill_shared_tiles(int fd, const struct buffer *buffer,
 	CHECK(munmap(pixels, buffer->dumb.size) == 0);
 }
 
+static void
+queue_tile_captures(const struct drm_castkms_monitor_group_capture_member captures[2],
+		    uint64_t use_id)
+{
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_queue_output queue = {
+			.stream = 1,
+			.use_id = use_id,
+			.destination = 1,
+			.reuse_fd = -1,
+		};
+
+		CHECK(ioctl(captures[i].capture_fd,
+			    DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
+	}
+}
+
+static void
+dequeue_tile_captures(const struct drm_castkms_monitor_group_capture_member captures[2],
+		      uint64_t use_id, struct drm_capture_result results[2])
+{
+	for (unsigned int i = 0; i < 2; i++) {
+		struct pollfd event = {
+			.fd = captures[i].capture_fd,
+			.events = POLLIN,
+		};
+		struct drm_capture_dequeue dequeue = {
+			.stream = 1,
+			.result = (uintptr_t)&results[i],
+		};
+
+		memset(&results[i], 0, sizeof(results[i]));
+		CHECK(poll(&event, 1, 5000) == 1);
+		CHECK(event.revents & POLLIN);
+		CHECK(!(event.revents & (POLLERR | POLLHUP | POLLNVAL)));
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE,
+			    &dequeue) == 0);
+		CHECK(results[i].use_id == use_id && results[i].status == 0);
+		CHECK(results[i].completed_at_ns && !results[i].reserved);
+	}
+}
+
 static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 				 const struct drm_castkms_monitor_group_capture_member captures[2])
 {
@@ -545,71 +587,22 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 			    DRM_IOCTL_CAPTURE_REGISTER_DESTINATION,
 			    &destination) == 0);
 	}
+	queue_tile_captures(captures, 1);
+	dequeue_tile_captures(captures, 1, results);
 	for (unsigned int i = 0; i < 2; i++) {
-		struct drm_capture_queue_output queue = {
-			.stream = 1,
-			.use_id = 1,
-			.destination = 1,
-			.reuse_fd = -1,
-		};
-
-		CHECK(ioctl(captures[i].capture_fd,
-			    DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
-	}
-	for (unsigned int i = 0; i < 2; i++) {
-		struct pollfd event = {
-			.fd = captures[i].capture_fd,
-			.events = POLLIN,
-		};
-		struct drm_capture_dequeue dequeue = {
-			.stream = 1,
-			.result = (uintptr_t)&results[i],
-		};
-
-		CHECK(poll(&event, 1, 5000) == 1);
-		CHECK(event.revents & POLLIN);
-		CHECK(!(event.revents & (POLLERR | POLLHUP | POLLNVAL)));
-		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE,
-			    &dequeue) == 0);
-		CHECK(results[i].use_id == 1 && results[i].status == 0);
-		CHECK(results[i].completed_at_ns && !results[i].reserved);
 		check_tile_pixels(destination_fds[i], &destinations[i], values[i]);
 	}
 
 	shared = create_buffer(fd, 3840, 1080, 0);
 	fill_shared_tiles(fd, &shared, shared_values);
 	for (unsigned int i = 0; i < 2; i++) {
-		struct drm_capture_queue_output queue = {
-			.stream = 1,
-			.use_id = 2,
-			.destination = 1,
-			.reuse_fd = -1,
-		};
-
 		CHECK(drmModeSetCrtc(fd, resources->crtcs[i], shared.fb,
 				     i * 1920, 0, &resources->connectors[i],
 				     1, &modes[i]) == 0);
-		CHECK(ioctl(captures[i].capture_fd,
-			    DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
 	}
+	queue_tile_captures(captures, 2);
+	dequeue_tile_captures(captures, 2, results);
 	for (unsigned int i = 0; i < 2; i++) {
-		struct pollfd event = {
-			.fd = captures[i].capture_fd,
-			.events = POLLIN,
-		};
-		struct drm_capture_dequeue dequeue = {
-			.stream = 1,
-			.result = (uintptr_t)&results[i],
-		};
-
-		memset(&results[i], 0, sizeof(results[i]));
-		CHECK(poll(&event, 1, 5000) == 1);
-		CHECK(event.revents & POLLIN);
-		CHECK(!(event.revents & (POLLERR | POLLHUP | POLLNVAL)));
-		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE,
-			    &dequeue) == 0);
-		CHECK(results[i].use_id == 2 && results[i].status == 0);
-		CHECK(results[i].completed_at_ns && !results[i].reserved);
 		check_tile_pixels(destination_fds[i], &destinations[i],
 				  shared_values[i]);
 	}
