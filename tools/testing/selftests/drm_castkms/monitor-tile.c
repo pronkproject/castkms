@@ -16,6 +16,7 @@
 
 #include "../../../../include/uapi/drm/castkms_drm.h"
 #include "../../../../include/uapi/drm/drm_capture.h"
+#include "../../../../include/uapi/drm/drm_prepare.h"
 
 _Static_assert(sizeof(struct drm_castkms_monitor_group_member) == 16,
 	       "monitor group member ABI");
@@ -715,7 +716,8 @@ static void commit_scaled_tiles(int fd, const struct buffer *buffer)
 	drmModeAtomicFree(request);
 }
 
-static void commit_shared_tiles(int fd, const struct buffer *buffer,
+static void commit_shared_tiles(int fd, const drmModeRes *resources,
+				const struct buffer *buffer, int ticket,
 				uint32_t flags)
 {
 	drmModeAtomicReq *request = drmModeAtomicAlloc();
@@ -739,9 +741,53 @@ static void commit_shared_tiles(int fd, const struct buffer *buffer,
 			 "CRTC_W", 1920);
 		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
 			 "CRTC_H", 1080);
+		property(fd, request, resources->crtcs[i], DRM_MODE_OBJECT_CRTC,
+			 DRM_PREPARE_FD_PROPERTY, ticket);
 	}
 	CHECK(drmModeAtomicCommit(fd, request, flags, NULL) == 0);
 	drmModeAtomicFree(request);
+}
+
+static int prepare_tiles(int fd, const drmModeRes *resources)
+{
+	uint32_t crtcs[2] = { resources->crtcs[0], resources->crtcs[1] };
+	struct drm_mode_prepare_replace prepare = {
+		.crtc_ids = (uintptr_t)crtcs,
+		.count_crtcs = 2,
+	};
+	struct pollfd event = { .events = POLLIN };
+	struct drm_prepare_query query = {0};
+	int ticket = drmIoctl(fd, DRM_IOCTL_MODE_PREPARE_REPLACE, &prepare);
+
+	CHECK(ticket >= 0);
+	event.fd = ticket;
+	CHECK(poll(&event, 1, 5000) == 1);
+	CHECK(event.revents & POLLIN);
+	CHECK(!(event.revents & (POLLERR | POLLHUP | POLLNVAL)));
+	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &query) == 0);
+	CHECK(query.status == DRM_PREPARE_READY);
+	CHECK(!query.reserved[0] && !query.reserved[1] && !query.reserved[2]);
+	return ticket;
+}
+
+static void check_preparation_status(int ticket, uint32_t status)
+{
+	struct drm_prepare_query query = {0};
+
+	CHECK(ioctl(ticket, DRM_IOCTL_PREPARE_QUERY, &query) == 0);
+	CHECK(query.status == status);
+	CHECK(!query.reserved[0] && !query.reserved[1] && !query.reserved[2]);
+}
+
+static void check_primary_framebuffers(int fd, const struct buffer sources[2])
+{
+	for (unsigned int i = 0; i < 2; i++) {
+		drmModePlane *plane = drmModeGetPlane(fd, primary_plane(fd, i));
+
+		CHECK(plane);
+		CHECK(plane->fb_id == sources[i].fb);
+		drmModeFreePlane(plane);
+	}
 }
 
 static void
@@ -814,7 +860,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	struct buffer sources[2], destinations[2], shared, scaled, cursor, overlay;
 	drmModeModeInfo modes[2];
 	uint32_t overlay_id;
-	int destination_fds[2];
+	int destination_fds[2], ticket;
 
 	for (unsigned int i = 0; i < 2; i++) {
 		struct drm_capture_create_stream stream = {
@@ -857,13 +903,14 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 
 	shared = create_buffer(fd, 3840, 1080, 0);
 	fill_shared_tiles(fd, &shared, shared_values);
-	commit_shared_tiles(fd, &shared, DRM_MODE_ATOMIC_TEST_ONLY);
-	queue_tile_captures(captures, 2);
-	dequeue_tile_captures(captures, 2, results);
-	for (unsigned int i = 0; i < 2; i++)
-		check_tile_pixels(destination_fds[i], &destinations[i],
-				  values[i], false);
-	commit_shared_tiles(fd, &shared, 0);
+	ticket = prepare_tiles(fd, resources);
+	commit_shared_tiles(fd, resources, &shared, ticket,
+			    DRM_MODE_ATOMIC_TEST_ONLY);
+	check_preparation_status(ticket, DRM_PREPARE_READY);
+	check_primary_framebuffers(fd, sources);
+	commit_shared_tiles(fd, resources, &shared, ticket, 0);
+	check_preparation_status(ticket, DRM_PREPARE_CONSUMED);
+	CHECK(close(ticket) == 0);
 	queue_tile_captures(captures, 3);
 	dequeue_tile_captures(captures, 3, results);
 	for (unsigned int i = 0; i < 2; i++) {
@@ -997,6 +1044,7 @@ int main(int argc, char **argv)
 	CHECK(fd >= 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
+	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC_PREPARATION, 1) == 0);
 	CHECK(drmSetMaster(fd) == 0 || errno == EINVAL);
 	resources = drmModeGetResources(fd);
 	CHECK(resources);
