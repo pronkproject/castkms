@@ -463,7 +463,7 @@ static drmModeModeInfo mode_1080p(int fd, uint32_t connector_id)
 }
 
 static void check_tile_pixels(int dma_fd, const struct buffer *buffer,
-			      unsigned char value)
+			      unsigned char value, bool cursor)
 {
 	struct dma_buf_sync sync = {
 		.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ,
@@ -474,9 +474,14 @@ static void check_tile_pixels(int dma_fd, const struct buffer *buffer,
 	CHECK(pixels != MAP_FAILED);
 	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
 	for (unsigned int y = 0; y < 1080; y++) {
-		for (unsigned int x = 0; x < 1920 * 4; x++)
-			CHECK(pixels[y * buffer->dumb.pitch + x] ==
-			      (x % 4 == 3 ? 0xff : value));
+		for (unsigned int x = 0; x < 1920 * 4; x++) {
+			bool cursor_pixel = cursor && y >= 100 && y < 164 &&
+					    x >= 100 * 4 && x < 164 * 4;
+			unsigned char expected = cursor_pixel || x % 4 == 3 ?
+					 0xff : value;
+
+			CHECK(pixels[y * buffer->dumb.pitch + x] == expected);
+		}
 	}
 	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
 	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
@@ -590,7 +595,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	queue_tile_captures(captures, 1);
 	dequeue_tile_captures(captures, 1, results);
 	for (unsigned int i = 0; i < 2; i++) {
-		check_tile_pixels(destination_fds[i], &destinations[i], values[i]);
+		check_tile_pixels(destination_fds[i], &destinations[i], values[i], false);
 	}
 
 	shared = create_buffer(fd, 3840, 1080, 0);
@@ -604,7 +609,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	dequeue_tile_captures(captures, 2, results);
 	for (unsigned int i = 0; i < 2; i++) {
 		check_tile_pixels(destination_fds[i], &destinations[i],
-				  shared_values[i]);
+				  shared_values[i], false);
 	}
 	for (unsigned int i = 0; i < 2; i++) {
 		struct drm_capture_unregister_destination destination = {
