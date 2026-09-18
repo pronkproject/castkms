@@ -128,20 +128,25 @@ struct drm_castkms_renderer_constraints_format {
 #define DRM_CASTKMS_RENDERER_RELEASE_SUBMITTED 3
 #define DRM_CASTKMS_RENDERER_MAX_MEMORY_PLANES 4
 
+#define DRM_CASTKMS_MONITOR_CREATE_ADMIN (1U << 0)
+
 /**
  * struct drm_castkms_create_monitor_control - create virtual monitor control
  * @connector_id: DRM object ID of the virtual connector
- * @flags: must be zero
+ * @flags: zero or DRM_CASTKMS_MONITOR_CREATE_ADMIN
  * @files: pointer to writable struct drm_castkms_monitor_files storage
  * @reserved: must be zero
  *
- * The calling DRM file must be the current master and hold the connector.
+ * With zero flags, the calling DRM file must be the current master and hold
+ * the connector. DRM_CASTKMS_MONITOR_CREATE_ADMIN instead requires
+ * CAP_SYS_ADMIN in the initial user namespace and does not require or acquire
+ * DRM master. The administrative path grants only the monitor attachment and
+ * EDID authority described here; it grants no modesetting or pixel access.
  * Only one monitor-control file may exist for a connector. Connectors remain
  * disconnected until explicitly attached. Final close of the control file,
  * or close of the revocation file, disconnects the monitor. The control
  * capability remains valid across DRM master changes and may be transferred
- * like any other file descriptor. The issuer
- * retains the revocation file.
+ * like any other file descriptor. The issuer retains the revocation file.
  * All request fields are input. Failure installs no descriptors and does not
  * change monitor state; partially copied output must be ignored.
  */

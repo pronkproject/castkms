@@ -140,7 +140,7 @@ int main(int argc, char **argv)
 	drmModeFreeResources(resources);
 
 	create.connector_id = connector_id;
-	create.flags = 1;
+	create.flags = DRM_CASTKMS_MONITOR_CREATE_ADMIN << 1;
 	expect_ioctl_error(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL,
 			   &create, EINVAL);
 	create.flags = 0;

@@ -6,6 +6,7 @@ use crate::{monitor::Control, CastKms, Driver, File as DriverFile};
 use core::{ffi::c_void, ptr::NonNull};
 use kernel::{
     bindings,
+    cred::{self, Capability},
     drm::{device::Registered, file::File as DrmFile, kms::connector::Edid, Device},
     error::from_err_ptr,
     fs::{file::FileDescriptorReservation, File},
@@ -260,30 +261,44 @@ pub(crate) fn create(
     request: &mut uapi::drm_castkms_create_monitor_control,
     file: &DrmFile<DriverFile>,
 ) -> Result<u32> {
-    if request.flags != 0 || request.reserved != [0; 2] || request.files == 0 {
+    let administrative = request.flags & uapi::DRM_CASTKMS_MONITOR_CREATE_ADMIN != 0;
+    if request.flags & !uapi::DRM_CASTKMS_MONITOR_CREATE_ADMIN != 0
+        || request.reserved != [0; 2]
+        || request.files == 0
+    {
         return Err(EINVAL);
     }
+    if administrative && !cred::capable_in_initial_user_namespace(Capability::SysAdmin) {
+        return Err(EACCES);
+    }
     let result = usize::try_from(request.files).map_err(|_| EFAULT)?;
-    let connector = dev.lookup_connector(file, request.connector_id)?;
+    let connector = if administrative {
+        dev.lookup_connector_unfiltered(request.connector_id)?
+    } else {
+        dev.lookup_connector(file, request.connector_id)?
+    };
     let control_reservation =
         FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
     let revoke_reservation =
         FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
-    let snapshot = file.master_snapshot().ok_or(EACCES)?;
-    {
-        let guard = snapshot.master().lock_current().ok_or(EACCES)?;
-        if !guard.is_master_file(file) || !guard.holds_object(&*connector) {
-            return Err(EACCES);
+    let snapshot = if administrative {
+        None
+    } else {
+        Some(file.master_snapshot().ok_or(EACCES)?)
+    };
+    let check_authority = || -> Result {
+        if let Some(snapshot) = &snapshot {
+            let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+            if !guard.is_master_file(file) || !guard.holds_object(&*connector) {
+                return Err(EACCES);
+            }
         }
-    }
+        Ok(())
+    };
+    check_authority()?;
     let pending = connector.monitor.reserve(dev)?;
     let lease = Lease::new()?;
-    {
-        let guard = snapshot.master().lock_current().ok_or(EACCES)?;
-        if !guard.is_master_file(file) || !guard.holds_object(&*connector) {
-            return Err(EACCES);
-        }
-    }
+    check_authority()?;
     let revoke_file = RevokerFile::new(lease.clone())?;
     let control_file = HolderFile::new(lease.clone())?;
     let control_fd = control_reservation
@@ -314,12 +329,7 @@ pub(crate) fn create(
     UserSlice::new(UserPtr::from_addr(result), core::mem::size_of_val(&files))
         .writer()
         .write(&files)?;
-    {
-        let guard = snapshot.master().lock_current().ok_or(EACCES)?;
-        if !guard.is_master_file(file) || !guard.holds_object(&*connector) {
-            return Err(EACCES);
-        }
-    }
+    check_authority()?;
     *lease.control.lock() = Some(pending.publish()?);
     control_reservation.fd_install(control_file);
     revoke_reservation.fd_install(revoke_file);

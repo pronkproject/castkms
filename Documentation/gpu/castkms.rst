@@ -125,11 +125,15 @@ re-enabling the CRTC, then repeats playback after monitor replacement::
 Virtual monitor control
 -----------------------
 
-The current DRM master can issue one monitor-control capability per selected
-virtual connector with ``DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL``. Issuance
-requires the master to hold the connector. Connectors begin disconnected and
-remain disconnected until explicitly attached. A second capability is
-rejected while the first remains open for that connector.
+One monitor-control capability per virtual connector can be issued with
+``DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL``. A normal request requires the
+exact current DRM master to hold the connector. An explicit administrative
+request instead requires ``CAP_SYS_ADMIN`` in the initial user namespace and
+works without acquiring, displacing, or depending on DRM master. This lets a
+privileged device-discovery service publish monitors while a compositor keeps
+modesetting authority, or before a compositor starts. Connectors begin
+disconnected and remain disconnected until explicitly attached. A second
+capability is rejected while the first remains open for that connector.
 
 Monitor protocol version 1 uses an input-only creation request with a ``files``
 pointer to ``drm_castkms_monitor_files``. Both descriptor numbers are copied
@@ -141,17 +145,16 @@ The anonymous close-on-exec control file supports only query, attach and detach
 operations. Attach accepts either a complete validated EDID or no EDID, in
 which case the driver publishes fallback modes with 1920 by 1080 preferred.
 Each successful change emits a normal DRM hotplug event. The capability does
-not expose DRM objects,
-framebuffers, capture images, modesetting, or renderer authority. A second
+not expose DRM objects, framebuffers, capture images, modesetting, or renderer
+authority, including when administratively issued. A second
 close-on-exec file lets the issuer revoke the capability without retaining its
 control endpoint.
 
 The control file itself carries authority after issuance. It can be passed to
 the display service and remains usable across later DRM master changes. Final
 control-file close or revocation-file close disconnects the monitor and emits
-another hotplug event. Device removal
-instead makes the monitor terminally disconnected; a retained capability
-cannot recreate it.
+another hotplug event. Device removal instead makes the monitor terminally
+disconnected; a retained capability cannot recreate it.
 
 Accepted constraints
 --------------------
