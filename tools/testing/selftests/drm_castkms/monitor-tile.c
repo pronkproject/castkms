@@ -277,7 +277,8 @@ static void exercise_additional_layouts(int fd, const drmModeRes *resources)
 	static const char vertical_id[] = "CASTVERT0";
 	static const char grid_id[] = "CASTGRID0";
 	static const char second_id[] = "CASTVERT1";
-	struct published_group vertical, grid, second, replacement;
+	static const char busy_id[] = "CASTBUSY0";
+	struct published_group vertical, grid, second, replacement, rejected, reclaimed;
 	struct drm_castkms_monitor_group_capture_member captures[2] = {0};
 	struct drm_castkms_create_monitor_group_capture capture = {
 		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
@@ -291,6 +292,13 @@ static void exercise_additional_layouts(int fd, const drmModeRes *resources)
 	CHECK(publish_group(fd, resources, 0, 1, 2, vertical_id,
 			    &vertical) == 0);
 	CHECK(publish_group(fd, resources, 2, 2, 2, grid_id, &grid) == 0);
+	errno = 0;
+	CHECK(publish_group(fd, resources, 6, 1, 2, vertical_id,
+			    &rejected) == -1);
+	CHECK(errno == EEXIST);
+	CHECK(rejected.monitor.control_fd == -1);
+	CHECK(rejected.monitor.revoke_fd == -1);
+	check_disconnected(fd, resources, 6, 2);
 	CHECK(publish_group(fd, resources, 6, 1, 2, second_id, &second) == 0);
 	CHECK(vertical.group_id != grid.group_id);
 	CHECK(vertical.group_id != second.group_id);
@@ -298,6 +306,12 @@ static void exercise_additional_layouts(int fd, const drmModeRes *resources)
 	check_group(fd, resources, 0, 1, 2, vertical_id, &vertical);
 	check_group(fd, resources, 2, 2, 2, grid_id, &grid);
 	check_group(fd, resources, 6, 1, 2, second_id, &second);
+	errno = 0;
+	CHECK(publish_group(fd, resources, 0, 1, 2, busy_id,
+			    &rejected) == -1);
+	CHECK(errno == EBUSY);
+	CHECK(rejected.monitor.control_fd == -1);
+	CHECK(rejected.monitor.revoke_fd == -1);
 
 	capture.group_fd = vertical.monitor.control_fd;
 	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
@@ -328,7 +342,11 @@ static void exercise_additional_layouts(int fd, const drmModeRes *resources)
 		CHECK(close(captures[i].capture_fd) == 0);
 		CHECK(close(captures[i].control_fd) == 0);
 	}
+	CHECK(publish_group(fd, resources, 0, 1, 2, busy_id,
+			    &reclaimed) == 0);
+	check_group(fd, resources, 0, 1, 2, busy_id, &reclaimed);
 	check_group(fd, resources, 6, 1, 2, second_id, &second);
+	close_monitor(&reclaimed.monitor);
 	close_monitor(&replacement.monitor);
 	close_monitor(&second.monitor);
 	check_disconnected(fd, resources, 0, 8);
