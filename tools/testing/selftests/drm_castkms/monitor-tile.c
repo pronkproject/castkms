@@ -156,6 +156,8 @@ int main(int argc, char **argv)
 	};
 	unsigned char edids[2][256];
 	struct tile_metadata left, right;
+	uint64_t first_group_id;
+	int helper;
 
 	if (argc != 2) {
 		fprintf(stderr, "SKIP: supply a disposable Rust CastKMS DRM node\n");
@@ -205,6 +207,7 @@ int main(int argc, char **argv)
 	CHECK(query.horizontal_tiles == 2 && query.vertical_tiles == 1);
 	CHECK(query.tile_width == 1920 && query.tile_height == 1080);
 	CHECK(!memcmp(query.topology_id, "CASTTILE0", 9));
+	first_group_id = query.group_id;
 	probe_1080p(fd, resources->connectors[0]);
 	probe_1080p(fd, resources->connectors[1]);
 	left = tile_metadata(fd, resources->connectors[0]);
@@ -228,6 +231,27 @@ int main(int argc, char **argv)
 		CHECK(connector->connection == DRM_MODE_DISCONNECTED);
 		drmModeFreeConnector(connector);
 	}
+
+	/* Administrative publication neither requires nor displaces DRM master. */
+	helper = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(helper >= 0 && !drmIsMaster(helper));
+	files = (struct drm_castkms_monitor_files) { -1, -1 };
+	memset(mappings, 0, sizeof(mappings));
+	memset(&query, 0, sizeof(query));
+	create.flags = DRM_CASTKMS_MONITOR_CREATE_ADMIN;
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == 0);
+	CHECK(drmIsMaster(fd) && !drmIsMaster(helper));
+	CHECK(mappings[0].group_id > first_group_id);
+	CHECK(mappings[1].group_id == mappings[0].group_id);
+	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY,
+		    &query) == 0);
+	CHECK(query.group_id == mappings[0].group_id);
+	monitor = (struct monitor_control) {
+		.control_fd = files.control_fd,
+		.revoke_fd = files.revoke_fd,
+	};
+	close_monitor(&monitor);
+	CHECK(close(helper) == 0);
 	drmModeFreeResources(resources);
 	CHECK(close(fd) == 0);
 	puts("PASS: DisplayID tiled monitor topology");
