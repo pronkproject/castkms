@@ -94,6 +94,37 @@ pub type Mutex<T> = super::Lock<T, MutexBackend>;
 /// [`Guard`]: super::Guard
 pub type MutexGuard<'a, T> = super::Guard<'a, T, MutexBackend>;
 
+impl<T: ?Sized> super::Lock<T, MutexBackend> {
+    /// Acquires this mutex with a lockdep subclass.
+    ///
+    /// This is intended for a bounded collection of same-class locks which is
+    /// always acquired in one externally defined order. `subclass` must be the
+    /// lock's position in that order and fit in lockdep's subclass range.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `subclass` is outside lockdep's fixed subclass range.
+    #[inline]
+    pub fn lock_nested(&self, subclass: u32) -> MutexGuard<'_, T> {
+        assert!(subclass < bindings::MAX_LOCKDEP_SUBCLASSES);
+        #[cfg(CONFIG_DEBUG_LOCK_ALLOC)]
+        // SAFETY: The constructor initialized the mutex, and the returned guard
+        // owns the acquisition performed here.
+        unsafe {
+            bindings::mutex_lock_nested(self.state.get(), subclass)
+        };
+        #[cfg(not(CONFIG_DEBUG_LOCK_ALLOC))]
+        // SAFETY: The constructor initialized the mutex, and lockdep subclasses
+        // have no runtime meaning in this configuration.
+        unsafe {
+            bindings::mutex_lock(self.state.get())
+        };
+
+        // SAFETY: The mutex was acquired immediately above.
+        unsafe { super::Guard::new(self, ()) }
+    }
+}
+
 /// A kernel `struct mutex` lock backend.
 pub struct MutexBackend;
 
