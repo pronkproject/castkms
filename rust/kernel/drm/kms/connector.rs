@@ -33,6 +33,114 @@ use core::{
 };
 use macros::paste;
 
+/// The immutable geometry of one connector in a tiled monitor.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Tile {
+    horizontal_tiles: u8,
+    vertical_tiles: u8,
+    horizontal_location: u8,
+    vertical_location: u8,
+    width: u16,
+    height: u16,
+    single_monitor: bool,
+}
+
+impl Tile {
+    /// Validate the location and geometry of one tile.
+    pub fn new(
+        horizontal_tiles: u8,
+        vertical_tiles: u8,
+        horizontal_location: u8,
+        vertical_location: u8,
+        width: u16,
+        height: u16,
+        single_monitor: bool,
+    ) -> Result<Self> {
+        if horizontal_tiles == 0
+            || vertical_tiles == 0
+            || horizontal_location >= horizontal_tiles
+            || vertical_location >= vertical_tiles
+            || width == 0
+            || height == 0
+        {
+            return Err(EINVAL);
+        }
+        Ok(Self {
+            horizontal_tiles,
+            vertical_tiles,
+            horizontal_location,
+            vertical_location,
+            width,
+            height,
+            single_monitor,
+        })
+    }
+}
+
+/// An owned native tile-group reference for an unregistered KMS device.
+///
+/// The nine-byte identity is private to the display and must be shared by every connector which
+/// describes a tile of that display. Keeping this owner alive while connectors are configured
+/// prevents the native group from disappearing between reference acquisitions.
+pub struct TileGroup<'a, D: KmsDriver> {
+    raw: NonNull<bindings::drm_tile_group>,
+    dev: &'a UnregisteredKmsDevice<'a, D>,
+    identity: [u8; 9],
+}
+
+impl<'a, D: KmsDriver> TileGroup<'a, D> {
+    /// Create a new tile group with a device-unique identity.
+    pub fn new(dev: &'a UnregisteredKmsDevice<'a, D>, identity: [u8; 9]) -> Result<Self> {
+        // Reject duplicate identities rather than allowing two native group IDs to describe the
+        // same monitor. Object creation is serialized by the unregistered-device typestate.
+        let existing = unsafe {
+            bindings::drm_mode_get_tile_group(dev.as_raw(), identity.as_ptr().cast())
+        };
+        if !existing.is_null() {
+            // SAFETY: The successful lookup returned one owned reference on this device.
+            unsafe { bindings::drm_mode_put_tile_group(dev.as_raw(), existing) };
+            return Err(EEXIST);
+        }
+
+        // SAFETY: The device's mode configuration is initialized and remains unpublished. The
+        // native helper copies all nine identity bytes before returning.
+        let raw = unsafe {
+            bindings::drm_mode_create_tile_group(dev.as_raw(), identity.as_ptr().cast())
+        };
+        Ok(Self {
+            raw: NonNull::new(raw).ok_or(ENOMEM)?,
+            dev,
+            identity,
+        })
+    }
+
+    fn get(&self) -> Result<NonNull<bindings::drm_tile_group>> {
+        // SAFETY: Our owned reference keeps this identity registered on this device. The lookup
+        // returns a distinct reference for transfer to a connector.
+        let raw = unsafe {
+            bindings::drm_mode_get_tile_group(
+                self.dev.as_raw(),
+                self.identity.as_ptr().cast(),
+            )
+        };
+        let raw = NonNull::new(raw).ok_or(ENODEV)?;
+        if raw != self.raw {
+            // SAFETY: The lookup above returned this reference on the same device.
+            unsafe { bindings::drm_mode_put_tile_group(self.dev.as_raw(), raw.as_ptr()) };
+            return Err(EINVAL);
+        }
+        Ok(raw)
+    }
+}
+
+impl<D: KmsDriver> Drop for TileGroup<'_, D> {
+    fn drop(&mut self) {
+        // SAFETY: `self` owns one reference created by drm_mode_create_tile_group(), and the
+        // unregistered-device borrow keeps the matching mode configuration alive.
+        unsafe { bindings::drm_mode_put_tile_group(self.dev.as_raw(), self.raw.as_ptr()) };
+    }
+}
+
 /// A validated, owned copy of Extended Display Identification Data (EDID).
 ///
 /// Construction checks the complete block count, headers, versions, and
@@ -575,6 +683,61 @@ impl<T: DriverConnector> UnregisteredConnector<T> {
         // SAFETY: This connector is initialized and remains unpublished while
         // its properties are configured.
         unsafe { bindings::drm_connector_attach_edid_property(self.as_raw()) };
+    }
+
+    /// Describe this connector as one tile of a monitor.
+    ///
+    /// Every connector in the monitor must use the same [`TileGroup`] and agree on the grid and
+    /// tile dimensions. The caller remains responsible for checking that complete-group
+    /// invariant; this method validates the individual tile and publishes the standard immutable
+    /// `TILE` property.
+    pub fn set_tile(&self, group: &TileGroup<'_, T::Driver>, tile: Tile) -> Result
+    where
+        T::Driver: KmsDriver<Connector = T>,
+    {
+        let connector = self.as_raw();
+        // SAFETY: Both borrows retain initialized objects. The typestate excludes concurrent
+        // setup, while this check prevents transferring a group reference across DRM devices.
+        if unsafe { (*connector).dev != group.dev.as_raw() || (*connector).has_tile } {
+            return Err(EINVAL);
+        }
+        let group_ref = group.get()?;
+
+        // SAFETY: This unregistered connector is exclusively configured by the setup thread.
+        // `group_ref` is a distinct owned reference which connector cleanup will release after a
+        // successful property update.
+        unsafe {
+            (*connector).tile_group = group_ref.as_ptr();
+            (*connector).tile_is_single_monitor = tile.single_monitor;
+            (*connector).num_h_tile = tile.horizontal_tiles;
+            (*connector).num_v_tile = tile.vertical_tiles;
+            (*connector).tile_h_loc = tile.horizontal_location;
+            (*connector).tile_v_loc = tile.vertical_location;
+            (*connector).tile_h_size = tile.width;
+            (*connector).tile_v_size = tile.height;
+            (*connector).has_tile = true;
+        }
+
+        // The standard property owns its blob, while the connector owns the group reference.
+        let result = to_result(unsafe { bindings::drm_connector_set_tile_property(connector) });
+        if let Err(error) = result {
+            // SAFETY: Publication failed while setup remains single-threaded. Restore the native
+            // connector invariant before releasing the reference that was not transferred.
+            unsafe {
+                (*connector).has_tile = false;
+                (*connector).tile_group = null_mut();
+                (*connector).tile_is_single_monitor = false;
+                (*connector).num_h_tile = 0;
+                (*connector).num_v_tile = 0;
+                (*connector).tile_h_loc = 0;
+                (*connector).tile_v_loc = 0;
+                (*connector).tile_h_size = 0;
+                (*connector).tile_v_size = 0;
+                bindings::drm_mode_put_tile_group(group.dev.as_raw(), group_ref.as_ptr());
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Attach the HDR output metadata property to this [`Connector`].
