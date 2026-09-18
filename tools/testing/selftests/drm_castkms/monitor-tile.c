@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Exercise transactional DisplayID tiled-monitor publication. */
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #include "fixture.h"
 
 #include "../../../../include/uapi/drm/castkms_drm.h"
+#include "../../../../include/uapi/drm/drm_capture.h"
 
 _Static_assert(sizeof(struct drm_castkms_monitor_group_member) == 16,
 	       "monitor group member ABI");
@@ -19,6 +22,10 @@ _Static_assert(sizeof(struct drm_castkms_create_monitor_group) == 56,
 	       "monitor group creation ABI");
 _Static_assert(sizeof(struct drm_castkms_monitor_group_query) == 72,
 	       "monitor group query ABI");
+_Static_assert(sizeof(struct drm_castkms_monitor_group_capture_member) == 40,
+	       "monitor group capture member ABI");
+_Static_assert(sizeof(struct drm_castkms_create_monitor_group_capture) == 48,
+	       "monitor group capture creation ABI");
 
 struct tile_metadata {
 	uint32_t group;
@@ -30,6 +37,24 @@ struct tile_metadata {
 	uint32_t width;
 	uint32_t height;
 };
+
+static unsigned int open_files(void)
+{
+	DIR *directory = opendir("/proc/self/fd");
+	struct dirent *entry;
+	unsigned int count = 0;
+
+	CHECK(directory);
+	while ((entry = readdir(directory))) {
+		char *end;
+		long fd = strtol(entry->d_name, &end, 10);
+
+		if (!*end && fd >= 0 && fd != dirfd(directory))
+			count++;
+	}
+	CHECK(closedir(directory) == 0);
+	return count;
+}
 
 static void checksum(unsigned char *block)
 {
@@ -168,9 +193,21 @@ int main(int argc, char **argv)
 		.mappings = (uintptr_t)mappings,
 		.files = (uintptr_t)&files,
 	};
+	struct drm_castkms_monitor_group_capture_member captures[2] = {
+		{ .capture_fd = -1, .control_fd = -1 },
+		{ .capture_fd = -1, .control_fd = -1 },
+	};
+	struct drm_castkms_create_monitor_group_capture capture = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.member_capacity = 2,
+		.members = (uintptr_t)captures,
+	};
 	unsigned char edids[2][256];
 	struct tile_metadata left, right;
 	uint64_t first_group_id;
+	unsigned int before;
+	long page_size;
+	void *partial;
 	int helper, transferred;
 
 	if (argc != 2) {
@@ -244,6 +281,52 @@ int main(int argc, char **argv)
 	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY,
 		    &query) == 0);
 	first_group_id = query.group_id;
+	capture.group_fd = monitor.revoke_fd;
+	errno = 0;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == -1);
+	CHECK(errno == EBADF);
+	capture.group_fd = monitor.control_fd;
+	capture.member_capacity = 1;
+	errno = 0;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == -1);
+	CHECK(errno == ENOSPC);
+	CHECK(captures[0].capture_fd == -1 && captures[0].control_fd == -1);
+	capture.member_capacity = 2;
+	page_size = sysconf(_SC_PAGESIZE);
+	CHECK(page_size > 0);
+	partial = mmap(NULL, page_size * 2, PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	CHECK(partial != MAP_FAILED);
+	CHECK(mprotect((char *)partial + page_size, page_size, PROT_NONE) == 0);
+	before = open_files();
+	capture.members = (uintptr_t)((char *)partial + page_size - sizeof(captures[0]));
+	errno = 0;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == -1);
+	CHECK(errno == EFAULT);
+	CHECK(open_files() == before);
+	CHECK(munmap(partial, page_size * 2) == 0);
+	capture.members = (uintptr_t)captures;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == 0);
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_describe description = {0};
+
+		CHECK(captures[i].group_id == first_group_id);
+		CHECK(captures[i].crtc_id == resources->crtcs[i]);
+		CHECK(captures[i].connector_id == resources->connectors[i]);
+		CHECK(captures[i].horizontal_location == i);
+		CHECK(captures[i].vertical_location == 0);
+		CHECK(captures[i].reserved == 0 && captures[i].reserved2 == 0);
+		CHECK(captures[i].capture_fd >= 0 && captures[i].control_fd >= 0);
+		CHECK(fcntl(captures[i].capture_fd, F_GETFD) == FD_CLOEXEC);
+		CHECK(fcntl(captures[i].control_fd, F_GETFD) == FD_CLOEXEC);
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE,
+			    &description) == -1);
+		CHECK(errno == ENODEV);
+	}
 	probe_1080p(fd, resources->connectors[0]);
 	probe_1080p(fd, resources->connectors[1]);
 	left = tile_metadata(fd, resources->connectors[0]);
@@ -259,6 +342,15 @@ int main(int argc, char **argv)
 	CHECK(left.height == 1080 && right.height == 1080);
 
 	close_monitor(&monitor);
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_describe description = {0};
+
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE,
+			    &description) == -1);
+		CHECK(errno == EKEYREVOKED);
+		CHECK(close(captures[i].capture_fd) == 0);
+		CHECK(close(captures[i].control_fd) == 0);
+	}
 	for (unsigned int i = 0; i < 2; i++) {
 		drmModeConnector *connector = drmModeGetConnector(fd,
 							 resources->connectors[i]);
@@ -292,6 +384,21 @@ int main(int argc, char **argv)
 		.control_fd = files.control_fd,
 		.revoke_fd = files.revoke_fd,
 	};
+	memset(captures, 0, sizeof(captures));
+	capture = (struct drm_castkms_create_monitor_group_capture) {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.flags = DRM_CASTKMS_MONITOR_GROUP_CAPTURE_ADMIN,
+		.group_fd = monitor.control_fd,
+		.member_capacity = 2,
+		.members = (uintptr_t)captures,
+	};
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == 0);
+	for (unsigned int i = 0; i < 2; i++) {
+		CHECK(captures[i].group_id == query.group_id);
+		CHECK(close(captures[i].capture_fd) == 0);
+		CHECK(close(captures[i].control_fd) == 0);
+	}
 	close_monitor(&monitor);
 	CHECK(close(helper) == 0);
 	drmModeFreeResources(resources);
