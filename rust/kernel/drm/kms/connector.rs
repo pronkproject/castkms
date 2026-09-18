@@ -75,6 +75,60 @@ impl Tile {
             single_monitor,
         })
     }
+
+    /// Return the number of horizontal tiles.
+    pub fn horizontal_tiles(&self) -> u8 {
+        self.horizontal_tiles
+    }
+
+    /// Return the number of vertical tiles.
+    pub fn vertical_tiles(&self) -> u8 {
+        self.vertical_tiles
+    }
+
+    /// Return this tile's zero-based horizontal location.
+    pub fn horizontal_location(&self) -> u8 {
+        self.horizontal_location
+    }
+
+    /// Return this tile's zero-based vertical location.
+    pub fn vertical_location(&self) -> u8 {
+        self.vertical_location
+    }
+
+    /// Return this tile's width in pixels.
+    pub fn width(&self) -> u16 {
+        self.width
+    }
+
+    /// Return this tile's height in pixels.
+    pub fn height(&self) -> u16 {
+        self.height
+    }
+
+    /// Return whether the tiles form one monitor.
+    pub fn is_single_monitor(&self) -> bool {
+        self.single_monitor
+    }
+}
+
+/// Tiled-monitor information decoded from an EDID DisplayID block.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct EdidTile {
+    topology_id: [u8; 9],
+    tile: Tile,
+}
+
+impl EdidTile {
+    /// Return the identity shared by every member of the tiled monitor.
+    pub fn topology_id(&self) -> &[u8; 9] {
+        &self.topology_id
+    }
+
+    /// Return this member's tile geometry.
+    pub fn tile(&self) -> Tile {
+        self.tile
+    }
 }
 
 /// An owned native tile-group reference for an unregistered KMS device.
@@ -171,6 +225,29 @@ impl Edid {
             return Err(EINVAL);
         }
         Ok(Self(raw))
+    }
+
+    /// Decode this display's optional tiled-monitor topology.
+    pub fn tile(&self) -> Result<Option<EdidTile>> {
+        let mut info = bindings::drm_edid_tile_info::default();
+        // SAFETY: Both pointers remain valid for the call. The native helper only reads the
+        // immutable EDID and initializes `info` on success.
+        match to_result(unsafe { bindings::drm_edid_get_tile_info(self.as_ptr(), &mut info) }) {
+            Ok(()) => Ok(Some(EdidTile {
+                topology_id: info.topology_id,
+                tile: Tile::new(
+                    info.num_h_tile,
+                    info.num_v_tile,
+                    info.tile_h_loc,
+                    info.tile_v_loc,
+                    info.tile_h_size,
+                    info.tile_v_size,
+                    info.is_single_monitor,
+                )?,
+            })),
+            Err(ENOENT) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     fn as_ptr(&self) -> *const bindings::drm_edid {
