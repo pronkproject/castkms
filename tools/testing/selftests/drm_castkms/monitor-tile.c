@@ -688,9 +688,11 @@ static void commit_shared_damage(int fd, const struct buffer *buffer,
 		CHECK(drmModeDestroyPropertyBlob(fd, blobs[i]) == 0);
 }
 
-static void commit_scaled_tiles(int fd, const struct buffer *buffer)
+static int submit_scaled_tiles(int fd, const drmModeRes *resources,
+			       const struct buffer *buffer, int ticket)
 {
 	drmModeAtomicReq *request = drmModeAtomicAlloc();
+	int ret;
 
 	CHECK(request);
 	for (unsigned int i = 0; i < 2; i++) {
@@ -711,7 +713,24 @@ static void commit_scaled_tiles(int fd, const struct buffer *buffer)
 			 "CRTC_W", 1920);
 		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
 			 "CRTC_H", 1080);
+		property(fd, request, resources->crtcs[i], DRM_MODE_OBJECT_CRTC,
+			 DRM_PREPARE_FD_PROPERTY, ticket);
 	}
+	ret = drmModeAtomicCommit(fd, request, DRM_MODE_ATOMIC_NONBLOCK, NULL);
+	if (ret)
+		ret = -errno;
+	drmModeAtomicFree(request);
+	return ret;
+}
+
+static void commit_single_tile_update(int fd, unsigned int crtc_index,
+				      const struct buffer *buffer)
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+	uint32_t plane = primary_plane(fd, crtc_index);
+
+	CHECK(request);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "FB_ID", buffer->fb);
 	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
 	drmModeAtomicFree(request);
 }
@@ -779,15 +798,14 @@ static void check_preparation_status(int ticket, uint32_t status)
 	CHECK(!query.reserved[0] && !query.reserved[1] && !query.reserved[2]);
 }
 
-static void check_primary_framebuffers(int fd, const struct buffer sources[2])
+static void check_primary_framebuffer(int fd, unsigned int crtc_index,
+				      const struct buffer *source)
 {
-	for (unsigned int i = 0; i < 2; i++) {
-		drmModePlane *plane = drmModeGetPlane(fd, primary_plane(fd, i));
+	drmModePlane *plane = drmModeGetPlane(fd, primary_plane(fd, crtc_index));
 
-		CHECK(plane);
-		CHECK(plane->fb_id == sources[i].fb);
-		drmModeFreePlane(plane);
-	}
+	CHECK(plane);
+	CHECK(plane->fb_id == source->fb);
+	drmModeFreePlane(plane);
 }
 
 static void
@@ -907,7 +925,8 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	commit_shared_tiles(fd, resources, &shared, ticket,
 			    DRM_MODE_ATOMIC_TEST_ONLY);
 	check_preparation_status(ticket, DRM_PREPARE_READY);
-	check_primary_framebuffers(fd, sources);
+	for (unsigned int i = 0; i < 2; i++)
+		check_primary_framebuffer(fd, i, &sources[i]);
 	commit_shared_tiles(fd, resources, &shared, ticket, 0);
 	check_preparation_status(ticket, DRM_PREPARE_CONSUMED);
 	CHECK(close(ticket) == 0);
@@ -939,7 +958,16 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	}
 	scaled = create_buffer(fd, 3840, 2160, 0);
 	fill_scaled_tiles(fd, &scaled, scaled_values);
-	commit_scaled_tiles(fd, &scaled);
+	ticket = prepare_tiles(fd, resources);
+	commit_single_tile_update(fd, 0, &shared);
+	CHECK(submit_scaled_tiles(fd, resources, &scaled, ticket) == -ESTALE);
+	for (unsigned int i = 0; i < 2; i++)
+		check_primary_framebuffer(fd, i, &shared);
+	CHECK(close(ticket) == 0);
+	ticket = prepare_tiles(fd, resources);
+	CHECK(submit_scaled_tiles(fd, resources, &scaled, ticket) == 0);
+	check_preparation_status(ticket, DRM_PREPARE_CONSUMED);
+	CHECK(close(ticket) == 0);
 	queue_tile_captures(captures, 6);
 	dequeue_tile_captures(captures, 6, results);
 	for (unsigned int i = 0; i < 2; i++) {
