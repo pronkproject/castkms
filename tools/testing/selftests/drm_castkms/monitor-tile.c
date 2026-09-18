@@ -186,6 +186,13 @@ int main(int argc, char **argv)
 	CHECK(errno == EINVAL);
 	CHECK(files.control_fd == -1 && files.revoke_fd == -1);
 	fill_tile_edid(edids[1], 1);
+	edids[1][54]++;
+	checksum(edids[1]);
+	errno = 0;
+	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == -1);
+	CHECK(errno == EINVAL);
+	CHECK(files.control_fd == -1 && files.revoke_fd == -1);
+	fill_tile_edid(edids[1], 1);
 	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == 0);
 	monitor = (struct monitor_control) {
 		.control_fd = files.control_fd,
