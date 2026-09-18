@@ -17,11 +17,19 @@
 #include "../../../../include/uapi/drm/drm_capture.h"
 #include "../../../../include/uapi/drm/drm_constraints.h"
 
+_Static_assert(sizeof(struct drm_castkms_renderer_files) == 8, "renderer files layout");
+_Static_assert(sizeof(struct drm_castkms_create_renderer) == 32, "create layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_query) == 32, "query layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_configure) == 48, "configure layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_publish) == 32, "publish layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_publish_result) == 32, "result layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_withdraw) == 16, "withdraw layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_register_image) == 48,
+	       "image registration layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_unregister_image) == 16,
+	       "image removal layout");
+_Static_assert(sizeof(struct drm_castkms_renderer_acquire_job) == 32,
+	       "job acquire layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_constraints) == 128, "constraints layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_constraints_format) == 56, "format layout");
 _Static_assert(sizeof(struct drm_castkms_renderer_job) == 56, "job layout");
