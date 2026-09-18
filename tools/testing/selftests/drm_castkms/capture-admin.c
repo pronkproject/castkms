@@ -68,7 +68,7 @@ int main(int argc, char **argv)
 	expect_error(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &describe, ENODEV);
 	CHECK(drmDropMaster(master) == 0);
 	expect_error(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &describe, ESTALE);
-	CHECK(drmSetMaster(master) == 0);
+	acquire_master(master);
 	expect_error(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &describe, ESTALE);
 
 	close_files(&files);
