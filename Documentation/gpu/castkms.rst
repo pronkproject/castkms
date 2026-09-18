@@ -174,6 +174,22 @@ ID while it remains loaded. Closing either lifetime capability disconnects
 every member together. Creating a different layout requires a new group
 incarnation.
 
+``DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE`` turns one live group
+mapping into a versioned array of ordinary final-image capture grants, one for
+each tile. Possession of the group file is only topology and lifetime proof;
+the calling DRM file must independently have master authority over every CRTC
+and connector, or request the explicitly privileged administrative path. The
+member records include both DRM object IDs and tile coordinates so a broker can
+route each tile without guessing from array position.
+
+Creation reserves and reports every capture/control descriptor pair before
+installing any of them. An undersized array or any authorization, allocation or
+copy fault therefore installs no descriptors. Each grant exposes only its own
+tile and retains the usual creator, device and individual-control revocation
+rules. Closing the group capability additionally revokes every retained member
+grant from that group incarnation. The interface provides no stitched image or
+implicit rights from a main connector.
+
 The standard connector ``TILE`` blobs are derived from the DisplayID records,
 so compositors continue to use ordinary KMS tiled-monitor discovery. Each
 connector advertises its tile-sized modes and remains independently

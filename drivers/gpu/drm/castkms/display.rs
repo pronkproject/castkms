@@ -777,6 +777,9 @@ impl KmsDriver for Driver {
             };
             let crtc =
                 crtc::UnregisteredCrtc::<Crtc>::new(dev, plane, cursor, None, display.clone())?;
+            if !display.crtc_id.populate(crtc.object_id()) {
+                return Err(EINVAL);
+            }
             allocation_planes.push(
                 super::execution::constraints::Plane::from_kms(
                     plane,

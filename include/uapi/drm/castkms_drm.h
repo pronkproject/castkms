@@ -11,6 +11,7 @@
 #define DRM_CASTKMS_MONITOR_CAP_CEC (1U << 0)
 #define DRM_CASTKMS_MONITOR_GROUP_VERSION 1
 #define DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS 8
+#define DRM_CASTKMS_MONITOR_GROUP_CAPTURE_ADMIN (1U << 0)
 #define DRM_CASTKMS_CEC_TRANSPORT_ONLINE (1U << 0)
 #define DRM_CASTKMS_CEC_STATE_ONLINE (1U << 0)
 #define DRM_CASTKMS_CEC_STATE_MONITOR_ATTACHED (1U << 1)
@@ -279,6 +280,65 @@ struct drm_castkms_monitor_group_query {
 	__u64 mappings;
 	__u32 mapping_capacity;
 	__u32 reserved3;
+};
+
+/**
+ * struct drm_castkms_monitor_group_capture_member - one scoped tile grant
+ * @group_id: immutable group incarnation from the group control file
+ * @crtc_id: CRTC paired with this tile
+ * @connector_id: connector paired with this tile
+ * @horizontal_location: zero-based horizontal tile coordinate
+ * @vertical_location: zero-based vertical tile coordinate
+ * @reserved: returned zero
+ * @capture_fd: final-image capture endpoint for this tile only
+ * @control_fd: independent revocation endpoint for @capture_fd
+ * @reserved2: returned zero
+ *
+ * Records preserve the mapping order returned by the group control file. Each
+ * descriptor pair is an ordinary DRM final-image capture grant. No pair grants
+ * access to another tile, and the group does not imply stitched capture.
+ */
+struct drm_castkms_monitor_group_capture_member {
+	__u64 group_id;
+	__u32 crtc_id;
+	__u32 connector_id;
+	__u16 horizontal_location;
+	__u16 vertical_location;
+	__u32 reserved;
+	__s32 capture_fd;
+	__s32 control_fd;
+	__u64 reserved2;
+};
+
+/**
+ * struct drm_castkms_create_monitor_group_capture - issue every tile grant
+ * @version: must be DRM_CASTKMS_MONITOR_GROUP_VERSION
+ * @flags: zero or DRM_CASTKMS_MONITOR_GROUP_CAPTURE_ADMIN
+ * @group_fd: live monitor-group control descriptor
+ * @member_capacity: writable records available at @members
+ * @members: pointer to writable capture-member records
+ * @reserved: must be zero
+ *
+ * The group descriptor identifies topology and lifetime but grants no pixel
+ * access. With zero flags, the calling DRM file must be the current master and
+ * hold every group CRTC and connector. The administrative flag requires
+ * CAP_SYS_ADMIN in the initial user namespace, a distinct current master and
+ * exclusive access to every group object.
+ *
+ * Call DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY first to obtain the immutable
+ * member count. Capacity smaller than that count returns ``ENOSPC``. Success
+ * copies every record before installing any descriptor. Any failure installs
+ * none, and callers must ignore all output storage. Creator close, device
+ * removal, individual control close or group removal revokes the corresponding
+ * authority. Group removal revokes every member grant in the bundle.
+ */
+struct drm_castkms_create_monitor_group_capture {
+	__u32 version;
+	__u32 flags;
+	__s32 group_fd;
+	__u32 member_capacity;
+	__u64 members;
+	__u64 reserved[3];
 };
 
 /**
@@ -967,6 +1027,7 @@ struct drm_castkms_audio_query {
 
 #define DRM_CASTKMS_CREATE_AUDIO_CAPTURE 0x02
 #define DRM_CASTKMS_CREATE_MONITOR_GROUP 0x03
+#define DRM_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE 0x04
 #define DRM_CASTKMS_AUDIO_QUERY 0x01
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
 #define DRM_CASTKMS_CREATE_RENDERER 0x01
@@ -1016,6 +1077,9 @@ enum {
 	DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_MONITOR_GROUP,
 			struct drm_castkms_create_monitor_group),
+	DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+			struct drm_castkms_create_monitor_group_capture),
 	DRM_IOCTL_CASTKMS_AUDIO_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_AUDIO_QUERY,
 			struct drm_castkms_audio_query),

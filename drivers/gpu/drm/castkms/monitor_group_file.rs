@@ -14,7 +14,7 @@ use kernel::{
     cred::{self, Capability},
     drm::{device::Registered, file::File as DrmFile, kms::connector::Edid, Device},
     error::from_err_ptr,
-    fs::{file::FileDescriptorReservation, File},
+    fs::{file::FileDescriptorReservation, File, LocalFile},
     module::this_module,
     prelude::*,
     sync::{aref::ARef, Arc, Mutex},
@@ -64,10 +64,25 @@ struct Query {
     reserved3: u32,
 }
 
+#[repr(C)]
+struct CaptureMember {
+    group_id: u64,
+    crtc_id: u32,
+    connector_id: u32,
+    horizontal_location: u16,
+    vertical_location: u16,
+    reserved: u32,
+    capture_fd: i32,
+    control_fd: i32,
+    reserved2: u64,
+}
+
 // SAFETY: Query contains only initialized integers and byte arrays without padding.
 unsafe impl AsBytes for Query {}
 // SAFETY: Every bit pattern is valid for the integer and byte-array fields.
 unsafe impl FromBytes for Query {}
+// SAFETY: CaptureMember contains only initialized integers without padding.
+unsafe impl AsBytes for CaptureMember {}
 
 const _: () = {
     assert!(
@@ -81,6 +96,10 @@ const _: () = {
     assert!(
         core::mem::size_of::<Query>()
             == core::mem::size_of::<uapi::drm_castkms_monitor_group_query>()
+    );
+    assert!(
+        core::mem::size_of::<CaptureMember>()
+            == core::mem::size_of::<uapi::drm_castkms_monitor_group_capture_member>()
     );
 };
 
@@ -96,6 +115,8 @@ struct Lease {
     group_id: u64,
     topology: monitor::group::Topology,
     mappings: [Mapping; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
+    crtc_ids: [u32; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
+    device_groups: Arc<monitor::group::Registry>,
     grants: Arc<grants::Registry>,
     #[pin]
     control: Mutex<Option<Managed>>,
@@ -111,6 +132,8 @@ impl Lease {
         group_id: u64,
         topology: monitor::group::Topology,
         mappings: [Mapping; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
+        crtc_ids: [u32; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
+        device_groups: Arc<monitor::group::Registry>,
     ) -> Result<Arc<Self>> {
         let grants = grants::Registry::new_monitor_group()?;
         Arc::pin_init(
@@ -118,6 +141,8 @@ impl Lease {
                 group_id,
                 topology,
                 mappings,
+                crtc_ids,
+                device_groups,
                 grants,
                 control <- kernel::new_mutex!(None),
             }),
@@ -136,23 +161,28 @@ struct HolderFile {
     lease: Arc<Lease>,
 }
 
-impl HolderFile {
-    const OPS: bindings::file_operations = bindings::file_operations {
-        owner: this_module::<CastKms>().as_ptr(),
-        release: Some(Self::release),
-        unlocked_ioctl: Some(Self::ioctl),
-        #[cfg(CONFIG_COMPAT)]
-        compat_ioctl: bindings::compat_ptr_ioctl,
-        ..pin_init::zeroed()
-    };
+struct HolderOperations(bindings::file_operations);
 
+// SAFETY: The operations table is immutable after static initialization.
+unsafe impl Sync for HolderOperations {}
+
+static HOLDER_OPS: HolderOperations = HolderOperations(bindings::file_operations {
+    owner: this_module::<CastKms>().as_ptr(),
+    release: Some(HolderFile::release),
+    unlocked_ioctl: Some(HolderFile::ioctl),
+    #[cfg(CONFIG_COMPAT)]
+    compat_ioctl: bindings::compat_ptr_ioctl,
+    ..pin_init::zeroed()
+});
+
+impl HolderFile {
     fn new(lease: Arc<Lease>) -> Result<ARef<File>> {
         let owner = KBox::into_raw(KBox::new(Self { lease }, GFP_KERNEL)?);
         // SAFETY: The immutable operations table describes the exact private allocation.
         let file = from_err_ptr(unsafe {
             bindings::anon_inode_getfile(
                 c"[castkms-monitor-group]".as_char_ptr(),
-                &Self::OPS,
+                &HOLDER_OPS.0,
                 owner.cast::<c_void>(),
                 kernel::fs::file::flags::O_RDWR as i32,
             )
@@ -250,6 +280,23 @@ impl HolderFile {
         UserSlice::new(address, core::mem::size_of_val(&query))
             .writer()
             .write(&query)
+    }
+
+    fn lease_from_fd(dev: &Device<Driver, Registered>, fd: i32) -> Result<Arc<Lease>> {
+        let file = LocalFile::fget(fd.try_into().map_err(|_| EBADF)?).map_err(|_| EBADF)?;
+        // SAFETY: fget retains the file and its immutable operations table through inspection.
+        if !core::ptr::eq(unsafe { (*file.as_ptr()).f_op }, &HOLDER_OPS.0) {
+            return Err(EBADF);
+        }
+        // SAFETY: HOLDER_OPS uniquely identifies the initialized HolderFile private allocation.
+        let owner = unsafe { &*(*file.as_ptr()).private_data.cast::<Self>() };
+        if !Arc::ptr_eq(&owner.lease.device_groups, &dev.monitor_groups) {
+            return Err(EXDEV);
+        }
+        if owner.lease.control.lock().is_none() {
+            return Err(ECANCELED);
+        }
+        Ok(owner.lease.clone())
     }
 }
 
@@ -423,6 +470,7 @@ pub(crate) fn create(
     let pending = monitor::Monitor::reserve_group(dev, &output_indices)?;
     let group_id = next_group_id()?;
     let mut mappings = [Mapping::default(); uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize];
+    let mut crtc_ids = [0; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize];
     for (sorted_index, candidate) in candidates.iter().enumerate() {
         let location = topology.member_location(sorted_index).ok_or(EINVAL)?;
         mappings[candidate.input_index] = Mapping {
@@ -432,8 +480,18 @@ pub(crate) fn create(
             vertical_location: location[1].into(),
             reserved: 0,
         };
+        crtc_ids[candidate.input_index] = dev.displays[candidate.output_index]
+            .crtc_id
+            .copy()
+            .ok_or(ENODEV)?;
     }
-    let lease = Lease::new(group_id, topology, mappings)?;
+    let lease = Lease::new(
+        group_id,
+        topology,
+        mappings,
+        crtc_ids,
+        dev.monitor_groups.clone(),
+    )?;
     let control_reservation =
         FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
     let revoke_reservation =
@@ -487,5 +545,99 @@ pub(crate) fn create(
     });
     control_reservation.fd_install(control_file);
     revoke_reservation.fd_install(revoke_file);
+    Ok(0)
+}
+
+struct CapturePublication {
+    capture_reservation: FileDescriptorReservation,
+    control_reservation: FileDescriptorReservation,
+    capture: ARef<File>,
+    control: ARef<File>,
+}
+
+pub(crate) fn create_capture(
+    dev: &Device<Driver, Registered>,
+    _: &(),
+    request: &mut uapi::drm_castkms_create_monitor_group_capture,
+    file: &DrmFile<DriverFile>,
+) -> Result<u32> {
+    let administrative = request.flags & uapi::DRM_CASTKMS_MONITOR_GROUP_CAPTURE_ADMIN != 0;
+    if request.version != uapi::DRM_CASTKMS_MONITOR_GROUP_VERSION
+        || request.flags & !uapi::DRM_CASTKMS_MONITOR_GROUP_CAPTURE_ADMIN != 0
+        || request.group_fd < 0
+        || request.members == 0
+        || request.reserved != [0; 3]
+    {
+        return Err(EINVAL);
+    }
+    if administrative && !cred::capable_in_initial_user_namespace(Capability::SysAdmin) {
+        return Err(EACCES);
+    }
+
+    let lease = HolderFile::lease_from_fd(dev, request.group_fd)?;
+    let member_count = lease.topology.member_count();
+    if request.member_capacity < member_count.try_into().map_err(|_| EOVERFLOW)? {
+        return Err(ENOSPC);
+    }
+    let mut targets = KVec::with_capacity(member_count, GFP_KERNEL)?;
+    for index in 0..member_count {
+        targets.push(
+            (lease.crtc_ids[index], lease.mappings[index].connector_id),
+            GFP_KERNEL,
+        )?;
+    }
+    let pairs =
+        DriverFile::create_group_capture_files(dev, file, &targets, administrative, &lease.grants)?;
+
+    let mut publications = KVec::with_capacity(member_count, GFP_KERNEL)?;
+    let members_address = usize::try_from(request.members).map_err(|_| EFAULT)?;
+    let members_bytes = member_count
+        .checked_mul(core::mem::size_of::<CaptureMember>())
+        .ok_or(EOVERFLOW)?;
+    let mut writer = UserSlice::new(UserPtr::from_addr(members_address), members_bytes).writer();
+    for (index, pair) in pairs.into_iter().enumerate() {
+        let capture_reservation =
+            FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
+        let control_reservation =
+            FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
+        let member = &lease.mappings[index];
+        let output = CaptureMember {
+            group_id: lease.group_id,
+            crtc_id: lease.crtc_ids[index],
+            connector_id: member.connector_id,
+            horizontal_location: member.horizontal_location,
+            vertical_location: member.vertical_location,
+            reserved: 0,
+            capture_fd: capture_reservation
+                .reserved_fd()
+                .try_into()
+                .map_err(|_| EOVERFLOW)?,
+            control_fd: control_reservation
+                .reserved_fd()
+                .try_into()
+                .map_err(|_| EOVERFLOW)?,
+            reserved2: 0,
+        };
+        writer.write(&output)?;
+        let (capture, control) = pair.into_files();
+        publications.push(
+            CapturePublication {
+                capture_reservation,
+                control_reservation,
+                capture,
+                control,
+            },
+            GFP_KERNEL,
+        )?;
+    }
+
+    for publication in publications {
+        publication
+            .capture_reservation
+            .fd_install(publication.capture);
+        publication
+            .control_reservation
+            .fd_install(publication.control);
+    }
     Ok(0)
 }

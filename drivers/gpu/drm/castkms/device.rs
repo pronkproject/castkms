@@ -32,6 +32,7 @@ pub(super) struct Display {
     pub(super) output: Arc<Output>,
     pub(super) monitor: Arc<Monitor>,
     pub(super) host: Arc<configuration::Configuration>,
+    pub(super) crtc_id: SetOnce<u32>,
     pub(crate) constraints: SetOnce<Arc<crate::execution::constraints::provider::Provider>>,
 }
 
@@ -176,6 +177,7 @@ impl Owner {
                         output,
                         monitor,
                         host: host.configuration(),
+                        crtc_id: SetOnce::new(),
                         constraints: SetOnce::new(),
                     },
                     GFP_KERNEL,

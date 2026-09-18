@@ -165,6 +165,9 @@ impl drm::Driver for Driver {
          drm::ioctl::MASTER, audio::create),
         (CASTKMS_CREATE_MONITOR_GROUP, drm_castkms_create_monitor_group,
          0, monitor_group_file::create),
+        (CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+         drm_castkms_create_monitor_group_capture,
+         0, monitor_group_file::create_capture),
     }
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {

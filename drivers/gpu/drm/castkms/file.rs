@@ -3,6 +3,7 @@
 //! DRM file lifetime and checked issuance, above the kernel capture provider.
 
 use crate::{
+    authority::grants,
     capture::{
         permission::Permission,
         provider::{
@@ -28,6 +29,7 @@ use kernel::{
         }, //
     },
     prelude::*, //
+    sync::Arc,
 };
 
 pub(crate) struct File {
@@ -300,6 +302,110 @@ impl File {
         };
         Self::issue_capture_grant_from(file, crtc.crtc(), &connector, origin, || Ok(()))?
             .into_files_with(crate::capture::client::Client::new)
+    }
+
+    /// Issue one independently scoped final-image grant for every group member.
+    pub(crate) fn create_group_capture_files(
+        dev: &drm::Device<Driver, Registered>,
+        file: &drm::file::File<Self>,
+        targets: &[(u32, u32)],
+        administrative: bool,
+        group: &Arc<grants::Registry>,
+    ) -> Result<KVec<FilePair>> {
+        let mut objects = KVec::with_capacity(targets.len(), GFP_KERNEL)?;
+        for &(crtc_id, connector_id) in targets {
+            let object = if administrative {
+                (
+                    dev.lookup_crtc_unfiltered(crtc_id)?,
+                    dev.lookup_connector_unfiltered(connector_id)?,
+                )
+            } else {
+                (
+                    dev.lookup_crtc(file, crtc_id)?,
+                    dev.lookup_connector(file, connector_id)?,
+                )
+            };
+            objects.push(object, GFP_KERNEL)?;
+        }
+
+        let (master, interval) =
+            if administrative {
+                let master = dev.authority.snapshot().ok_or(EBUSY)?;
+                let interval = dev.authority.interval().map_err(|error| {
+                    if error == EACCES {
+                        EBUSY
+                    } else {
+                        error
+                    }
+                })?;
+                (master, Some(interval))
+            } else {
+                (file.master_snapshot().ok_or(EACCES)?.master().clone(), None)
+            };
+        let mut permissions = KVec::with_capacity(objects.len(), GFP_KERNEL)?;
+        {
+            let guard = master
+                .lock_current()
+                .ok_or(if administrative { EBUSY } else { EACCES })?;
+            if administrative == guard.is_master_file(file) {
+                return Err(if administrative { EBUSY } else { EACCES });
+            }
+            for (crtc, connector) in &objects {
+                if administrative
+                    && (!guard.exclusively_holds_object(crtc.crtc())
+                        || !guard.exclusively_holds_object(&**connector))
+                {
+                    return Err(EBUSY);
+                }
+                let permission = if let Some(interval) = interval {
+                    Permission::administrative(&guard, crtc.crtc(), connector, interval)?
+                } else {
+                    Permission::new(&guard, crtc.crtc(), connector)?
+                };
+                permissions.push(permission, GFP_KERNEL)?;
+            }
+        }
+
+        let mut grantors = KVec::with_capacity(permissions.len(), GFP_KERNEL)?;
+        for permission in permissions {
+            grantors.push(Grantor::new(permission)?, GFP_KERNEL)?;
+        }
+        {
+            let guard =
+                master
+                    .lock_current()
+                    .ok_or(if administrative { ESTALE } else { EACCES })?;
+            if administrative == guard.is_master_file(file) {
+                return Err(if administrative { EBUSY } else { EACCES });
+            }
+            if interval.is_some_and(|expected| dev.authority.interval() != Ok(expected)) {
+                return Err(ESTALE);
+            }
+            for (crtc, connector) in &objects {
+                if !guard.holds_object(crtc.crtc()) || !guard.holds_object(&**connector) {
+                    return Err(EACCES);
+                }
+                if administrative
+                    && (!guard.exclusively_holds_object(crtc.crtc())
+                        || !guard.exclusively_holds_object(&**connector))
+                {
+                    return Err(EBUSY);
+                }
+            }
+            for grantor in &mut grantors {
+                grantor.track_creator(&file.inner().grants)?;
+                grantor.track_group(group)?;
+            }
+        }
+
+        let mut files = KVec::with_capacity(grantors.len(), GFP_KERNEL)?;
+        for grantor in grantors {
+            files.push(
+                grantor.into_files_with(crate::capture::client::Client::new)?,
+                GFP_KERNEL,
+            )?;
+        }
+        Ok(files)
     }
 
     /// Issue through a current master file without granting any public ioctl by implication.
