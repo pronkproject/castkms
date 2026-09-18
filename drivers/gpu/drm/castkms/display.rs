@@ -747,6 +747,7 @@ impl KmsDriver for Driver {
                 None,
                 scene::Kind::Primary,
             )?;
+            plane.enable_fb_damage_clips();
             plane.create_zpos_immutable_property(0)?;
             plane.create_blend_mode_property(plane::BlendModes::PREMULTIPLIED)?;
             plane.create_yuv_color_properties()?;
@@ -764,6 +765,7 @@ impl KmsDriver for Driver {
                     None,
                     scene::Kind::Cursor,
                 )?;
+                cursor.enable_fb_damage_clips();
                 cursor.create_zpos_immutable_property(31)?;
                 cursor.create_yuv_color_properties()?;
                 cursor.create_nearest_scaling_filter_property()?;
@@ -832,6 +834,7 @@ impl KmsDriver for Driver {
                     None,
                     scene::Kind::Overlay,
                 )?;
+                plane.enable_fb_damage_clips();
                 plane.create_zpos_property(1, 1, 30)?;
                 plane.create_yuv_color_properties()?;
                 plane.create_nearest_scaling_filter_property()?;

@@ -22,6 +22,10 @@ the accepted renderer constraints entry determines actual acceptance. Neither
 bound is a receiver or transport policy. Cursor planes, eight
 shared overlays and per-plane color pipelines are enabled by default. Their
 module parameters allow disabling them for focused testing.
+Every plane exposes the standard ``FB_DAMAGE_CLIPS`` property. Supplying clips
+marks an accepted explicit update as new content. The current compositor may
+recompose the complete output; damage is a correctness-preserving hint rather
+than a promise of partial work.
 The virtual parent has DMA addressing configured before DRM registration so
 exporters can map imported attachments. Import retains the exporter's storage
 and reservation without requiring a persistent CPU mapping. It does not add
