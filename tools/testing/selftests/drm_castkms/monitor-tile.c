@@ -506,6 +506,36 @@ static void fill_shared_tiles(int fd, const struct buffer *buffer,
 	CHECK(munmap(pixels, buffer->dumb.size) == 0);
 }
 
+static void commit_shared_damage(int fd, const struct buffer *buffer,
+				 const unsigned char values[2])
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+	uint32_t blobs[2];
+
+	CHECK(request);
+	fill_shared_tiles(fd, buffer, values);
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_mode_rect damage = {
+			.x1 = i * 1920,
+			.y1 = 0,
+			.x2 = (i + 1) * 1920,
+			.y2 = 1080,
+		};
+		uint32_t plane = primary_plane(fd, i);
+
+		CHECK(drmModeCreatePropertyBlob(fd, &damage, sizeof(damage),
+						&blobs[i]) == 0);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "FB_ID", buffer->fb);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "FB_DAMAGE_CLIPS", blobs[i]);
+	}
+	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
+	drmModeAtomicFree(request);
+	for (unsigned int i = 0; i < 2; i++)
+		CHECK(drmModeDestroyPropertyBlob(fd, blobs[i]) == 0);
+}
+
 static void
 queue_tile_captures(const struct drm_castkms_monitor_group_capture_member captures[2],
 		    uint64_t use_id)
@@ -553,6 +583,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 {
 	static const unsigned char values[2] = { 0x31, 0x72 };
 	static const unsigned char shared_values[2] = { 0x19, 0xa4 };
+	static const unsigned char damaged_values[2] = { 0x46, 0xb2 };
 	struct drm_capture_describe descriptions[2] = {0};
 	struct drm_capture_result results[2] = {0};
 	struct buffer sources[2], destinations[2], shared, cursor;
@@ -624,6 +655,13 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	}
 	CHECK(drmModeSetCursor(fd, resources->crtcs[0], 0, 0, 0) == 0);
 	destroy_buffer(fd, &cursor);
+	commit_shared_damage(fd, &shared, damaged_values);
+	queue_tile_captures(captures, 4);
+	dequeue_tile_captures(captures, 4, results);
+	for (unsigned int i = 0; i < 2; i++) {
+		check_tile_pixels(destination_fds[i], &destinations[i],
+				  damaged_values[i], false);
+	}
 
 	for (unsigned int i = 0; i < 2; i++) {
 		struct drm_capture_unregister_destination destination = {
