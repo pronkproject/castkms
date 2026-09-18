@@ -555,7 +555,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	static const unsigned char shared_values[2] = { 0x19, 0xa4 };
 	struct drm_capture_describe descriptions[2] = {0};
 	struct drm_capture_result results[2] = {0};
-	struct buffer sources[2], destinations[2], shared;
+	struct buffer sources[2], destinations[2], shared, cursor;
 	drmModeModeInfo modes[2];
 	int destination_fds[2];
 
@@ -611,6 +611,20 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 		check_tile_pixels(destination_fds[i], &destinations[i],
 				  shared_values[i], false);
 	}
+
+	cursor = create_buffer(fd, 64, 64, 0xff);
+	CHECK(drmModeSetCursor(fd, resources->crtcs[0], cursor.dumb.handle,
+			       64, 64) == 0);
+	CHECK(drmModeMoveCursor(fd, resources->crtcs[0], 100, 100) == 0);
+	queue_tile_captures(captures, 3);
+	dequeue_tile_captures(captures, 3, results);
+	for (unsigned int i = 0; i < 2; i++) {
+		check_tile_pixels(destination_fds[i], &destinations[i],
+				  shared_values[i], i == 0);
+	}
+	CHECK(drmModeSetCursor(fd, resources->crtcs[0], 0, 0, 0) == 0);
+	destroy_buffer(fd, &cursor);
+
 	for (unsigned int i = 0; i < 2; i++) {
 		struct drm_capture_unregister_destination destination = {
 			.id = 1,
