@@ -715,6 +715,35 @@ static void commit_scaled_tiles(int fd, const struct buffer *buffer)
 	drmModeAtomicFree(request);
 }
 
+static void commit_shared_tiles(int fd, const struct buffer *buffer,
+				uint32_t flags)
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+
+	CHECK(request);
+	for (unsigned int i = 0; i < 2; i++) {
+		uint32_t plane = primary_plane(fd, i);
+
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "FB_ID", buffer->fb);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "SRC_X", ((uint64_t)i * 1920) << 16);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "SRC_Y", 0);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "SRC_W", (uint64_t)1920 << 16);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "SRC_H", (uint64_t)1080 << 16);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_X", 0);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_Y", 0);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "CRTC_W", 1920);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "CRTC_H", 1080);
+	}
+	CHECK(drmModeAtomicCommit(fd, request, flags, NULL) == 0);
+	drmModeAtomicFree(request);
+}
+
 static void
 queue_tile_capture(const struct drm_castkms_monitor_group_capture_member *capture,
 		   uint64_t use_id)
@@ -828,13 +857,15 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 
 	shared = create_buffer(fd, 3840, 1080, 0);
 	fill_shared_tiles(fd, &shared, shared_values);
-	for (unsigned int i = 0; i < 2; i++) {
-		CHECK(drmModeSetCrtc(fd, resources->crtcs[i], shared.fb,
-				     i * 1920, 0, &resources->connectors[i],
-				     1, &modes[i]) == 0);
-	}
+	commit_shared_tiles(fd, &shared, DRM_MODE_ATOMIC_TEST_ONLY);
 	queue_tile_captures(captures, 2);
 	dequeue_tile_captures(captures, 2, results);
+	for (unsigned int i = 0; i < 2; i++)
+		check_tile_pixels(destination_fds[i], &destinations[i],
+				  values[i], false);
+	commit_shared_tiles(fd, &shared, 0);
+	queue_tile_captures(captures, 3);
+	dequeue_tile_captures(captures, 3, results);
 	for (unsigned int i = 0; i < 2; i++) {
 		check_tile_pixels(destination_fds[i], &destinations[i],
 				  shared_values[i], false);
@@ -844,8 +875,8 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	CHECK(drmModeSetCursor(fd, resources->crtcs[0], cursor.dumb.handle,
 			       64, 64) == 0);
 	CHECK(drmModeMoveCursor(fd, resources->crtcs[0], 100, 100) == 0);
-	queue_tile_captures(captures, 3);
-	dequeue_tile_captures(captures, 3, results);
+	queue_tile_captures(captures, 4);
+	dequeue_tile_captures(captures, 4, results);
 	for (unsigned int i = 0; i < 2; i++) {
 		check_tile_pixels(destination_fds[i], &destinations[i],
 				  shared_values[i], i == 0);
@@ -853,8 +884,8 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	CHECK(drmModeSetCursor(fd, resources->crtcs[0], 0, 0, 0) == 0);
 	destroy_buffer(fd, &cursor);
 	commit_shared_damage(fd, &shared, damaged_values);
-	queue_tile_captures(captures, 4);
-	dequeue_tile_captures(captures, 4, results);
+	queue_tile_captures(captures, 5);
+	dequeue_tile_captures(captures, 5, results);
 	for (unsigned int i = 0; i < 2; i++) {
 		check_tile_pixels(destination_fds[i], &destinations[i],
 				  damaged_values[i], false);
@@ -862,16 +893,16 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	scaled = create_buffer(fd, 3840, 2160, 0);
 	fill_scaled_tiles(fd, &scaled, scaled_values);
 	commit_scaled_tiles(fd, &scaled);
-	queue_tile_captures(captures, 5);
-	dequeue_tile_captures(captures, 5, results);
+	queue_tile_captures(captures, 6);
+	dequeue_tile_captures(captures, 6, results);
 	for (unsigned int i = 0; i < 2; i++) {
 		check_scaled_tile_pixels(destination_fds[i], &destinations[i],
 					 scaled_values[i]);
 	}
 	overlay = create_buffer(fd, 320, 240, 0xd6);
 	overlay_id = commit_overlay(fd, resources->crtcs[0], &overlay);
-	queue_tile_captures(captures, 6);
-	dequeue_tile_captures(captures, 6, results);
+	queue_tile_captures(captures, 7);
+	dequeue_tile_captures(captures, 7, results);
 	for (unsigned int i = 0; i < 2; i++)
 		check_overlay_tile_pixels(destination_fds[i], &destinations[i],
 					  scaled_values, i);
@@ -884,8 +915,8 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	CHECK(errno == EKEYREVOKED);
 	CHECK(drmModeSetCrtc(fd, resources->crtcs[1], sources[1].fb, 0, 0,
 			     &resources->connectors[1], 1, &modes[1]) == 0);
-	queue_tile_capture(&captures[1], 7);
-	dequeue_tile_capture(&captures[1], 7, &results[1]);
+	queue_tile_capture(&captures[1], 8);
+	dequeue_tile_capture(&captures[1], 8, &results[1]);
 	check_tile_pixels(destination_fds[1], &destinations[1], values[1], false);
 
 	for (unsigned int i = 0; i < 2; i++) {
