@@ -4,8 +4,10 @@
 //!
 //! C header: [`include/drm/drm_connector.h`](srctree/include/drm/drm_connector.h)
 
-mod properties;
+#[cfg(CONFIG_DRM_DISPLAY_HDMI_CEC_HELPER)]
+pub mod cec;
 mod eld;
+mod properties;
 pub use eld::Eld;
 pub use properties::ReadOnlyBlobProperty;
 

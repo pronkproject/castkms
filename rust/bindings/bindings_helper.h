@@ -37,6 +37,11 @@
 #include <sound/pcm_drm_eld.h>
 #endif
 
+#if IS_ENABLED(CONFIG_DRM_DISPLAY_HDMI_CEC_HELPER)
+#include <drm/display/drm_hdmi_cec_helper.h>
+#include <media/cec.h>
+#endif
+
 #include <linux/acpi.h>
 #include <linux/anon_inodes.h>
 #include <linux/dma-fence-retire.h>
