@@ -36,11 +36,44 @@ _Static_assert(sizeof(struct drm_capture_queue_output) == 40, "capture queue lay
 _Static_assert(sizeof(struct drm_capture_result) == 24, "capture result layout");
 _Static_assert(sizeof(struct drm_capture_cancel) == 24, "capture cancel layout");
 
+struct sw_sync_create_fence_data {
+	uint32_t value;
+	char name[32];
+	int32_t fence;
+};
+
+#define SW_SYNC_IOC_CREATE_FENCE \
+	_IOWR('W', 0, struct sw_sync_create_fence_data)
+#define SW_SYNC_IOC_INC _IOW('W', 1, uint32_t)
+
 static void expect_error(int fd, unsigned long cmd, void *request, int error)
 {
 	errno = 0;
 	CHECK(ioctl(fd, cmd, request) < 0);
 	CHECK(errno == error);
+}
+
+static int pending_fence(int *timeline)
+{
+	struct sw_sync_create_fence_data create = {
+		.value = 1,
+		.name = "castkms-ready",
+		.fence = -1,
+	};
+
+	*timeline = open("/sys/kernel/debug/sync/sw_sync", O_RDWR | O_CLOEXEC);
+	CHECK(*timeline >= 0);
+	CHECK(ioctl(*timeline, SW_SYNC_IOC_CREATE_FENCE, &create) == 0);
+	CHECK(create.fence >= 0);
+	CHECK(fcntl(create.fence, F_GETFD) == FD_CLOEXEC);
+	return create.fence;
+}
+
+static void signal_fence(int timeline)
+{
+	uint32_t increment = 1;
+
+	CHECK(ioctl(timeline, SW_SYNC_IOC_INC, &increment) == 0);
 }
 
 static unsigned int open_files(void)
@@ -281,7 +314,7 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_configure configure = {
 		.constraints = (uintptr_t)&constraints, .constraints_size = sizeof(constraints),
 	};
-	struct drm_castkms_renderer_publish_result result;
+	struct drm_castkms_renderer_publish_result result, untouched;
 	struct drm_castkms_renderer_publish publish = {
 		.result = (uintptr_t)&result,
 		.ready_fence_fd = -1,
@@ -325,7 +358,7 @@ int main(int argc, char **argv)
 	uint64_t host, worker, previous = 0;
 	unsigned int baseline;
 	uint32_t plane;
-	int fd, private_fd[2], output_fd;
+	int fd, private_fd[2], output_fd, ready_timeline, ready_fence;
 	void *fault;
 
 	CHECK(argc == 2);
@@ -390,8 +423,20 @@ int main(int argc, char **argv)
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH, &publish, EFAULT);
 	CHECK(selected(fd, create.crtc_id, 1) == host);
 	CHECK(query_endpoint(files.renderer_fd).state == DRM_CASTKMS_RENDERER_STATE_CONFIGURED);
+	ready_fence = pending_fence(&ready_timeline);
+	memset(&result, 0xa5, sizeof(result));
+	untouched = result;
 	publish.result = (uintptr_t)&result;
+	publish.ready_fence_fd = ready_fence;
+	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH, &publish, EBUSY);
+	CHECK(!memcmp(&result, &untouched, sizeof(result)));
+	CHECK(selected(fd, create.crtc_id, 1) == host);
+	CHECK(query_endpoint(files.renderer_fd).state == DRM_CASTKMS_RENDERER_STATE_CONFIGURED);
+	signal_fence(ready_timeline);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_PUBLISH, &publish) == 0);
+	CHECK(close(ready_fence) == 0);
+	CHECK(close(ready_timeline) == 0);
+	publish.ready_fence_fd = -1;
 	worker = result.constraints_id;
 	CHECK(worker && worker != host
 		&& !result.reserved[0] && !result.reserved[1] && !result.reserved[2]);
