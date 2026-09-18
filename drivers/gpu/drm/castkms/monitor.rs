@@ -34,6 +34,7 @@ enum State {
 
 #[pin_data]
 pub(crate) struct Monitor {
+    pub(crate) cec: Arc<crate::cec::Cec>,
     #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
     pub(crate) audio_link: Arc<crate::audio::playback::Gate>,
     #[pin]
@@ -44,6 +45,7 @@ impl Monitor {
     pub(crate) fn new() -> Result<Arc<Self>> {
         Arc::pin_init(
             try_pin_init!(Self {
+                cec: crate::cec::Cec::new()?,
                 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
                 audio_link: crate::audio::playback::Gate::new(false)?,
                 state <- kernel::new_mutex!(State::Unmanaged),
@@ -73,7 +75,7 @@ impl Monitor {
         connector: &connector::ConnectorGuard<'_, display::Connector>,
     ) -> i32 {
         let state = self.state.lock();
-        match &*state {
+        let count = match &*state {
             State::Managed {
                 description:
                     Description::Attached {
@@ -105,7 +107,10 @@ impl Monitor {
                 let _ = connector.update_edid(None);
                 0
             }
-        }
+        };
+        drop(state);
+        self.cec.refresh_physical_address();
+        count
     }
 
     fn add_fallback_modes(connector: &connector::ConnectorGuard<'_, display::Connector>) -> i32 {
@@ -201,6 +206,7 @@ impl Monitor {
     pub(crate) fn close(&self) {
         let retired = core::mem::replace(&mut *self.state.lock(), State::Closed);
         drop(retired);
+        self.cec.close();
     }
 
     #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
@@ -253,6 +259,10 @@ impl PendingControl {
 }
 
 impl Control {
+    pub(crate) fn cec(&self) -> &Arc<crate::cec::Cec> {
+        &self.monitor.cec
+    }
+
     pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
         let audio = {
@@ -280,6 +290,7 @@ impl Control {
                 audio,
             },
         )?;
+        self.monitor.cec.set_attached(true);
         self.notify();
         Ok(())
     }
@@ -287,6 +298,7 @@ impl Control {
     pub(crate) fn detach(&self) -> Result {
         self.monitor
             .publish(&self.identity, Description::Disconnected)?;
+        self.monitor.cec.set_attached(false);
         self.notify();
         Ok(())
     }
@@ -302,6 +314,7 @@ impl Control {
 impl Drop for Control {
     fn drop(&mut self) {
         if self.monitor.release(&self.identity) {
+            self.monitor.cec.reset();
             self.notify();
         }
     }

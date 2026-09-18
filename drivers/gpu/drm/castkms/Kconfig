@@ -7,6 +7,7 @@ config DRM_CASTKMS
 	depends on MMU
 	select RUST_DRM_GEM_SHMEM_HELPER
 	select DRM_KMS_HELPER
+	select DRM_DISPLAY_HDMI_CEC_HELPER
 	help
 	  Development version of the CastKMS virtual display driver. It provides
 	  one to eight virtual outputs and atomic modesetting with software vblank.
@@ -15,7 +16,8 @@ config DRM_CASTKMS
 	  and an optional pool of eight shared overlays support positioned, cropped
 	  and scaled composition. Output lookup tables and matrices, optional plane
 	  color pipelines and YUV color properties are applied in software. The
-	  in-kernel compositor does not support tiled storage. CEC is unsupported.
+	  in-kernel compositor does not support tiled storage. Each connector also
+	  exposes a native CEC adapter backed by its monitor-control transport.
 	  Optional ALSA support exposes one
 	  playback card per attached audio sink and separately authorized audio
 	  capture. Captures embed the cursor. An authorized userspace renderer can

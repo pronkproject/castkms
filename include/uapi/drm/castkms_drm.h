@@ -8,6 +8,11 @@
 
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
+#define DRM_CASTKMS_MONITOR_CAP_CEC (1U << 0)
+#define DRM_CASTKMS_CEC_TRANSPORT_ONLINE (1U << 0)
+#define DRM_CASTKMS_CEC_STATE_ONLINE (1U << 0)
+#define DRM_CASTKMS_CEC_STATE_MONITOR_ATTACHED (1U << 1)
+#define DRM_CASTKMS_CEC_STATE_ADAPTER_ENABLED (1U << 2)
 #define DRM_CASTKMS_RENDERER_VERSION 1
 
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_VERSION 1
@@ -166,7 +171,7 @@ struct drm_castkms_monitor_files {
 /**
  * struct drm_castkms_monitor_query - query monitor-control capabilities
  * @version: returned DRM_CASTKMS_MONITOR_CONTROL_VERSION
- * @flags: returned capability flags; currently zero
+ * @flags: returned DRM_CASTKMS_MONITOR_CAP_* capability flags
  * @max_edid_size: maximum accepted complete EDID size in bytes
  * @reserved: must be zero
  */
@@ -199,6 +204,132 @@ struct drm_castkms_monitor_attach {
 struct drm_castkms_monitor_detach {
 	__u32 flags;
 	__u32 reserved;
+};
+
+/*
+ * CEC transport is part of the exclusive monitor-control capability. The
+ * connector's Linux CEC adapter remains the application-facing interface;
+ * these ioctls let the monitor service implement its physical transport.
+ * No separate bind identity or event queue exists. The control file becomes
+ * readable when one outbound transaction can be acquired, and reports
+ * POLLHUP|POLLERR after revocation. These anonymous-file commands use ioctl(2),
+ * not libdrm's drmIoctl().
+ */
+
+/**
+ * struct drm_castkms_cec_set_transport - change CEC transport availability
+ * @flags: zero or DRM_CASTKMS_CEC_TRANSPORT_ONLINE
+ * @reserved: must be zero
+ *
+ * Going offline aborts an outstanding transaction and invalidates the native
+ * adapter's physical address. Going online republishes a valid EDID-derived
+ * address while a monitor is attached. The online preference is also cleared
+ * when the monitor-control capability is revoked or closed.
+ */
+struct drm_castkms_cec_set_transport {
+	__u32 flags;
+	__u32 reserved;
+};
+
+/**
+ * struct drm_castkms_cec_transaction - acquire an outbound CEC transaction
+ * @cookie: never-zero transaction identity
+ * @state_generation: complete CEC state generation at submission
+ * @signal_free_time: CEC-core signal-free-time request
+ * @attempts: requested CEC attempt count
+ * @length: initialized bytes in @msg
+ * @msg: CEC message bytes
+ * @reserved: returned zero
+ *
+ * This structure is output-only. A transaction is returned once and remains
+ * outstanding until completed, aborted by a state change, or timed out after
+ * two seconds. At most one transaction is outstanding for the connector.
+ * Empty queues return EAGAIN; poll reports readable unacquired work.
+ * Callers must ignore every output field when the ioctl fails.
+ */
+struct drm_castkms_cec_transaction {
+	__u64 cookie;
+	__u64 state_generation;
+	__u32 signal_free_time;
+	__u8 attempts;
+	__u8 length;
+	__u8 msg[16];
+	__u8 reserved[2];
+};
+
+/**
+ * struct drm_castkms_cec_complete - complete an outbound CEC transaction
+ * @cookie: cookie returned by acquire
+ * @status: Linux CEC_TX_STATUS_* result bits; must be nonzero
+ * @arb_lost_cnt: arbitration-loss count
+ * @nack_cnt: NACK count
+ * @low_drive_cnt: low-drive count
+ * @error_cnt: other error count
+ * @reserved: must be zero
+ *
+ * @cookie must name the acquired outstanding transaction. A transaction which
+ * has not been acquired returns EAGAIN, a different cookie returns ESTALE and
+ * no outstanding transaction returns ENOENT. Successful completion makes the
+ * result visible through the connector's native CEC adapter.
+ */
+struct drm_castkms_cec_complete {
+	__u64 cookie;
+	__u8 status;
+	__u8 arb_lost_cnt;
+	__u8 nack_cnt;
+	__u8 low_drive_cnt;
+	__u8 error_cnt;
+	__u8 reserved[3];
+};
+
+/**
+ * struct drm_castkms_cec_receive - inject one received CEC message
+ * @flags: must be zero
+ * @length: initialized bytes in @msg; 1 through 16
+ * @msg: CEC message bytes
+ * @reserved: must be zero
+ *
+ * The transport must be online and a monitor attached. Messages initiated by
+ * a logical address currently assigned to this connector are rejected so a
+ * bridge cannot reflect the connector's own traffic back into the CEC core.
+ */
+struct drm_castkms_cec_receive {
+	__u32 flags;
+	__u8 length;
+	__u8 msg[16];
+	__u8 reserved[11];
+};
+
+/**
+ * struct drm_castkms_cec_state - query the complete CEC transport state
+ * @state_generation: generation of this state
+ * @pending_cookie: outstanding transaction cookie, or zero
+ * @stats_tx_submitted: transactions accepted from the CEC core
+ * @stats_tx_completed: successful transport completions
+ * @stats_tx_nack: NACK transport completions
+ * @stats_tx_error: other failures, aborts, and timeouts
+ * @stats_tx_timeout: transactions included in @stats_tx_error that timed out
+ * @stats_rx: received messages delivered to the CEC core
+ * @stats_invalid: rejected stale or invalid transport operations
+ * @flags: DRM_CASTKMS_CEC_STATE_* values
+ * @physical_address: current EDID-derived CEC physical address
+ * @logical_address_mask: logical addresses assigned by the CEC core
+ * @reserved: returned zero
+ */
+struct drm_castkms_cec_state {
+	__u64 state_generation;
+	__u64 pending_cookie;
+	__u64 stats_tx_submitted;
+	__u64 stats_tx_completed;
+	__u64 stats_tx_nack;
+	__u64 stats_tx_error;
+	__u64 stats_tx_timeout;
+	__u64 stats_rx;
+	__u64 stats_invalid;
+	__u32 flags;
+	__u16 physical_address;
+	__u16 logical_address_mask;
+	__u64 reserved[2];
 };
 
 /**
@@ -728,6 +859,11 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_MONITOR_QUERY 0x01
 #define DRM_CASTKMS_MONITOR_ATTACH 0x02
 #define DRM_CASTKMS_MONITOR_DETACH 0x03
+#define DRM_CASTKMS_MONITOR_CEC_SET_TRANSPORT 0x04
+#define DRM_CASTKMS_MONITOR_CEC_ACQUIRE_TX 0x05
+#define DRM_CASTKMS_MONITOR_CEC_COMPLETE_TX 0x06
+#define DRM_CASTKMS_MONITOR_CEC_RECEIVE 0x07
+#define DRM_CASTKMS_MONITOR_CEC_GET_STATE 0x08
 #define DRM_CASTKMS_RENDERER_QUERY 0x00
 #define DRM_CASTKMS_RENDERER_CONFIGURE 0x01
 #define DRM_CASTKMS_RENDERER_PUBLISH 0x02
@@ -780,6 +916,21 @@ enum {
 	DRM_IOCTL_CASTKMS_MONITOR_DETACH =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_DETACH,
 			struct drm_castkms_monitor_detach),
+	DRM_IOCTL_CASTKMS_MONITOR_CEC_SET_TRANSPORT =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_CEC_SET_TRANSPORT,
+			struct drm_castkms_cec_set_transport),
+	DRM_IOCTL_CASTKMS_MONITOR_CEC_ACQUIRE_TX =
+		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_CEC_ACQUIRE_TX,
+			struct drm_castkms_cec_transaction),
+	DRM_IOCTL_CASTKMS_MONITOR_CEC_COMPLETE_TX =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_CEC_COMPLETE_TX,
+			struct drm_castkms_cec_complete),
+	DRM_IOCTL_CASTKMS_MONITOR_CEC_RECEIVE =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_CEC_RECEIVE,
+			struct drm_castkms_cec_receive),
+	DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE =
+		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_CEC_GET_STATE,
+			struct drm_castkms_cec_state),
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY,
 			struct drm_castkms_renderer_query),

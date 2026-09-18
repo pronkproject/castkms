@@ -194,7 +194,7 @@ int main(int argc, char **argv)
 	expect_ioctl_error(control, DRM_IOCTL_CASTKMS_MONITOR_QUERY, NULL, EFAULT);
 	CHECK(ioctl(control, DRM_IOCTL_CASTKMS_MONITOR_QUERY, &query) == 0);
 	CHECK(query.version == DRM_CASTKMS_MONITOR_CONTROL_VERSION);
-	CHECK(query.flags == 0);
+	CHECK(query.flags == DRM_CASTKMS_MONITOR_CAP_CEC);
 	CHECK(query.max_edid_size == DRM_CASTKMS_MONITOR_MAX_EDID_SIZE);
 	CHECK(query.reserved == 0);
 

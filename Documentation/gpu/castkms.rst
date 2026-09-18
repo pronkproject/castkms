@@ -40,8 +40,8 @@ requests a frame through an authorized stream. Normal DRM operations on a
 caller's own buffers are not a capture capability.
 
 An explicitly authorized service can replace the development monitor and
-publish attachment and EDID state through a narrow capability file. There is
-no CEC, writeback or CRC collection. Cursor and overlay planes support software
+publish attachment, EDID and CEC transport state through a narrow capability
+file. There is no writeback or CRC collection. Cursor and overlay planes support software
 composition. With ALSA support enabled, attached audio sinks also expose
 playback and separately authorized audio capture. No default framebuffer
 console client is started. Do not use the
@@ -141,14 +141,39 @@ before the managed monitor is published and the descriptors are installed.
 Failure installs neither file and leaves the connector disconnected;
 callers must discard all output bytes on failure, including partial copyout.
 
-The anonymous close-on-exec control file supports only query, attach and detach
-operations. Attach accepts either a complete validated EDID or no EDID, in
+The anonymous close-on-exec control file supports query, attach, detach and CEC
+transport operations. Attach accepts either a complete validated EDID or no EDID, in
 which case the driver publishes fallback modes with 1920 by 1080 preferred.
 Each successful change emits a normal DRM hotplug event. The capability does
 not expose DRM objects, framebuffers, capture images, modesetting, or renderer
 authority, including when administratively issued. A second
 close-on-exec file lets the issuer revoke the capability without retaining its
 control endpoint.
+
+Each connector also registers a native Linux CEC adapter. When the attached
+EDID supplies an HDMI physical address, monitor control can bring its external
+CEC transport online. Native CEC transmissions then become pollable, bounded
+transactions on the control file. The service acquires each transaction once
+and reports the physical transport's standard ``CEC_TX_STATUS_*`` result. It
+can inject received messages through the same capability. Only one outbound
+transaction may be outstanding, and an unreported transaction fails after two
+seconds. Going offline, monitor replacement or detachment, revocation and
+device removal abort outstanding work. Replacement retains the service's
+online preference but never carries a transaction to the new sink.
+
+The monitor-control file is the transport's authority and lifetime identity;
+there is no separate CEC binding or DRM event stream. Its state query reports
+attachment, transport and native-adapter readiness, the EDID-derived physical
+address, logical addresses assigned by the CEC core, the outstanding cookie
+and saturating statistics. Received messages whose initiator is one of those
+local logical addresses are rejected to prevent transport reflection loops.
+CEC access grants neither modesetting nor final-image capture authority.
+
+The ``cec`` selftest attaches an HDMI EDID, configures the real ``/dev/cecN``
+adapter, completes a native outbound transaction through monitor control and
+injects a received message back into the CEC core::
+
+    tools/testing/selftests/drm_castkms/cec /dev/dri/cardN
 
 The control file itself carries authority after issuance. It can be passed to
 the display service and remains usable across later DRM master changes. Final

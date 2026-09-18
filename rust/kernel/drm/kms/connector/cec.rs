@@ -3,7 +3,7 @@
 //! Safe callbacks and notifications for an HDMI CEC adapter on a DRM connector.
 
 use super::{AsRawConnector, Connector, DriverConnector, UnregisteredConnector};
-use crate::{bindings, device, error::to_result, prelude::*};
+use crate::{bindings, device, error::to_result, prelude::*, sync::aref::ARef};
 
 /// Maximum payload size of one CEC message.
 pub const MAX_MESSAGE_SIZE: usize = bindings::CEC_MAX_MSG_SIZE as usize;
@@ -128,6 +128,30 @@ impl<T: DriverCec> Connector<T> {
             )
         };
     }
+
+    /// Return the physical address most recently derived from connector EDID.
+    pub fn cec_physical_address(&self) -> u16 {
+        // SAFETY: Display information belongs to this initialized connector.
+        // Volatile access is the Rust-side equivalent of READ_ONCE while EDID
+        // probing may update the field under the modeset locks.
+        unsafe {
+            core::ptr::addr_of!((*self.as_raw()).display_info.source_physical_address)
+                .read_volatile()
+        }
+    }
+
+    /// Publish or invalidate the adapter's EDID-derived physical address.
+    pub fn cec_set_physical_address_valid(&self, valid: bool) {
+        // SAFETY: The connector owns registered CEC helper callbacks. These
+        // native helpers serialize the adapter update with the CEC core.
+        unsafe {
+            if valid {
+                bindings::drm_connector_cec_phys_addr_set(self.as_raw());
+            } else {
+                bindings::drm_connector_cec_phys_addr_invalidate(self.as_raw());
+            }
+        }
+    }
 }
 
 impl<T: DriverCec> UnregisteredConnector<T> {
@@ -137,7 +161,7 @@ impl<T: DriverCec> UnregisteredConnector<T> {
         name: &CStr,
         available_logical_addresses: u8,
         parent: &device::Device,
-    ) -> Result {
+    ) -> Result<ARef<Connector<T>>> {
         if available_logical_addresses > bindings::CEC_MAX_LOG_ADDRS as u8 {
             return Err(EINVAL);
         }
@@ -152,7 +176,8 @@ impl<T: DriverCec> UnregisteredConnector<T> {
                 available_logical_addresses,
                 parent.as_raw(),
             )
-        })
+        })?;
+        Ok(ARef::from(&self.0))
     }
 }
 

@@ -5,6 +5,7 @@
 mod audio;
 mod authority;
 mod capture;
+mod cec;
 mod color;
 mod device;
 mod display;

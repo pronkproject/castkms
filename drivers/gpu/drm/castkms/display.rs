@@ -593,6 +593,28 @@ impl connector::DriverConnector for Connector {
     }
 }
 
+impl connector::cec::DriverCec for Connector {
+    fn cec_enable(connector: &connector::Connector<Self>, enabled: bool) -> Result {
+        connector.monitor.cec.enable(enabled)
+    }
+
+    fn cec_logical_address(connector: &connector::Connector<Self>, address: u8) -> Result {
+        connector.monitor.cec.logical_address(address)
+    }
+
+    fn cec_transmit(
+        connector: &connector::Connector<Self>,
+        attempts: u8,
+        signal_free_time: u32,
+        message: connector::cec::Message,
+    ) -> Result {
+        connector
+            .monitor
+            .cec
+            .transmit(attempts, signal_free_time, message)
+    }
+}
+
 fn install_constraints<'a>(
     install: atomic::Install<'a, Driver>,
 ) -> atomic::InstallResult<'a, Driver> {
@@ -788,6 +810,12 @@ impl KmsDriver for Driver {
                 display.monitor.clone(),
             )?;
             connector.attach_edid_property();
+            let cec_connector = connector.register_cec(
+                c"CastKMS CEC",
+                1,
+                dev.as_ref().as_ref(),
+            )?;
+            display.monitor.cec.install(cec_connector)?;
             connector.attach_encoder(encoder)?;
         }
         if dev.enable_overlay {

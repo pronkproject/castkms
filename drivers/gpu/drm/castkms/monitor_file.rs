@@ -12,7 +12,7 @@ use kernel::{
     fs::{file::FileDescriptorReservation, File},
     module::this_module,
     prelude::*,
-    sync::{aref::ARef, Arc, Mutex},
+    sync::{aref::ARef, poll::PollTable, Arc, Mutex},
     transmute::{AsBytes, FromBytes},
     uaccess::{UserPtr, UserSlice},
     uapi,
@@ -48,6 +48,88 @@ struct Detach {
 // SAFETY: Every bit pattern is valid for Detach's integer fields.
 unsafe impl FromBytes for Detach {}
 
+#[repr(C)]
+struct CecSetTransport {
+    flags: u32,
+    reserved: u32,
+}
+// SAFETY: Every bit pattern is valid for the integer fields.
+unsafe impl FromBytes for CecSetTransport {}
+
+#[repr(C)]
+struct CecTransaction {
+    cookie: u64,
+    state_generation: u64,
+    signal_free_time: u32,
+    attempts: u8,
+    length: u8,
+    message: [u8; 16],
+    reserved: [u8; 2],
+}
+// SAFETY: Every byte belongs to an initialized integer or byte array.
+unsafe impl AsBytes for CecTransaction {}
+
+#[repr(C)]
+struct CecComplete {
+    cookie: u64,
+    status: u8,
+    arbitration_lost: u8,
+    nack: u8,
+    low_drive: u8,
+    error: u8,
+    reserved: [u8; 3],
+}
+// SAFETY: Every bit pattern is valid for the integer and byte fields.
+unsafe impl FromBytes for CecComplete {}
+
+#[repr(C)]
+struct CecReceive {
+    flags: u32,
+    length: u8,
+    message: [u8; 16],
+    reserved: [u8; 11],
+}
+// SAFETY: Every bit pattern is valid for the integer and byte fields.
+unsafe impl FromBytes for CecReceive {}
+
+#[repr(C)]
+struct CecState {
+    state_generation: u64,
+    pending_cookie: u64,
+    submitted: u64,
+    completed: u64,
+    nack: u64,
+    error: u64,
+    timeout: u64,
+    received: u64,
+    invalid: u64,
+    flags: u32,
+    physical_address: u16,
+    logical_address_mask: u16,
+    reserved: [u64; 2],
+}
+// SAFETY: Every byte belongs to an initialized integer or array, without padding.
+unsafe impl AsBytes for CecState {}
+
+const _: () = {
+    assert!(core::mem::size_of::<CecSetTransport>()
+        == core::mem::size_of::<uapi::drm_castkms_cec_set_transport>());
+    assert!(core::mem::size_of::<CecTransaction>()
+        == core::mem::size_of::<uapi::drm_castkms_cec_transaction>());
+    assert!(core::mem::size_of::<CecComplete>()
+        == core::mem::size_of::<uapi::drm_castkms_cec_complete>());
+    assert!(core::mem::size_of::<CecReceive>()
+        == core::mem::size_of::<uapi::drm_castkms_cec_receive>());
+    assert!(core::mem::size_of::<CecState>()
+        == core::mem::size_of::<uapi::drm_castkms_cec_state>());
+};
+
+fn read<T: FromBytes>(arg: usize) -> Result<T> {
+    UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of::<T>())
+        .reader()
+        .read::<T>()
+}
+
 #[pin_data]
 struct Lease {
     #[pin]
@@ -76,6 +158,64 @@ impl Lease {
         let control = self.control.lock().take();
         drop(control);
     }
+
+    fn set_cec_online(&self, online: bool) -> Result {
+        self.control
+            .lock()
+            .as_ref()
+            .ok_or(ECANCELED)?
+            .cec()
+            .set_online(online)
+    }
+
+    fn peek_cec(&self) -> Result<crate::cec::Transaction> {
+        self.control
+            .lock()
+            .as_ref()
+            .ok_or(ECANCELED)?
+            .cec()
+            .peek()
+    }
+
+    fn acquire_cec(&self, cookie: u64) -> Result {
+        self.control
+            .lock()
+            .as_ref()
+            .ok_or(ECANCELED)?
+            .cec()
+            .acquire(cookie)
+    }
+
+    fn complete_cec(
+        &self,
+        cookie: u64,
+        result: kernel::drm::kms::connector::cec::TransmitResult,
+    ) -> Result {
+        self.control
+            .lock()
+            .as_ref()
+            .ok_or(ECANCELED)?
+            .cec()
+            .complete(cookie, result)
+    }
+
+    fn receive_cec(&self, message: kernel::drm::kms::connector::cec::Message) -> Result {
+        self.control
+            .lock()
+            .as_ref()
+            .ok_or(ECANCELED)?
+            .cec()
+            .receive(message)
+    }
+
+    fn cec_snapshot(&self) -> Result<crate::cec::Snapshot> {
+        self.control
+            .lock()
+            .as_ref()
+            .ok_or(ECANCELED)?
+            .cec()
+            .snapshot()
+    }
 }
 
 struct HolderFile {
@@ -86,6 +226,7 @@ impl HolderFile {
     const OPS: bindings::file_operations = bindings::file_operations {
         owner: this_module::<CastKms>().as_ptr(),
         release: Some(Self::release),
+        poll: Some(Self::poll),
         unlocked_ioctl: Some(Self::ioctl),
         #[cfg(CONFIG_COMPAT)]
         compat_ioctl: bindings::compat_ptr_ioctl,
@@ -136,11 +277,39 @@ impl HolderFile {
             .map_or_else(|error| error.to_errno() as isize, |_| 0)
     }
 
+    unsafe extern "C" fn poll(
+        file: *mut bindings::file,
+        table: *mut bindings::poll_table_struct,
+    ) -> bindings::__poll_t {
+        // SAFETY: VFS retains this file and its private allocation throughout poll.
+        let owner = unsafe { &*(*file).private_data.cast::<Self>() };
+        let control = owner.lease.control.lock();
+        let Some(control) = control.as_ref() else {
+            return (bindings::POLLHUP | bindings::POLLERR) as _;
+        };
+        // SAFETY: Both VFS pointers remain valid throughout this callback. The
+        // monitor owns the wait queue beyond the control interval.
+        unsafe {
+            PollTable::from_raw(table)
+                .register_wait(File::from_raw_file(file), control.cec().changed())
+        };
+        match control.cec().readable() {
+            Ok(true) => (bindings::POLLIN | bindings::POLLRDNORM) as _,
+            Ok(false) => 0,
+            Err(_) => (bindings::POLLHUP | bindings::POLLERR) as _,
+        }
+    }
+
     fn dispatch(&self, cmd: u32, arg: usize) -> Result {
         match cmd {
             uapi::DRM_IOCTL_CASTKMS_MONITOR_QUERY => self.query(arg),
             uapi::DRM_IOCTL_CASTKMS_MONITOR_ATTACH => self.attach(arg),
             uapi::DRM_IOCTL_CASTKMS_MONITOR_DETACH => self.detach(arg),
+            uapi::DRM_IOCTL_CASTKMS_MONITOR_CEC_SET_TRANSPORT => self.cec_set_transport(arg),
+            uapi::DRM_IOCTL_CASTKMS_MONITOR_CEC_ACQUIRE_TX => self.cec_acquire(arg),
+            uapi::DRM_IOCTL_CASTKMS_MONITOR_CEC_COMPLETE_TX => self.cec_complete(arg),
+            uapi::DRM_IOCTL_CASTKMS_MONITOR_CEC_RECEIVE => self.cec_receive(arg),
+            uapi::DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE => self.cec_state(arg),
             _ => Err(ENOTTY),
         }
     }
@@ -154,7 +323,7 @@ impl HolderFile {
         };
         let query = Query {
             version: uapi::DRM_CASTKMS_MONITOR_CONTROL_VERSION,
-            flags: 0,
+            flags: uapi::DRM_CASTKMS_MONITOR_CAP_CEC,
             max_edid_size: uapi::DRM_CASTKMS_MONITOR_MAX_EDID_SIZE,
             reserved: 0,
         };
@@ -205,6 +374,92 @@ impl HolderFile {
             return Err(EINVAL);
         }
         self.lease.detach()
+    }
+
+    fn cec_set_transport(&self, arg: usize) -> Result {
+        let request = read::<CecSetTransport>(arg)?;
+        if request.flags & !uapi::DRM_CASTKMS_CEC_TRANSPORT_ONLINE != 0
+            || request.reserved != 0
+        {
+            return Err(EINVAL);
+        }
+        self.lease
+            .set_cec_online(request.flags & uapi::DRM_CASTKMS_CEC_TRANSPORT_ONLINE != 0)
+    }
+
+    fn cec_acquire(&self, arg: usize) -> Result {
+        let transaction = self.lease.peek_cec()?;
+        let bytes = transaction.message.as_bytes();
+        let mut message = [0; 16];
+        message[..bytes.len()].copy_from_slice(bytes);
+        let result = CecTransaction {
+            cookie: transaction.cookie,
+            state_generation: transaction.state_generation,
+            signal_free_time: transaction.signal_free_time,
+            attempts: transaction.attempts,
+            length: bytes.len() as u8,
+            message,
+            reserved: [0; 2],
+        };
+        UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of_val(&result))
+            .writer()
+            .write(&result)?;
+        self.lease.acquire_cec(transaction.cookie)
+    }
+
+    fn cec_complete(&self, arg: usize) -> Result {
+        let request = read::<CecComplete>(arg)?;
+        if request.reserved != [0; 3] {
+            return Err(EINVAL);
+        }
+        self.lease.complete_cec(
+            request.cookie,
+            kernel::drm::kms::connector::cec::TransmitResult {
+                status: request.status,
+                arbitration_lost: request.arbitration_lost,
+                nack: request.nack,
+                low_drive: request.low_drive,
+                error: request.error,
+            },
+        )
+    }
+
+    fn cec_receive(&self, arg: usize) -> Result {
+        let request = read::<CecReceive>(arg)?;
+        if request.flags != 0
+            || request.reserved != [0; 11]
+            || request.length == 0
+            || request.length as usize > request.message.len()
+        {
+            return Err(EINVAL);
+        }
+        self.lease.receive_cec(
+            kernel::drm::kms::connector::cec::Message::new(
+                &request.message[..request.length as usize],
+            )?,
+        )
+    }
+
+    fn cec_state(&self, arg: usize) -> Result {
+        let snapshot = self.lease.cec_snapshot()?;
+        let state = CecState {
+            state_generation: snapshot.generation,
+            pending_cookie: snapshot.pending_cookie,
+            submitted: snapshot.submitted,
+            completed: snapshot.completed,
+            nack: snapshot.nack,
+            error: snapshot.error,
+            timeout: snapshot.timeout,
+            received: snapshot.received,
+            invalid: snapshot.invalid,
+            flags: snapshot.flags,
+            physical_address: snapshot.physical_address,
+            logical_address_mask: snapshot.logical_address_mask,
+            reserved: [0; 2],
+        };
+        UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of_val(&state))
+            .writer()
+            .write(&state)
     }
 }
 
