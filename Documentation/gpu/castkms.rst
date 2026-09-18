@@ -150,6 +150,37 @@ authority, including when administratively issued. A second
 close-on-exec file lets the issuer revoke the capability without retaining its
 control endpoint.
 
+Tiled monitor groups
+~~~~~~~~~~~~~~~~~~~~
+
+``DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP`` publishes a complete tiled monitor
+across two through eight virtual connectors. The request supplies one validated
+EDID per connector. Every EDID must contain exactly one DisplayID tiled-topology
+block, and the complete set must form a rectangular single-monitor grid with a
+shared topology identity, grid dimensions and tile size. Duplicate connectors,
+duplicate or missing coordinates, mixed identities and aggregate dimensions
+outside the KMS envelope are rejected before any connector changes.
+
+The request returns an explicit connector-to-coordinate mapping and the same
+control/revocation descriptor pair used for a single monitor. Publication is
+transactional: all member descriptions become visible before one hotplug event,
+and a failed request installs no descriptors and leaves every connector
+disconnected. The group file's query reports its immutable identity and
+geometry. Each mapping and the query carry the same never-zero incarnation ID;
+the driver does not reuse that ID while it remains loaded. Closing either
+lifetime capability disconnects every member together. Creating a different
+layout requires a new group incarnation.
+
+The standard connector ``TILE`` blobs are derived from the DisplayID records,
+so compositors continue to use ordinary KMS tiled-monitor discovery. Each
+connector advertises its tile-sized modes and remains independently
+addressable by its CRTC and planes. Group control does not create an audio or
+CEC endpoint for each tile; monitor-wide routing for those facilities is a
+separate policy. The ``monitor-tile`` selftest exercises a two-output group,
+its returned mapping and native ``TILE`` properties::
+
+    tools/testing/selftests/drm_castkms/monitor-tile /dev/dri/cardN
+
 Each connector also registers a native Linux CEC adapter. When the attached
 EDID supplies an HDMI physical address, monitor control can bring its external
 CEC transport online. Native CEC transmissions then become pollable, bounded

@@ -19,6 +19,7 @@ mod image_access;
 mod image_storage;
 mod monitor;
 mod monitor_file;
+mod monitor_group_file;
 mod output;
 mod provenance;
 mod renderer;
@@ -162,6 +163,8 @@ impl drm::Driver for Driver {
          0, renderer_file::create),
         (CASTKMS_CREATE_AUDIO_CAPTURE, drm_castkms_create_audio_capture,
          drm::ioctl::MASTER, audio::create),
+        (CASTKMS_CREATE_MONITOR_GROUP, drm_castkms_create_monitor_group,
+         0, monitor_group_file::create),
     }
 
     fn master_changed(dev: &drm::Device<Self>, master: Option<drm::auth::MasterRef<Self>>) {

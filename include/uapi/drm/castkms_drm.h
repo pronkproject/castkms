@@ -9,6 +9,8 @@
 #define DRM_CASTKMS_MONITOR_CONTROL_VERSION 1
 #define DRM_CASTKMS_MONITOR_MAX_EDID_SIZE (256U * 128U)
 #define DRM_CASTKMS_MONITOR_CAP_CEC (1U << 0)
+#define DRM_CASTKMS_MONITOR_GROUP_VERSION 1
+#define DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS 8
 #define DRM_CASTKMS_CEC_TRANSPORT_ONLINE (1U << 0)
 #define DRM_CASTKMS_CEC_STATE_ONLINE (1U << 0)
 #define DRM_CASTKMS_CEC_STATE_MONITOR_ATTACHED (1U << 1)
@@ -166,6 +168,106 @@ struct drm_castkms_create_monitor_control {
 struct drm_castkms_monitor_files {
 	__s32 control_fd;
 	__s32 revoke_fd;
+};
+
+/**
+ * struct drm_castkms_monitor_group_member - one tiled-monitor member
+ * @connector_id: DRM object ID of one virtual connector
+ * @edid_size: complete EDID size in bytes
+ * @edid_ptr: userspace pointer to @edid_size bytes
+ *
+ * Each EDID must contain exactly one DisplayID tiled-topology block. All
+ * members must describe one complete rectangular single-monitor topology
+ * with a common identity, grid and tile size. Connector IDs must be unique;
+ * member order has no meaning.
+ */
+struct drm_castkms_monitor_group_member {
+	__u32 connector_id;
+	__u32 edid_size;
+	__u64 edid_ptr;
+};
+
+/**
+ * struct drm_castkms_monitor_group_mapping - published member mapping
+ * @group_id: never-zero group incarnation for the loaded driver
+ * @connector_id: connector from the corresponding input member
+ * @horizontal_location: zero-based horizontal tile coordinate
+ * @vertical_location: zero-based vertical tile coordinate
+ * @reserved: returned zero
+ *
+ * The output array uses the input member order. DRM object IDs and native
+ * TILE group IDs are not persistent monitor identities.
+ */
+struct drm_castkms_monitor_group_mapping {
+	__u64 group_id;
+	__u32 connector_id;
+	__u16 horizontal_location;
+	__u16 vertical_location;
+	__u64 reserved;
+};
+
+/**
+ * struct drm_castkms_create_monitor_group - create an attached tiled monitor
+ * @version: must be DRM_CASTKMS_MONITOR_GROUP_VERSION
+ * @flags: zero or DRM_CASTKMS_MONITOR_CREATE_ADMIN
+ * @member_count: number of records at @members and @mappings; 2 through 8
+ * @reserved: must be zero
+ * @members: pointer to @member_count input member records
+ * @mappings: pointer to @member_count writable mapping records
+ * @files: pointer to writable struct drm_castkms_monitor_files storage
+ * @reserved2: must be zero
+ *
+ * With zero flags, the calling DRM file must be the current master and hold
+ * every connector. The administrative flag has the same authority semantics
+ * as DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL. The complete group is validated
+ * and all connectors become attached at one publication boundary. Failure
+ * leaves every connector unchanged and installs no descriptors. Callers must
+ * ignore all output storage when the ioctl fails.
+ *
+ * The returned control capability owns the whole group. Final close of the
+ * control file, or close of the revocation file, disconnects every member.
+ * Group control deliberately provides no audio or CEC endpoint; routing those
+ * monitor-wide facilities requires a separate policy.
+ */
+struct drm_castkms_create_monitor_group {
+	__u32 version;
+	__u32 flags;
+	__u32 member_count;
+	__u32 reserved;
+	__u64 members;
+	__u64 mappings;
+	__u64 files;
+	__u64 reserved2[2];
+};
+
+/**
+ * struct drm_castkms_monitor_group_query - query an attached group
+ * @version: returned DRM_CASTKMS_MONITOR_GROUP_VERSION
+ * @flags: returned zero
+ * @member_count: number of connectors in the complete group
+ * @reserved: returned zero
+ * @horizontal_tiles: horizontal grid size
+ * @vertical_tiles: vertical grid size
+ * @tile_width: width of each tile in pixels
+ * @tile_height: height of each tile in pixels
+ * @topology_id: DisplayID topology identity shared by the members
+ * @reserved2: returned zero
+ * @group_id: never-zero group incarnation returned in every mapping
+ * @reserved3: returned zero
+ */
+struct drm_castkms_monitor_group_query {
+	__u32 version;
+	__u32 flags;
+	__u32 member_count;
+	__u32 reserved;
+	__u32 horizontal_tiles;
+	__u32 vertical_tiles;
+	__u32 tile_width;
+	__u32 tile_height;
+	__u8 topology_id[9];
+	__u8 reserved2[7];
+	__u64 group_id;
+	__u64 reserved3;
 };
 
 /**
@@ -853,6 +955,7 @@ struct drm_castkms_audio_query {
 };
 
 #define DRM_CASTKMS_CREATE_AUDIO_CAPTURE 0x02
+#define DRM_CASTKMS_CREATE_MONITOR_GROUP 0x03
 #define DRM_CASTKMS_AUDIO_QUERY 0x01
 #define DRM_CASTKMS_CREATE_MONITOR_CONTROL 0x00
 #define DRM_CASTKMS_CREATE_RENDERER 0x01
@@ -864,6 +967,7 @@ struct drm_castkms_audio_query {
 #define DRM_CASTKMS_MONITOR_CEC_COMPLETE_TX 0x06
 #define DRM_CASTKMS_MONITOR_CEC_RECEIVE 0x07
 #define DRM_CASTKMS_MONITOR_CEC_GET_STATE 0x08
+#define DRM_CASTKMS_MONITOR_GROUP_QUERY 0x00
 #define DRM_CASTKMS_RENDERER_QUERY 0x00
 #define DRM_CASTKMS_RENDERER_CONFIGURE 0x01
 #define DRM_CASTKMS_RENDERER_PUBLISH 0x02
@@ -898,6 +1002,9 @@ enum {
 	DRM_IOCTL_CASTKMS_CREATE_AUDIO_CAPTURE =
 		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_AUDIO_CAPTURE,
 			struct drm_castkms_create_audio_capture),
+	DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP =
+		DRM_IOW(DRM_COMMAND_BASE + DRM_CASTKMS_CREATE_MONITOR_GROUP,
+			struct drm_castkms_create_monitor_group),
 	DRM_IOCTL_CASTKMS_AUDIO_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_AUDIO_QUERY,
 			struct drm_castkms_audio_query),
@@ -931,6 +1038,9 @@ enum {
 	DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_CEC_GET_STATE,
 			struct drm_castkms_cec_state),
+	DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY =
+		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_GROUP_QUERY,
+			struct drm_castkms_monitor_group_query),
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY,
 			struct drm_castkms_renderer_query),
