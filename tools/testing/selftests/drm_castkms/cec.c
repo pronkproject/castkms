@@ -132,6 +132,7 @@ int main(int argc, char **argv)
 {
 	struct drm_castkms_monitor_files files = { -1, -1 };
 	struct drm_castkms_create_monitor_control create = {
+		.flags = DRM_CASTKMS_MONITOR_CREATE_ADMIN,
 		.files = (uintptr_t)&files,
 	};
 	struct drm_castkms_monitor_query query = {0};
@@ -148,7 +149,7 @@ int main(int argc, char **argv)
 	drmModeConnector *connector;
 	drmModeRes *resources;
 	uint32_t connector_id;
-	int cec_fd, fd;
+	int cec_fd, fd, helper;
 
 	if (argc != 2) {
 		fprintf(stderr, "SKIP: supply a disposable Rust CastKMS DRM node\n");
@@ -157,13 +158,17 @@ int main(int argc, char **argv)
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0);
 	CHECK(drmSetMaster(fd) == 0);
+	helper = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(helper >= 0 && !drmIsMaster(helper));
 	resources = drmModeGetResources(fd);
 	CHECK(resources && resources->count_connectors > 0);
 	connector_id = resources->connectors[0];
 	drmModeFreeResources(resources);
 
 	create.connector_id = connector_id;
-	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL, &create) == 0);
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_MONITOR_CONTROL, &create) == 0);
+	CHECK(drmIsMaster(fd) && !drmIsMaster(helper));
+	CHECK(close(helper) == 0);
 	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_QUERY, &query) == 0);
 	CHECK(query.version == DRM_CASTKMS_MONITOR_CONTROL_VERSION);
 	CHECK(query.flags == DRM_CASTKMS_MONITOR_CAP_CEC);
