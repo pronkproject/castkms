@@ -65,7 +65,11 @@ static void checksum(unsigned char *block)
 	block[127] = -sum;
 }
 
-static void fill_tile_edid(unsigned char edid[256], unsigned int location)
+static void fill_tile_edid(unsigned char edid[256], unsigned int horizontal_tiles,
+			   unsigned int vertical_tiles,
+			   unsigned int horizontal_location,
+			   unsigned int vertical_location,
+			   const char topology_id[9])
 {
 	static const unsigned char header[] = {
 		0, 255, 255, 255, 255, 255, 255, 0
@@ -80,7 +84,10 @@ static void fill_tile_edid(unsigned char edid[256], unsigned int location)
 	unsigned char *displayid;
 	unsigned char sum = 0;
 
-	CHECK(location < 2);
+	CHECK(horizontal_tiles && horizontal_tiles <= 16);
+	CHECK(vertical_tiles && vertical_tiles <= 16);
+	CHECK(horizontal_location < horizontal_tiles);
+	CHECK(vertical_location < vertical_tiles);
 	memset(edid, 0, 256);
 	memcpy(edid, header, sizeof(header));
 	edid[8] = 0x31;
@@ -98,19 +105,233 @@ static void fill_tile_edid(unsigned char edid[256], unsigned int location)
 	displayid[5] = 0x12;
 	displayid[7] = 22;
 	displayid[8] = 0x80;
-	displayid[9] = 0x10;
-	displayid[10] = location << 4;
+	displayid[9] = ((horizontal_tiles - 1) << 4) | (vertical_tiles - 1);
+	displayid[10] = (horizontal_location << 4) | vertical_location;
 	displayid[12] = 0x7f;
 	displayid[13] = 0x07;
 	displayid[14] = 0x37;
 	displayid[15] = 0x04;
-	memcpy(displayid + 21, "CASTTILE0", 9);
+	memcpy(displayid + 21, topology_id, 9);
 	for (unsigned int i = 1; i < 30; i++)
 		sum += displayid[i];
 	displayid[30] = -sum;
 
 	checksum(edid);
 	checksum(displayid);
+}
+
+struct published_group {
+	struct monitor_control monitor;
+	struct drm_castkms_monitor_group_mapping mappings[4];
+	uint64_t group_id;
+};
+
+static struct tile_metadata tile_metadata(int fd, uint32_t connector_id);
+static void probe_1080p(int fd, uint32_t connector_id);
+
+static void check_disconnected(int fd, const drmModeRes *resources,
+			       unsigned int first_connector,
+			       unsigned int member_count)
+{
+	CHECK(first_connector + member_count <=
+	      (unsigned int)resources->count_connectors);
+	for (unsigned int i = 0; i < member_count; i++) {
+		drmModeConnector *connector = drmModeGetConnector(fd,
+			resources->connectors[first_connector + i]);
+
+		CHECK(connector);
+		CHECK(connector->connection == DRM_MODE_DISCONNECTED);
+		drmModeFreeConnector(connector);
+	}
+}
+
+static int publish_group(int fd, const drmModeRes *resources,
+			 unsigned int first_connector,
+			 unsigned int horizontal_tiles,
+			 unsigned int vertical_tiles,
+			 const char topology_id[9],
+			 struct published_group *group)
+{
+	struct drm_castkms_monitor_group_member members[4];
+	struct drm_castkms_monitor_files files = { -1, -1 };
+	unsigned char edids[4][256];
+	unsigned int member_count = horizontal_tiles * vertical_tiles;
+	struct drm_castkms_create_monitor_group create = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.member_count = member_count,
+		.members = (uintptr_t)members,
+		.mappings = (uintptr_t)group->mappings,
+		.files = (uintptr_t)&files,
+	};
+
+	CHECK(member_count <= 4);
+	CHECK(first_connector + member_count <=
+	      (unsigned int)resources->count_connectors);
+	memset(group, 0, sizeof(*group));
+	group->monitor.control_fd = -1;
+	group->monitor.revoke_fd = -1;
+	for (unsigned int i = 0; i < member_count; i++) {
+		unsigned int x = i % horizontal_tiles;
+		unsigned int y = i / horizontal_tiles;
+
+		fill_tile_edid(edids[i], horizontal_tiles, vertical_tiles,
+			       x, y, topology_id);
+		members[i] = (struct drm_castkms_monitor_group_member) {
+			.connector_id = resources->connectors[first_connector + i],
+			.edid_size = sizeof(edids[i]),
+			.edid_ptr = (uintptr_t)edids[i],
+		};
+	}
+	if (ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) < 0)
+		return -1;
+	group->monitor = (struct monitor_control) {
+		.control_fd = files.control_fd,
+		.revoke_fd = files.revoke_fd,
+	};
+	group->group_id = group->mappings[0].group_id;
+	return 0;
+}
+
+static void check_group(int fd, const drmModeRes *resources,
+			unsigned int first_connector,
+			unsigned int horizontal_tiles,
+			unsigned int vertical_tiles,
+			const char topology_id[9],
+			const struct published_group *group)
+{
+	unsigned int member_count = horizontal_tiles * vertical_tiles;
+	struct drm_castkms_monitor_group_mapping mappings[4] = {0};
+	struct drm_castkms_monitor_group_query query = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.mappings = (uintptr_t)mappings,
+		.mapping_capacity = member_count,
+	};
+
+	CHECK(ioctl(group->monitor.control_fd,
+		    DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY, &query) == 0);
+	CHECK(query.group_id == group->group_id);
+	CHECK(query.member_count == member_count);
+	CHECK(query.horizontal_tiles == horizontal_tiles);
+	CHECK(query.vertical_tiles == vertical_tiles);
+	CHECK(!memcmp(query.topology_id, topology_id, 9));
+	for (unsigned int i = 0; i < member_count; i++) {
+		struct tile_metadata tile;
+		unsigned int x = i % horizontal_tiles;
+		unsigned int y = i / horizontal_tiles;
+
+		CHECK(mappings[i].group_id == group->group_id);
+		CHECK(mappings[i].connector_id ==
+		      resources->connectors[first_connector + i]);
+		CHECK(mappings[i].horizontal_location == x);
+		CHECK(mappings[i].vertical_location == y);
+		probe_1080p(fd, mappings[i].connector_id);
+		tile = tile_metadata(fd, mappings[i].connector_id);
+		CHECK(tile.horizontal_tiles == horizontal_tiles);
+		CHECK(tile.vertical_tiles == vertical_tiles);
+		CHECK(tile.horizontal_location == x);
+		CHECK(tile.vertical_location == y);
+	}
+}
+
+static void reject_incomplete_grid(int fd, const drmModeRes *resources)
+{
+	static const char topology_id[] = "CASTGRID0";
+	struct drm_castkms_monitor_group_member members[4];
+	struct drm_castkms_monitor_group_mapping mappings[4] = {0};
+	struct drm_castkms_monitor_files files = { -1, -1 };
+	unsigned char edids[4][256];
+	struct drm_castkms_create_monitor_group create = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.member_count = 3,
+		.members = (uintptr_t)members,
+		.mappings = (uintptr_t)mappings,
+		.files = (uintptr_t)&files,
+	};
+
+	for (unsigned int i = 0; i < 4; i++) {
+		unsigned int location = i == 3 ? 2 : i;
+
+		fill_tile_edid(edids[i], 2, 2, location % 2, location / 2,
+			       topology_id);
+		members[i] = (struct drm_castkms_monitor_group_member) {
+			.connector_id = resources->connectors[2 + i],
+			.edid_size = sizeof(edids[i]),
+			.edid_ptr = (uintptr_t)edids[i],
+		};
+	}
+	errno = 0;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == -1);
+	CHECK(errno == EINVAL);
+	CHECK(files.control_fd == -1 && files.revoke_fd == -1);
+	check_disconnected(fd, resources, 2, 4);
+	create.member_count = 4;
+	errno = 0;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == -1);
+	CHECK(errno == EINVAL);
+	CHECK(files.control_fd == -1 && files.revoke_fd == -1);
+	check_disconnected(fd, resources, 2, 4);
+}
+
+static void exercise_additional_layouts(int fd, const drmModeRes *resources)
+{
+	static const char vertical_id[] = "CASTVERT0";
+	static const char grid_id[] = "CASTGRID0";
+	static const char second_id[] = "CASTVERT1";
+	struct published_group vertical, grid, second, replacement;
+	struct drm_castkms_monitor_group_capture_member captures[2] = {0};
+	struct drm_castkms_create_monitor_group_capture capture = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.member_capacity = 2,
+		.members = (uintptr_t)captures,
+	};
+	uint64_t removed_group_id;
+
+	CHECK(resources->count_connectors >= 8);
+	reject_incomplete_grid(fd, resources);
+	CHECK(publish_group(fd, resources, 0, 1, 2, vertical_id,
+			    &vertical) == 0);
+	CHECK(publish_group(fd, resources, 2, 2, 2, grid_id, &grid) == 0);
+	CHECK(publish_group(fd, resources, 6, 1, 2, second_id, &second) == 0);
+	CHECK(vertical.group_id != grid.group_id);
+	CHECK(vertical.group_id != second.group_id);
+	CHECK(grid.group_id != second.group_id);
+	check_group(fd, resources, 0, 1, 2, vertical_id, &vertical);
+	check_group(fd, resources, 2, 2, 2, grid_id, &grid);
+	check_group(fd, resources, 6, 1, 2, second_id, &second);
+
+	capture.group_fd = vertical.monitor.control_fd;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == 0);
+	removed_group_id = grid.group_id;
+	close_monitor(&grid.monitor);
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_describe description = {0};
+
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE,
+			    &description) == -1);
+		CHECK(errno == ENODEV);
+	}
+	check_group(fd, resources, 0, 1, 2, vertical_id, &vertical);
+	check_group(fd, resources, 6, 1, 2, second_id, &second);
+	CHECK(publish_group(fd, resources, 2, 2, 2, grid_id,
+			    &replacement) == 0);
+	CHECK(replacement.group_id > removed_group_id);
+	check_group(fd, resources, 2, 2, 2, grid_id, &replacement);
+
+	close_monitor(&vertical.monitor);
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_describe description = {0};
+
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE,
+			    &description) == -1);
+		CHECK(errno == EKEYREVOKED);
+		CHECK(close(captures[i].capture_fd) == 0);
+		CHECK(close(captures[i].control_fd) == 0);
+	}
+	check_group(fd, resources, 6, 1, 2, second_id, &second);
+	close_monitor(&replacement.monitor);
+	close_monitor(&second.monitor);
+	check_disconnected(fd, resources, 0, 8);
 }
 
 static struct tile_metadata tile_metadata(int fd, uint32_t connector_id)
@@ -224,26 +445,26 @@ int main(int argc, char **argv)
 	CHECK(resources->count_connectors >= 2);
 
 	for (unsigned int i = 0; i < 2; i++) {
-		fill_tile_edid(edids[i], i);
+		fill_tile_edid(edids[i], 2, 1, i, 0, "CASTTILE0");
 		members[i] = (struct drm_castkms_monitor_group_member) {
 			.connector_id = resources->connectors[i],
 			.edid_size = sizeof(edids[i]),
 			.edid_ptr = (uintptr_t)edids[i],
 		};
 	}
-	fill_tile_edid(edids[1], 0);
+	fill_tile_edid(edids[1], 2, 1, 0, 0, "CASTTILE0");
 	errno = 0;
 	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == -1);
 	CHECK(errno == EINVAL);
 	CHECK(files.control_fd == -1 && files.revoke_fd == -1);
-	fill_tile_edid(edids[1], 1);
+	fill_tile_edid(edids[1], 2, 1, 1, 0, "CASTTILE0");
 	edids[1][54]++;
 	checksum(edids[1]);
 	errno = 0;
 	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == -1);
 	CHECK(errno == EINVAL);
 	CHECK(files.control_fd == -1 && files.revoke_fd == -1);
-	fill_tile_edid(edids[1], 1);
+	fill_tile_edid(edids[1], 2, 1, 1, 0, "CASTTILE0");
 	CHECK(drmIoctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == 0);
 	monitor = (struct monitor_control) {
 		.control_fd = files.control_fd,
@@ -401,6 +622,7 @@ int main(int argc, char **argv)
 	}
 	close_monitor(&monitor);
 	CHECK(close(helper) == 0);
+	exercise_additional_layouts(fd, resources);
 	drmModeFreeResources(resources);
 	CHECK(close(fd) == 0);
 	puts("PASS: DisplayID tiled monitor topology");
