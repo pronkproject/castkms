@@ -623,6 +623,46 @@ static void check_overlay_tile_pixels(int dma_fd, const struct buffer *buffer,
 	CHECK(munmap(pixels, buffer->dumb.size) == 0);
 }
 
+static void check_green_tile_pixels(int dma_fd, const struct buffer *buffer)
+{
+	static const unsigned char green[] = { 0, 0xff, 0, 0xff };
+	struct dma_buf_sync sync = {
+		.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ,
+	};
+	unsigned char *pixels = mmap(NULL, buffer->dumb.size, PROT_READ,
+				     MAP_SHARED, dma_fd, 0);
+
+	CHECK(pixels != MAP_FAILED);
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	for (unsigned int y = 0; y < 1080; y++) {
+		for (unsigned int x = 0; x < 1920 * 4; x++)
+			CHECK(pixels[y * buffer->dumb.pitch + x] == green[x % 4]);
+	}
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	CHECK(munmap(pixels, buffer->dumb.size) == 0);
+}
+
+static void commit_green_gamma(int fd, uint32_t crtc)
+{
+	struct drm_color_lut lut[256];
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+	uint32_t blob;
+
+	CHECK(request);
+	for (unsigned int i = 0; i < 256; i++) {
+		lut[i].red = 0;
+		lut[i].green = UINT16_MAX;
+		lut[i].blue = 0;
+		lut[i].reserved = 0;
+	}
+	CHECK(drmModeCreatePropertyBlob(fd, lut, sizeof(lut), &blob) == 0);
+	property(fd, request, crtc, DRM_MODE_OBJECT_CRTC, "GAMMA_LUT", blob);
+	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
+	drmModeAtomicFree(request);
+	CHECK(drmModeDestroyPropertyBlob(fd, blob) == 0);
+}
+
 static uint32_t commit_overlay(int fd, uint32_t crtc,
 			       const struct buffer *buffer)
 {
@@ -983,6 +1023,12 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 					  scaled_values, i);
 	disable_plane(fd, overlay_id);
 	destroy_buffer(fd, &overlay);
+	commit_green_gamma(fd, resources->crtcs[0]);
+	queue_tile_captures(captures, 8);
+	dequeue_tile_captures(captures, 8, results);
+	check_green_tile_pixels(destination_fds[0], &destinations[0]);
+	check_scaled_tile_pixels(destination_fds[1], &destinations[1],
+				 scaled_values[1]);
 	CHECK(close(captures[0].control_fd) == 0);
 	captures[0].control_fd = -1;
 	CHECK(ioctl(captures[0].capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE,
@@ -990,8 +1036,8 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	CHECK(errno == EKEYREVOKED);
 	CHECK(drmModeSetCrtc(fd, resources->crtcs[1], sources[1].fb, 0, 0,
 			     &resources->connectors[1], 1, &modes[1]) == 0);
-	queue_tile_capture(&captures[1], 8);
-	dequeue_tile_capture(&captures[1], 8, &results[1]);
+	queue_tile_capture(&captures[1], 9);
+	dequeue_tile_capture(&captures[1], 9, &results[1]);
 	check_tile_pixels(destination_fds[1], &destinations[1], values[1], false);
 
 	for (unsigned int i = 0; i < 2; i++) {
