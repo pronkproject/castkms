@@ -91,7 +91,8 @@ pub(crate) struct Topology {
 
 impl Topology {
     pub(crate) fn from_edids(edids: &[Edid]) -> Result<Self> {
-        let first = edids.first().ok_or(EINVAL)?.tile()?.ok_or(EINVAL)?;
+        let first_edid = edids.first().ok_or(EINVAL)?;
+        let first = first_edid.tile()?.ok_or(EINVAL)?;
         let first_tile = first.tile();
         let member_count = usize::from(first_tile.horizontal_tiles())
             .checked_mul(usize::from(first_tile.vertical_tiles()))
@@ -115,6 +116,9 @@ impl Topology {
         let mut member_locations = [[0; 2]; MAX_OUTPUTS as usize];
         let mut occupied = 0u8;
         for (index, edid) in edids.iter().enumerate() {
+            if !first_edid.is_tile_group_compatible(edid) {
+                return Err(EINVAL);
+            }
             let member = edid.tile()?.ok_or(EINVAL)?;
             Self::validate_member(&first, &member)?;
             let tile = member.tile();

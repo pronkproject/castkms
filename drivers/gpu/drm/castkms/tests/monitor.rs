@@ -24,8 +24,17 @@ fn checksum(block: &mut [u8]) {
 }
 
 fn tiled_edid(identity: &[u8; 9], horizontal_location: u8) -> Result<Edid> {
+    tiled_edid_with_clock(identity, horizontal_location, 0x02)
+}
+
+fn tiled_edid_with_clock(
+    identity: &[u8; 9],
+    horizontal_location: u8,
+    clock_low: u8,
+) -> Result<Edid> {
     let mut bytes = [0; 256];
     bytes[..128].copy_from_slice(&EDID_1080P);
+    bytes[54] = clock_low;
     bytes[126] = 1;
     checksum(&mut bytes[..128]);
 
@@ -181,6 +190,14 @@ mod cases {
         mismatched.push(tiled_edid(b"CASTTILE1", 1)?, GFP_KERNEL)?;
         check(matches!(
             Monitor::reserve_group(&device, &[0, 1])?.attach(mismatched),
+            Err(EINVAL)
+        ))?;
+
+        let mut mismatched_timing = KVec::new();
+        mismatched_timing.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
+        mismatched_timing.push(tiled_edid_with_clock(b"CASTTILE0", 1, 0x03)?, GFP_KERNEL)?;
+        check(matches!(
+            Monitor::reserve_group(&device, &[0, 1])?.attach(mismatched_timing),
             Err(EINVAL)
         ))?;
         check(device.displays[0].monitor.status() == Status::Disconnected)?;
