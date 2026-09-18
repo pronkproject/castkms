@@ -250,6 +250,15 @@ impl Edid {
         }
     }
 
+    /// Return whether this EDID and `other` describe compatible members of one tiled monitor.
+    ///
+    /// Tile coordinates may differ. All other EDID bytes, including timing and display
+    /// metadata, must match.
+    pub fn is_tile_group_compatible(&self, other: &Self) -> bool {
+        // SAFETY: Both pointers name immutable validated native EDID containers for the call.
+        unsafe { bindings::drm_edid_tile_group_compatible(self.as_ptr(), other.as_ptr()) }
+    }
+
     fn as_ptr(&self) -> *const bindings::drm_edid {
         self.0.as_ptr()
     }
