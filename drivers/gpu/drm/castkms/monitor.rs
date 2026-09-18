@@ -2,6 +2,8 @@
 
 //! Published sink description for the virtual connector.
 
+pub(crate) mod group;
+
 use crate::{display, Driver};
 use kernel::{
     drm::{
@@ -263,7 +265,7 @@ impl Control {
         &self.monitor.cec
     }
 
-    pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
+    fn description(&self, edid: Option<Edid>) -> Result<Description> {
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
         let audio = {
             let device = self.device.registration_guard().ok_or(ENODEV)?;
@@ -282,13 +284,17 @@ impl Control {
                 None => None,
             }
         };
+        Ok(Description::Attached {
+            edid,
+            #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+            audio,
+        })
+    }
+
+    pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
         self.monitor.publish(
             &self.identity,
-            Description::Attached {
-                edid,
-                #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-                audio,
-            },
+            self.description(edid)?,
         )?;
         self.monitor.cec.set_attached(true);
         self.notify();
