@@ -288,6 +288,28 @@ struct drm_edid_product_id {
 	u8 year_of_manufacture;
 } __packed;
 
+/**
+ * struct drm_edid_tile_info - decoded DisplayID tiled-monitor topology
+ * @topology_id: identity shared by every member of one tiled monitor
+ * @num_h_tile: number of horizontal tiles
+ * @num_v_tile: number of vertical tiles
+ * @tile_h_loc: zero-based horizontal location of this tile
+ * @tile_v_loc: zero-based vertical location of this tile
+ * @tile_h_size: horizontal pixel count of this tile
+ * @tile_v_size: vertical pixel count of this tile
+ * @is_single_monitor: whether the tiles form one monitor
+ */
+struct drm_edid_tile_info {
+	u8 topology_id[9];
+	u8 num_h_tile;
+	u8 num_v_tile;
+	u8 tile_h_loc;
+	u8 tile_v_loc;
+	u16 tile_h_size;
+	u16 tile_v_size;
+	bool is_single_monitor;
+};
+
 struct edid {
 	u8 header[8];
 	/* Vendor & product info */
@@ -484,6 +506,8 @@ int drm_edid_connector_update(struct drm_connector *connector,
 			      const struct drm_edid *edid);
 int drm_edid_connector_add_modes(struct drm_connector *connector);
 bool drm_edid_is_digital(const struct drm_edid *drm_edid);
+int drm_edid_get_tile_info(const struct drm_edid *drm_edid,
+			   struct drm_edid_tile_info *info);
 void drm_edid_get_product_id(const struct drm_edid *drm_edid,
 			     struct drm_edid_product_id *id);
 void drm_edid_print_product_id(struct drm_printer *p,

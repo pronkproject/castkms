@@ -7670,22 +7670,26 @@ drm_hdmi_vendor_infoframe_from_display_mode(struct hdmi_vendor_infoframe *frame,
 }
 EXPORT_SYMBOL(drm_hdmi_vendor_infoframe_from_display_mode);
 
-static void drm_parse_tiled_block(struct drm_connector *connector,
-				  const struct displayid_block *block)
+static bool displayid_is_tiled_block(const struct displayid_iter *iter,
+				     const struct displayid_block *block)
+{
+	return (displayid_version(iter) < DISPLAY_ID_STRUCTURE_VER_20 &&
+		block->tag == DATA_BLOCK_TILED_DISPLAY) ||
+		(displayid_version(iter) == DISPLAY_ID_STRUCTURE_VER_20 &&
+		 block->tag == DATA_BLOCK_2_TILED_DISPLAY_TOPOLOGY);
+}
+
+static int drm_decode_tiled_block(const struct displayid_block *block,
+				  struct drm_edid_tile_info *info)
 {
 	const struct displayid_tiled_block *tile = (struct displayid_tiled_block *)block;
 	u16 w, h;
 	u8 tile_v_loc, tile_h_loc;
 	u8 num_v_tile, num_h_tile;
-	struct drm_tile_group *tg;
 
 	/* tiled block payload per spec: cap 1 + topo 3 + size 4 + bezel 5 + id 9 = 22 */
-	if (block->num_bytes < 22) {
-		drm_dbg_kms(connector->dev,
-			    "[CONNECTOR:%d:%s] Unexpected tiled block size %u\n",
-			    connector->base.id, connector->name, block->num_bytes);
-		return;
-	}
+	if (block->num_bytes < 22)
+		return -EINVAL;
 
 	w = tile->tile_size[0] | tile->tile_size[1] << 8;
 	h = tile->tile_size[2] | tile->tile_size[3] << 8;
@@ -7695,29 +7699,98 @@ static void drm_parse_tiled_block(struct drm_connector *connector,
 	tile_v_loc = (tile->topo[1] & 0xf) | ((tile->topo[2] & 0x3) << 4);
 	tile_h_loc = (tile->topo[1] >> 4) | (((tile->topo[2] >> 2) & 0x3) << 4);
 
-	connector->has_tile = true;
-	if (tile->tile_cap & 0x80)
-		connector->tile_is_single_monitor = true;
+	memcpy(info->topology_id, tile->topology_id, sizeof(info->topology_id));
+	info->num_h_tile = num_h_tile + 1;
+	info->num_v_tile = num_v_tile + 1;
+	info->tile_h_loc = tile_h_loc;
+	info->tile_v_loc = tile_v_loc;
+	info->tile_h_size = w + 1;
+	info->tile_v_size = h + 1;
+	info->is_single_monitor = tile->tile_cap & 0x80;
 
-	connector->num_h_tile = num_h_tile + 1;
-	connector->num_v_tile = num_v_tile + 1;
-	connector->tile_h_loc = tile_h_loc;
-	connector->tile_v_loc = tile_v_loc;
-	connector->tile_h_size = w + 1;
-	connector->tile_v_size = h + 1;
+	return 0;
+}
+
+/**
+ * drm_edid_get_tile_info - decode tiled-monitor topology from an EDID
+ * @drm_edid: validated EDID container
+ * @info: destination for the decoded topology
+ *
+ * Return: 0 for one valid tiled-display block, -ENOENT when no tiled-display
+ * block exists, or -EINVAL for malformed or ambiguous topology information.
+ */
+int drm_edid_get_tile_info(const struct drm_edid *drm_edid,
+			   struct drm_edid_tile_info *info)
+{
+	const struct displayid_block *block;
+	struct displayid_iter iter;
+	bool found = false;
+	int ret = -ENOENT;
+
+	if (!drm_edid || !info)
+		return -EINVAL;
+
+	displayid_iter_edid_begin(drm_edid, &iter);
+	displayid_iter_for_each(block, &iter) {
+		if (!displayid_is_tiled_block(&iter, block))
+			continue;
+		if (found) {
+			ret = -EINVAL;
+			break;
+		}
+		ret = drm_decode_tiled_block(block, info);
+		if (ret)
+			break;
+		if (info->tile_h_loc >= info->num_h_tile ||
+		    info->tile_v_loc >= info->num_v_tile) {
+			ret = -EINVAL;
+			break;
+		}
+		found = true;
+	}
+	displayid_iter_end(&iter);
+
+	return ret;
+}
+EXPORT_SYMBOL(drm_edid_get_tile_info);
+
+static void drm_parse_tiled_block(struct drm_connector *connector,
+				  const struct displayid_block *block)
+{
+	struct drm_edid_tile_info info;
+	struct drm_tile_group *tg;
+	int ret;
+
+	ret = drm_decode_tiled_block(block, &info);
+	if (ret) {
+		drm_dbg_kms(connector->dev,
+			    "[CONNECTOR:%d:%s] Invalid tiled block (%d)\n",
+			    connector->base.id, connector->name, ret);
+		return;
+	}
+
+	connector->has_tile = true;
+	if (info.is_single_monitor)
+		connector->tile_is_single_monitor = true;
+	connector->num_h_tile = info.num_h_tile;
+	connector->num_v_tile = info.num_v_tile;
+	connector->tile_h_loc = info.tile_h_loc;
+	connector->tile_v_loc = info.tile_v_loc;
+	connector->tile_h_size = info.tile_h_size;
+	connector->tile_v_size = info.tile_v_size;
 
 	drm_dbg_kms(connector->dev,
 		    "[CONNECTOR:%d:%s] tile cap 0x%x, size %dx%d, num tiles %dx%d, location %dx%d, vend %c%c%c",
 		    connector->base.id, connector->name,
-		    tile->tile_cap,
+		    ((const struct displayid_tiled_block *)block)->tile_cap,
 		    connector->tile_h_size, connector->tile_v_size,
 		    connector->num_h_tile, connector->num_v_tile,
 		    connector->tile_h_loc, connector->tile_v_loc,
-		    tile->topology_id[0], tile->topology_id[1], tile->topology_id[2]);
+		    info.topology_id[0], info.topology_id[1], info.topology_id[2]);
 
-	tg = drm_mode_get_tile_group(connector->dev, tile->topology_id);
+	tg = drm_mode_get_tile_group(connector->dev, info.topology_id);
 	if (!tg)
-		tg = drm_mode_create_tile_group(connector->dev, tile->topology_id);
+		tg = drm_mode_create_tile_group(connector->dev, info.topology_id);
 	if (!tg)
 		return;
 
@@ -7731,15 +7804,6 @@ static void drm_parse_tiled_block(struct drm_connector *connector,
 		/* if same tile group, then release the ref we just took. */
 		drm_mode_put_tile_group(connector->dev, tg);
 	}
-}
-
-static bool displayid_is_tiled_block(const struct displayid_iter *iter,
-				     const struct displayid_block *block)
-{
-	return (displayid_version(iter) < DISPLAY_ID_STRUCTURE_VER_20 &&
-		block->tag == DATA_BLOCK_TILED_DISPLAY) ||
-		(displayid_version(iter) == DISPLAY_ID_STRUCTURE_VER_20 &&
-		 block->tag == DATA_BLOCK_2_TILED_DISPLAY_TOPOLOGY);
 }
 
 static void _drm_update_tile_info(struct drm_connector *connector,
