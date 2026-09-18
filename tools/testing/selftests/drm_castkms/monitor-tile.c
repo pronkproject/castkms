@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Exercise transactional DisplayID tiled-monitor publication. */
 #include <dirent.h>
+#include <drm_fourcc.h>
 #include <fcntl.h>
+#include <linux/dma-buf.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -441,6 +444,134 @@ static void probe_1080p(int fd, uint32_t connector_id)
 	drmModeFreeConnector(connector);
 }
 
+static drmModeModeInfo mode_1080p(int fd, uint32_t connector_id)
+{
+	drmModeConnector *connector = drmModeGetConnector(fd, connector_id);
+	drmModeModeInfo mode = {0};
+
+	CHECK(connector);
+	for (int i = 0; i < connector->count_modes; i++) {
+		if (connector->modes[i].hdisplay == 1920 &&
+		    connector->modes[i].vdisplay == 1080) {
+			mode = connector->modes[i];
+			break;
+		}
+	}
+	drmModeFreeConnector(connector);
+	CHECK(mode.clock);
+	return mode;
+}
+
+static void check_tile_pixels(int dma_fd, const struct buffer *buffer,
+			      unsigned char value)
+{
+	struct dma_buf_sync sync = {
+		.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ,
+	};
+	unsigned char *pixels = mmap(NULL, buffer->dumb.size, PROT_READ,
+				     MAP_SHARED, dma_fd, 0);
+
+	CHECK(pixels != MAP_FAILED);
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	for (unsigned int y = 0; y < 1080; y++) {
+		for (unsigned int x = 0; x < 1920 * 4; x++)
+			CHECK(pixels[y * buffer->dumb.pitch + x] ==
+			      (x % 4 == 3 ? 0xff : value));
+	}
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	CHECK(munmap(pixels, buffer->dumb.size) == 0);
+}
+
+static void exercise_tile_pixels(int fd, const drmModeRes *resources,
+				 const struct drm_castkms_monitor_group_capture_member captures[2])
+{
+	static const unsigned char values[2] = { 0x31, 0x72 };
+	struct drm_capture_describe descriptions[2] = {0};
+	struct drm_capture_result results[2] = {0};
+	struct buffer sources[2], destinations[2];
+	drmModeModeInfo modes[2];
+	int destination_fds[2];
+
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_create_stream stream = {
+			.id = 1,
+			.capacity = 1,
+		};
+		struct drm_capture_register_destination destination = {
+			.id = 1,
+			.width = 1920,
+			.height = 1080,
+			.format = DRM_FORMAT_XRGB8888,
+			.num_planes = 1,
+			.modifier = DRM_FORMAT_MOD_LINEAR,
+		};
+
+		modes[i] = mode_1080p(fd, resources->connectors[i]);
+		sources[i] = create_buffer(fd, 1920, 1080, values[i]);
+		destinations[i] = create_buffer(fd, 1920, 1080, 0);
+		CHECK(drmPrimeHandleToFD(fd, destinations[i].dumb.handle,
+					 DRM_CLOEXEC | DRM_RDWR,
+					 &destination_fds[i]) == 0);
+		CHECK(drmModeSetCrtc(fd, resources->crtcs[i], sources[i].fb, 0, 0,
+				     &resources->connectors[i], 1, &modes[i]) == 0);
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE,
+			    &descriptions[i]) == 0);
+		stream.offer = descriptions[i].id;
+		CHECK(ioctl(captures[i].capture_fd,
+			    DRM_IOCTL_CAPTURE_CREATE_STREAM, &stream) == 0);
+		destination.fds[0] = destination_fds[i];
+		destination.strides[0] = destinations[i].dumb.pitch;
+		CHECK(ioctl(captures[i].capture_fd,
+			    DRM_IOCTL_CAPTURE_REGISTER_DESTINATION,
+			    &destination) == 0);
+	}
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_queue_output queue = {
+			.stream = 1,
+			.use_id = 1,
+			.destination = 1,
+			.reuse_fd = -1,
+		};
+
+		CHECK(ioctl(captures[i].capture_fd,
+			    DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
+	}
+	for (unsigned int i = 0; i < 2; i++) {
+		struct pollfd event = {
+			.fd = captures[i].capture_fd,
+			.events = POLLIN,
+		};
+		struct drm_capture_dequeue dequeue = {
+			.stream = 1,
+			.result = (uintptr_t)&results[i],
+		};
+		struct drm_capture_unregister_destination destination = {
+			.id = 1,
+		};
+		struct drm_capture_destroy_stream stream = { .id = 1 };
+
+		CHECK(poll(&event, 1, 5000) == 1);
+		CHECK(event.revents & POLLIN);
+		CHECK(!(event.revents & (POLLERR | POLLHUP | POLLNVAL)));
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE,
+			    &dequeue) == 0);
+		CHECK(results[i].use_id == 1 && results[i].status == 0);
+		CHECK(results[i].completed_at_ns && !results[i].reserved);
+		check_tile_pixels(destination_fds[i], &destinations[i], values[i]);
+		CHECK(ioctl(captures[i].capture_fd,
+			    DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
+			    &destination) == 0);
+		CHECK(ioctl(captures[i].capture_fd,
+			    DRM_IOCTL_CAPTURE_DESTROY_STREAM, &stream) == 0);
+		CHECK(close(destination_fds[i]) == 0);
+		CHECK(drmModeSetCrtc(fd, resources->crtcs[i], 0, 0, 0,
+				     NULL, 0, NULL) == 0);
+		destroy_buffer(fd, &sources[i]);
+		destroy_buffer(fd, &destinations[i]);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	int fd;
@@ -605,6 +736,7 @@ int main(int argc, char **argv)
 			    &description) == -1);
 		CHECK(errno == ENODEV);
 	}
+	exercise_tile_pixels(fd, resources, captures);
 	probe_1080p(fd, resources->connectors[0]);
 	probe_1080p(fd, resources->connectors[1]);
 	left = tile_metadata(fd, resources->connectors[0]);
