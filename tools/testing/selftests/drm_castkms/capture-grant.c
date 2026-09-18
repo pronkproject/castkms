@@ -89,7 +89,7 @@ static void rejected_publication(int fd, struct drm_mode_create_capture_grant re
 	CHECK(setrlimit(RLIMIT_NOFILE, &saved) == 0);
 	CHECK(open_files(&highest) == before);
 	CHECK(files.capture_fd == -1 && files.control_fd == -1);
-	request.flags = 1;
+	request.flags = DRM_CAPTURE_GRANT_CREATE_ADMIN << 1;
 	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &request) == -1);
 	CHECK(errno == EINVAL);
 	request.flags = 0;
