@@ -483,13 +483,32 @@ static void check_tile_pixels(int dma_fd, const struct buffer *buffer,
 	CHECK(munmap(pixels, buffer->dumb.size) == 0);
 }
 
+static void fill_shared_tiles(int fd, const struct buffer *buffer,
+			      const unsigned char values[2])
+{
+	struct drm_mode_map_dumb map = { .handle = buffer->dumb.handle };
+	unsigned char *pixels;
+
+	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map) == 0);
+	pixels = mmap(NULL, buffer->dumb.size, PROT_READ | PROT_WRITE,
+		      MAP_SHARED, fd, map.offset);
+	CHECK(pixels != MAP_FAILED);
+	for (unsigned int y = 0; y < 1080; y++) {
+		memset(pixels + y * buffer->dumb.pitch, values[0], 1920 * 4);
+		memset(pixels + y * buffer->dumb.pitch + 1920 * 4,
+		       values[1], 1920 * 4);
+	}
+	CHECK(munmap(pixels, buffer->dumb.size) == 0);
+}
+
 static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 				 const struct drm_castkms_monitor_group_capture_member captures[2])
 {
 	static const unsigned char values[2] = { 0x31, 0x72 };
+	static const unsigned char shared_values[2] = { 0x19, 0xa4 };
 	struct drm_capture_describe descriptions[2] = {0};
 	struct drm_capture_result results[2] = {0};
-	struct buffer sources[2], destinations[2];
+	struct buffer sources[2], destinations[2], shared;
 	drmModeModeInfo modes[2];
 	int destination_fds[2];
 
@@ -546,10 +565,6 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 			.stream = 1,
 			.result = (uintptr_t)&results[i],
 		};
-		struct drm_capture_unregister_destination destination = {
-			.id = 1,
-		};
-		struct drm_capture_destroy_stream stream = { .id = 1 };
 
 		CHECK(poll(&event, 1, 5000) == 1);
 		CHECK(event.revents & POLLIN);
@@ -559,6 +574,51 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 		CHECK(results[i].use_id == 1 && results[i].status == 0);
 		CHECK(results[i].completed_at_ns && !results[i].reserved);
 		check_tile_pixels(destination_fds[i], &destinations[i], values[i]);
+	}
+
+	shared = create_buffer(fd, 3840, 1080, 0);
+	fill_shared_tiles(fd, &shared, shared_values);
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_queue_output queue = {
+			.stream = 1,
+			.use_id = 2,
+			.destination = 1,
+			.reuse_fd = -1,
+		};
+
+		CHECK(drmModeSetCrtc(fd, resources->crtcs[i], shared.fb,
+				     i * 1920, 0, &resources->connectors[i],
+				     1, &modes[i]) == 0);
+		CHECK(ioctl(captures[i].capture_fd,
+			    DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
+	}
+	for (unsigned int i = 0; i < 2; i++) {
+		struct pollfd event = {
+			.fd = captures[i].capture_fd,
+			.events = POLLIN,
+		};
+		struct drm_capture_dequeue dequeue = {
+			.stream = 1,
+			.result = (uintptr_t)&results[i],
+		};
+
+		memset(&results[i], 0, sizeof(results[i]));
+		CHECK(poll(&event, 1, 5000) == 1);
+		CHECK(event.revents & POLLIN);
+		CHECK(!(event.revents & (POLLERR | POLLHUP | POLLNVAL)));
+		CHECK(ioctl(captures[i].capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE,
+			    &dequeue) == 0);
+		CHECK(results[i].use_id == 2 && results[i].status == 0);
+		CHECK(results[i].completed_at_ns && !results[i].reserved);
+		check_tile_pixels(destination_fds[i], &destinations[i],
+				  shared_values[i]);
+	}
+	for (unsigned int i = 0; i < 2; i++) {
+		struct drm_capture_unregister_destination destination = {
+			.id = 1,
+		};
+		struct drm_capture_destroy_stream stream = { .id = 1 };
+
 		CHECK(ioctl(captures[i].capture_fd,
 			    DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
 			    &destination) == 0);
@@ -570,6 +630,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 		destroy_buffer(fd, &sources[i]);
 		destroy_buffer(fd, &destinations[i]);
 	}
+	destroy_buffer(fd, &shared);
 }
 
 int main(int argc, char **argv)
