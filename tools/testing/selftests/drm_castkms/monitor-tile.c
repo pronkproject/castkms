@@ -508,6 +508,52 @@ static void fill_shared_tiles(int fd, const struct buffer *buffer,
 	CHECK(munmap(pixels, buffer->dumb.size) == 0);
 }
 
+static void fill_scaled_tiles(int fd, const struct buffer *buffer,
+			      const unsigned char values[2][2])
+{
+	struct drm_mode_map_dumb map = { .handle = buffer->dumb.handle };
+	unsigned int half_width = buffer->dumb.width / 2;
+	unsigned char *pixels;
+
+	CHECK(buffer->dumb.width == 3840 && buffer->dumb.height == 2160);
+	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map) == 0);
+	pixels = mmap(NULL, buffer->dumb.size, PROT_READ | PROT_WRITE,
+		      MAP_SHARED, fd, map.offset);
+	CHECK(pixels != MAP_FAILED);
+	for (unsigned int y = 0; y < buffer->dumb.height; y++) {
+		unsigned int band = y >= buffer->dumb.height / 2;
+
+		memset(pixels + y * buffer->dumb.pitch,
+		       values[0][band], half_width * 4);
+		memset(pixels + y * buffer->dumb.pitch + half_width * 4,
+		       values[1][band], half_width * 4);
+	}
+	CHECK(munmap(pixels, buffer->dumb.size) == 0);
+}
+
+static void check_scaled_tile_pixels(int dma_fd, const struct buffer *buffer,
+				     const unsigned char values[2])
+{
+	struct dma_buf_sync sync = {
+		.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ,
+	};
+	unsigned char *pixels = mmap(NULL, buffer->dumb.size, PROT_READ,
+				     MAP_SHARED, dma_fd, 0);
+
+	CHECK(pixels != MAP_FAILED);
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	for (unsigned int y = 0; y < 1080; y++) {
+		for (unsigned int x = 0; x < 1920 * 4; x++) {
+			unsigned char expected = x % 4 == 3 ? 0xff : values[y >= 540];
+
+			CHECK(pixels[y * buffer->dumb.pitch + x] == expected);
+		}
+	}
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	CHECK(munmap(pixels, buffer->dumb.size) == 0);
+}
+
 static void commit_shared_damage(int fd, const struct buffer *buffer,
 				 const unsigned char values[2])
 {
@@ -536,6 +582,34 @@ static void commit_shared_damage(int fd, const struct buffer *buffer,
 	drmModeAtomicFree(request);
 	for (unsigned int i = 0; i < 2; i++)
 		CHECK(drmModeDestroyPropertyBlob(fd, blobs[i]) == 0);
+}
+
+static void commit_scaled_tiles(int fd, const struct buffer *buffer)
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+
+	CHECK(request);
+	for (unsigned int i = 0; i < 2; i++) {
+		uint32_t plane = primary_plane(fd, i);
+
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "FB_ID", buffer->fb);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "SRC_X", ((uint64_t)i * 1920) << 16);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "SRC_Y", 0);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "SRC_W", (uint64_t)1920 << 16);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "SRC_H", (uint64_t)2160 << 16);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_X", 0);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_Y", 0);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "CRTC_W", 1920);
+		property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+			 "CRTC_H", 1080);
+	}
+	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
+	drmModeAtomicFree(request);
 }
 
 static void
@@ -586,9 +660,13 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	static const unsigned char values[2] = { 0x31, 0x72 };
 	static const unsigned char shared_values[2] = { 0x19, 0xa4 };
 	static const unsigned char damaged_values[2] = { 0x46, 0xb2 };
+	static const unsigned char scaled_values[2][2] = {
+		{ 0x2d, 0x5e },
+		{ 0xc3, 0x87 },
+	};
 	struct drm_capture_describe descriptions[2] = {0};
 	struct drm_capture_result results[2] = {0};
-	struct buffer sources[2], destinations[2], shared, cursor;
+	struct buffer sources[2], destinations[2], shared, scaled, cursor;
 	drmModeModeInfo modes[2];
 	int destination_fds[2];
 
@@ -664,6 +742,15 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 		check_tile_pixels(destination_fds[i], &destinations[i],
 				  damaged_values[i], false);
 	}
+	scaled = create_buffer(fd, 3840, 2160, 0);
+	fill_scaled_tiles(fd, &scaled, scaled_values);
+	commit_scaled_tiles(fd, &scaled);
+	queue_tile_captures(captures, 5);
+	dequeue_tile_captures(captures, 5, results);
+	for (unsigned int i = 0; i < 2; i++) {
+		check_scaled_tile_pixels(destination_fds[i], &destinations[i],
+					 scaled_values[i]);
+	}
 
 	for (unsigned int i = 0; i < 2; i++) {
 		struct drm_capture_unregister_destination destination = {
@@ -683,6 +770,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 		destroy_buffer(fd, &destinations[i]);
 	}
 	destroy_buffer(fd, &shared);
+	destroy_buffer(fd, &scaled);
 }
 
 int main(int argc, char **argv)
