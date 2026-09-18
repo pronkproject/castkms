@@ -59,11 +59,15 @@ struct Query {
     topology_id: [u8; 9],
     reserved2: [u8; 7],
     group_id: u64,
-    reserved3: u64,
+    mappings: u64,
+    mapping_capacity: u32,
+    reserved3: u32,
 }
 
 // SAFETY: Query contains only initialized integers and byte arrays without padding.
 unsafe impl AsBytes for Query {}
+// SAFETY: Every bit pattern is valid for the integer and byte-array fields.
+unsafe impl FromBytes for Query {}
 
 const _: () = {
     assert!(
@@ -91,6 +95,7 @@ struct Candidate {
 struct Lease {
     group_id: u64,
     topology: monitor::group::Topology,
+    mappings: [Mapping; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
     #[pin]
     control: Mutex<Option<Managed>>,
 }
@@ -101,11 +106,16 @@ struct Managed {
 }
 
 impl Lease {
-    fn new(group_id: u64, topology: monitor::group::Topology) -> Result<Arc<Self>> {
+    fn new(
+        group_id: u64,
+        topology: monitor::group::Topology,
+        mappings: [Mapping; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
+    ) -> Result<Arc<Self>> {
         Arc::pin_init(
             pin_init!(Self {
                 group_id,
                 topology,
+                mappings,
                 control <- kernel::new_mutex!(None),
             }),
             GFP_KERNEL,
@@ -180,6 +190,19 @@ impl HolderFile {
     }
 
     fn query(&self, arg: usize) -> Result {
+        let address = UserPtr::from_addr(arg);
+        let request = UserSlice::new(address, core::mem::size_of::<Query>())
+            .reader()
+            .read::<Query>()?;
+        if request.version != uapi::DRM_CASTKMS_MONITOR_GROUP_VERSION
+            || request.flags != 0
+            || request.reserved != 0
+            || request.reserved2 != [0; 7]
+            || request.reserved3 != 0
+            || (request.mappings == 0) != (request.mapping_capacity == 0)
+        {
+            return Err(EINVAL);
+        }
         if self.lease.control.lock().is_none() {
             return Err(ECANCELED);
         }
@@ -202,9 +225,25 @@ impl HolderFile {
             topology_id: *self.lease.topology.identity(),
             reserved2: [0; 7],
             group_id: self.lease.group_id,
+            mappings: request.mappings,
+            mapping_capacity: request.mapping_capacity,
             reserved3: 0,
         };
-        UserSlice::new(UserPtr::from_addr(arg), core::mem::size_of_val(&query))
+        if request.mappings != 0 {
+            if request.mapping_capacity < query.member_count {
+                return Err(ENOSPC);
+            }
+            let mappings_address = usize::try_from(request.mappings).map_err(|_| EFAULT)?;
+            let mappings_bytes = (query.member_count as usize)
+                .checked_mul(core::mem::size_of::<Mapping>())
+                .ok_or(EOVERFLOW)?;
+            let mut writer =
+                UserSlice::new(UserPtr::from_addr(mappings_address), mappings_bytes).writer();
+            for mapping in &self.lease.mappings[..query.member_count as usize] {
+                writer.write(mapping)?;
+            }
+        }
+        UserSlice::new(address, core::mem::size_of_val(&query))
             .writer()
             .write(&query)
     }
@@ -379,14 +418,6 @@ pub(crate) fn create(
     let claim = dev.monitor_groups.claim(*topology.identity())?;
     let pending = monitor::Monitor::reserve_group(dev, &output_indices)?;
     let group_id = next_group_id()?;
-    let lease = Lease::new(group_id, topology)?;
-    let control_reservation =
-        FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
-    let revoke_reservation =
-        FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
-    let control_file = HolderFile::new(lease.clone())?;
-    let revoke_file = RevokerFile::new(lease.clone())?;
-
     let mut mappings = [Mapping::default(); uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize];
     for (sorted_index, candidate) in candidates.iter().enumerate() {
         let location = topology.member_location(sorted_index).ok_or(EINVAL)?;
@@ -398,11 +429,19 @@ pub(crate) fn create(
             reserved: 0,
         };
     }
+    let lease = Lease::new(group_id, topology, mappings)?;
+    let control_reservation =
+        FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
+    let revoke_reservation =
+        FileDescriptorReservation::get_unused_fd_flags(kernel::fs::file::flags::O_CLOEXEC)?;
+    let control_file = HolderFile::new(lease.clone())?;
+    let revoke_file = RevokerFile::new(lease.clone())?;
+
     let mappings_bytes = member_count
         .checked_mul(core::mem::size_of::<Mapping>())
         .ok_or(EOVERFLOW)?;
     let mut writer = UserSlice::new(UserPtr::from_addr(mappings_address), mappings_bytes).writer();
-    for mapping in &mappings[..member_count] {
+    for mapping in &lease.mappings[..member_count] {
         writer.write(mapping)?;
     }
 

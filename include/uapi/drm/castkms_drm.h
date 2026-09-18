@@ -242,8 +242,8 @@ struct drm_castkms_create_monitor_group {
 
 /**
  * struct drm_castkms_monitor_group_query - query an attached group
- * @version: returned DRM_CASTKMS_MONITOR_GROUP_VERSION
- * @flags: returned zero
+ * @version: input and output DRM_CASTKMS_MONITOR_GROUP_VERSION
+ * @flags: must be zero
  * @member_count: number of connectors in the complete group
  * @reserved: returned zero
  * @horizontal_tiles: horizontal grid size
@@ -253,7 +253,16 @@ struct drm_castkms_create_monitor_group {
  * @topology_id: DisplayID topology identity shared by the members
  * @reserved2: returned zero
  * @group_id: never-zero group incarnation returned in every mapping
- * @reserved3: returned zero
+ * @mappings: pointer to @mapping_capacity writable mapping records, or zero
+ * @mapping_capacity: available records at @mappings, preserved on output
+ * @reserved3: must be zero
+ *
+ * Set @version before calling. Flags and reserved fields must be zero; values
+ * in the output-only fields are ignored. A null @mappings pointer returns
+ * group metadata only. A non-null pointer must provide room for at least
+ * @member_count records; otherwise the ioctl returns ``ENOSPC`` without
+ * copying mappings. The records preserve the order supplied at group creation,
+ * but consumers should identify members by connector ID or tile coordinate.
  */
 struct drm_castkms_monitor_group_query {
 	__u32 version;
@@ -267,7 +276,9 @@ struct drm_castkms_monitor_group_query {
 	__u8 topology_id[9];
 	__u8 reserved2[7];
 	__u64 group_id;
-	__u64 reserved3;
+	__u64 mappings;
+	__u32 mapping_capacity;
+	__u32 reserved3;
 };
 
 /**
@@ -1039,8 +1050,8 @@ enum {
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_CEC_GET_STATE,
 			struct drm_castkms_cec_state),
 	DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY =
-		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_GROUP_QUERY,
-			struct drm_castkms_monitor_group_query),
+		DRM_IOWR(DRM_COMMAND_BASE + DRM_CASTKMS_MONITOR_GROUP_QUERY,
+			 struct drm_castkms_monitor_group_query),
 	DRM_IOCTL_CASTKMS_RENDERER_QUERY =
 		DRM_IOR(DRM_COMMAND_BASE + DRM_CASTKMS_RENDERER_QUERY,
 			struct drm_castkms_renderer_query),
