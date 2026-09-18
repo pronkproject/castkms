@@ -492,16 +492,18 @@ static void fill_shared_tiles(int fd, const struct buffer *buffer,
 			      const unsigned char values[2])
 {
 	struct drm_mode_map_dumb map = { .handle = buffer->dumb.handle };
+	unsigned int half_width = buffer->dumb.width / 2;
 	unsigned char *pixels;
 
+	CHECK(buffer->dumb.width && !(buffer->dumb.width % 2));
 	CHECK(drmIoctl(fd, DRM_IOCTL_MODE_MAP_DUMB, &map) == 0);
 	pixels = mmap(NULL, buffer->dumb.size, PROT_READ | PROT_WRITE,
 		      MAP_SHARED, fd, map.offset);
 	CHECK(pixels != MAP_FAILED);
-	for (unsigned int y = 0; y < 1080; y++) {
-		memset(pixels + y * buffer->dumb.pitch, values[0], 1920 * 4);
-		memset(pixels + y * buffer->dumb.pitch + 1920 * 4,
-		       values[1], 1920 * 4);
+	for (unsigned int y = 0; y < buffer->dumb.height; y++) {
+		memset(pixels + y * buffer->dumb.pitch, values[0], half_width * 4);
+		memset(pixels + y * buffer->dumb.pitch + half_width * 4,
+		       values[1], half_width * 4);
 	}
 	CHECK(munmap(pixels, buffer->dumb.size) == 0);
 }
