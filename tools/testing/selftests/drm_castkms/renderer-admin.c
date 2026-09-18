@@ -67,7 +67,7 @@ int main(int argc, char **argv)
 	CHECK(query.version == DRM_CASTKMS_RENDERER_VERSION);
 	CHECK(drmDropMaster(master) == 0);
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query, EACCES);
-	CHECK(drmSetMaster(master) == 0);
+	acquire_master(master);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query) == 0);
 	CHECK(query.state == DRM_CASTKMS_RENDERER_STATE_EMPTY);
 
