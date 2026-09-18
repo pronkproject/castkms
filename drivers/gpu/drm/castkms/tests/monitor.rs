@@ -58,4 +58,60 @@ mod cases {
         drop(control);
         check(matches!(device.monitor.acquire(&device), Err(ENODEV)))
     }
+
+    #[test]
+    fn group_reservation_publishes_and_releases_every_member() -> Result {
+        let driver = CastKms::new_outputs(c"castkms-monitor-group", 3)?;
+        let device = driver._display.registration_guard().ok_or(ENODEV)?;
+        let pending = Monitor::reserve_group(&device, &[0, 2])?;
+        check(matches!(
+            device.displays[0].monitor.reserve(&device),
+            Err(EBUSY)
+        ))?;
+        check(matches!(
+            device.displays[2].monitor.reserve(&device),
+            Err(EBUSY)
+        ))?;
+        check(device.displays[0].monitor.status() == Status::Disconnected)?;
+        check(device.displays[2].monitor.status() == Status::Disconnected)?;
+
+        let control = pending.publish()?;
+        let mut edids = KVec::new();
+        edids.push(None, GFP_KERNEL)?;
+        edids.push(None, GFP_KERNEL)?;
+        control.attach(edids)?;
+        check(device.displays[0].monitor.status() == Status::Connected)?;
+        check(device.displays[1].monitor.status() == Status::Disconnected)?;
+        check(device.displays[2].monitor.status() == Status::Connected)?;
+
+        control.detach()?;
+        check(device.displays[0].monitor.status() == Status::Disconnected)?;
+        check(device.displays[2].monitor.status() == Status::Disconnected)?;
+        drop(control);
+        let first = device.displays[0].monitor.acquire(&device)?;
+        let last = device.displays[2].monitor.acquire(&device)?;
+        drop(last);
+        drop(first);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_group_reservation_releases_earlier_members() -> Result {
+        let driver = CastKms::new_outputs(c"castkms-monitor-group-unwind", 3)?;
+        let device = driver._display.registration_guard().ok_or(ENODEV)?;
+        let occupied = device.displays[1].monitor.acquire(&device)?;
+        check(matches!(
+            Monitor::reserve_group(&device, &[0, 1, 2]),
+            Err(EBUSY)
+        ))?;
+        let first = device.displays[0].monitor.acquire(&device)?;
+        let last = device.displays[2].monitor.acquire(&device)?;
+        drop(last);
+        drop(first);
+        drop(occupied);
+        check(matches!(
+            Monitor::reserve_group(&device, &[1, 0]),
+            Err(EINVAL)
+        ))
+    }
 }
