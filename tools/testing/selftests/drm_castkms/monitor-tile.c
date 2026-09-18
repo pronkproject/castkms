@@ -17,7 +17,7 @@ _Static_assert(sizeof(struct drm_castkms_monitor_group_mapping) == 24,
 	       "monitor group mapping ABI");
 _Static_assert(sizeof(struct drm_castkms_create_monitor_group) == 56,
 	       "monitor group creation ABI");
-_Static_assert(sizeof(struct drm_castkms_monitor_group_query) == 64,
+_Static_assert(sizeof(struct drm_castkms_monitor_group_query) == 72,
 	       "monitor group query ABI");
 
 struct tile_metadata {
@@ -146,7 +146,21 @@ int main(int argc, char **argv)
 	struct drm_castkms_monitor_files files = { -1, -1 };
 	struct drm_castkms_monitor_group_member members[2];
 	struct drm_castkms_monitor_group_mapping mappings[2] = {0};
-	struct drm_castkms_monitor_group_query query = {0};
+	struct drm_castkms_monitor_group_mapping queried_mappings[2] = {0};
+	struct drm_castkms_monitor_group_mapping short_mapping = {0};
+	struct drm_castkms_monitor_group_query query = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.mappings = (uintptr_t)queried_mappings,
+		.mapping_capacity = 2,
+	};
+	struct drm_castkms_monitor_group_query metadata = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+	};
+	struct drm_castkms_monitor_group_query undersized = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.mappings = (uintptr_t)&short_mapping,
+		.mapping_capacity = 1,
+	};
 	struct drm_castkms_create_monitor_group create = {
 		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
 		.member_count = 2,
@@ -157,7 +171,7 @@ int main(int argc, char **argv)
 	unsigned char edids[2][256];
 	struct tile_metadata left, right;
 	uint64_t first_group_id;
-	int helper;
+	int helper, transferred;
 
 	if (argc != 2) {
 		fprintf(stderr, "SKIP: supply a disposable Rust CastKMS DRM node\n");
@@ -198,6 +212,10 @@ int main(int argc, char **argv)
 		.control_fd = files.control_fd,
 		.revoke_fd = files.revoke_fd,
 	};
+	transferred = fcntl(monitor.control_fd, F_DUPFD_CLOEXEC, 0);
+	CHECK(transferred >= 0);
+	CHECK(close(monitor.control_fd) == 0);
+	monitor.control_fd = transferred;
 	CHECK(mappings[0].connector_id == resources->connectors[0]);
 	CHECK(mappings[0].group_id != 0);
 	CHECK(mappings[0].horizontal_location == 0);
@@ -207,6 +225,14 @@ int main(int argc, char **argv)
 	CHECK(mappings[1].horizontal_location == 1);
 	CHECK(mappings[1].vertical_location == 0);
 	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY,
+		    &metadata) == 0);
+	CHECK(metadata.member_count == 2 && metadata.mappings == 0);
+	errno = 0;
+	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY,
+		    &undersized) == -1);
+	CHECK(errno == ENOSPC);
+	CHECK(short_mapping.group_id == 0);
+	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY,
 		    &query) == 0);
 	CHECK(query.version == DRM_CASTKMS_MONITOR_GROUP_VERSION);
 	CHECK(query.flags == 0 && query.member_count == 2);
@@ -214,6 +240,9 @@ int main(int argc, char **argv)
 	CHECK(query.horizontal_tiles == 2 && query.vertical_tiles == 1);
 	CHECK(query.tile_width == 1920 && query.tile_height == 1080);
 	CHECK(!memcmp(query.topology_id, "CASTTILE0", 9));
+	CHECK(!memcmp(queried_mappings, mappings, sizeof(mappings)));
+	CHECK(ioctl(monitor.control_fd, DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY,
+		    &query) == 0);
 	first_group_id = query.group_id;
 	probe_1080p(fd, resources->connectors[0]);
 	probe_1080p(fd, resources->connectors[1]);
@@ -244,7 +273,12 @@ int main(int argc, char **argv)
 	CHECK(helper >= 0 && !drmIsMaster(helper));
 	files = (struct drm_castkms_monitor_files) { -1, -1 };
 	memset(mappings, 0, sizeof(mappings));
-	memset(&query, 0, sizeof(query));
+	memset(queried_mappings, 0, sizeof(queried_mappings));
+	query = (struct drm_castkms_monitor_group_query) {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.mappings = (uintptr_t)queried_mappings,
+		.mapping_capacity = 2,
+	};
 	create.flags = DRM_CASTKMS_MONITOR_CREATE_ADMIN;
 	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP, &create) == 0);
 	CHECK(drmIsMaster(fd) && !drmIsMaster(helper));
@@ -253,6 +287,7 @@ int main(int argc, char **argv)
 	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_GROUP_QUERY,
 		    &query) == 0);
 	CHECK(query.group_id == mappings[0].group_id);
+	CHECK(!memcmp(queried_mappings, mappings, sizeof(mappings)));
 	monitor = (struct monitor_control) {
 		.control_fd = files.control_fd,
 		.revoke_fd = files.revoke_fd,
