@@ -121,11 +121,10 @@ mod cases {
         check(device.displays[0].monitor.status() == Status::Disconnected)?;
         check(device.displays[2].monitor.status() == Status::Disconnected)?;
 
-        let control = pending.publish()?;
         let mut edids = KVec::new();
         edids.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
         edids.push(tiled_edid(b"CASTTILE0", 1)?, GFP_KERNEL)?;
-        let topology = control.attach(edids)?;
+        let (control, topology) = pending.attach(edids)?;
         check(topology.identity() == b"CASTTILE0")?;
         check(topology.dimensions() == [2, 1])?;
         check(topology.tile_size() == [1920, 1080])?;
@@ -148,10 +147,9 @@ mod cases {
             ))?;
         }
 
-        control.detach()?;
+        drop(control);
         check(device.displays[0].monitor.status() == Status::Disconnected)?;
         check(device.displays[2].monitor.status() == Status::Disconnected)?;
-        drop(control);
         let first = device.displays[0].monitor.acquire(&device)?;
         let last = device.displays[2].monitor.acquire(&device)?;
         drop(last);
@@ -163,21 +161,28 @@ mod cases {
     fn group_rejects_incomplete_or_ambiguous_topology_before_publication() -> Result {
         let driver = CastKms::new_outputs(c"castkms-monitor-group-validation", 2)?;
         let device = driver._display.registration_guard().ok_or(ENODEV)?;
-        let control = Monitor::reserve_group(&device, &[0, 1])?.publish()?;
-
         let mut incomplete = KVec::new();
         incomplete.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
-        check(matches!(control.attach(incomplete), Err(EINVAL)))?;
+        check(matches!(
+            Monitor::reserve_group(&device, &[0, 1])?.attach(incomplete),
+            Err(EINVAL)
+        ))?;
 
         let mut duplicate = KVec::new();
         duplicate.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
         duplicate.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
-        check(matches!(control.attach(duplicate), Err(EINVAL)))?;
+        check(matches!(
+            Monitor::reserve_group(&device, &[0, 1])?.attach(duplicate),
+            Err(EINVAL)
+        ))?;
 
         let mut mismatched = KVec::new();
         mismatched.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
         mismatched.push(tiled_edid(b"CASTTILE1", 1)?, GFP_KERNEL)?;
-        check(matches!(control.attach(mismatched), Err(EINVAL)))?;
+        check(matches!(
+            Monitor::reserve_group(&device, &[0, 1])?.attach(mismatched),
+            Err(EINVAL)
+        ))?;
         check(device.displays[0].monitor.status() == Status::Disconnected)?;
         check(device.displays[1].monitor.status() == Status::Disconnected)
     }

@@ -16,6 +16,7 @@ use kernel::{
 };
 
 /// Complete rectangular topology decoded from a monitor group's EDIDs.
+#[derive(Clone, Copy)]
 pub(crate) struct Topology {
     identity: [u8; 9],
     horizontal_tiles: u8,
@@ -113,6 +114,10 @@ impl Topology {
     pub(crate) fn member_location(&self, index: usize) -> Option<[u8; 2]> {
         (index < self.member_count).then(|| self.member_locations[index])
     }
+
+    pub(crate) fn member_count(&self) -> usize {
+        self.member_count
+    }
 }
 
 /// An unpublished, all-member reservation for one monitor group.
@@ -123,6 +128,24 @@ pub(crate) struct Pending {
 /// Exclusive control of one virtual monitor group publication interval.
 pub(crate) struct Control {
     controls: KVec<MemberControl>,
+}
+
+fn descriptions(edids: KVec<Edid>, member_count: usize) -> Result<KVec<Description>> {
+    if edids.len() != member_count {
+        return Err(EINVAL);
+    }
+    let mut descriptions = KVec::with_capacity(edids.len(), GFP_KERNEL)?;
+    for edid in edids {
+        descriptions.push(
+            Description::Attached {
+                edid: Some(edid),
+                #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+                audio: None,
+            },
+            GFP_KERNEL,
+        )?;
+    }
+    Ok(descriptions)
 }
 
 impl Monitor {
@@ -150,7 +173,10 @@ impl Monitor {
 }
 
 impl Pending {
-    pub(crate) fn publish(self) -> Result<Control> {
+    /// Publish a validated attached group without an intermediate disconnected event.
+    pub(crate) fn attach(self, edids: KVec<Edid>) -> Result<(Control, Topology)> {
+        let topology = Topology::from_edids(&edids)?;
+        let descriptions = descriptions(edids, self.controls.len())?;
         let controls = self.controls;
         let mut states: [Option<MutexGuard<'_, State>>; MAX_OUTPUTS as usize] =
             core::array::from_fn(|_| None);
@@ -164,88 +190,21 @@ impl Pending {
                 _ => return Err(ECANCELED),
             }
         }
-        for (state, control) in states.iter_mut().flatten().zip(&controls) {
+        for ((state, control), description) in
+            states.iter_mut().flatten().zip(&controls).zip(descriptions)
+        {
             **state = State::Managed {
                 identity: control.identity.clone(),
-                description: Description::Disconnected,
+                description,
             };
         }
         drop(states);
         controls.first().ok_or(EINVAL)?.notify();
-        Ok(Control { controls })
+        Ok((Control { controls }, topology))
     }
 }
 
 impl Control {
-    fn descriptions(&self, edids: KVec<Edid>) -> Result<KVec<Description>> {
-        if edids.len() != self.controls.len() {
-            return Err(EINVAL);
-        }
-        let mut descriptions = KVec::with_capacity(edids.len(), GFP_KERNEL)?;
-        for edid in edids {
-            descriptions.push(
-                Description::Attached {
-                    edid: Some(edid),
-                    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-                    audio: None,
-                },
-                GFP_KERNEL,
-            )?;
-        }
-        Ok(descriptions)
-    }
-
-    fn publish(&self, descriptions: KVec<Description>) -> Result {
-        let mut states: [Option<MutexGuard<'_, State>>; MAX_OUTPUTS as usize] =
-            core::array::from_fn(|_| None);
-        let mut retired: [Option<State>; MAX_OUTPUTS as usize] = core::array::from_fn(|_| None);
-        for (index, (slot, control)) in states.iter_mut().zip(&self.controls).enumerate() {
-            *slot = Some(control.monitor.state.lock_nested(index as u32));
-        }
-        for (state, control) in states.iter().flatten().zip(&self.controls) {
-            match &**state {
-                State::Managed { identity, .. } if Arc::ptr_eq(identity, &control.identity) => {}
-                State::Closed => return Err(ENODEV),
-                _ => return Err(ECANCELED),
-            }
-        }
-        for (index, ((state, control), description)) in states
-            .iter_mut()
-            .flatten()
-            .zip(&self.controls)
-            .zip(descriptions)
-            .enumerate()
-        {
-            retired[index] = Some(core::mem::replace(
-                &mut **state,
-                State::Managed {
-                    identity: control.identity.clone(),
-                    description,
-                },
-            ));
-        }
-        drop(states);
-        drop(retired);
-        Ok(())
-    }
-
-    pub(crate) fn attach(&self, edids: KVec<Edid>) -> Result<Topology> {
-        let topology = Topology::from_edids(&edids)?;
-        self.publish(self.descriptions(edids)?)?;
-        self.controls.first().ok_or(EINVAL)?.notify();
-        Ok(topology)
-    }
-
-    pub(crate) fn detach(&self) -> Result {
-        let mut descriptions = KVec::with_capacity(self.controls.len(), GFP_KERNEL)?;
-        for _ in &self.controls {
-            descriptions.push(Description::Disconnected, GFP_KERNEL)?;
-        }
-        self.publish(descriptions)?;
-        self.controls.first().ok_or(EINVAL)?.notify();
-        Ok(())
-    }
-
     fn release(&self) -> bool {
         let mut states: [Option<MutexGuard<'_, State>>; MAX_OUTPUTS as usize] =
             core::array::from_fn(|_| None);
