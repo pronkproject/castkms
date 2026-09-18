@@ -206,4 +206,25 @@ mod cases {
             Err(EINVAL)
         ))
     }
+
+    #[test]
+    fn group_topology_identity_is_exclusive_for_its_live_interval() -> Result {
+        let driver = CastKms::new_outputs(c"castkms-monitor-group-identity", 2)?;
+        let device = driver._display.registration_guard().ok_or(ENODEV)?;
+        let first = device.monitor_groups.claim(*b"CASTTILE0")?;
+        check(matches!(
+            device.monitor_groups.claim(*b"CASTTILE0"),
+            Err(EEXIST)
+        ))?;
+        let other = device.monitor_groups.claim(*b"CASTTILE1")?;
+        drop(first);
+        let replacement = device.monitor_groups.claim(*b"CASTTILE0")?;
+        drop(replacement);
+        drop(other);
+        device.monitor_groups.close();
+        check(matches!(
+            device.monitor_groups.claim(*b"CASTTILE0"),
+            Err(ENODEV)
+        ))
+    }
 }

@@ -92,7 +92,12 @@ struct Lease {
     group_id: u64,
     topology: monitor::group::Topology,
     #[pin]
-    control: Mutex<Option<monitor::group::Control>>,
+    control: Mutex<Option<Managed>>,
+}
+
+struct Managed {
+    _control: monitor::group::Control,
+    _claim: monitor::group::Claim,
 }
 
 impl Lease {
@@ -371,6 +376,7 @@ pub(crate) fn create(
     }
 
     let topology = monitor::group::Topology::from_edids(&edids)?;
+    let claim = dev.monitor_groups.claim(*topology.identity())?;
     let pending = monitor::Monitor::reserve_group(dev, &output_indices)?;
     let group_id = next_group_id()?;
     let lease = Lease::new(group_id, topology)?;
@@ -432,7 +438,10 @@ pub(crate) fn create(
 
     check_authority()?;
     let (control, _) = pending.attach(edids)?;
-    *lease.control.lock() = Some(control);
+    *lease.control.lock() = Some(Managed {
+        _control: control,
+        _claim: claim,
+    });
     control_reservation.fd_install(control_file);
     revoke_reservation.fd_install(revoke_file);
     Ok(0)

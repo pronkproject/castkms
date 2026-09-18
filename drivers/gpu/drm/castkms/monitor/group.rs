@@ -12,8 +12,70 @@ use kernel::{
         Device,
     },
     prelude::*,
-    sync::{Arc, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
+
+#[pin_data]
+pub(crate) struct Registry {
+    #[pin]
+    state: Mutex<RegistryState>,
+}
+
+struct RegistryState {
+    closed: bool,
+    identities: KVec<[u8; 9]>,
+}
+
+impl Registry {
+    pub(crate) fn new() -> Result<Arc<Self>> {
+        Arc::pin_init(
+            pin_init!(Self {
+                state <- kernel::new_mutex!(RegistryState {
+                    closed: false,
+                    identities: KVec::new(),
+                }),
+            }),
+            GFP_KERNEL,
+        )
+    }
+
+    pub(crate) fn claim(self: &Arc<Self>, identity: [u8; 9]) -> Result<Claim> {
+        let mut state = self.state.lock();
+        if state.closed {
+            return Err(ENODEV);
+        }
+        if state.identities.contains(&identity) {
+            return Err(EEXIST);
+        }
+        state.identities.push(identity, GFP_KERNEL)?;
+        Ok(Claim {
+            registry: self.clone(),
+            identity,
+        })
+    }
+
+    pub(crate) fn close(&self) {
+        let mut state = self.state.lock();
+        state.closed = true;
+        state.identities.clear();
+    }
+}
+
+pub(crate) struct Claim {
+    registry: Arc<Registry>,
+    identity: [u8; 9],
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let mut state = self.registry.state.lock();
+        if !state.closed {
+            state
+                .identities
+                .retain(|identity| *identity != self.identity);
+        }
+    }
+}
 
 /// Complete rectangular topology decoded from a monitor group's EDIDs.
 #[derive(Clone, Copy)]

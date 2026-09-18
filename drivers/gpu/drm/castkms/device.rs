@@ -62,6 +62,7 @@ pub(super) struct State {
     pub(super) capture_budget: Arc<budget::Budget>,
     pub(crate) capture_request_budget: Arc<crate::capture::request_budget::Budget>,
     pub(crate) image_storage: Arc<crate::image_storage::Registry>,
+    pub(crate) monitor_groups: Arc<crate::monitor::group::Registry>,
     pub(super) displays: KVec<Arc<Display>>,
 }
 
@@ -101,6 +102,7 @@ impl State {
             capture_budget: budget::Budget::new()?,
             capture_request_budget: crate::capture::request_budget::Budget::new()?,
             image_storage: crate::image_storage::Registry::new()?,
+            monitor_groups: crate::monitor::group::Registry::new()?,
             displays,
         })
     }
@@ -112,6 +114,7 @@ impl State {
             }
         }
         self.image_storage.close();
+        self.monitor_groups.close();
         self.validation.close();
         for display in &self.displays {
             display.monitor.close();
