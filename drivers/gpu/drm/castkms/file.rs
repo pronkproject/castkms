@@ -102,7 +102,7 @@ impl File {
         Ok(owner)
     }
 
-    /// Issue renderer control from one current master interval.
+    /// Issue renderer control for the current master identity.
     ///
     /// Construction runs outside native DRM locks. The second check prevents a file or
     /// display-object ownership change during allocation from authorizing the result.
@@ -199,7 +199,7 @@ impl File {
                 master
                     .lock_current()
                     .ok_or(if interval.is_some() { EBUSY } else { EACCES })?;
-            if let Some(interval) = interval {
+            if interval.is_some() {
                 if guard.is_master_file(file) {
                     return Err(EBUSY);
                 }
@@ -208,7 +208,7 @@ impl File {
                 {
                     return Err(EBUSY);
                 }
-                RendererPermission::administrative(&guard, crtc, connector, interval)?
+                RendererPermission::new(&guard, crtc, connector)?
             } else {
                 if !guard.is_master_file(file) {
                     return Err(EACCES);

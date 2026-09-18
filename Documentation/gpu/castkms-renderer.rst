@@ -29,10 +29,11 @@ Renderer authority is output-scoped and distinct from final-image capture
 authority. Normal issuance requires the exact current master file controlling
 the CRTC and connector. An administrative helper can instead set
 ``DRM_CASTKMS_RENDERER_CREATE_ADMIN`` while holding ``CAP_SYS_ADMIN`` in the
-initial user namespace. That explicit mode binds to the independently observed
-current top-level owner interval; it does not use the helper's DRM-master
-association, take master from the compositor or grant modesetting rights. The
-helper must drop an accidentally acquired master role before requesting it.
+initial user namespace. That explicit mode selects the independently observed
+current top-level owner and rejects an owner change during issuance. It does not
+use the helper's DRM-master association, take master from the compositor or
+grant modesetting rights. The helper must drop an accidentally acquired master
+role before requesting it.
 The returned close-on-exec renderer descriptor grants scoped access to
 committed KMS sources for execution. It grants no modesetting authority and
 does not authorize the separate final-image capture interface. The renderer is
@@ -49,9 +50,6 @@ If the same master becomes current again, the descriptor resumes with an empty
 generation after outstanding old jobs have been released. Configurations,
 published backends, private registrations and jobs from the earlier interval
 never reactivate.
-An administratively issued descriptor is narrower: owner-interval loss makes
-it permanently stale, including if the same ``drm_master`` later returns. The
-helper must issue a fresh endpoint for the new interval.
 
 The KMS client discovers immutable descriptions with
 ``DRM_IOCTL_MODE_LIST_CONSTRAINTS``, subscribes with

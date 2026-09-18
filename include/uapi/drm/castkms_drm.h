@@ -222,11 +222,11 @@ struct drm_castkms_renderer_files {
  * With zero flags, the calling DRM file must be the exact current master and
  * hold both display objects. DRM_CASTKMS_RENDERER_CREATE_ADMIN explicitly asks
  * for administrative issuance and requires CAP_SYS_ADMIN in the initial user
- * namespace. It binds to the independently observed current top-level owner
- * interval, not the calling file's DRM master association. A caller which is
- * itself current master must drop that incidental role before administrative
- * issuance. Absence of a distinct current owner, or a target delegated through
- * a DRM lease, returns EBUSY.
+ * namespace. It selects the independently observed current top-level owner,
+ * not the calling file's DRM master association, and rejects an owner change
+ * during issuance. A caller which is itself current master must drop that
+ * incidental role before administrative issuance. Absence of a distinct
+ * current owner, or a target delegated through a DRM lease, returns EBUSY.
  *
  * The renderer descriptor grants no modesetting authority and does not
  * authorize the separate final-image capture interface. Its operations grant
@@ -236,8 +236,6 @@ struct drm_castkms_renderer_files {
  * unregister and withdrawal remain available for cleanup. Reacquiring the same
  * master reactivates the descriptor, but work and renderer configurations from
  * the previous uninterrupted interval stay invalid.
- * An administratively issued descriptor is instead permanently stale after
- * its bound owner interval ends; the helper must issue a new descriptor.
  *
  * All request fields are input. Success returns zero after copying both output
  * descriptor numbers and installing their files. On failure neither descriptor

@@ -66,9 +66,10 @@ int main(int argc, char **argv)
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query) == 0);
 	CHECK(query.version == DRM_CASTKMS_RENDERER_VERSION);
 	CHECK(drmDropMaster(master) == 0);
-	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query, ESTALE);
+	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query, EACCES);
 	CHECK(drmSetMaster(master) == 0);
-	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query, ESTALE);
+	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query) == 0);
+	CHECK(query.state == DRM_CASTKMS_RENDERER_STATE_EMPTY);
 
 	close_files(&files);
 	CHECK(close(helper) == 0);

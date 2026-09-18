@@ -101,7 +101,7 @@ mod cases {
     }
 
     #[test]
-    fn administrative_control_expires_with_its_owner_interval() -> Result {
+    fn administrative_control_never_follows_a_replacement_master() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
         let owner_file = fixture.drm.master_file()?;
@@ -116,9 +116,9 @@ mod cases {
         )?;
         let access = owner.access();
         drop(owner_file);
-        check(matches!(access.with_current(|_| Ok(())), Err(ESTALE)))?;
+        check(matches!(access.with_current(|_| Ok(())), Err(EACCES)))?;
         let _replacement = fixture.drm.master_file()?;
-        check(matches!(access.with_current(|_| Ok(())), Err(ESTALE)))
+        check(matches!(access.with_current(|_| Ok(())), Err(EACCES)))
     }
 
     #[test]
