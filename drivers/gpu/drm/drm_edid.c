@@ -7754,6 +7754,90 @@ int drm_edid_get_tile_info(const struct drm_edid *drm_edid,
 }
 EXPORT_SYMBOL(drm_edid_get_tile_info);
 
+struct drm_edid_tile_span {
+	size_t block_offset;
+	size_t block_size;
+	size_t section_checksum_offset;
+	size_t extension_checksum_offset;
+};
+
+static int drm_edid_get_tile_span(const struct drm_edid *drm_edid,
+				  struct drm_edid_tile_span *span)
+{
+	const struct displayid_block *block;
+	const u8 *raw = (const u8 *)drm_edid->edid;
+	struct displayid_iter iter;
+	bool found = false;
+	int ret = -ENOENT;
+
+	displayid_iter_edid_begin(drm_edid, &iter);
+	displayid_iter_for_each(block, &iter) {
+		if (!displayid_is_tiled_block(&iter, block))
+			continue;
+		if (found) {
+			ret = -EINVAL;
+			break;
+		}
+		span->block_offset = (const u8 *)block - raw;
+		span->block_size = sizeof(*block) + block->num_bytes;
+		span->section_checksum_offset = iter.section + iter.length - raw;
+		span->extension_checksum_offset = iter.section + EDID_LENGTH - 1 - raw;
+		found = true;
+		ret = 0;
+	}
+	displayid_iter_end(&iter);
+
+	return ret;
+}
+
+/**
+ * drm_edid_tile_group_compatible - compare fixed metadata for two tiled EDIDs
+ * @first: first validated tiled EDID
+ * @second: second validated tiled EDID
+ *
+ * A tiled monitor may vary its DisplayID tiled-topology block between members,
+ * including its tile location. The checksums covering that block vary as a
+ * consequence. Require every other EDID byte to match so a group cannot expose
+ * different timing sets or display metadata on different tiles.
+ *
+ * Return: true when both EDIDs contain their topology block at the same offset
+ * and are byte-identical outside the topology block and its covering checksums.
+ */
+bool drm_edid_tile_group_compatible(const struct drm_edid *first,
+				    const struct drm_edid *second)
+{
+	struct drm_edid_tile_span first_span, second_span;
+	struct drm_edid_tile_info tile_info;
+	const u8 *first_raw, *second_raw;
+	size_t i;
+
+	if (!first || !second || first->size != second->size ||
+	    drm_edid_get_tile_info(first, &tile_info) ||
+	    drm_edid_get_tile_info(second, &tile_info) ||
+	    drm_edid_get_tile_span(first, &first_span) ||
+	    drm_edid_get_tile_span(second, &second_span) ||
+	    first_span.block_offset != second_span.block_offset ||
+	    first_span.block_size != second_span.block_size ||
+	    first_span.section_checksum_offset != second_span.section_checksum_offset ||
+	    first_span.extension_checksum_offset != second_span.extension_checksum_offset)
+		return false;
+
+	first_raw = (const u8 *)first->edid;
+	second_raw = (const u8 *)second->edid;
+	for (i = 0; i < first->size; i++) {
+		if ((i >= first_span.block_offset &&
+		     i < first_span.block_offset + first_span.block_size) ||
+		    i == first_span.section_checksum_offset ||
+		    i == first_span.extension_checksum_offset)
+			continue;
+		if (first_raw[i] != second_raw[i])
+			return false;
+	}
+
+	return true;
+}
+EXPORT_SYMBOL(drm_edid_tile_group_compatible);
+
 static void drm_parse_tiled_block(struct drm_connector *connector,
 				  const struct displayid_block *block)
 {

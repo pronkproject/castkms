@@ -508,6 +508,8 @@ int drm_edid_connector_add_modes(struct drm_connector *connector);
 bool drm_edid_is_digital(const struct drm_edid *drm_edid);
 int drm_edid_get_tile_info(const struct drm_edid *drm_edid,
 			   struct drm_edid_tile_info *info);
+bool drm_edid_tile_group_compatible(const struct drm_edid *first,
+				    const struct drm_edid *second);
 void drm_edid_get_product_id(const struct drm_edid *drm_edid,
 			     struct drm_edid_product_id *id);
 void drm_edid_print_product_id(struct drm_printer *p,
