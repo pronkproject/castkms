@@ -40,6 +40,7 @@ mod retirement;
 mod routing;
 mod installation;
 mod constraints;
+mod tiles;
 
 use super::*;
 use crate::{
@@ -76,6 +77,7 @@ struct Counts {
     committed_constraints_id: AtomicU64,
     constraints_render: AtomicU32,
     output_count: AtomicU32,
+    tile_topology: AtomicU32,
     scene_properties: AtomicU32,
     scene_color_range_id: AtomicU32,
     constraints_work: constraints::Published,
@@ -547,6 +549,14 @@ impl KmsDriver for TestDriver {
         if output_count > 2 {
             return Err(EINVAL);
         }
+        let tile_group = if dev.counts.tile_topology.load(Ordering::Relaxed) != 0 {
+            if output_count != 2 {
+                return Err(EINVAL);
+            }
+            Some(connector::TileGroup::new(dev, *b"rusttile0")?)
+        } else {
+            None
+        };
         for index in 0..output_count {
             let plane = plane::UnregisteredPlane::<TestPlane>::new(
                 dev,
@@ -596,6 +606,12 @@ impl KmsDriver for TestDriver {
                 connector::Type::Virtual,
                 (),
             )?;
+            if let Some(group) = &tile_group {
+                connector.set_tile(
+                    group,
+                    connector::Tile::new(2, 1, index as u8, 0, 640, 480, true)?,
+                )?;
+            }
             connector.attach_encoder(encoder)?;
             if index == 0 {
                 dev.connector.store(connector.as_raw(), Ordering::Relaxed);
