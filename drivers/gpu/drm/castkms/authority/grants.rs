@@ -15,7 +15,6 @@ use kernel::{
 
 const MAX_GRANTS: usize = 256;
 const MAX_DEVICE_WORKERS: usize = 512;
-const MAX_MONITOR_GROUP_MEMBERS: usize = 8;
 
 struct Entry {
     revocation: ARef<Revocation>,
@@ -45,7 +44,7 @@ impl Registry {
     }
 
     pub(crate) fn new_monitor_group() -> Result<Arc<Self>> {
-        Self::new_with_capacity(MAX_MONITOR_GROUP_MEMBERS)
+        Self::new_with_capacity(MAX_GRANTS)
     }
 
     fn new_with_capacity(capacity: usize) -> Result<Arc<Self>> {
