@@ -85,6 +85,7 @@ unsafe impl NativePolicy for Policy {
 pub(crate) struct Grantor {
     capture: Capture,
     creator: Option<creator::Registration>,
+    group: Option<grants::Registration>,
     _device_registration: grants::Registration,
 }
 
@@ -101,6 +102,7 @@ impl Grantor {
         Ok(Self {
             capture: Capture { authority, policy },
             creator: None,
+            group: None,
             _device_registration: device_registration,
         })
     }
@@ -114,6 +116,15 @@ impl Grantor {
             return Err(EEXIST);
         }
         self.creator = Some(creator.register(&self.capture.authority)?);
+        Ok(())
+    }
+
+    /// Bind this grant to one complete monitor-group incarnation.
+    pub(crate) fn track_group(&mut self, group: &Arc<grants::Registry>) -> Result {
+        if self.group.is_some() {
+            return Err(EEXIST);
+        }
+        self.group = Some(group.register(&self.capture.authority.revocation())?);
         Ok(())
     }
 

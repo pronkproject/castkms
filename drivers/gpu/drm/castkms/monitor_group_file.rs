@@ -2,7 +2,7 @@
 
 //! Anonymous lifetime capability for one attached tiled monitor.
 
-use crate::{display, monitor, CastKms, Driver, File as DriverFile};
+use crate::{authority::grants, display, monitor, CastKms, Driver, File as DriverFile};
 use core::{
     ffi::c_void,
     ptr::NonNull,
@@ -96,6 +96,7 @@ struct Lease {
     group_id: u64,
     topology: monitor::group::Topology,
     mappings: [Mapping; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
+    grants: Arc<grants::Registry>,
     #[pin]
     control: Mutex<Option<Managed>>,
 }
@@ -111,11 +112,13 @@ impl Lease {
         topology: monitor::group::Topology,
         mappings: [Mapping; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize],
     ) -> Result<Arc<Self>> {
+        let grants = grants::Registry::new_monitor_group()?;
         Arc::pin_init(
             pin_init!(Self {
                 group_id,
                 topology,
                 mappings,
+                grants,
                 control <- kernel::new_mutex!(None),
             }),
             GFP_KERNEL,
@@ -125,6 +128,7 @@ impl Lease {
     fn revoke(&self) {
         let control = self.control.lock().take();
         drop(control);
+        self.grants.close();
     }
 }
 

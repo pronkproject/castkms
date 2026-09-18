@@ -9,7 +9,7 @@ mod stream_files;
 mod streams;
 
 use super::*;
-use crate::capture::provider::Capture;
+use crate::{authority::grants, capture::provider::Capture};
 use kernel::drm::{
     capture::Target,
     kms::{
@@ -102,6 +102,26 @@ mod cases {
         check(!client.is_revoked()?)?;
         drop(control);
         check(client.is_revoked()?)
+    }
+
+    #[test]
+    fn monitor_group_close_revokes_every_bound_grant() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let creator = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &creator)?;
+        let group = grants::Registry::new_monitor_group()?;
+        let mut first = grant(&fixture, &creator)?;
+        let mut second = grant(&fixture, &creator)?;
+        first.track_group(&group)?;
+        second.track_group(&group)?;
+        let first = ClientFile::new(first.capture())?;
+        let second = ClientFile::new(second.capture())?;
+        check(!first.is_revoked()?)?;
+        check(!second.is_revoked()?)?;
+        group.close();
+        check(first.is_revoked()?)?;
+        check(second.is_revoked()?)
     }
 
     #[test]
