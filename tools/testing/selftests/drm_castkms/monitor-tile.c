@@ -122,7 +122,8 @@ static void fill_tile_edid(unsigned char edid[256], unsigned int horizontal_tile
 
 struct published_group {
 	struct monitor_control monitor;
-	struct drm_castkms_monitor_group_mapping mappings[4];
+	struct drm_castkms_monitor_group_mapping
+		mappings[DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS];
 	uint64_t group_id;
 };
 
@@ -152,9 +153,10 @@ static int publish_group(int fd, const drmModeRes *resources,
 			 const char topology_id[9],
 			 struct published_group *group)
 {
-	struct drm_castkms_monitor_group_member members[4];
+	struct drm_castkms_monitor_group_member
+		members[DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS];
 	struct drm_castkms_monitor_files files = { -1, -1 };
-	unsigned char edids[4][256];
+	unsigned char edids[DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS][256];
 	unsigned int member_count = horizontal_tiles * vertical_tiles;
 	struct drm_castkms_create_monitor_group create = {
 		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
@@ -164,7 +166,7 @@ static int publish_group(int fd, const drmModeRes *resources,
 		.files = (uintptr_t)&files,
 	};
 
-	CHECK(member_count <= 4);
+	CHECK(member_count <= DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS);
 	CHECK(first_connector + member_count <=
 	      (unsigned int)resources->count_connectors);
 	memset(group, 0, sizeof(*group));
@@ -200,7 +202,8 @@ static void check_group(int fd, const drmModeRes *resources,
 			const struct published_group *group)
 {
 	unsigned int member_count = horizontal_tiles * vertical_tiles;
-	struct drm_castkms_monitor_group_mapping mappings[4] = {0};
+	struct drm_castkms_monitor_group_mapping
+		mappings[DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS] = {0};
 	struct drm_castkms_monitor_group_query query = {
 		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
 		.mappings = (uintptr_t)mappings,
@@ -231,6 +234,42 @@ static void check_group(int fd, const drmModeRes *resources,
 		CHECK(tile.horizontal_location == x);
 		CHECK(tile.vertical_location == y);
 	}
+}
+
+static void exercise_repeated_group_capture(int fd, const drmModeRes *resources)
+{
+	static const char topology_id[] = "CASTWALL0";
+	struct published_group wall;
+	struct drm_castkms_monitor_group_capture_member
+		first[DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS] = {0};
+	struct drm_castkms_monitor_group_capture_member
+		second[DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS] = {0};
+	struct drm_castkms_create_monitor_group_capture capture = {
+		.version = DRM_CASTKMS_MONITOR_GROUP_VERSION,
+		.group_fd = -1,
+		.member_capacity = DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS,
+		.members = (uintptr_t)first,
+	};
+
+	CHECK(publish_group(fd, resources, 0, 4, 2, topology_id, &wall) == 0);
+	check_group(fd, resources, 0, 4, 2, topology_id, &wall);
+	capture.group_fd = wall.monitor.control_fd;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == 0);
+	capture.members = (uintptr_t)second;
+	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_MONITOR_GROUP_CAPTURE,
+		    &capture) == 0);
+	for (unsigned int i = 0;
+	     i < DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS; i++) {
+		CHECK(first[i].group_id == wall.group_id);
+		CHECK(second[i].group_id == wall.group_id);
+		CHECK(close(first[i].capture_fd) == 0);
+		CHECK(close(first[i].control_fd) == 0);
+		CHECK(close(second[i].capture_fd) == 0);
+		CHECK(close(second[i].control_fd) == 0);
+	}
+	close_monitor(&wall.monitor);
+	check_disconnected(fd, resources, 0, 8);
 }
 
 static void reject_incomplete_grid(int fd, const drmModeRes *resources)
@@ -641,6 +680,7 @@ int main(int argc, char **argv)
 	close_monitor(&monitor);
 	CHECK(close(helper) == 0);
 	exercise_additional_layouts(fd, resources);
+	exercise_repeated_group_capture(fd, resources);
 	drmModeFreeResources(resources);
 	CHECK(close(fd) == 0);
 	puts("PASS: DisplayID tiled monitor topology");
