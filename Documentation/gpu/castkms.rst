@@ -165,11 +165,14 @@ The request returns an explicit connector-to-coordinate mapping and the same
 control/revocation descriptor pair used for a single monitor. Publication is
 transactional: all member descriptions become visible before one hotplug event,
 and a failed request installs no descriptors and leaves every connector
-disconnected. The group file's query reports its immutable identity and
-geometry. Each mapping and the query carry the same never-zero incarnation ID;
-the driver does not reuse that ID while it remains loaded. Closing either
-lifetime capability disconnects every member together. Creating a different
-layout requires a new group incarnation.
+disconnected. The group file's query reports its immutable identity, geometry
+and complete connector-to-coordinate mapping. A metadata-only query can omit
+the mapping buffer, while a recipient of a transferred control file can use a
+full query without retaining creation-time side data. Each mapping and the
+query carry the same never-zero incarnation ID; the driver does not reuse that
+ID while it remains loaded. Closing either lifetime capability disconnects
+every member together. Creating a different layout requires a new group
+incarnation.
 
 The standard connector ``TILE`` blobs are derived from the DisplayID records,
 so compositors continue to use ordinary KMS tiled-monitor discovery. Each
