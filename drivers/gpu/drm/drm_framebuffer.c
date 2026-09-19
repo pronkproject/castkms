@@ -1102,6 +1102,15 @@ static int build_remove_fb(struct drm_atomic_commit *state, void *data)
 	return plane_mask ? DRM_ATOMIC_REQUEST_COMMIT : DRM_ATOMIC_REQUEST_UNCHANGED;
 }
 
+static bool remove_fb_needs_crtc_disable(int ret)
+{
+	/*
+	 * A withdrawn backend may reject a plane-only update. File teardown
+	 * must still be able to disable the affected CRTC and release its FB.
+	 */
+	return ret == -EINVAL || ret == -ESTALE || ret == -EKEYREVOKED;
+}
+
 static int atomic_remove_fb(struct drm_framebuffer *fb)
 {
 	struct remove_fb_request request = { .fb = fb };
@@ -1112,7 +1121,7 @@ static int atomic_remove_fb(struct drm_framebuffer *fb)
 
 	if (dev->mode_config.preparation) {
 		ret = drm_atomic_commit_request(dev, build_remove_fb, &request);
-		if (ret == -EINVAL) {
+		if (remove_fb_needs_crtc_disable(ret)) {
 			request.disable_crtcs = true;
 			ret = drm_atomic_commit_request(dev, build_remove_fb, &request);
 		}
@@ -1147,7 +1156,7 @@ out:
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 
-	if (ret == -EINVAL && !request.disable_crtcs) {
+	if (remove_fb_needs_crtc_disable(ret) && !request.disable_crtcs) {
 		request.disable_crtcs = true;
 		goto retry_disable;
 	}

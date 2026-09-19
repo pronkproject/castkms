@@ -24,7 +24,7 @@ struct remove_fixture {
 	struct completion checked;
 	unsigned int checks;
 	unsigned int installs;
-	bool require_disable;
+	int require_disable_error;
 	int worker_error;
 };
 
@@ -36,8 +36,8 @@ static int check_remove(struct drm_device *dev, struct drm_atomic_commit *state)
 
 	f->checks++;
 	complete_all(&f->checked);
-	if (f->require_disable && plane && !plane->fb && crtc && crtc->enable)
-		return -EINVAL;
+	if (f->require_disable_error && plane && !plane->fb && crtc && crtc->enable)
+		return f->require_disable_error;
 	return 0;
 }
 
@@ -229,7 +229,33 @@ static void removal_preserves_controller_disable_fallback(struct kunit *test)
 {
 	struct remove_fixture *f = new_remove(test);
 
-	f->require_disable = true;
+	f->require_disable_error = -EINVAL;
+	drm_framebuffer_get(f->fb);
+	drm_framebuffer_remove(f->fb);
+	KUNIT_EXPECT_EQ(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+}
+
+static void removal_disables_controller_after_stale_backend(struct kunit *test)
+{
+	struct remove_fixture *f = new_remove(test);
+
+	f->require_disable_error = -ESTALE;
+	drm_framebuffer_get(f->fb);
+	drm_framebuffer_remove(f->fb);
+	KUNIT_EXPECT_EQ(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state->fb, NULL);
+	KUNIT_EXPECT_FALSE(test, f->crtc->state->active);
+}
+
+static void removal_disables_controller_after_revocation(struct kunit *test)
+{
+	struct remove_fixture *f = new_remove(test);
+
+	f->require_disable_error = -EKEYREVOKED;
 	drm_framebuffer_get(f->fb);
 	drm_framebuffer_remove(f->fb);
 	KUNIT_EXPECT_EQ(test, f->checks, 2);
@@ -257,6 +283,8 @@ static void removal_leaves_replacement_framebuffer_installed(struct kunit *test)
 static struct kunit_case cases[] = {
 	KUNIT_CASE(removal_waits_for_reader_before_disabling_plane),
 	KUNIT_CASE(removal_preserves_controller_disable_fallback),
+	KUNIT_CASE(removal_disables_controller_after_stale_backend),
+	KUNIT_CASE(removal_disables_controller_after_revocation),
 	KUNIT_CASE(removal_leaves_replacement_framebuffer_installed),
 	{}
 };
