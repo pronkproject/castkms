@@ -59,6 +59,31 @@ impl<'a, T: KmsDriver> RegisteredMasterFile<'a, T> {
         self.client.file()
     }
 
+    /// Open a non-master file associated with this registered device's current owner.
+    ///
+    /// The peer retains its own file lifetime and may outlive this master file, but
+    /// not the registered device. Issuance still has to check the current owner.
+    pub fn associated_file(&self) -> Result<RegisteredAssociatedFile<'a, T>> {
+        let client = Client::new_registered(self.registered)?;
+        let identity = self.file().associated_master().ok_or(EINVAL)?;
+        {
+            let access = identity.lock_current().ok_or(EACCES)?;
+            if !access.is_master_file(self.file()) {
+                return Err(EACCES);
+            }
+            let peer = client.file().as_raw();
+            let owner = self.file().as_raw();
+            // SAFETY: The peer is initialized without a master association. The
+            // current-owner guard stabilizes the native association while it is copied.
+            unsafe {
+                bindings::spin_lock(&raw mut (*peer).master_lookup_lock);
+                (*peer).master = bindings::drm_master_get((*owner).master);
+                bindings::spin_unlock(&raw mut (*peer).master_lookup_lock);
+            }
+        }
+        Ok(RegisteredAssociatedFile { client, _registered: self.registered })
+    }
+
     /// Borrow the sole static CRTC, rejecting a different test topology.
     pub fn crtc(&self) -> Result<&Crtc<T::Crtc>> {
         // SAFETY: Registration completed static CRTC creation and excludes teardown. Rust
@@ -143,5 +168,18 @@ impl<'a, T: KmsDriver> RegisteredMasterFile<'a, T> {
             return Err(EINVAL);
         }
         Ok(connector)
+    }
+}
+
+/// Non-master peer of a registered test display's current owner.
+pub struct RegisteredAssociatedFile<'a, T: KmsDriver> {
+    client: Client<T>,
+    _registered: &'a Device<T, Registered>,
+}
+
+impl<T: KmsDriver> RegisteredAssociatedFile<'_, T> {
+    /// Borrow the peer without extending its close lifetime.
+    pub fn file(&self) -> &File<T::File> {
+        self.client.file()
     }
 }

@@ -62,7 +62,7 @@ pub use masters::{
     MasterFile, //
 };
 #[cfg(CONFIG_DRM_CLIENT)]
-pub use registered_master::RegisteredMasterFile;
+pub use registered_master::{RegisteredAssociatedFile, RegisteredMasterFile};
 
 // Native master allocation stays in the built-in test support, not in driver modules.
 #[inline(never)]
