@@ -150,15 +150,16 @@ static void page_flip(int fd, unsigned int sequence, unsigned int sec,
 
 void flip(int fd, uint32_t plane, uint32_t fb)
 {
-	drmModeAtomicReq *req = drmModeAtomicAlloc();
+	drmModePlane *current = drmModeGetPlane(fd, plane);
 	drmEventContext context = { .version = 2, .page_flip_handler = page_flip };
 	struct pollfd pollfd = { .fd = fd, .events = POLLIN };
 	unsigned int events = 0;
+	uint32_t crtc;
 
-	CHECK(req);
-	property(fd, req, plane, DRM_MODE_OBJECT_PLANE, "FB_ID", fb);
-	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK |
-				 DRM_MODE_PAGE_FLIP_EVENT, &events) == 0);
+	CHECK(current && current->crtc_id);
+	crtc = current->crtc_id;
+	drmModeFreePlane(current);
+	CHECK(drmModePageFlip(fd, crtc, fb, DRM_MODE_PAGE_FLIP_EVENT, &events) == 0);
 	/* Advisory constraints events may precede the requested flip event. */
 	for (unsigned int attempt = 0; !events && attempt < 64; attempt++) {
 		CHECK(poll(&pollfd, 1, 5000) == 1);
@@ -166,5 +167,4 @@ void flip(int fd, uint32_t plane, uint32_t fb)
 		CHECK(drmHandleEvent(fd, &context) == 0);
 	}
 	CHECK(events == 1);
-	drmModeAtomicFree(req);
 }
