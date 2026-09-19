@@ -230,6 +230,13 @@ pub(crate) struct PendingControl {
 
 impl PendingControl {
     pub(crate) fn publish(self) -> Result<Control> {
+        let control = self.publish_unnotified()?;
+        control.notify();
+        Ok(control)
+    }
+
+    /// Publish under an issuer's current-master guard without invoking hotplug callbacks.
+    pub(crate) fn publish_unnotified(self) -> Result<Control> {
         let control = self.control;
         {
             let mut state = control.monitor.state.lock();
@@ -244,7 +251,6 @@ impl PendingControl {
                 _ => return Err(ECANCELED),
             }
         }
-        control.notify();
         Ok(control)
     }
 }
