@@ -59,7 +59,8 @@ struct drm_capture_client_owner_ops {
 	struct module *owner;
 	void (*release)(void *data);
 	struct drm_capture_readiness *(*get_readiness)(void *data);
-	int (*describe)(void *data, struct drm_capture_description *description);
+	int (*describe)(void *data, const struct drm_capture_layout *layout,
+			struct drm_capture_description *description);
 	int (*open_stream)(void *data, u64 id, u64 offer, u32 capacity);
 	int (*close_stream)(void *data, u64 id);
 	int (*register_destination)(void *data, u64 id,
@@ -108,11 +109,14 @@ struct drm_capture_readiness *drm_capture_client_get_readiness(struct file *file
  * Describe through an owned client file without accessing userspace memory.
  * Retain file throughout the call. A different endpoint returns -EINVAL, an
  * absent provider operation returns -EOPNOTSUPP, and terminal revocation
- * returns -EKEYREVOKED. Success copies validated metadata to description;
+ * returns -EKEYREVOKED. A zero layout requests the provider default; a
+ * nonzero format requests that exact format and modifier. Success copies
+ * validated metadata matching an exact request to description;
  * failure leaves it unchanged. Call outside DRM and authority locks.
  * Success is an observation, not permission for a later stream or pixel access.
  */
 int drm_capture_client_describe(struct file *file,
+			       const struct drm_capture_layout *layout,
 			       struct drm_capture_description *description);
 
 /*

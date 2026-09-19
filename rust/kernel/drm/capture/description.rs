@@ -29,6 +29,46 @@ pub struct Description {
     max_requests: NonZeroU32,
 }
 
+/// Exact storage accepted by a capture consumer, or the provider default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RequestedLayout {
+    format: u32,
+    modifier: u64,
+}
+
+impl RequestedLayout {
+    /// Request one exact packed image format and modifier.
+    pub fn exact(format: u32, modifier: u64) -> Result<Self> {
+        if format == 0 || modifier == fourcc::FORMAT_MOD_INVALID {
+            return Err(EINVAL);
+        }
+        Ok(Self { format, modifier })
+    }
+
+    /// Requested DRM fourcc, or zero for the provider default.
+    pub fn format(self) -> u32 {
+        self.format
+    }
+    /// Requested DRM format modifier.
+    pub fn modifier(self) -> u64 {
+        self.modifier
+    }
+
+    pub(super) fn from_raw(raw: &bindings::drm_capture_layout) -> Self {
+        Self {
+            format: raw.format,
+            modifier: raw.modifier,
+        }
+    }
+
+    fn raw(self) -> bindings::drm_capture_layout {
+        bindings::drm_capture_layout {
+            format: self.format,
+            modifier: self.modifier,
+        }
+    }
+}
+
 impl Description {
     /// Validate metadata without reserving storage or asserting provider support.
     pub fn new(
@@ -63,10 +103,18 @@ impl Description {
     /// Other files return EINVAL; absent support returns EOPNOTSUPP. Call outside
     /// DRM and authority locks. Success does not authorize a subsequent operation.
     pub fn query(client: &File) -> Result<Self> {
+        Self::query_layout(client, RequestedLayout::default())
+    }
+
+    /// Query one exact layout. Unsupported tuples fail without changing a stream.
+    pub fn query_layout(client: &File, layout: RequestedLayout) -> Result<Self> {
         let mut result = bindings::drm_capture_description::default();
+        let requested = layout.raw();
         // SAFETY: The borrowed file remains live, and output storage is writable for the
         // entire call. Native dispatch validates the file before accessing provider data.
-        to_result(unsafe { bindings::drm_capture_client_describe(client.as_ptr(), &mut result) })?;
+        to_result(unsafe {
+            bindings::drm_capture_client_describe(client.as_ptr(), &requested, &mut result)
+        })?;
         Self::new(
             result.id,
             [result.width, result.height],

@@ -5,6 +5,19 @@
 #include <linux/types.h>
 
 /**
+ * struct drm_capture_layout - requested final-image storage layout
+ * @format: DRM fourcc, or zero to request the provider's default layout
+ * @modifier: exact DRM modifier, or zero when format is zero
+ *
+ * Providers may reject an explicit layout with -EOPNOTSUPP. A successful
+ * description reports the selected layout independently of this request.
+ */
+struct drm_capture_layout {
+	u32 format;
+	u64 modifier;
+};
+
+/**
  * struct drm_capture_description - one offered configuration of a final image
  * @id: Nonzero name within one capture client, not an authority or object address.
  * @width: Nonzero visible width in pixels.
@@ -22,8 +35,9 @@
  * not identify a configuration, and a description does not authorize pixels.
  *
  * This is image metadata, not an allocation description: destination strides,
- * offsets, planes and exporter support need independent validation. Querying
- * an offer must not reserve image storage, claim a source or start rendering.
+ * offsets, planes, exporter support and native importer compatibility need
+ * independent validation. Querying an offer must not reserve image storage,
+ * claim a source or start rendering.
  */
 struct drm_capture_description {
 	u64 id;

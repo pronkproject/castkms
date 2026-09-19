@@ -10,6 +10,7 @@
 
 struct description_context {
 	struct drm_capture_description offered;
+	struct drm_capture_layout requested;
 	unsigned int calls;
 	int result;
 };
@@ -22,13 +23,23 @@ static void description_revoke(void *data)
 {
 }
 
-static int description_query(void *data, struct drm_capture_description *result)
+static int description_query(void *data, const struct drm_capture_layout *layout,
+			     struct drm_capture_description *result)
 {
 	struct description_context *context = data;
 
 	context->calls++;
+	context->requested = *layout;
 	*result = context->offered;
 	return context->result;
+}
+
+static int description_query_default(struct file *file,
+				     struct drm_capture_description *result)
+{
+	const struct drm_capture_layout layout = {};
+
+	return drm_capture_client_describe(file, &layout, result);
 }
 
 static const struct drm_capture_authority_ops description_authority_ops = {
@@ -91,13 +102,41 @@ static void drm_capture_description_copies_provider_metadata(struct kunit *test)
 	struct file *file = description_create(test, &authority, &context);
 	struct drm_capture_description description = {};
 
-	KUNIT_ASSERT_EQ(test, drm_capture_client_describe(file, &description), 0);
+	KUNIT_ASSERT_EQ(test, description_query_default(file, &description), 0);
 	KUNIT_EXPECT_MEMEQ(test, &description, &context->offered, sizeof(description));
 	KUNIT_EXPECT_EQ(test, context->calls, 1);
-	KUNIT_ASSERT_EQ(test, drm_capture_client_describe(file, &description), 0);
+	KUNIT_ASSERT_EQ(test, description_query_default(file, &description), 0);
 	KUNIT_EXPECT_EQ(test, description.id, 19);
 	KUNIT_EXPECT_EQ(test, context->calls, 2);
+	KUNIT_EXPECT_EQ(test, context->requested.format, 0);
+	KUNIT_EXPECT_EQ(test, context->requested.modifier, 0);
 	KUNIT_EXPECT_FALSE(test, drm_capture_authority_revoked(authority));
+}
+
+static void drm_capture_description_passes_an_exact_layout(struct kunit *test)
+{
+	struct drm_capture_authority *authority;
+	struct description_context *context;
+	struct file *file = description_create(test, &authority, &context);
+	struct drm_capture_layout layout = {
+		.format = DRM_FORMAT_ARGB8888,
+		.modifier = 9,
+	};
+	struct drm_capture_description description = {};
+
+	context->offered.format = layout.format;
+	context->offered.modifier = layout.modifier;
+	KUNIT_ASSERT_EQ(test, drm_capture_client_describe(file, &layout, &description), 0);
+	KUNIT_EXPECT_EQ(test, context->requested.format, layout.format);
+	KUNIT_EXPECT_EQ(test, context->requested.modifier, layout.modifier);
+	KUNIT_EXPECT_EQ(test, description.format, layout.format);
+	context->offered.format = DRM_FORMAT_XRGB8888;
+	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &layout, &description), -EINVAL);
+	layout.format = 0;
+	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &layout, &description), -EINVAL);
+	layout.format = DRM_FORMAT_XRGB8888;
+	layout.modifier = DRM_FORMAT_MOD_INVALID;
+	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &layout, &description), -EINVAL);
 }
 
 static void drm_capture_description_errors_preserve_output(struct kunit *test)
@@ -110,10 +149,10 @@ static void drm_capture_description_errors_preserve_output(struct kunit *test)
 	struct drm_capture_description valid = context->offered;
 
 	context->result = -ESTALE;
-	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &description), -ESTALE);
+	KUNIT_EXPECT_EQ(test, description_query_default(file, &description), -ESTALE);
 	KUNIT_EXPECT_MEMEQ(test, &description, &before, sizeof(description));
 	context->result = 1;
-	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &description), -EINVAL);
+	KUNIT_EXPECT_EQ(test, description_query_default(file, &description), -EINVAL);
 	KUNIT_EXPECT_MEMEQ(test, &description, &before, sizeof(description));
 	context->result = 0;
 	for (unsigned int field = 0; field < 7; field++) {
@@ -141,7 +180,7 @@ static void drm_capture_description_errors_preserve_output(struct kunit *test)
 			context->offered.modifier = DRM_FORMAT_MOD_INVALID;
 			break;
 		}
-		KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &description), -EINVAL);
+		KUNIT_EXPECT_EQ(test, description_query_default(file, &description), -EINVAL);
 		KUNIT_EXPECT_MEMEQ(test, &description, &before, sizeof(description));
 	}
 }
@@ -152,18 +191,20 @@ static void drm_capture_description_requires_a_client_provider(struct kunit *tes
 	struct description_context *context;
 	struct file *client = description_create(test, &authority, &context);
 	struct drm_capture_description description = {};
+	const struct drm_capture_layout layout = {};
 	struct file *control, *absent;
 
-	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(NULL, &description), -EINVAL);
-	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(client, NULL), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(NULL, &layout, &description), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(client, NULL, &description), -EINVAL);
+	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(client, &layout, NULL), -EINVAL);
 	control = drm_capture_control_file_create(authority);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, control);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put_file, control), 0);
-	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(control, &description), -EINVAL);
+	KUNIT_EXPECT_EQ(test, description_query_default(control, &description), -EINVAL);
 	absent = drm_capture_client_file_create(authority, &description_absent_ops, context);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, absent);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, description_put_file, absent), 0);
-	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(absent, &description), -EOPNOTSUPP);
+	KUNIT_EXPECT_EQ(test, description_query_default(absent, &description), -EOPNOTSUPP);
 	KUNIT_EXPECT_EQ(test, context->calls, 0);
 }
 
@@ -175,13 +216,14 @@ static void drm_capture_description_checks_revocation_before_provider(struct kun
 	struct drm_capture_description description = { .id = 71 };
 
 	drm_capture_authority_revoke(authority);
-	KUNIT_EXPECT_EQ(test, drm_capture_client_describe(file, &description), -EKEYREVOKED);
+	KUNIT_EXPECT_EQ(test, description_query_default(file, &description), -EKEYREVOKED);
 	KUNIT_EXPECT_EQ(test, description.id, 71);
 	KUNIT_EXPECT_EQ(test, context->calls, 0);
 }
 
 static struct kunit_case drm_capture_description_cases[] = {
 	KUNIT_CASE(drm_capture_description_copies_provider_metadata),
+	KUNIT_CASE(drm_capture_description_passes_an_exact_layout),
 	KUNIT_CASE(drm_capture_description_errors_preserve_output),
 	KUNIT_CASE(drm_capture_description_requires_a_client_provider),
 	KUNIT_CASE(drm_capture_description_checks_revocation_before_provider),

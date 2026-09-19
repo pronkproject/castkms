@@ -91,6 +91,13 @@ pub unsafe trait ClientOwner: Send + 'static {
         Err(EOPNOTSUPP)
     }
 
+    /// Describe a requested exact layout, leaving the default query available to providers
+    /// whose output format does not vary. An unsupported selection changes no stream.
+    fn describe_layout(&mut self, layout: super::super::RequestedLayout) -> Result<Description> {
+        if layout != super::super::RequestedLayout::default() { return Err(EOPNOTSUPP); }
+        self.describe()
+    }
+
     /// Open the named offer under a new, increasing nonzero stream ID.
     ///
     /// Serialize provider registration with revocation as well as checking current
@@ -256,13 +263,16 @@ impl<O: ClientOwner> Callbacks<O> {
 
     unsafe extern "C" fn describe(
         data: *mut c_void,
+        layout: *const bindings::drm_capture_layout,
         output: *mut bindings::drm_capture_description,
     ) -> i32 {
         // SAFETY: Creation binds the callback to one owned KBox<O>. Native dispatch holds
         // the client's mutex, excluding every other callback, and retains the file so its
         // final release cannot destroy O. No reference to O escapes this call.
         let owner = unsafe { &mut *data.cast::<O>() };
-        match owner.describe() {
+        // SAFETY: Native dispatch supplies a validated callback-local layout.
+        let layout = super::super::RequestedLayout::from_raw(unsafe { &*layout });
+        match owner.describe_layout(layout) {
             Ok(description) => {
                 // SAFETY: Native dispatch supplies writable callback-local output storage.
                 unsafe { output.write(description.raw()) };

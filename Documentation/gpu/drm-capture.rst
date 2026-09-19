@@ -50,9 +50,13 @@ Describing an image configuration
 ================================
 
 ``DRM_IOCTL_CAPTURE_DESCRIBE`` asks the capture file's provider what image
-configuration it currently offers. The reply gives its visible dimensions,
-DRM pixel format and modifier, maximum requests per stream, and a name for
-that offer. It does not allocate images or start rendering. Destination
+configuration it currently offers. A zero format and modifier request the
+provider's default layout; a nonzero format and modifier request that exact
+layout. The reply gives its visible dimensions, selected DRM pixel format and
+modifier, maximum requests per stream, and a name for that offer. Unsupported
+format families return ``EOPNOTSUPP``. The description selects metadata; it
+does not allocate an image, start rendering, or prove that a particular
+exporter and native importer can use the requested modifier. Destination
 allocation details, including strides and exporter compatibility, still need
 separate validation before delivery.
 
@@ -64,10 +68,11 @@ must subsequently recheck both the named configuration and current permission;
 remembering the name does not preserve either. Existing streams retain their
 own lifetime rules when another offer is queried.
 
-All fields are output, including reserved fields returned as zero. A bad
-output pointer may cause a partial copy, so callers must ignore the reply on
-failure. Retrying describes the current configuration without consuming the
-previous offer or any image-storage credit. A revoked grant returns
+Only format and modifier are input/output. All other fields must be zero on
+input. A bad output pointer may cause a partial copy, so callers must ignore
+the reply on failure. It may still update the client's latest offer and name;
+retrying describes the current configuration without allocating image-storage
+credit. A revoked grant returns
 ``EKEYREVOKED``. Providers may reject a description when the output is inactive
 or its current content is outside the recipient's permission.
 
@@ -169,9 +174,9 @@ the lifetime that allows new grants. Rust ``Creator`` and ``Registration``
 provide the corresponding unique owners and perform cleanup on drop.
 The provider chooses the limit and authorizes issuance before registration.
 
-Client owners optionally implement ``describe``. The native file layer serializes
+Client owners optionally implement ``describe_layout``. The native file layer serializes
 callbacks and checks the returned metadata; the provider checks current display
-permission. ``drm_capture_client_describe()`` and Rust ``Description::query()``
+permission. ``drm_capture_client_describe()`` and Rust ``Description::query_layout()``
 perform the same query entirely in kernel memory. CastKMS's file callback uses
 its transport-independent negotiation object above the permission provider,
 so exposing the ioctl does not introduce another policy implementation.
@@ -205,11 +210,14 @@ file-backed cleanup obligation without acquiring revocation ownership.
 The input-only destination ioctls resolve all descriptors before admission.
 Repeated numbers in one request use the first resolved allocation, and every
 temporary reference is released after the provider returns. CastKMS accepts
-single-plane linear XRGB8888 images through its existing checked image and
-client registry. It currently bounds registrations to 16 per client and
+single-plane, packed 32-bit RGB images with negotiated modifiers for delegated
+capture; HOST capture accepts only linear XRGB8888. The checked image and
+client registry currently bound registrations to 16 per client and
 allocations to 512 MiB each, independently of stream request depth and private
-result storage. The complete described image span has the same bound, including
-row padding. A larger bounded allocation may back a smaller image view.
+result storage. Linear images also check the complete row span, including
+padding. Tiled images retain exact modifier metadata; their exporter and
+renderer importer must validate the native allocation layout. A larger bounded
+allocation may back a smaller image view.
 These operations do not queue a capture or deliver pixels. Unregistering a
 name is not storage revocation or GPU completion, and cleanup remains available
 after capture revocation. Registration does not guarantee that a later exporter

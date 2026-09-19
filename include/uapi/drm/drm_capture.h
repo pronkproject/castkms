@@ -76,12 +76,14 @@ struct drm_mode_create_capture_grant {
  * @height: Visible height in pixels.
  * @refresh_millihz: Accepted display refresh rate in millihertz.
  * @mode_flags: DRM_MODE_FLAG_* values for the accepted display mode.
- * @format: DRM fourcc format of the offered image.
+ * @format: Requested DRM fourcc, or zero for the default; selected fourcc on return.
  * @max_requests: Maximum requests per stream, not a reservation of queue credit.
- * @modifier: DRM format modifier of the offered image.
+ * @modifier: Requested exact modifier, or zero with default format; selected
+ *            modifier on return.
  * @reserved: Returned as zero.
  *
- * All fields are output. Valid only on an anonymous capture-client descriptor,
+ * Format and modifier are input/output. All other fields must be zero on input.
+ * Valid only on an anonymous capture-client descriptor,
  * not its revocation descriptor or a primary DRM file. The provider checks
  * current permission. Inactive output may return ENODEV, denied content EACCES,
  * absent description support EOPNOTSUPP, and revoked authority EKEYREVOKED.
@@ -92,10 +94,15 @@ struct drm_mode_create_capture_grant {
  * The name identifies the latest offered configuration, not a buffer, fence,
  * presentation time or right to open it after permission changes.
  *
+ * An unsupported explicit format family returns EOPNOTSUPP. Selecting a
+ * modifier does not prove that a particular destination's exporter and native
+ * importer can use it; registration and delivery validate those separately.
+ * A zero format with a nonzero modifier or DRM_FORMAT_MOD_INVALID returns EINVAL.
  * Querying reserves no image storage and starts no rendering. The image layout
  * does not establish destination strides, offsets or exporter compatibility.
  * On error ignore all output, which may have been partially copied. A failed
- * copy does not consume the offer; retry queries the current configuration.
+ * copy may still update the client's latest offered configuration and name;
+ * retry queries the current configuration without allocating image storage.
  */
 struct drm_capture_describe {
 	__u64 id;
@@ -109,7 +116,7 @@ struct drm_capture_describe {
 	__u64 reserved;
 };
 
-#define DRM_IOCTL_CAPTURE_DESCRIBE DRM_IOR(0x00, struct drm_capture_describe)
+#define DRM_IOCTL_CAPTURE_DESCRIBE DRM_IOWR(0x00, struct drm_capture_describe)
 
 /**
  * struct drm_capture_create_stream - Open an offered configuration in a client

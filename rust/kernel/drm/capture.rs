@@ -31,7 +31,7 @@ mod resources;
 pub use resources::Resources;
 pub use readiness::Readiness;
 pub use files::FilePair;
-pub use description::Description;
+pub use description::{Description, RequestedLayout};
 pub use completion::Completion;
 pub use destination::{Destination, DestinationPlane};
 pub use client_stream::ClientStream;

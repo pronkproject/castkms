@@ -19,11 +19,19 @@
 
 static long capture_describe(struct file *file, void __user *arg)
 {
-	struct drm_capture_describe output = {};
+	struct drm_capture_describe output;
+	struct drm_capture_layout layout;
 	struct drm_capture_description description;
 	int ret;
 
-	ret = drm_capture_client_describe(file, &description);
+	if (copy_from_user(&output, arg, sizeof(output)))
+		return -EFAULT;
+	if (output.id || output.width || output.height || output.refresh_millihz ||
+	    output.mode_flags || output.max_requests || output.reserved)
+		return -EINVAL;
+	layout.format = output.format;
+	layout.modifier = output.modifier;
+	ret = drm_capture_client_describe(file, &layout, &description);
 	if (ret)
 		return ret;
 	output.id = description.id;

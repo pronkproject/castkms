@@ -86,13 +86,16 @@ struct drm_capture_readiness *drm_capture_client_get_readiness(struct file *file
 EXPORT_SYMBOL_GPL(drm_capture_client_get_readiness);
 
 int drm_capture_client_describe(struct file *file,
+			       const struct drm_capture_layout *layout,
 			       struct drm_capture_description *description)
 {
 	struct drm_capture_description result = {};
 	struct drm_capture_client *client = capture_client_from_file(file);
 	int ret;
 
-	if (!client || !description)
+	if (!client || !layout || !description ||
+	    (!layout->format && layout->modifier) ||
+	    layout->modifier == DRM_FORMAT_MOD_INVALID)
 		return -EINVAL;
 	mutex_lock(&client->lock);
 	if (drm_capture_authority_revoked(client->authority)) {
@@ -103,12 +106,14 @@ int drm_capture_client_describe(struct file *file,
 		ret = -EOPNOTSUPP;
 		goto unlock;
 	}
-	ret = client->ops->describe(client->data, &result);
+	ret = client->ops->describe(client->data, layout, &result);
 	if (ret < 0)
 		goto unlock;
 	if (ret || !result.id || !result.width || !result.height ||
 	    !result.refresh_millihz || !result.format || !result.max_requests ||
-	    result.modifier == DRM_FORMAT_MOD_INVALID) {
+	    result.modifier == DRM_FORMAT_MOD_INVALID ||
+	    (layout->format && (result.format != layout->format ||
+			result.modifier != layout->modifier))) {
 		ret = -EINVAL;
 		goto unlock;
 	}
