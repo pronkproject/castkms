@@ -584,9 +584,21 @@ pub(crate) fn create(
     UserSlice::new(UserPtr::from_addr(result), core::mem::size_of_val(&files))
         .writer()
         .write(&files)?;
-    check_authority()?;
-    *lease.control.lock() = Some(pending.publish()?);
+    let current = if let Some(snapshot) = &snapshot {
+        let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+        if !guard.is_master_file(file) || !guard.holds_object(&*connector) {
+            return Err(EACCES);
+        }
+        Some(guard)
+    } else {
+        None
+    };
+    let control = pending.publish_unnotified()?;
+    drop(current);
+    *lease.control.lock() = Some(control);
     control_reservation.fd_install(control_file);
     revoke_reservation.fd_install(revoke_file);
+    dev.changed.notify_all();
+    dev.hotplug_event();
     Ok(0)
 }
