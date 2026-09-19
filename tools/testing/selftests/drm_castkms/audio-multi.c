@@ -106,6 +106,8 @@ static void start_writer(unsigned int output)
 	CHECK(ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS, &hw) == 0);
 	CHECK(ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS, &sw) == 0);
 	CHECK(ioctl(fd, SNDRV_PCM_IOCTL_PREPARE) == 0);
+	/* Repeated ALSA preparation must leave playback progressing. */
+	CHECK(ioctl(fd, SNDRV_PCM_IOCTL_PREPARE) == 0);
 	for (unsigned int i = 0; i < 960; i += 2) {
 		samples[i] = 0x1000 + output;
 		samples[i + 1] = 0x2000 + output;

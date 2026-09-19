@@ -142,6 +142,9 @@ impl Operations for Playback {
         state.link_generation = link.generation;
         drop(state);
         drop(link);
+        // Both handles refer to this embedded timer; dropping the old one after
+        // start would cancel the new deadline.
+        drop(handle.take());
         *handle = Some(self.clone().start(Delta::from_micros(TIMER_INTERVAL_US)));
         Ok(())
     }
