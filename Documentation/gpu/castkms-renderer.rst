@@ -189,6 +189,9 @@ Repeating the latest accepted release succeeds. Ordinary DMA-BUF descriptors
 do not authorize reads after release. Successful reporting does not mean a
 pending native fence has completed. Retained image evidence preserves original
 content and producer identity without retaining a source claim.
+Job IDs and private-image names remain increasing across same-master
+reconfiguration of a retained renderer descriptor. Cleanup using an ID from a
+previous master interval cannot resolve a new job or remove a new image.
 
 Private storage must remain independent of sources and recipients. Alias
 tracking rejects known overlapping DMA-BUF/reservation identities. The renderer
