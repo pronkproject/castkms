@@ -163,7 +163,7 @@ impl Monitor {
         Ok(PendingControl { control })
     }
 
-    fn publish(&self, identity: &Arc<()>, replacement: Description) -> Result {
+    fn publish(&self, identity: &Arc<()>, replacement: Description) -> Result<State> {
         let retired = {
             let mut state = self.state.lock();
             match &*state {
@@ -180,17 +180,16 @@ impl Monitor {
                 State::Closed => return Err(ENODEV),
             }
         };
-        drop(retired);
-        Ok(())
+        Ok(retired)
     }
 
-    fn release(&self, identity: &Arc<()>) -> bool {
+    fn release(&self, identity: &Arc<()>) -> Option<State> {
         let retired = {
             let mut state = self.state.lock();
             match &*state {
                 State::Reserved { identity: current } if Arc::ptr_eq(current, identity) => {
                     *state = State::Unmanaged;
-                    return false;
+                    return None;
                 }
                 State::Managed {
                     identity: current, ..
@@ -200,9 +199,7 @@ impl Monitor {
                 _ => None,
             }
         };
-        let changed = retired.is_some();
-        drop(retired);
-        changed
+        retired
     }
 
     pub(crate) fn close(&self) {
@@ -321,19 +318,18 @@ impl Control {
     }
 
     pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
-        self.monitor.publish(
-            &self.identity,
-            self.description(edid)?,
-        )?;
+        let retired = self.monitor.publish(&self.identity, self.description(edid)?)?;
         self.monitor.cec.set_attached(true);
+        drop(retired);
         self.notify();
         Ok(())
     }
 
     pub(crate) fn detach(&self) -> Result {
-        self.monitor
+        let retired = self.monitor
             .publish(&self.identity, Description::Disconnected)?;
         self.monitor.cec.set_attached(false);
+        drop(retired);
         self.notify();
         Ok(())
     }
@@ -348,8 +344,13 @@ impl Control {
 
 impl Drop for Control {
     fn drop(&mut self) {
-        if self.monitor.release(&self.identity) {
+        let retired = self.monitor.release(&self.identity);
+        if retired.is_some() {
             self.monitor.cec.reset();
+        }
+        let changed = retired.is_some();
+        drop(retired);
+        if changed {
             self.notify();
         }
     }
