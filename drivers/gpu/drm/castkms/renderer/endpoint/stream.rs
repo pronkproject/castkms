@@ -2,7 +2,7 @@
 
 //! One bounded source stream tied to the endpoint's immutable accepted publication.
 
-use super::{Endpoint, State};
+use super::{Endpoint, Ordering, State};
 use crate::renderer::{
     job::Completion,
     publication::Control,
@@ -36,8 +36,8 @@ pub(super) struct Stream {
 }
 
 impl Stream {
-    pub(super) fn new() -> Self {
-        Self { next_id: 1, last_serial: None, last_released: None, slot: Slot::Ready }
+    pub(super) fn new(next_id: u64) -> Self {
+        Self { next_id, last_serial: None, last_released: None, slot: Slot::Ready }
     }
 
     pub(super) fn references(&self, image: u64) -> bool {
@@ -104,6 +104,7 @@ impl Endpoint {
         let image = pool.image(image_id)?;
         let id = source.next_id;
         source.next_id = id.checked_add(1).ok_or(EOVERFLOW)?;
+        self.next_source_id.store(source.next_id, Ordering::Relaxed);
         let retired = pool.withdraw(image_id)?;
         let previous = source.last_serial;
         source.slot = Slot::Publishing { id, image: image_id };

@@ -10,6 +10,7 @@ use super::{
     publication::Publication,
 };
 use crate::{authority::Interval, execution::capabilities::Profile, Driver};
+use core::sync::atomic::{AtomicU64, Ordering};
 use kernel::{
     dma_buf::DmaBuf,
     dma_fence::Fence,
@@ -46,6 +47,7 @@ pub(crate) struct Description {
 pub(crate) struct Endpoint {
     access: Access,
     device: RegisteredDeviceRef<Driver>,
+    next_source_id: AtomicU64,
     #[pin]
     state: Mutex<State>,
 }
@@ -55,6 +57,7 @@ impl Endpoint {
         Arc::pin_init(pin_init!(Self {
             access,
             device,
+            next_source_id: AtomicU64::new(1),
             state <- kernel::new_mutex!(State::Empty),
         }), GFP_KERNEL)
     }
@@ -224,7 +227,7 @@ impl Endpoint {
             Ok(()) => *state = State::Ready {
                 publication,
                 pool,
-                source: stream::Stream::new(),
+                source: stream::Stream::new(self.next_source_id.load(Ordering::Relaxed)),
                 output: output::Stream::new(),
             },
             Err(error) => {
