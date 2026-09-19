@@ -610,6 +610,31 @@ static void rotation_is_reapplied_to_current_state(struct kunit *test)
 	}
 }
 
+static void zpos_is_reapplied_to_current_state(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base, .type = DRM_ATOMIC_REQUEST_SCALAR,
+		.scalar = 2,
+	};
+	struct drm_atomic_request *request;
+	unsigned int i;
+
+	KUNIT_ASSERT_EQ(test, drm_plane_create_zpos_property(f->plane, 1, 1, 4), 0);
+	entry.property = f->plane->zpos_property;
+	request = new_request(test, f, &entry, 1);
+	for (i = 0; i < 2; i++) {
+		struct drm_plane_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_plane_state(f->state, f->plane);
+		KUNIT_EXPECT_EQ(test, state->zpos, entry.scalar);
+		KUNIT_EXPECT_EQ(test, state->crtc_h, i ? 99 : 0);
+		drm_atomic_commit_clear(f->state);
+		f->plane->state->crtc_h = 99;
+	}
+}
+
 static void plane_color_is_reapplied_to_current_state(struct kunit *test)
 {
 	struct apply_fixture *f = new_fixture(test);
@@ -700,6 +725,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(private_scalar_is_reapplied_only_after_opt_in),
 	KUNIT_CASE(plane_color_is_reapplied_to_current_state),
 	KUNIT_CASE(rotation_is_reapplied_to_current_state),
+	KUNIT_CASE(zpos_is_reapplied_to_current_state),
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
 	KUNIT_CASE(unsupported_property_prevents_application),
