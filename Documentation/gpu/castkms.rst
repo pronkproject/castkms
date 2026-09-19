@@ -106,8 +106,8 @@ facilities use ``kernel::sound::pcm`` for safe ALSA registration, callbacks,
 buffer access, controls and notifications. CastKMS owns the virtual playback
 engine, sample clocks, timer limits and CRTC interruption policy.
 ELD snapshots come from DRM's native EDID parser. The ``audio`` selftest
-exercises real ALSA sample delivery, idle silence, descriptor revocation and
-attachment replacement on a disposable device::
+exercises real ALSA sample delivery, idle silence, handoff and poll wakeups,
+descriptor revocation and attachment replacement on a disposable device::
 
     make -C tools/testing/selftests TARGETS=drm_castkms
     tools/testing/selftests/drm_castkms/audio /dev/dri/cardN
