@@ -6,6 +6,7 @@
 #include <linux/sync_file.h>
 #include <drm/drm_device.h>
 #include <drm/drm_atomic_constraints.h>
+#include <drm/drm_colorop.h>
 #include <drm/drm_constraints_entry.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_file.h>
@@ -72,6 +73,17 @@ int drm_atomic_resolve_user_value(struct drm_mode_object *object, struct drm_pro
 			if (!resolved.fence)
 				return -EINVAL;
 		}
+	} else if (object->type == DRM_MODE_OBJECT_PLANE &&
+		   property == obj_to_plane(object)->color_pipeline_property) {
+		struct drm_colorop *colorop = NULL;
+
+		if (value) {
+			colorop = drm_colorop_find(property->dev, file, value);
+			if (!colorop)
+				return -EACCES;
+		}
+		resolved.type = DRM_ATOMIC_REQUEST_OBJECT;
+		resolved.reference = colorop ? &colorop->base : NULL;
 	} else if (drm_property_type_is(property, DRM_MODE_PROP_BLOB)) {
 		resolved.type = DRM_ATOMIC_REQUEST_BLOB;
 		resolved.blob = reference ? obj_to_blob(reference) : NULL;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0 OR MIT
 
 #include <drm/drm_crtc.h>
+#include <drm/drm_colorop.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
 #include <drm/drm_kunit_helpers.h>
@@ -175,6 +176,32 @@ static void null_fence_does_not_require_a_descriptor(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, entry->fence, NULL);
 }
 
+static const struct drm_colorop_funcs colorop_funcs = {
+	.destroy = drm_colorop_destroy,
+};
+
+static void color_pipeline_value_is_resolved_to_identity(struct kunit *test)
+{
+	struct value_fixture *f = new_fixture(test);
+	struct drm_prop_enum_list pipeline = { .name = "Test pipeline" };
+	struct drm_colorop *colorop = kzalloc_obj(*colorop);
+	struct drm_atomic_request_entry *entry;
+	int ret;
+
+	KUNIT_ASSERT_NOT_NULL(test, colorop);
+	ret = drm_plane_colorop_ctm_3x4_init(f->dev, colorop, f->plane, &colorop_funcs,
+					     DRM_COLOROP_FLAG_ALLOW_BYPASS);
+	KUNIT_ASSERT_EQ(test, ret, 0);
+	pipeline.type = colorop->base.id;
+	KUNIT_ASSERT_EQ(test,
+			drm_plane_create_color_pipeline_property(f->plane, &pipeline, 1), 0);
+	entry = resolve_value(test, &f->plane->base, f->plane->color_pipeline_property,
+			      colorop->base.id);
+	KUNIT_EXPECT_EQ(test, entry->type, DRM_ATOMIC_REQUEST_OBJECT);
+	KUNIT_EXPECT_PTR_EQ(test, entry->reference, &colorop->base);
+	kunit_release_action(test, release_value, entry);
+}
+
 static struct kunit_case cases[] = {
 	KUNIT_CASE(scalar_value_preserves_signed_bits),
 	KUNIT_CASE(invalid_value_preserves_destination),
@@ -183,6 +210,7 @@ static struct kunit_case cases[] = {
 	KUNIT_CASE(resolved_blob_has_independent_ownership),
 	KUNIT_CASE(resolved_framebuffer_has_independent_ownership),
 	KUNIT_CASE(controller_value_is_resolved_to_identity),
+	KUNIT_CASE(color_pipeline_value_is_resolved_to_identity),
 	KUNIT_CASE(null_fence_does_not_require_a_descriptor),
 	{}
 };
