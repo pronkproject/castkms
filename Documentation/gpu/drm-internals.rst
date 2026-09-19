@@ -244,7 +244,7 @@ waiter must register before testing the condition to avoid missing that wakeup.
 Ordinary references are acquired with ``drm_capture_authority_get()`` and
 released with ``drm_capture_authority_put()``. Final release also revokes if
 necessary, then releases the provider context. These operations may sleep. A
-future file adapter and an in-kernel consumer use the same admission and
+file adapter and an in-kernel consumer use the same admission and
 revocation operations; closing a mode-specific stream is not an authority
 operation. The KUnit ``drm_capture_authority`` suite exercises terminal cleanup,
 stream replacement and concurrent revocation without introducing a public ABI.
@@ -307,7 +307,7 @@ its own ownership mechanism; holding a job neither freezes framebuffer pixels
 nor retains a modesetting transaction. The provider completes the job exactly
 once when its actual access ends, even if permission is revoked meanwhile.
 
-The same claim operation is available to kernel consumers and future capture
+The same claim operation is available to kernel consumers and capture
 adapters. It does not implement DRM master selection, scene attribution or a
 GPU source-use protocol. Providers still supply those policies and lifetimes;
 the shared operation prevents separating their approval from request admission
@@ -398,7 +398,7 @@ authority that is already terminal produces the same terminal poll result.
 
 The constructor returns an owned file reference, not an installed descriptor.
 Failure leaves the caller's authority unchanged. Once creation succeeds,
-discarding even an unpublished file revokes on final release. A future grant
+discarding even an unpublished file revokes on final release. A grant
 creation operation must reserve descriptors with ``O_CLOEXEC`` and finish
 fallible setup before installing files. It must treat rollback of a created
 control file as terminal rather than trying to reuse the same grant. There is
