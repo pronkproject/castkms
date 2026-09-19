@@ -43,7 +43,7 @@ mod cases {
                         check(planes[stride + offset].kind == scene::Kind::Overlay)?;
                     }
                 }
-                let description = execution::constraints::host(planes, &[])?;
+                let description = execution::constraints::host(planes)?;
                 check(
                     description
                         .formats()

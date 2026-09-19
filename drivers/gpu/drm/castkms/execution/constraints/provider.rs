@@ -55,7 +55,7 @@ impl Provider {
         output: Identity,
         topology: Arc<Topology>,
     ) -> Result<Arc<Self>> {
-        let description = super::host(topology.planes(), &[])?;
+        let description = super::host(topology.planes())?;
         let initial = OpaqueEntry::new_stateless(&domain, crtc, &description)?;
         let bindings = Arc::pin_init(Bindings::new(domain.clone(), crtc, CAPACITY), GFP_KERNEL)?;
         Arc::pin_init(

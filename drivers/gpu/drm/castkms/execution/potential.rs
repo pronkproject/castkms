@@ -8,6 +8,8 @@ use kernel::prelude::*;
 
 pub(crate) const MAX_DIMENSION: u32 = 16384;
 pub(crate) const MAX_CURSOR_DIMENSION: u32 = 512;
+pub(crate) const MIN_OVERLAY_ZPOS: u32 = 1;
+pub(crate) const MAX_OVERLAY_ZPOS: u32 = 30;
 
 /// GPU-only packed formats whose storage is passed through without HOST interpretation.
 const PACKED: &[u32] = &[

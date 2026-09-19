@@ -835,7 +835,11 @@ impl KmsDriver for Driver {
                     scene::Kind::Overlay,
                 )?;
                 plane.enable_fb_damage_clips();
-                plane.create_zpos_property(1, 1, 30)?;
+                plane.create_zpos_property(
+                    super::execution::potential::MIN_OVERLAY_ZPOS,
+                    super::execution::potential::MIN_OVERLAY_ZPOS,
+                    super::execution::potential::MAX_OVERLAY_ZPOS,
+                )?;
                 plane.create_yuv_color_properties()?;
                 plane.create_nearest_scaling_filter_property()?;
                 if dev.enable_plane_pipeline {

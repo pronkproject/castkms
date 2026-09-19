@@ -86,7 +86,7 @@ impl Backend {
         topology: &Topology,
     ) -> Result<ARef<Entry<Self>>> {
         let description = match &self {
-            Self::Host => super::host(topology.planes(), &[])?,
+            Self::Host => super::host(topology.planes())?,
             Self::Renderer(worker) => {
                 if worker.output() != output {
                     return Err(EINVAL);

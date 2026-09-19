@@ -48,11 +48,12 @@ pub(crate) struct Plane {
 struct PlaneProperties {
     color_encoding: u32,
     color_range: u32,
+    zpos: u32,
 }
 
 impl PlaneProperties {
-    fn ids(self) -> [u32; 2] {
-        [self.color_encoding, self.color_range]
+    fn ids(self) -> [u32; 3] {
+        [self.color_encoding, self.color_range, self.zpos]
     }
 }
 
@@ -65,6 +66,7 @@ impl Plane {
             properties: PlaneProperties {
                 color_encoding: required(SceneProperty::ColorEncoding)?,
                 color_range: required(SceneProperty::ColorRange)?,
+                zpos: required(SceneProperty::Zpos)?,
             },
         })
     }
@@ -196,6 +198,30 @@ fn enabled_mask<const N: usize>(enabled: &[bool; N], values: [u32; N]) -> u64 {
         })
 }
 
+fn add_zpos_property(properties: &mut KVec<Property>, plane: &Plane) -> Result {
+    if plane.kind == Kind::Overlay {
+        properties.push(
+            Property::unsigned_range(
+                plane.id,
+                plane.properties.zpos,
+                u64::from(potential::MIN_OVERLAY_ZPOS),
+                u64::from(potential::MAX_OVERLAY_ZPOS),
+            ),
+            GFP_KERNEL,
+        )?;
+    }
+    Ok(())
+}
+
+fn host_properties(planes: &[Plane]) -> Result<KVec<Property>> {
+    let mut properties = KVec::new();
+
+    for plane in planes {
+        add_zpos_property(&mut properties, plane)?;
+    }
+    Ok(properties)
+}
+
 fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Property>> {
     let limits = profile.limits();
     let encoding_mask = enabled_mask(
@@ -218,6 +244,7 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
         if !plane_supported(profile, plane) {
             continue;
         }
+        add_zpos_property(&mut properties, plane)?;
         let ids = plane.properties;
         let supports_yuv = profile
             .formats()
@@ -288,8 +315,9 @@ fn renderer_geometry(profile: &Profile, plane: &Plane) -> PlaneGeometry {
 ///
 /// Both implicit layout and explicit linear layout are accepted. The framebuffer validator
 /// remains responsible for storage bounds, and complete-scene checks validate operations.
-/// The caller supplies standard scalar property rules; no readiness or source access is granted.
-pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Description>> {
+/// Adjustable overlay stacking rules are derived from the fixed KMS envelope. No readiness or
+/// source access is granted.
+pub(crate) fn host(planes: &[Plane]) -> Result<ARef<Description>> {
     check_planes(planes)?;
     let output = Size::new(1, 1, super::host::MAX_WIDTH, super::host::MAX_HEIGHT);
     let mut formats = KVec::new();
@@ -317,7 +345,13 @@ pub(crate) fn host(planes: &[Plane], properties: &[Property]) -> Result<ARef<Des
         }
         geometries.push(host_geometry(plane), GFP_KERNEL)?;
     }
-    Description::new_with_geometry(output, &formats, properties, &[], &geometries)
+    Description::new_with_geometry(
+        output,
+        &formats,
+        &host_properties(planes)?,
+        &[],
+        &geometries,
+    )
 }
 
 /// Describe the profile's allocation choices within the fixed KMS object envelope.
@@ -480,6 +514,7 @@ mod tests {
                 properties: PlaneProperties {
                     color_encoding: 21,
                     color_range: 22,
+                    zpos: 27,
                 },
             },
             Plane {
@@ -488,6 +523,7 @@ mod tests {
                 properties: PlaneProperties {
                     color_encoding: 23,
                     color_range: 24,
+                    zpos: 28,
                 },
             },
             Plane {
@@ -496,6 +532,7 @@ mod tests {
                 properties: PlaneProperties {
                     color_encoding: 25,
                     color_range: 26,
+                    zpos: 29,
                 },
             },
         ]
@@ -518,7 +555,10 @@ mod tests {
         assert_eq!(formats[6].plane_id(), 9);
         assert_eq!(formats[6].format(), fourcc::ARGB8888);
         assert_eq!(formats[6].size().maximum(), (512, 512));
-        assert!(description.properties().is_empty());
+        assert_eq!(description.properties().len(), 1);
+        assert_eq!(description.properties()[0].object_id(), 8);
+        assert_eq!(description.properties()[0].property_id(), 28);
+        assert_eq!(description.properties()[0].bounds(), (1, 30));
         assert!(description.plane_limits().is_empty());
         let geometries = description.plane_geometries();
         assert_eq!(geometries.len(), 3);
@@ -737,6 +777,7 @@ mod tests {
                     properties: PlaneProperties {
                         color_encoding,
                         color_range: color_encoding + 1,
+                        zpos: color_encoding + 2,
                     },
                 },
                 GFP_KERNEL,
@@ -753,6 +794,16 @@ mod tests {
         assert_eq!(plane_limits[0].plane_ids(), [7, 8, 9, 10, 11]);
         assert_eq!(plane_limits[1].max_active(), 2);
         assert_eq!(plane_limits[1].plane_ids(), [8, 10, 11]);
+        let properties = description.properties();
+        assert_eq!(properties.len(), 3);
+        for (property, (plane_id, property_id)) in properties
+            .iter()
+            .zip([(8, 28), (10, 29), (11, 31)])
+        {
+            assert_eq!(property.object_id(), plane_id);
+            assert_eq!(property.property_id(), property_id);
+            assert_eq!(property.bounds(), (1, 30));
+        }
         Ok(())
     }
 
@@ -767,7 +818,7 @@ mod tests {
 
         let broad = renderer(&profile(limits())?, &planes())?;
         let narrow = renderer(&profile(restricted)?, &planes())?;
-        let host = host(&planes(), &[])?;
+        let host = host(&planes())?;
 
         assert!(broad.covers(&narrow));
         assert!(!narrow.covers(&broad));
@@ -890,10 +941,12 @@ mod tests {
 
     #[test]
     fn host_describes_only_builtin_allocation_choices() -> Result {
-        let rules = [Property::unsigned_range(8, 17, 1, 30)];
-        let description = host(&planes(), &rules)?;
+        let description = host(&planes())?;
         assert_eq!(description.output().minimum(), (1, 1));
         assert_eq!(description.output().maximum(), (8192, 8192));
+        assert_eq!(description.properties().len(), 1);
+        assert_eq!(description.properties()[0].object_id(), 8);
+        assert_eq!(description.properties()[0].property_id(), 28);
         assert_eq!(description.properties()[0].bounds(), (1, 30));
         assert_eq!(description.plane_geometries().len(), 3);
         for geometry in description.plane_geometries() {
@@ -930,12 +983,12 @@ mod tests {
 
     #[test]
     fn host_rejects_ambiguous_plane_identity() -> Result {
-        assert!(matches!(host(&[], &[]), Err(EINVAL)));
+        assert!(matches!(host(&[]), Err(EINVAL)));
         let mut planes = planes();
         planes[1].id = planes[0].id;
-        assert!(matches!(host(&planes, &[]), Err(EINVAL)));
+        assert!(matches!(host(&planes), Err(EINVAL)));
         planes[1].id = 0;
-        assert!(matches!(host(&planes, &[]), Err(EINVAL)));
+        assert!(matches!(host(&planes), Err(EINVAL)));
         Ok(())
     }
 
@@ -951,7 +1004,7 @@ mod tests {
         assert_eq!(topology.planes()[1].id, 8);
         assert!(topology.planes()[1].kind == Kind::Overlay);
         assert_eq!(
-            host(topology.planes(), &[])?.output().maximum(),
+            host(topology.planes())?.output().maximum(),
             (8192, 8192)
         );
         Ok(())
