@@ -799,7 +799,10 @@ struct drm_castkms_renderer_release_output {
  * No descriptor is installed on failure, even after a partial metadata copy.
  * Allocate JOB_MAX_BYTES for the result; a smaller capacity may return
  * ENOSPC without consuming the job. Flags and reserved fields must be zero.
- * Empty/unchanged jobs return ENODATA, and an outstanding job returns EBUSY.
+ * An active output with no visible planes is a zero-plane job. It renders
+ * opaque black before applying output color operations, has no source DMA-BUFs
+ * and carries a new content_serial when blanking changes accepted output.
+ * Unchanged jobs return ENODATA, and an outstanding job returns EBUSY.
  */
 #define DRM_CASTKMS_RENDERER_JOB_VERSION 1
 #define DRM_CASTKMS_RENDERER_JOB_MAX_BYTES 65536
@@ -874,7 +877,7 @@ struct drm_castkms_renderer_unregister_image {
  * @bytes: complete job packet size, including plane and color-op records
  * @job_id: endpoint-local identity required by RENDERER_RELEASE_JOB
  * @constraints_id: exact accepted renderer constraints entry
- * @content_serial: output content identity used to suppress unchanged jobs
+ * @content_serial: output revision, including active blanking, used to suppress unchanged jobs
  * @width: composed private-target width
  * @height: composed private-target height
  * @plane_count: number of following struct drm_castkms_renderer_plane records
