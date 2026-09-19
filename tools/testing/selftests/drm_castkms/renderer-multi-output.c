@@ -229,6 +229,7 @@ static void deliver(struct output *output, unsigned char value)
 	struct drm_capture_result result;
 	struct drm_capture_dequeue capture = { .stream = 1, .result = (uintptr_t)&result };
 	struct pollfd event = { .fd = output->capture.capture_fd, .events = POLLIN };
+	bool acquired = false;
 
 	CHECK(job);
 	CHECK(ioctl(output->renderer.renderer_fd,
@@ -257,8 +258,22 @@ static void deliver(struct output *output, unsigned char value)
 	CHECK(ioctl(output->renderer.renderer_fd,
 		    DRM_IOCTL_CASTKMS_RENDERER_RELEASE_JOB, &source) == 0);
 	memset(&recipient, 0xa5, sizeof(recipient));
-	CHECK(ioctl(output->renderer.renderer_fd,
-		    DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT, &take) == 0);
+	for (unsigned int attempt = 0; attempt < 200; attempt++) {
+		struct pollfd ready = {
+			.fd = output->renderer.renderer_fd, .events = POLLIN,
+		};
+
+		if (ioctl(output->renderer.renderer_fd,
+			  DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT, &take) == 0) {
+			acquired = true;
+			break;
+		}
+		CHECK(errno == ENODATA || errno == EBUSY);
+		CHECK(poll(&ready, 1, 50) >= 0);
+		CHECK(!(ready.revents & (POLLERR | POLLHUP)));
+		usleep(1000);
+	}
+	CHECK(acquired);
 	CHECK(recipient.job_id && recipient.image_id == 1 &&
 	      recipient.width == output->mode.hdisplay &&
 	      recipient.height == output->mode.vdisplay);
