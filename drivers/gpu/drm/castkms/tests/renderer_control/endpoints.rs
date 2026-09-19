@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 use super::*;
-use crate::renderer::endpoint::Endpoint;
+use crate::renderer::endpoint::{Endpoint, Phase};
 use kernel::drm::gem::ExportAccess;
 use kernel::workqueue::{self, impl_has_work, new_work, Work, WorkItem};
 
@@ -39,6 +39,62 @@ pub(super) fn prepared(
 #[kunit_tests(rust_castkms_renderer_endpoints)]
 mod cases {
     use super::*;
+
+    #[test]
+    fn reply_copyout_can_reenter_endpoint_and_authority() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-reply-reentry", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = prepared(device, &owner)?;
+            let mut copied_id = 0;
+            endpoint.publish(None, |id| {
+                copied_id = id;
+                check(endpoint.describe()?.phase == Phase::Publishing)?;
+                owner.access().with_output(|| Ok(()))
+            })?;
+            check(copied_id != 0 && endpoint.constraints_id()? == copied_id)
+        })
+    }
+
+    #[test]
+    fn close_during_reply_cannot_publish_a_backend() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-reply-close", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = prepared(device, &owner)?;
+            let output = device.constraints_output(crtc)?;
+            let generation = output.snapshot(0)?.info().generation;
+            let mut copied_id = 0;
+            check(endpoint.publish(None, |id| {
+                copied_id = id;
+                endpoint.close();
+                Ok(())
+            }) == Err(EKEYREVOKED))?;
+            check(copied_id != 0)?;
+            check(output.snapshot(0)?.info().generation == generation)?;
+            check(output.lookup(copied_id).err() == Some(ESTALE))
+        })
+    }
+
+    #[test]
+    fn issuer_revocation_during_reply_cannot_publish_a_backend() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-reply-revoke", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = prepared(device, &owner)?;
+            let output = device.constraints_output(crtc)?;
+            let generation = output.snapshot(0)?.info().generation;
+            let mut copied_id = 0;
+            check(endpoint.publish(None, |id| {
+                copied_id = id;
+                owner.revoke();
+                Ok(())
+            }) == Err(EKEYREVOKED))?;
+            check(copied_id != 0)?;
+            check(output.snapshot(0)?.info().generation == generation)?;
+            check(output.lookup(copied_id).err() == Some(ESTALE))
+        })
+    }
 
     #[test]
     fn racing_close_cannot_leave_a_selectable_unowned_backend() -> Result {
