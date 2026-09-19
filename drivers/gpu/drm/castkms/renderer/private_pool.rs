@@ -21,7 +21,7 @@ struct Entry {
 ///
 /// This is not a source claim, a private-image write reservation, or completion of earlier
 /// native work. The endpoint must independently establish authority and readiness before
-/// publishing an publication. Drop outside endpoint and DRM locks; images can own native resources.
+/// publishing a configuration. Drop outside endpoint and DRM locks; images can own native resources.
 pub(crate) struct RegistrationSet {
     images: KVec<PinnedImage>,
 }
@@ -138,7 +138,7 @@ impl Pool {
         }) {
             entry
                 .pins
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                     value.checked_add(1)
                 })
                 .map_err(|_| EOVERFLOW)?;
