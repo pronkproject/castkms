@@ -313,6 +313,11 @@ client negotiated explicit tickets. A supplied ticket keeps the explicit
 protocol described below. Capability and ioctl numbers are experimental, not
 an assigned upstream ABI.
 
+On a participating device, a nonblocking atomic update from a file without
+that client capability returns ``EOPNOTSUPP`` rather than bypassing source-read
+accounting. ``TEST_ONLY`` remains a validation request and does not acquire a
+ticket or install display state.
+
 ``DRM_IOCTL_MODE_PREPARE_REPLACE`` accepts one to 32 unique CRTC IDs belonging
 to that file's modesetting authority. It captures their current accepted
 generations under the display locks and prevents new read admission to them.
