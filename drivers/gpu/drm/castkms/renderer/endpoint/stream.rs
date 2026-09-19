@@ -123,7 +123,7 @@ impl Endpoint {
         pending.completed = Some(UniqueArc::new_uninit(GFP_KERNEL)?);
         pending.job = Some(pending.control.claim(image_id, previous, image.prepare(id)?)?);
         let job = pending.job.as_mut().ok_or(EIO)?;
-        pending.serial = job.source().scene().content_serial().ok_or(ENODATA)?.get();
+        pending.serial = job.source().scene().render_content().ok_or(ENODATA)?.get();
         job.observe_producers(&self.access.device().changed)?;
         Ok(pending)
     }

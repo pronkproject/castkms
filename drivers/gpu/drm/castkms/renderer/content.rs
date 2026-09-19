@@ -43,7 +43,7 @@ impl Evidence {
             configuration: current.configuration().clone(),
             owner: scene.owner().cloned(),
             constraints: scene.constraints().map(ARef::from),
-            content: scene.content_serial(),
+            content: scene.render_content(),
             producers,
         }
     }

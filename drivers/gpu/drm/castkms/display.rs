@@ -59,6 +59,7 @@ pub(super) struct CrtcState {
     visible: bool,
     layer_mask: u32,
     content: Option<scene::ContentSerial>,
+    render_content: Option<scene::ContentSerial>,
     blank_owner: Option<kernel::drm::auth::MasterRef<Driver>>,
 }
 
@@ -109,6 +110,7 @@ impl crtc::DriverCrtcState for CrtcState {
             visible: false,
             layer_mask: 0,
             content: None,
+            render_content: None,
             blank_owner: None,
         })
     }
@@ -121,6 +123,7 @@ impl crtc::DriverCrtcState for CrtcState {
             visible: self.visible,
             layer_mask: self.layer_mask,
             content: self.content,
+            render_content: self.render_content,
             blank_owner: self.blank_owner.clone(),
         })
     }
@@ -342,6 +345,10 @@ impl CrtcState {
             return Err(EINVAL);
         }
         scene.finalize(state.content);
+        scene.set_render_content(
+            state.render_content,
+            state.configuration.as_ref().ok_or(EINVAL)?.dimensions(),
+        );
         scene.output_color = state.output_color.clone();
         scene.set_binding(state.binding.as_ref());
         state.checked_scene = Some(scene);
@@ -373,6 +380,10 @@ impl CrtcState {
         state.layer_mask = if state.active() { mask } else { 0 };
         state.visible = state.layer_mask != 0;
         state.content = scene::ContentSerial::for_update(old.content, state.visible && changed)?;
+        state.render_content = scene::ContentSerial::for_update(
+            old.render_content,
+            state.active() && changed,
+        )?;
         state.blank_owner = if !state.active() || state.visible {
             None
         } else if !old.active() || old.visible || state.mode_changed() {
@@ -518,6 +529,9 @@ impl Crtc {
             let mut scene = scene::Scene::blank(state.blank_owner.clone());
             scene.output_color = state.output_color.clone();
             scene.set_binding(state.binding.as_ref());
+            if let Some(configuration) = state.configuration.as_ref() {
+                scene.set_render_content(state.render_content, configuration.dimensions());
+            }
             SceneUpdate::Replace(Some(scene))
         } else if old.visible && state.content == old.content
             && old.constraints_entry().map(core::ptr::from_ref)
@@ -541,6 +555,9 @@ impl Crtc {
                 scene.set_layer(plane.index() as usize, layer);
             });
             scene.finalize(state.content);
+            if let Some(configuration) = state.configuration.as_ref() {
+                scene.set_render_content(state.render_content, configuration.dimensions());
+            }
             scene.output_color = state.output_color.clone();
             scene.set_binding(state.binding.as_ref());
             SceneUpdate::Replace(Some(scene))

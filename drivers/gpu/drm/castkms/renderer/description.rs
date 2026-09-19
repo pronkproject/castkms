@@ -32,7 +32,10 @@ impl<'a> Description<'a> {
             }
             layers.push(layer, GFP_KERNEL)?;
         }
-        let output = layers.first().ok_or(ENODATA)?.geometry().output;
+        let output = scene.output_dimensions();
+        if output.contains(&0) {
+            return Err(EINVAL);
+        }
         if layers.iter().any(|layer| layer.geometry().output != output) {
             return Err(EINVAL);
         }
@@ -48,7 +51,7 @@ impl<'a> Description<'a> {
         Ok(Self {
             layers,
             output,
-            content_serial: scene.content_serial().ok_or(ENODATA)?.get(),
+            content_serial: scene.render_content().ok_or(ENODATA)?.get(),
             color: scene.output_color.as_deref(),
         })
     }

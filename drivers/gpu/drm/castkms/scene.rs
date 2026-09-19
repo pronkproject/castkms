@@ -37,9 +37,8 @@ impl ContentSerial {
     }
 
     /// Derive a candidate from the last accepted state without consuming a sequence number.
-    pub(super) fn for_update(previous: Option<Self>, has_scene: bool) -> Result<Option<Self>> {
-        // Blanking requires no content identity and must remain possible at exhaustion.
-        if !has_scene {
+    pub(super) fn for_update(previous: Option<Self>, changed: bool) -> Result<Option<Self>> {
+        if !changed {
             return Ok(previous);
         }
         let value = previous.map_or(0, |serial| serial.0.get());
@@ -54,6 +53,8 @@ pub(super) struct Scene {
     pub(super) output_color: Option<Arc<crate::color::OutputColor>>,
     layers: [Option<Arc<Primary>>; MAX_PLANES],
     content: Option<ContentSerial>,
+    render_content: Option<ContentSerial>,
+    output: [u32; 2],
     // Historical attribution resolved by the accepted transaction, not live capture authority.
     owner: Option<MasterRef<Driver>>,
     constraints: Option<ARef<OpaqueEntry>>,
@@ -163,6 +164,19 @@ impl Scene {
 
     pub(super) fn set_layer(&mut self, index: usize, layer: Option<Arc<Primary>>) {
         self.layers[index] = layer;
+    }
+
+    pub(super) fn set_render_content(&mut self, content: Option<ContentSerial>, output: [u32; 2]) {
+        self.render_content = content;
+        self.output = output;
+    }
+
+    pub(super) fn render_content(&self) -> Option<ContentSerial> {
+        self.render_content
+    }
+
+    pub(super) fn output_dimensions(&self) -> [u32; 2] {
+        self.output
     }
 
     /// A composed image is attributable only when every contributing plane agrees.
@@ -275,6 +289,7 @@ impl Scene {
             GFP_KERNEL,
         )?);
         scene.content = Some(content);
+        scene.set_render_content(Some(content), geometry.output);
         Ok(scene)
     }
 
@@ -283,6 +298,8 @@ impl Scene {
             output_color: None,
             layers: core::array::from_fn(|_| None),
             content: None,
+            render_content: None,
+            output: [0, 0],
             owner,
             constraints: None,
             binding: None,

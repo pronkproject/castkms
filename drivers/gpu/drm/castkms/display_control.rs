@@ -289,7 +289,7 @@ impl Current<'_> {
     ) -> Result<crate::scene::ContentSerial> {
         self.check_scene_owner()?;
         let scene = self.scene.ok_or(EAGAIN)?;
-        let content_serial = scene.content_serial().ok_or(ENODATA)?;
+        let content_serial = scene.render_content().ok_or(ENODATA)?;
         if previous_content_serial == Some(content_serial.get()) {
             return Err(ENODATA);
         }
