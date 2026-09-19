@@ -463,9 +463,11 @@ static drmModeModeInfo mode_1080p(int fd, uint32_t connector_id)
 	return mode;
 }
 
-static uint32_t overlay_plane(int fd, unsigned int crtc_index)
+static uint32_t overlay_plane(int fd, unsigned int crtc_index,
+			      unsigned int ordinal)
 {
 	drmModePlaneRes *planes = drmModeGetPlaneResources(fd);
+	unsigned int matched = 0;
 	uint32_t found = 0;
 
 	CHECK(planes && crtc_index < 32);
@@ -487,7 +489,8 @@ static uint32_t overlay_plane(int fd, unsigned int crtc_index)
 
 			CHECK(prop);
 			if (!strcmp(prop->name, "type") &&
-			    props->prop_values[p] == DRM_PLANE_TYPE_OVERLAY)
+			    props->prop_values[p] == DRM_PLANE_TYPE_OVERLAY &&
+			    matched++ == ordinal)
 				found = plane->plane_id;
 			drmModeFreeProperty(prop);
 		}
@@ -623,6 +626,41 @@ static void check_overlay_tile_pixels(int dma_fd, const struct buffer *buffer,
 	CHECK(munmap(pixels, buffer->dumb.size) == 0);
 }
 
+static void check_stacked_overlay_pixels(int dma_fd, const struct buffer *buffer,
+					 const unsigned char values[2][2],
+					 unsigned int tile, bool first_on_top)
+{
+	struct dma_buf_sync sync = {
+		.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ,
+	};
+	unsigned char *pixels = mmap(NULL, buffer->dumb.size, PROT_READ,
+				     MAP_SHARED, dma_fd, 0);
+
+	CHECK(tile < 2);
+	CHECK(pixels != MAP_FAILED);
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	for (unsigned int y = 0; y < 1080; y++) {
+		for (unsigned int x = 0; x < 1920 * 4; x++) {
+			bool first = tile == 0 && y >= 300 && y < 540 &&
+				     x >= 200 * 4 && x < 520 * 4;
+			bool second = tile == 0 && y >= 400 && y < 640 &&
+				      x >= 400 * 4 && x < 720 * 4;
+			unsigned char expected = values[tile][y >= 540];
+
+			if (first)
+				expected = 0x4a;
+			if (second && (!first || !first_on_top))
+				expected = 0xe1;
+			if (x % 4 == 3)
+				expected = 0xff;
+			CHECK(pixels[y * buffer->dumb.pitch + x] == expected);
+		}
+	}
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	CHECK(ioctl(dma_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	CHECK(munmap(pixels, buffer->dumb.size) == 0);
+}
+
 static void check_green_tile_pixels(int dma_fd, const struct buffer *buffer)
 {
 	static const unsigned char green[] = { 0, 0xff, 0, 0xff };
@@ -667,7 +705,7 @@ static uint32_t commit_overlay(int fd, uint32_t crtc,
 			       const struct buffer *buffer)
 {
 	drmModeAtomicReq *request = drmModeAtomicAlloc();
-	uint32_t plane = overlay_plane(fd, 0);
+	uint32_t plane = overlay_plane(fd, 0, 0);
 
 	CHECK(request);
 	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "FB_ID", buffer->fb);
@@ -685,6 +723,63 @@ static uint32_t commit_overlay(int fd, uint32_t crtc,
 	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
 	drmModeAtomicFree(request);
 	return plane;
+}
+
+static void add_overlay(drmModeAtomicReq *request, int fd, uint32_t plane,
+			uint32_t crtc, const struct buffer *buffer,
+			unsigned int x, unsigned int y)
+{
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "FB_ID", buffer->fb);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_ID", crtc);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "SRC_X", 0);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "SRC_Y", 0);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+		 "SRC_W", (uint64_t)320 << 16);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+		 "SRC_H", (uint64_t)240 << 16);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_X", x);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_Y", y);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_W", 320);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_H", 240);
+}
+
+static void commit_stacked_overlays(int fd, uint32_t crtc,
+				    const struct buffer buffers[2],
+				    uint32_t planes[2])
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+
+	CHECK(request);
+	planes[0] = overlay_plane(fd, 0, 0);
+	planes[1] = overlay_plane(fd, 0, 1);
+	CHECK(planes[0] != planes[1]);
+	add_overlay(request, fd, planes[0], crtc, &buffers[0], 200, 300);
+	add_overlay(request, fd, planes[1], crtc, &buffers[1], 400, 400);
+	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
+	drmModeAtomicFree(request);
+}
+
+static void raise_overlay(int fd, uint32_t plane)
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+
+	CHECK(request);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "zpos", 2);
+	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
+	drmModeAtomicFree(request);
+}
+
+static void disable_planes(int fd, const uint32_t planes[2])
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+
+	CHECK(request);
+	for (unsigned int i = 0; i < 2; i++) {
+		property(fd, request, planes[i], DRM_MODE_OBJECT_PLANE, "FB_ID", 0);
+		property(fd, request, planes[i], DRM_MODE_OBJECT_PLANE, "CRTC_ID", 0);
+	}
+	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
+	drmModeAtomicFree(request);
 }
 
 static void disable_plane(int fd, uint32_t plane)
@@ -916,7 +1011,9 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	struct drm_capture_describe revoked_description = {0};
 	struct drm_capture_result results[2] = {0};
 	struct buffer sources[2], destinations[2], shared, scaled, cursor, overlay;
+	struct buffer stacked[2];
 	drmModeModeInfo modes[2];
+	uint32_t stacked_planes[2];
 	uint32_t overlay_id;
 	int destination_fds[2], ticket;
 
@@ -1023,9 +1120,26 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 					  scaled_values, i);
 	disable_plane(fd, overlay_id);
 	destroy_buffer(fd, &overlay);
-	commit_green_gamma(fd, resources->crtcs[0]);
+	stacked[0] = create_buffer(fd, 320, 240, 0x4a);
+	stacked[1] = create_buffer(fd, 320, 240, 0xe1);
+	commit_stacked_overlays(fd, resources->crtcs[0], stacked, stacked_planes);
 	queue_tile_captures(captures, 8);
 	dequeue_tile_captures(captures, 8, results);
+	for (unsigned int i = 0; i < 2; i++)
+		check_stacked_overlay_pixels(destination_fds[i], &destinations[i],
+					     scaled_values, i, false);
+	raise_overlay(fd, stacked_planes[0]);
+	queue_tile_captures(captures, 9);
+	dequeue_tile_captures(captures, 9, results);
+	for (unsigned int i = 0; i < 2; i++)
+		check_stacked_overlay_pixels(destination_fds[i], &destinations[i],
+					     scaled_values, i, true);
+	disable_planes(fd, stacked_planes);
+	for (unsigned int i = 0; i < 2; i++)
+		destroy_buffer(fd, &stacked[i]);
+	commit_green_gamma(fd, resources->crtcs[0]);
+	queue_tile_captures(captures, 10);
+	dequeue_tile_captures(captures, 10, results);
 	check_green_tile_pixels(destination_fds[0], &destinations[0]);
 	check_scaled_tile_pixels(destination_fds[1], &destinations[1],
 				 scaled_values[1]);
@@ -1036,8 +1150,8 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	CHECK(errno == EKEYREVOKED);
 	CHECK(drmModeSetCrtc(fd, resources->crtcs[1], sources[1].fb, 0, 0,
 			     &resources->connectors[1], 1, &modes[1]) == 0);
-	queue_tile_capture(&captures[1], 9);
-	dequeue_tile_capture(&captures[1], 9, &results[1]);
+	queue_tile_capture(&captures[1], 11);
+	dequeue_tile_capture(&captures[1], 11, &results[1]);
 	check_tile_pixels(destination_fds[1], &destinations[1], values[1], false);
 
 	for (unsigned int i = 0; i < 2; i++) {
