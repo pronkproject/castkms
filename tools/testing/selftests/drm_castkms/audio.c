@@ -141,7 +141,7 @@ int main(int argc, char **argv)
 	unsigned char edid[256], samples[1920];
 	struct buffer buffer;
 	uint32_t crtc_id, connector_id;
-	int fd, pcm, found = 0;
+	int fd, peer, pcm, found = 0;
 
 	if (argc != 2) {
 		fprintf(stderr, "SKIP: supply a disposable CastKMS DRM node\n");
@@ -216,6 +216,30 @@ int main(int argc, char **argv)
 	}
 	CHECK(drmModeSetCrtc(fd, crtc_id, buffer.fb, 0, 0, &connector_id, 1, &mode) == 0);
 	reconfigure_prepared(pcm);
+	/* A retained grant must not appear terminal when a newer grant owns the tap. */
+	peer = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(peer >= 0);
+	CHECK(drmDropMaster(fd) == 0);
+	acquire_master(peer);
+	CHECK(ioctl(audio.audio_fd, DRM_IOCTL_CASTKMS_AUDIO_QUERY, &query) < 0 &&
+	      errno == EAGAIN);
+	{
+		struct pollfd event = { .fd = audio.audio_fd, .events = POLLIN };
+
+		CHECK(poll(&event, 1, 0) == 0);
+	}
+	CHECK(drmDropMaster(peer) == 0);
+	acquire_master(fd);
+	CHECK(close(peer) == 0);
+	next = audio_capture(fd, crtc_id, connector_id);
+	{
+		struct pollfd event = { .fd = audio.audio_fd, .events = POLLIN };
+
+		CHECK(poll(&event, 1, 0) == 0);
+	}
+	CHECK(close(next.revoke_fd) == 0);
+	CHECK(ioctl(audio.audio_fd, DRM_IOCTL_CASTKMS_AUDIO_QUERY, &query) == 0);
+	CHECK(close(next.audio_fd) == 0);
 	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
 	audio_terminal(audio.audio_fd);
 	CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_PREPARE) < 0);
@@ -232,6 +256,6 @@ int main(int argc, char **argv)
 	audio_terminal(next.audio_fd);
 	CHECK(close(next.audio_fd) == 0 && close(next.revoke_fd) == 0);
 	CHECK(close(monitor_files.control_fd) == 0 && close(monitor_files.revoke_fd) == 0);
-	puts("PASS: audio playback, silence, attachment replacement, revocation and creator close");
+	puts("PASS: audio playback, handoff poll, attachment replacement and revocation");
 	return 0;
 }
