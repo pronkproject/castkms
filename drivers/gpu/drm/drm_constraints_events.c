@@ -54,7 +54,7 @@ static void schedule_events(struct drm_constraints_events *events)
 
 	spin_lock_irqsave(&events->lock, flags);
 	if (events->ready && !events->stopping)
-		queue_work(system_unbound_wq, &events->work);
+		queue_work(system_dfl_wq, &events->work);
 	spin_unlock_irqrestore(&events->lock, flags);
 }
 
