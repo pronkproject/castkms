@@ -144,6 +144,7 @@ int main(int argc, char **argv)
 	struct drm_castkms_cec_complete complete = {0};
 	struct drm_castkms_cec_receive receive = {0};
 	struct drm_castkms_cec_state state = {0};
+	struct drm_castkms_cec_state initial_state = {0};
 	struct cec_msg message = {0}, result = {0};
 	unsigned char edid[256];
 	drmModeConnector *connector;
@@ -172,6 +173,8 @@ int main(int argc, char **argv)
 	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_QUERY, &query) == 0);
 	CHECK(query.version == DRM_CASTKMS_MONITOR_CONTROL_VERSION);
 	CHECK(query.flags == DRM_CASTKMS_MONITOR_CAP_CEC);
+	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE,
+		    &initial_state) == 0);
 	transport.flags = 2;
 	expect_error(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_SET_TRANSPORT,
 		     &transport, EINVAL);
@@ -317,9 +320,12 @@ int main(int argc, char **argv)
 	       DRM_CASTKMS_CEC_STATE_ADAPTER_ENABLED));
 	CHECK(state.physical_address == 0x1000);
 	CHECK(state.logical_address_mask == (1U << CEC_LOG_ADDR_UNREGISTERED));
-	CHECK(state.stats_tx_submitted == 4 && state.stats_tx_completed == 2);
-	CHECK(state.stats_tx_error == 2 && state.stats_tx_timeout == 1);
-	CHECK(state.stats_rx == 1 && state.stats_invalid == 2);
+	CHECK(state.stats_tx_submitted - initial_state.stats_tx_submitted == 4);
+	CHECK(state.stats_tx_completed - initial_state.stats_tx_completed == 2);
+	CHECK(state.stats_tx_error - initial_state.stats_tx_error == 2);
+	CHECK(state.stats_tx_timeout - initial_state.stats_tx_timeout == 1);
+	CHECK(state.stats_rx - initial_state.stats_rx == 1);
+	CHECK(state.stats_invalid - initial_state.stats_invalid == 2);
 
 	transport.flags = 0;
 	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_SET_TRANSPORT,
@@ -327,6 +333,11 @@ int main(int argc, char **argv)
 	receive.msg[0] = 0x0f;
 	expect_error(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_RECEIVE,
 		     &receive, ENONET);
+	{
+		struct cec_log_addrs addresses = {0};
+
+		CHECK(ioctl(cec_fd, CEC_ADAP_S_LOG_ADDRS, &addresses) == 0);
+	}
 	CHECK(close(files.revoke_fd) == 0);
 	expect_error(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE,
 		     &state, ECANCELED);
