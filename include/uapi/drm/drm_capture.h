@@ -266,7 +266,7 @@ struct drm_capture_unregister_destination {
  *
  * Rejection consumes neither name nor capacity. Invalid fields or a descriptor
  * that is not a sync file return EINVAL, absent names ENOENT, exhausted request
- * slots EAGAIN, non-increasing names ESTALE and revoked authority EKEYREVOKED.
+ * slots EBUSY, non-increasing names ESTALE and revoked authority EKEYREVOKED.
  * Admitting UINT64_MAX exhausts further request names with EOVERFLOW. A fence
  * or exporter error after admission is reported through a terminal result.
  */

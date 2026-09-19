@@ -91,7 +91,7 @@ impl<P, T> Queue<P, T> {
             return Err(ESTALE);
         }
         if self.records.len() == self.limit {
-            return Err(EAGAIN);
+            return Err(EBUSY);
         }
         let pending = admit()?;
         self.records.push(

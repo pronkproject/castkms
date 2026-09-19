@@ -70,7 +70,7 @@ mod cases {
             Ok(())
         })?;
         check(queue.dequeue(|_| Ok(())) == Err(EAGAIN))?;
-        check(queue.queue(3, || Ok(false)) == Err(EAGAIN))?;
+        check(queue.queue(3, || Ok(false)) == Err(EBUSY))?;
         check(
             queue.advance(
                 |cancelled| {
@@ -84,7 +84,7 @@ mod cases {
         )?;
         check(queue.cancel(1, |_| Err(EIO)) == Err(EALREADY))?;
         check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
-        check(queue.queue(3, || Ok(false)) == Err(EAGAIN))?;
+        check(queue.queue(3, || Ok(false)) == Err(EBUSY))?;
         queue.dequeue(|completion| {
             check(completion.use_id == 1)?;
             check(matches!(completion.result, Err(ECANCELED)))
@@ -135,7 +135,7 @@ mod cases {
             queue.queue(2, || {
                 called = true;
                 Ok(())
-            }) == Err(EAGAIN),
+            }) == Err(EBUSY),
         )?;
         check(!called)?;
         check(queue.advance(|_| Ok(Some(7))) == 1)?;
@@ -156,7 +156,7 @@ mod cases {
             Err(EFAULT)
         });
         check(fail == Err(EFAULT))?;
-        check(queue.queue(3, || Ok(30)) == Err(EAGAIN))?;
+        check(queue.queue(3, || Ok(30)) == Err(EBUSY))?;
         queue.dequeue(|completion| check(completion.use_id == 2))?;
         check(queue.advance(|value| Ok(Some(*value))) == 1)?;
         queue.dequeue(|completion| {

@@ -115,7 +115,7 @@ mod cases {
         check(queue.queue(0) == Err(EINVAL))?;
         queue.queue(10)?;
         queue.queue(20)?;
-        check(queue.queue(30) == Err(EAGAIN))?;
+        check(queue.queue(30) == Err(EBUSY))?;
         check(queue.dequeue(|_| Ok(())) == Err(EAGAIN))?;
         fixture.drm.device().host.current()?.flush_for_test();
         check(queue.advance() == 2)?;
@@ -126,7 +126,7 @@ mod cases {
             Err(EFAULT)
         });
         check(failed == Err(EFAULT))?;
-        check(queue.queue(30) == Err(EAGAIN))?;
+        check(queue.queue(30) == Err(EBUSY))?;
         queue.dequeue(|completion| {
             check(completion.use_id == 10)?;
             let mut pixels = KVVec::new();
@@ -156,7 +156,7 @@ mod cases {
         drop(grantor);
         fixture.drm.device().host.current()?.flush_for_test();
         check(queue.advance() == 2)?;
-        check(queue.queue(3) == Err(EAGAIN))?;
+        check(queue.queue(3) == Err(EBUSY))?;
         check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
         queue.dequeue(|completion| {
             check(completion.use_id == 1)?;

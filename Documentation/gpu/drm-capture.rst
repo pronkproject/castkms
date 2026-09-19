@@ -108,6 +108,8 @@ The transport resolves and retains the fence before provider admission. Success
 has no later copyout or descriptor installation; rejection consumes neither the
 name nor a request slot. Accepted work retains the exact allocation even if its
 registered name is removed. The provider rechecks its layout and permission.
+An exhausted stream request capacity returns ``EBUSY``; dequeue completed
+results to free slots before retrying.
 
 The recipient must exclude competing access until terminal completion or
 successful explicit stream destruction. A reuse fence describes prior work,

@@ -146,7 +146,7 @@ static void failed_publication(int client)
 	for (unsigned int i = 0; i < 8; i++) {
 		CHECK(dequeue(client, (void *)1) == -1 && errno == EFAULT);
 		CHECK(dequeue(client, partial) == -1 && errno == EFAULT);
-		CHECK(queue(client, 2, 2, -1) == -1 && errno == EAGAIN);
+		CHECK(queue(client, 2, 2, -1) == -1 && errno == EBUSY);
 		wait_result(client);
 	}
 	CHECK(munmap(mapping, page_size * 2) == 0);

@@ -171,7 +171,7 @@ mod cases {
             let mut reuse = ManualFence::new()?;
             queue.queue_to(1, first.clone(), Some(reuse.fence()))?;
             queue.queue_to(2, second.clone(), None)?;
-            check(queue.queue_to(3, first.clone(), None) == Err(EAGAIN))?;
+            check(queue.queue_to(3, first.clone(), None) == Err(EBUSY))?;
             fixture.drm.device().host.current()?.flush_for_test();
             advance_one(&mut queue)?;
             check(pixels(first.buffer())?.iter().all(|byte| *byte == 0x73))?;
@@ -183,7 +183,7 @@ mod cases {
                     Err(EFAULT)
                 }) == Err(EFAULT),
             )?;
-            check(queue.queue_to(3, second.clone(), None) == Err(EAGAIN))?;
+            check(queue.queue_to(3, second.clone(), None) == Err(EBUSY))?;
             check(queue.advance() == 0)?;
             queue.dequeue(|completion| {
                 check(completion.use_id == 2)?;
@@ -217,7 +217,7 @@ mod cases {
             fixture.drm.device().host.current()?.flush_for_test();
             advance_one(&mut queue)?;
             check(queue.advance() == 0)?;
-            check(queue.queue_to(2, image.clone(), None) == Err(EAGAIN))?;
+            check(queue.queue_to(2, image.clone(), None) == Err(EBUSY))?;
             check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
             queue.dequeue(|completion| {
                 check(completion.use_id == 1)?;
@@ -279,11 +279,11 @@ mod cases {
             fixture.drm.device().host.current()?.flush_for_test();
             advance_one(&mut queue)?;
             queue.cancel(1)?;
-            check(queue.queue(3) == Err(EAGAIN))?;
+            check(queue.queue(3) == Err(EBUSY))?;
             advance_one(&mut queue)?;
             check(queue.cancel(1) == Err(EALREADY))?;
             check(queue.dequeue::<()>(|_| Err(EFAULT)) == Err(EFAULT))?;
-            check(queue.queue(3) == Err(EAGAIN))?;
+            check(queue.queue(3) == Err(EBUSY))?;
             for id in [1, 2] {
                 queue.dequeue(|completion| {
                     check(completion.use_id == id)?;
