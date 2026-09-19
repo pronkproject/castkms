@@ -9,7 +9,7 @@ use super::{
     configuration::Configuration, permission::Access, private_pool::Pool,
     publication::Publication,
 };
-use crate::{execution::capabilities::Profile, Driver};
+use crate::{authority::Interval, execution::capabilities::Profile, Driver};
 use kernel::{
     dma_buf::DmaBuf,
     dma_fence::Fence,
