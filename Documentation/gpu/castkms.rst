@@ -442,6 +442,8 @@ activated, or its mode changes. An unchanged blank preserves its accepted
 owner, including an unknown owner, across master changes. Current capture
 permission is checked separately; a new master does not gain access merely
 by submitting an unchanged blank configuration.
+The renderer job stream has a separate output revision, which advances for
+active blanking so a selected worker can replace its previous private image.
 
 The serial conservatively advances for every accepted visible-plane update,
 even when the framebuffer and geometry are unchanged. It marks a possible
