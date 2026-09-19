@@ -29,6 +29,7 @@ bool drm_atomic_request_supports_property(struct drm_mode_object *object,
 		       property == obj_to_plane(object)->color_pipeline_property ||
 		       property == obj_to_plane(object)->scaling_filter_property ||
 		       drm_atomic_is_plane_color_property(obj_to_plane(object), property) ||
+		       drm_atomic_is_plane_hotspot_property(obj_to_plane(object), property) ||
 		       drm_atomic_is_plane_geometry_property(obj_to_plane(object), property);
 	if (object->type == DRM_MODE_OBJECT_CRTC)
 		return property == config->prop_constraints_id ||
@@ -72,6 +73,9 @@ static int apply_plane(struct drm_atomic_commit *state,
 	if (drm_atomic_is_plane_color_property(plane_state->plane, entry->property))
 		return drm_atomic_set_color_property_for_plane(plane_state, entry->property,
 							      entry->scalar);
+	if (drm_atomic_is_plane_hotspot_property(plane_state->plane, entry->property))
+		return drm_atomic_set_hotspot_property_for_plane(plane_state, entry->property,
+								entry->scalar);
 	if (entry->property == plane_state->plane->color_pipeline_property) {
 		struct drm_colorop *colorop = entry->reference ?
 			obj_to_colorop(entry->reference) : NULL;
@@ -159,8 +163,8 @@ static int apply_entry(struct drm_atomic_commit *state,
  * Entries are applied in order using kernel references, without identifier or
  * descriptor lookup. Supported properties are plane FB_ID, IN_FENCE_FD,
  * CRTC_ID, FB_DAMAGE_CLIPS, CRTC_X/Y/W/H, SRC_X/Y/W/H, alpha, pixel blend
- * mode, rotation, zpos, COLOR_ENCODING, COLOR_RANGE, COLOR_PIPELINE and
- * SCALING_FILTER,
+ * mode, rotation, zpos, COLOR_ENCODING, COLOR_RANGE, COLOR_PIPELINE,
+ * SCALING_FILTER and HOTSPOT_X/Y,
  * controller MODE_ID/ACTIVE, CONSTRAINTS_ID and DEGAMMA_LUT/CTM/GAMMA_LUT,
  * and connector CRTC_ID.
  * Driver-private CRTC ranges explicitly marked as replayable scalars are also

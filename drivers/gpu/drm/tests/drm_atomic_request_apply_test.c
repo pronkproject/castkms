@@ -777,6 +777,51 @@ static void plane_color_pipeline_is_reapplied_by_reference(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->validations, 2);
 }
 
+static void cursor_hotspot_is_reapplied_to_current_state(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_property *hotspot_x;
+	struct drm_property *hotspot_y;
+	struct drm_atomic_request_entry entries[2];
+	struct drm_atomic_request *request;
+	unsigned int i;
+
+	f->plane->type = DRM_PLANE_TYPE_CURSOR;
+	hotspot_x = drm_property_create_signed_range(f->dev, 0, "HOTSPOT_X", INT_MIN, INT_MAX);
+	hotspot_y = drm_property_create_signed_range(f->dev, 0, "HOTSPOT_Y", INT_MIN, INT_MAX);
+	KUNIT_ASSERT_NOT_NULL(test, hotspot_x);
+	KUNIT_ASSERT_NOT_NULL(test, hotspot_y);
+	drm_object_attach_property(&f->plane->base, hotspot_x, 0);
+	drm_object_attach_property(&f->plane->base, hotspot_y, 0);
+	f->plane->hotspot_x_property = hotspot_x;
+	f->plane->hotspot_y_property = hotspot_y;
+	entries[0] = (struct drm_atomic_request_entry) {
+		.object = &f->plane->base,
+		.property = hotspot_x,
+		.type = DRM_ATOMIC_REQUEST_SCALAR,
+		.scalar = (u64)-13,
+	};
+	entries[1] = (struct drm_atomic_request_entry) {
+		.object = &f->plane->base,
+		.property = hotspot_y,
+		.type = DRM_ATOMIC_REQUEST_SCALAR,
+		.scalar = 21,
+	};
+	request = new_request(test, f, entries, ARRAY_SIZE(entries));
+	for (i = 0; i < 2; i++) {
+		struct drm_plane_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_plane_state(f->state, f->plane);
+		KUNIT_EXPECT_EQ(test, state->hotspot_x, -13);
+		KUNIT_EXPECT_EQ(test, state->hotspot_y, 21);
+		KUNIT_EXPECT_EQ(test, state->crtc_h, i ? 99 : 0);
+		drm_atomic_commit_clear(f->state);
+		f->plane->state->crtc_h = 99;
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static int set_test_scalar(struct drm_crtc *crtc, struct drm_crtc_state *state,
 			   struct drm_property *property, u64 value)
 {
@@ -834,6 +879,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(private_scalar_is_reapplied_only_after_opt_in),
 	KUNIT_CASE(plane_color_is_reapplied_to_current_state),
 	KUNIT_CASE(plane_color_pipeline_is_reapplied_by_reference),
+	KUNIT_CASE(cursor_hotspot_is_reapplied_to_current_state),
 	KUNIT_CASE(rotation_is_reapplied_to_current_state),
 	KUNIT_CASE(zpos_is_reapplied_to_current_state),
 	KUNIT_CASE(plane_blending_is_reapplied_to_current_state),
