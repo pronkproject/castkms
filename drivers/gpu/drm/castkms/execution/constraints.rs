@@ -46,14 +46,22 @@ pub(crate) struct Plane {
 
 #[derive(Clone, Copy)]
 struct PlaneProperties {
+    blend_mode: u32,
     color_encoding: u32,
     color_range: u32,
+    scaling_filter: u32,
     zpos: u32,
 }
 
 impl PlaneProperties {
-    fn ids(self) -> [u32; 3] {
-        [self.color_encoding, self.color_range, self.zpos]
+    fn ids(self) -> [u32; 5] {
+        [
+            self.blend_mode,
+            self.color_encoding,
+            self.color_range,
+            self.scaling_filter,
+            self.zpos,
+        ]
     }
 }
 
@@ -64,8 +72,10 @@ impl Plane {
             id: plane.object_id(),
             kind,
             properties: PlaneProperties {
+                blend_mode: required(SceneProperty::BlendMode)?,
                 color_encoding: required(SceneProperty::ColorEncoding)?,
                 color_range: required(SceneProperty::ColorRange)?,
+                scaling_filter: required(SceneProperty::ScalingFilter)?,
                 zpos: required(SceneProperty::Zpos)?,
             },
         })
@@ -213,10 +223,33 @@ fn add_zpos_property(properties: &mut KVec<Property>, plane: &Plane) -> Result {
     Ok(())
 }
 
+fn add_sampling_properties(properties: &mut KVec<Property>, plane: &Plane) -> Result {
+    properties.push(
+        Property::enum_values(
+            plane.id,
+            plane.properties.blend_mode,
+            1 << kernel_bindings::DRM_MODE_BLEND_PREMULTI,
+        ),
+        GFP_KERNEL,
+    )?;
+    properties.push(
+        Property::enum_values(
+            plane.id,
+            plane.properties.scaling_filter,
+            (1 << kernel_bindings::drm_scaling_filter_DRM_SCALING_FILTER_DEFAULT)
+                | (1
+                    << kernel_bindings::drm_scaling_filter_DRM_SCALING_FILTER_NEAREST_NEIGHBOR),
+        ),
+        GFP_KERNEL,
+    )?;
+    Ok(())
+}
+
 fn host_properties(planes: &[Plane]) -> Result<KVec<Property>> {
     let mut properties = KVec::new();
 
     for plane in planes {
+        add_sampling_properties(&mut properties, plane)?;
         add_zpos_property(&mut properties, plane)?;
     }
     Ok(properties)
@@ -244,6 +277,7 @@ fn renderer_properties(profile: &Profile, planes: &[Plane]) -> Result<KVec<Prope
         if !plane_supported(profile, plane) {
             continue;
         }
+        add_sampling_properties(&mut properties, plane)?;
         add_zpos_property(&mut properties, plane)?;
         let ids = plane.properties;
         let supports_yuv = profile
@@ -512,8 +546,10 @@ mod tests {
                 id: 7,
                 kind: Kind::Primary,
                 properties: PlaneProperties {
+                    blend_mode: 30,
                     color_encoding: 21,
                     color_range: 22,
+                    scaling_filter: 31,
                     zpos: 27,
                 },
             },
@@ -521,8 +557,10 @@ mod tests {
                 id: 8,
                 kind: Kind::Overlay,
                 properties: PlaneProperties {
+                    blend_mode: 32,
                     color_encoding: 23,
                     color_range: 24,
+                    scaling_filter: 33,
                     zpos: 28,
                 },
             },
@@ -530,8 +568,10 @@ mod tests {
                 id: 9,
                 kind: Kind::Cursor,
                 properties: PlaneProperties {
+                    blend_mode: 34,
                     color_encoding: 25,
                     color_range: 26,
+                    scaling_filter: 35,
                     zpos: 29,
                 },
             },
@@ -555,10 +595,20 @@ mod tests {
         assert_eq!(formats[6].plane_id(), 9);
         assert_eq!(formats[6].format(), fourcc::ARGB8888);
         assert_eq!(formats[6].size().maximum(), (512, 512));
-        assert_eq!(description.properties().len(), 1);
-        assert_eq!(description.properties()[0].object_id(), 8);
-        assert_eq!(description.properties()[0].property_id(), 28);
-        assert_eq!(description.properties()[0].bounds(), (1, 30));
+        let properties = description.properties();
+        assert_eq!(properties.len(), 7);
+        assert_eq!(properties[0].property_id(), 30);
+        assert_eq!(properties[0].mask(), 1 << kernel_bindings::DRM_MODE_BLEND_PREMULTI);
+        assert_eq!(properties[1].property_id(), 31);
+        assert_eq!(
+            properties[1].mask(),
+            (1 << kernel_bindings::drm_scaling_filter_DRM_SCALING_FILTER_DEFAULT)
+                | (1
+                    << kernel_bindings::drm_scaling_filter_DRM_SCALING_FILTER_NEAREST_NEIGHBOR)
+        );
+        assert_eq!(properties[4].object_id(), 8);
+        assert_eq!(properties[4].property_id(), 28);
+        assert_eq!(properties[4].bounds(), (1, 30));
         assert!(description.plane_limits().is_empty());
         let geometries = description.plane_geometries();
         assert_eq!(geometries.len(), 3);
@@ -617,20 +667,20 @@ mod tests {
         let profile = Profile::new(limits, formats)?;
         let description = renderer(&profile, &planes())?;
         let properties = description.properties();
-        assert_eq!(properties.len(), 2);
+        assert_eq!(properties.len(), 4);
         assert!(properties.iter().all(|property| property.object_id() == 7));
-        for (property, expected) in properties.iter().zip([21, 22]) {
+        for (property, expected) in properties.iter().zip([30, 31, 21, 22]) {
             assert_eq!(property.property_id(), expected);
         }
         assert_eq!(
-            properties[0].mask(),
+            properties[2].mask(),
             1 << kernel_bindings::drm_color_encoding_DRM_COLOR_YCBCR_BT709
         );
         assert_eq!(
-            properties[1].mask(),
+            properties[3].mask(),
             1 << kernel_bindings::drm_color_range_DRM_COLOR_YCBCR_FULL_RANGE
         );
-        assert!(properties.iter().all(|property| {
+        assert!(properties[2..].iter().all(|property| {
             property.applicability_flags()
                 == kernel_bindings::DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV
         }));
@@ -670,8 +720,8 @@ mod tests {
         }
 
         let description = renderer(&Profile::new(limits, formats)?, &planes())?;
-        assert_eq!(description.properties().len(), 2);
-        assert!(description.properties().iter().all(|property| {
+        assert_eq!(description.properties().len(), 4);
+        assert!(description.properties()[2..].iter().all(|property| {
             property.applicability_flags()
                 == kernel_bindings::DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV
         }));
@@ -759,7 +809,7 @@ mod tests {
         let description = renderer(&Profile::new(limits, formats)?, &planes())?;
         assert_eq!(description.formats().len(), 1);
         assert_eq!(description.formats()[0].format(), fourcc::NV12);
-        assert_eq!(description.properties().len(), 2);
+        assert_eq!(description.properties().len(), 4);
         Ok(())
     }
 
@@ -775,8 +825,10 @@ mod tests {
                     id,
                     kind: Kind::Overlay,
                     properties: PlaneProperties {
+                        blend_mode: color_encoding + 3,
                         color_encoding,
                         color_range: color_encoding + 1,
+                        scaling_filter: color_encoding + 4,
                         zpos: color_encoding + 2,
                     },
                 },
@@ -795,9 +847,10 @@ mod tests {
         assert_eq!(plane_limits[1].max_active(), 2);
         assert_eq!(plane_limits[1].plane_ids(), [8, 10, 11]);
         let properties = description.properties();
-        assert_eq!(properties.len(), 3);
-        for (property, (plane_id, property_id)) in properties
+        assert_eq!(properties.len(), 13);
+        for (property, (plane_id, property_id)) in [4, 9, 12]
             .iter()
+            .map(|&index| &properties[index])
             .zip([(8, 28), (10, 29), (11, 31)])
         {
             assert_eq!(property.object_id(), plane_id);
@@ -944,10 +997,11 @@ mod tests {
         let description = host(&planes())?;
         assert_eq!(description.output().minimum(), (1, 1));
         assert_eq!(description.output().maximum(), (8192, 8192));
-        assert_eq!(description.properties().len(), 1);
-        assert_eq!(description.properties()[0].object_id(), 8);
-        assert_eq!(description.properties()[0].property_id(), 28);
-        assert_eq!(description.properties()[0].bounds(), (1, 30));
+        let properties = description.properties();
+        assert_eq!(properties.len(), 7);
+        assert_eq!(properties[4].object_id(), 8);
+        assert_eq!(properties[4].property_id(), 28);
+        assert_eq!(properties[4].bounds(), (1, 30));
         assert_eq!(description.plane_geometries().len(), 3);
         for geometry in description.plane_geometries() {
             assert_eq!(geometry.operations(), (true, true, true));
