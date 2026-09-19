@@ -207,10 +207,13 @@ stream never grants access to the KMS source planes or renderer-private image.
 
 After ``RELEASE_JOB`` has produced a valid private image, the renderer calls
 ``ACQUIRE_OUTPUT`` with its private image name. Success returns one writable
-recipient DMA-BUF and checked layout under a new output job ID. Version 1
-destinations are single-plane linear XRGB8888. A destination allocation and
-its described image span may each be at most 512 MiB, and all endpoints share
-a device-wide 512 MiB recipient ledger. The claim waits independently
+recipient DMA-BUF and checked layout under a new output job ID. Destinations
+are single-plane packed XRGB8888, ARGB8888, XBGR8888 or ABGR8888 with the
+exact format and modifier selected by the capture client. The allocation may
+be at most 512 MiB; linear layouts also check their complete stride-padded
+span. All endpoints share a device-wide 512 MiB recipient ledger. Nonlinear
+layout metadata does not prove native import compatibility; the renderer and
+exporter must validate the allocation. The claim waits independently
 for the private-image completion and recipient reuse dependency; it does not
 reacquire or retain a compositor source read. Failed copyout installs no fd and
 releases both images without access.
@@ -258,7 +261,7 @@ Remaining integration
 =====================
 
 The public source and recipient transports now cover A-to-E and E-to-D as
-independently released stages. Destination layout negotiation beyond the
-version 1 linear XRGB8888 capture contract, physical cross-GPU import/rendering
-qualification, and an installed userspace media pipeline remain. Passing the
+independently released stages. Native import qualification for selected
+format/modifier pairs, physical cross-GPU rendering qualification, and an
+installed userspace media pipeline remain. Passing the
 fake-worker tests is not evidence of physical GPU interoperability.
