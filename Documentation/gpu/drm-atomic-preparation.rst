@@ -358,14 +358,15 @@ installation helpers, and obtain a new generation for each accepted CRTC use,
 including an unchanged framebuffer or blank output.
 
 VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
-off by default. The Rust CastKMS device enables the same accounting through its
-unregistered-device wrapper. Neither provider admits external pixel readers
-yet. Kernel shutdown, suspend, framebuffer removal and kernel display clients
-use the request entry described below. The legacy SETCRTC, SETPLANE, cursor,
-page-flip, gamma and property ioctls use retained request adapters on
-participating providers. The shared dirty framebuffer helper also rebuilds its
-plane update after preparation. Callers that submit atomic state directly still
-need their own preparation integration before delegated reading can be enabled.
+off by default and VKMS does not admit external pixel readers. The Rust CastKMS
+device enables the same accounting through its unregistered-device wrapper and
+uses it for scoped renderer source reads. Kernel shutdown, suspend,
+framebuffer removal and kernel display clients use the request entry described
+below. The legacy SETCRTC, SETPLANE, cursor, page-flip, gamma and property
+ioctls use retained request adapters on participating providers. The shared
+dirty framebuffer helper also rebuilds its plane update after preparation.
+Callers that submit atomic state directly still need their own preparation
+integration before delegated reading can be enabled.
 Neither explicit nor implicit atomic commits protect unrelated internal callers.
 
 Blocking atomic updates from userspace
