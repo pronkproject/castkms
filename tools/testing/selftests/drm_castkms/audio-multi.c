@@ -52,6 +52,18 @@ static void cleanup(void)
 		stop_writer(&outputs[i]);
 }
 
+static int open_after_recovery(const char *path)
+{
+	for (unsigned int attempt = 0; attempt < 500; attempt++) {
+		int fd = open(path, O_RDWR | O_CLOEXEC);
+
+		if (fd >= 0 || errno != EBUSY)
+			return fd;
+		usleep(10000);
+	}
+	return -1;
+}
+
 static void fixed(struct snd_pcm_hw_params *hw, unsigned int param, unsigned int value)
 {
 	struct snd_interval *interval = &hw->intervals[param - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL];
@@ -184,7 +196,7 @@ int main(int argc, char **argv)
 	}
 	CHECK(atexit(cleanup) == 0);
 	parent = getpid();
-	fd = open(argv[1], O_RDWR | O_CLOEXEC);
+	fd = open_after_recovery(argv[1]);
 	CHECK(fd >= 0);
 	version = drmGetVersion(fd);
 	CHECK(version && !strcmp(version->name, "castkms"));
