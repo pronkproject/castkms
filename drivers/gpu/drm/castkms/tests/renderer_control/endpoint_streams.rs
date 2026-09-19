@@ -77,10 +77,12 @@ mod cases {
             check(endpoint.source_readable()?)?;
 
             let blank = endpoint.begin_source(1)?;
-            let description = blank.scene_description()?;
-            check(description.layers.is_empty())?;
-            check(description.output == [640, 480])?;
-            check(description.content_serial > first_serial)?;
+            {
+                let description = blank.scene_description()?;
+                check(description.layers.is_empty())?;
+                check(description.output == [640, 480])?;
+                check(description.content_serial > first_serial)?;
+            }
             let blank_id = blank.id();
             blank.publish(|| ())?;
             endpoint.release_source(blank_id, Completion::Cpu)?;
@@ -223,7 +225,7 @@ mod cases {
     #[test]
     fn master_reacquisition_drains_old_claim_before_endpoint_reuse() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-stream-generation", 1)?;
-        with_registered_display(&display, |device, crtc, connector, _, file| {
+        with_registered_display(&display, |device, crtc, connector, scanout, file| {
             let owner = owner(&file, crtc, connector)?;
             let endpoint = endpoints::prepared(device, &owner)?;
             endpoint.publish(None, |_| Ok(()))?;
