@@ -88,7 +88,7 @@ mod cases {
 
     #[cfg(CONFIG_DRM_CLIENT)]
     #[test]
-    fn failed_publication_releases_reservations_under_master_guard() -> Result {
+    fn unpublished_reservations_release_under_master_guard() -> Result {
         let driver = CastKms::new_outputs(c"castkms-monitor-master-guard", 2)?;
         let device = driver._display.registration_guard().ok_or(ENODEV)?;
         let file = RegisteredMasterFile::new(&device)?;
@@ -101,10 +101,8 @@ mod cases {
         check(device.displays[0].monitor.status() == Status::Disconnected)?;
 
         let pending = Monitor::reserve_group(&device, &[0, 1])?;
-        let mut incomplete = KVec::new();
-        incomplete.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
         let current = snapshot.master().lock_current().ok_or(EACCES)?;
-        check(matches!(pending.attach_unnotified(incomplete), Err(EINVAL)))?;
+        drop(pending);
         drop(current);
         check(device.displays[0].monitor.status() == Status::Disconnected)?;
         check(device.displays[1].monitor.status() == Status::Disconnected)?;
@@ -112,6 +110,31 @@ mod cases {
         let second = device.displays[1].monitor.reserve(&device)?;
         drop(second);
         drop(first);
+        Ok(())
+    }
+
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
+    fn failed_prepared_group_unwinds_under_master_guard() -> Result {
+        let driver = CastKms::new_outputs(c"castkms-monitor-group-unwind-guard", 2)?;
+        let device = driver._display.registration_guard().ok_or(ENODEV)?;
+        let file = RegisteredMasterFile::new(&device)?;
+        let snapshot = file.file().master_snapshot().ok_or(EACCES)?;
+        let pending = Monitor::reserve_group(&device, &[0, 1])?;
+        let mut edids = KVec::new();
+        edids.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
+        edids.push(tiled_edid(b"CASTTILE0", 1)?, GFP_KERNEL)?;
+        let prepared = pending.prepare(edids)?;
+
+        device.displays[0].monitor.close();
+        let current = snapshot.master().lock_current().ok_or(EACCES)?;
+        check(matches!(prepared.publish_unnotified(), Err(ENODEV)))?;
+        drop(current);
+        check(device.displays[0].monitor.status() == Status::Disconnected)?;
+        check(device.displays[1].monitor.status() == Status::Disconnected)?;
+        check(matches!(device.displays[0].monitor.reserve(&device), Err(ENODEV)))?;
+        let second = device.displays[1].monitor.reserve(&device)?;
+        drop(second);
         Ok(())
     }
 
