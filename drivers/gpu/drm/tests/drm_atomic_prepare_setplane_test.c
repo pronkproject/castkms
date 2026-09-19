@@ -12,6 +12,7 @@
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_auth.h>
 #include <drm/drm_connector.h>
+#include <drm/drm_damage_helper.h>
 #include <drm/drm_file.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drm_framebuffer.h>
@@ -290,6 +291,44 @@ static void master_loss_cancels_setplane(struct kunit *test)
 	KUNIT_EXPECT_PTR_EQ(test, f->plane->state, before);
 }
 
+static void dirtyfb_waits_for_reader(struct kunit *test)
+{
+	struct plane_fixture *f = new_fixture(test);
+	struct drm_clip_rect clip = { .x1 = 1, .y1 = 2, .x2 = 8, .y2 = 9 };
+	struct drm_mode_rect *rect;
+
+	f->change_alpha = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_dirtyfb(f->fb, f->file->private_data,
+							 0, 0, &clip, 1), 0);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_GE(test, f->checks, 2);
+	KUNIT_EXPECT_EQ(test, f->installs, 1);
+	KUNIT_EXPECT_EQ(test, f->plane->state->alpha, 0x1234);
+	KUNIT_ASSERT_NOT_NULL(test, f->plane->state->fb_damage_clips);
+	rect = f->plane->state->fb_damage_clips->data;
+	KUNIT_EXPECT_EQ(test, rect->x1, 1);
+	KUNIT_EXPECT_EQ(test, rect->y1, 2);
+	KUNIT_EXPECT_EQ(test, rect->x2, 8);
+	KUNIT_EXPECT_EQ(test, rect->y2, 9);
+}
+
+static void master_loss_cancels_dirtyfb(struct kunit *test)
+{
+	struct plane_fixture *f = new_fixture(test);
+	struct drm_plane_state *before = f->plane->state;
+
+	f->drop_master = true;
+	start_reader(test, f);
+	KUNIT_EXPECT_EQ(test, drm_atomic_helper_dirtyfb(f->fb, f->file->private_data,
+							 0, 0, NULL, 0), -ECANCELED);
+	join_reader(f);
+	KUNIT_EXPECT_EQ(test, f->worker_error, 0);
+	KUNIT_EXPECT_EQ(test, f->installs, 0);
+	KUNIT_EXPECT_PTR_EQ(test, f->plane->state, before);
+}
+
 static void setplane_requires_request_callback(struct kunit *test)
 {
 	static const struct drm_plane_funcs unsupported = {
@@ -409,6 +448,8 @@ static void plane_update_rejects_foreign_inputs(struct kunit *test)
 static struct kunit_case cases[] = {
 	KUNIT_CASE(setplane_disable_waits_for_reader),
 	KUNIT_CASE(master_loss_cancels_setplane),
+	KUNIT_CASE(dirtyfb_waits_for_reader),
+	KUNIT_CASE(master_loss_cancels_dirtyfb),
 	KUNIT_CASE(setplane_requires_request_callback),
 	KUNIT_CASE(plane_request_revalidates_after_wait),
 	KUNIT_CASE(plane_update_preserves_unrequested_current_state),
