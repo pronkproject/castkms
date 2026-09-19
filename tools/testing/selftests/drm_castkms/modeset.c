@@ -97,6 +97,9 @@ int main(int argc, char **argv)
 	errno = 0;
 	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL) != 0);
 	CHECK(errno == EOPNOTSUPP);
+	errno = 0;
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_PAGE_FLIP_ASYNC, NULL) != 0);
+	CHECK(errno == EOPNOTSUPP);
 	drmModeAtomicFree(req);
 	check_vblank(fd, mode);
 	if (argc == 3) {
