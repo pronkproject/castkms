@@ -361,11 +361,12 @@ VKMS exposes the experiment with ``vkms.enable_preparation=1``; the option is
 off by default. The Rust CastKMS device enables the same accounting through its
 unregistered-device wrapper. Neither provider admits external pixel readers
 yet. Kernel shutdown, suspend, framebuffer removal and kernel display clients
-use the request entry described below. The legacy SETCRTC ioctl uses a resolved
-request callback on participating providers. Other legacy userspace updates and
-internal callers still need preparation integration before delegated reading
-can be enabled. Neither explicit nor implicit atomic commits establish those
-remaining legacy paths.
+use the request entry described below. The legacy SETCRTC, SETPLANE, cursor,
+page-flip, gamma and property ioctls use retained request adapters on
+participating providers. The shared dirty framebuffer helper also rebuilds its
+plane update after preparation. Callers that submit atomic state directly still
+need their own preparation integration before delegated reading can be enabled.
+Neither explicit nor implicit atomic commits protect unrelated internal callers.
 
 Blocking atomic updates from userspace
 -------------------------------------
@@ -932,8 +933,8 @@ The caller still owns the client's lifetime and device resources.
 Checking a client's proposed configuration does not replace display state and
 does not wait for readers or hold their admission. Devices without preparation
 retain the ordinary client commit path. These client operations do not provide
-preparation for legacy userspace ioctls or driver helpers that borrow modeset
-locks from their callers.
+preparation for other kernel callers that submit atomic state directly or borrow
+modeset locks from their callers.
 
 Kernel tests use an outstanding read claim and a second thread which needs the
 modeset lock before releasing it. They check rebuilding, intervening generation
