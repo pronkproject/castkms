@@ -158,20 +158,30 @@ impl Client {
     ) -> bindings::__poll_t {
         // SAFETY: VFS retains the file and its private allocation throughout poll.
         let client = unsafe { &*(*file).private_data.cast::<Self>() };
-        if let Some(tap) = client.access.active_tap() {
+        // Authority changes also wake a suspended grant and a grant waiting for
+        // another grant's exclusive tap to be released.
+        // SAFETY: Both pointers have their VFS poll callback lifetimes.
+        unsafe {
+            PollTable::from_raw(table)
+                .register_wait(File::from_raw_file(file), client.access.authority_changed())
+        };
+        // This observation may open a fresh tap after master reacquisition. Register
+        // its queue before the final readiness check so its first tick cannot be lost.
+        let initial = client.access.readable();
+        let status = if let Some(tap) = client.access.active_tap() {
             // SAFETY: Both pointers have their VFS poll callback lifetimes. The retained
             // tap keeps its wait queue alive through registration and readiness recheck.
             unsafe {
                 PollTable::from_raw(table)
                     .register_wait(File::from_raw_file(file), &tap.changed)
             };
-        }
-        // SAFETY: Both pointers have their VFS poll callback lifetimes.
-        unsafe {
-            PollTable::from_raw(table)
-                .register_wait(File::from_raw_file(file), client.access.authority_changed())
+            client.access.readable()
+        } else {
+            initial
         };
-        match client.access.readable() {
+        match status {
+            // A newer grant can temporarily own the attachment's sole tap after
+            // this grant survives a master handoff. Its close wakes `changed`.
             Err(EAGAIN) | Err(EBUSY) => 0,
             // Allocation failure is not revocation, and must not report hangup.
             Err(ENOMEM) => bindings::POLLERR as _,
