@@ -97,6 +97,28 @@ mod cases {
     }
 
     #[test]
+    fn master_reacquisition_during_reply_cannot_publish_old_interval() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-reply-master", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = prepared(device, &owner)?;
+            let output = device.constraints_output(crtc)?;
+            let generation = output.snapshot(0)?.info().generation;
+            let master = file.file().master_snapshot().ok_or(EINVAL)?;
+            let mut copied_id = 0;
+            check(endpoint.publish(None, |id| {
+                copied_id = id;
+                device.authority.changed(None);
+                device.authority.changed(Some(master.master().clone()));
+                Ok(())
+            }) == Err(ESTALE))?;
+            check(copied_id != 0)?;
+            check(output.snapshot(0)?.info().generation == generation)?;
+            check(output.lookup(copied_id).err() == Some(ESTALE))
+        })
+    }
+
+    #[test]
     fn racing_close_cannot_leave_a_selectable_unowned_backend() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-close-race", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
