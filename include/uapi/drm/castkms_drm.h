@@ -704,8 +704,9 @@ struct drm_castkms_renderer_release_job {
  *
  * Claims one ready capture destination for an independent private-to-recipient
  * stage. The private image must have completed RELEASE_JOB successfully.
- * This operation acquires no compositor source read. ENODATA means no recipient
- * is ready for this image; EBUSY means another output claim is outstanding.
+ * This operation acquires no compositor source read. ENODATA means the private
+ * image or a recipient claim is unavailable at this instant; a prior POLLIN
+ * observation reserves neither. EBUSY means another output claim is outstanding.
  * No descriptor is installed on failure. On success RELEASE_OUTPUT is required.
  */
 struct drm_castkms_renderer_acquire_output {

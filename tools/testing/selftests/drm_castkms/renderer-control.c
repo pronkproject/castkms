@@ -150,6 +150,26 @@ static void readable(int fd, int expected)
 	CHECK(!!(pollfd.revents & POLLIN) == expected);
 }
 
+/* Readability is advisory, and it does not reserve the requested private image. */
+static int wait_output_ioctl(int fd,
+			     struct drm_castkms_renderer_acquire_output *request,
+			     int expected_error)
+{
+	for (unsigned int attempt = 0; attempt < 200; attempt++) {
+		struct pollfd pollfd = { .fd = fd, .events = POLLIN };
+		int ret = ioctl(fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT, request);
+
+		if (expected_error ? ret < 0 && errno == expected_error : ret == 0)
+			return 0;
+		CHECK(ret < 0 && (errno == ENODATA || errno == EBUSY));
+		CHECK(poll(&pollfd, 1, 50) >= 0);
+		CHECK(!(pollfd.revents & (POLLHUP | POLLERR | POLLNVAL)));
+		usleep(1000);
+	}
+	errno = ETIMEDOUT;
+	return -1;
+}
+
 static void hung_up(int fd)
 {
 	struct pollfd pollfd = { .fd = fd, .events = POLLIN };
@@ -545,8 +565,7 @@ int main(int argc, char **argv)
 	/* Failed publication grants no access and leaks no DMA-BUF descriptor. */
 	take_output.result = (uintptr_t)fault;
 	baseline = open_files();
-	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT,
-		     &take_output, EFAULT);
+	CHECK(wait_output_ioctl(files.renderer_fd, &take_output, EFAULT) == 0);
 	CHECK(open_files() == baseline);
 	wait_capture(capture_files.capture_fd);
 	take_capture.result = (uintptr_t)&capture_result;
@@ -557,8 +576,7 @@ int main(int argc, char **argv)
 	queue.use_id = 2;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
 	take_output.result = (uintptr_t)&renderer_output;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT,
-		    &take_output) == 0);
+	CHECK(wait_output_ioctl(files.renderer_fd, &take_output, 0) == 0);
 	CHECK(renderer_output.image_id == 1 && renderer_output.width == mode->hdisplay);
 	CHECK(renderer_output.height == mode->vdisplay);
 	CHECK(renderer_output.format == DRM_FORMAT_XRGB8888 &&
@@ -593,8 +611,7 @@ int main(int argc, char **argv)
 	queue.use_id = 3;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
 	take_output.image_id = 2;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT,
-		    &take_output) == 0);
+	CHECK(wait_output_ioctl(files.renderer_fd, &take_output, 0) == 0);
 	CHECK(renderer_output.image_id == 2 && renderer_output.dma_buf_fd >= 0);
 	CHECK(fcntl(renderer_output.dma_buf_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CANCEL,
@@ -637,8 +654,7 @@ int main(int argc, char **argv)
 	release.job_id = job->job_id;
 	close_job(job);
 	take_output.image_id = 2;
-	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_OUTPUT,
-		    &take_output) == 0);
+	CHECK(wait_output_ioctl(files.renderer_fd, &take_output, 0) == 0);
 	CHECK(renderer_output.image_id == 2 && renderer_output.dma_buf_fd >= 0);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_WITHDRAW, &withdraw) == 0);
 	CHECK(query_endpoint(files.renderer_fd).state == DRM_CASTKMS_RENDERER_STATE_WITHDRAWN);
