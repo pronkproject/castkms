@@ -4,6 +4,7 @@
 #include <drm/drm_atomic_request.h>
 #include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_blend.h>
+#include <drm/drm_colorop.h>
 #include <drm/drm_color_mgmt.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_fourcc.h>
@@ -19,9 +20,14 @@ struct apply_fixture {
 	struct drm_crtc *crtc;
 	struct drm_connector connector;
 	struct drm_atomic_commit *state;
+	struct drm_colorop *colorop;
 	unsigned int validations;
 	int validation_error;
 	const struct drm_crtc_funcs *original_crtc_funcs;
+};
+
+static const struct drm_colorop_funcs colorop_funcs = {
+	.destroy = drm_colorop_destroy,
 };
 
 static void finish_state(void *data)
@@ -31,10 +37,11 @@ static void finish_state(void *data)
 	drm_atomic_commit_put(f->state);
 }
 
-static struct apply_fixture *new_fixture(struct kunit *test)
+static struct apply_fixture *new_fixture_with_pipeline(struct kunit *test, bool pipeline)
 {
 	struct apply_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
 	struct device *parent = drm_kunit_helper_alloc_device(test);
+	int ret;
 
 	KUNIT_ASSERT_NOT_NULL(test, f);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, parent);
@@ -47,11 +54,30 @@ static struct apply_fixture *new_fixture(struct kunit *test)
 	f->crtc = drm_kunit_helper_create_crtc(test, f->dev, f->plane, NULL, NULL, NULL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, f->crtc);
 	drm_plane_enable_fb_damage_clips(f->plane);
+	if (pipeline) {
+		struct drm_prop_enum_list description = { .name = "Test pipeline" };
+
+		f->colorop = kzalloc_obj(*f->colorop);
+		KUNIT_ASSERT_NOT_NULL(test, f->colorop);
+		ret = drm_plane_colorop_ctm_3x4_init(f->dev, f->colorop, f->plane,
+						     &colorop_funcs,
+						     DRM_COLOROP_FLAG_ALLOW_BYPASS);
+		KUNIT_ASSERT_EQ(test, ret, 0);
+		description.type = f->colorop->base.id;
+		KUNIT_ASSERT_EQ(test,
+				drm_plane_create_color_pipeline_property(f->plane, &description, 1),
+				0);
+	}
 	drm_mode_config_reset(f->dev);
 	f->state = drm_atomic_commit_alloc(f->dev);
 	KUNIT_ASSERT_NOT_NULL(test, f->state);
 	KUNIT_ASSERT_EQ(test, kunit_add_action_or_reset(test, finish_state, f), 0);
 	return f;
+}
+
+static struct apply_fixture *new_fixture(struct kunit *test)
+{
+	return new_fixture_with_pipeline(test, false);
 }
 
 /* KUnit assertions and cleanup run only after the acquire context is finished. */
@@ -708,6 +734,49 @@ static void plane_color_is_reapplied_to_current_state(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->validations, 2);
 }
 
+static void plane_color_pipeline_is_reapplied_by_reference(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture_with_pipeline(test, true);
+	struct drm_colorop *colorop = f->colorop;
+	struct drm_device *foreign_dev = kunit_kzalloc(test, sizeof(*foreign_dev), GFP_KERNEL);
+	struct drm_colorop foreign = {
+		.base = { .id = colorop->base.id, .type = DRM_MODE_OBJECT_COLOROP },
+		.dev = foreign_dev,
+	};
+	struct drm_atomic_request_entry entry = {
+		.object = &f->plane->base,
+		.property = f->plane->color_pipeline_property,
+		.type = DRM_ATOMIC_REQUEST_OBJECT,
+		.reference = &colorop->base,
+	};
+	struct drm_atomic_request_entry malformed = entry;
+	struct drm_atomic_request *request;
+	unsigned int i;
+
+	KUNIT_ASSERT_NOT_NULL(test, foreign_dev);
+	malformed.type = DRM_ATOMIC_REQUEST_SCALAR;
+	malformed.scalar = colorop->base.id;
+	request = drm_atomic_request_create(f->dev, &malformed, 1);
+	KUNIT_ASSERT_TRUE(test, IS_ERR(request));
+	KUNIT_EXPECT_EQ(test, PTR_ERR(request), -EINVAL);
+	malformed.type = DRM_ATOMIC_REQUEST_OBJECT;
+	malformed.reference = &foreign.base;
+	request = drm_atomic_request_create(f->dev, &malformed, 1);
+	KUNIT_ASSERT_TRUE(test, IS_ERR(request));
+	KUNIT_EXPECT_EQ(test, PTR_ERR(request), -EINVAL);
+	request = new_request(test, f, &entry, 1);
+	for (i = 0; i < 2; i++) {
+		struct drm_plane_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_plane_state(f->state, f->plane);
+		KUNIT_EXPECT_PTR_EQ(test, state->color_pipeline, colorop);
+		KUNIT_EXPECT_TRUE(test, state->color_mgmt_changed);
+		drm_atomic_commit_clear(f->state);
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static int set_test_scalar(struct drm_crtc *crtc, struct drm_crtc_state *state,
 			   struct drm_property *property, u64 value)
 {
@@ -764,6 +833,7 @@ static void private_scalar_is_reapplied_only_after_opt_in(struct kunit *test)
 static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(private_scalar_is_reapplied_only_after_opt_in),
 	KUNIT_CASE(plane_color_is_reapplied_to_current_state),
+	KUNIT_CASE(plane_color_pipeline_is_reapplied_by_reference),
 	KUNIT_CASE(rotation_is_reapplied_to_current_state),
 	KUNIT_CASE(zpos_is_reapplied_to_current_state),
 	KUNIT_CASE(plane_blending_is_reapplied_to_current_state),

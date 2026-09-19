@@ -59,6 +59,18 @@ static int validate_entry(struct drm_device *dev,
 	if (prop == dev->mode_config.prop_in_fence_fd)
 		return entry->object->type == DRM_MODE_OBJECT_PLANE &&
 		       entry->type == DRM_ATOMIC_REQUEST_FENCE ? 0 : -EINVAL;
+	if (entry->object->type == DRM_MODE_OBJECT_PLANE &&
+	    prop == obj_to_plane(entry->object)->color_pipeline_property) {
+		u64 value;
+
+		if (entry->type != DRM_ATOMIC_REQUEST_OBJECT ||
+		    (entry->reference &&
+		     (entry->reference->type != DRM_MODE_OBJECT_COLOROP ||
+		      object_device(entry->reference) != dev)))
+			return -EINVAL;
+		value = entry->reference ? entry->reference->id : 0;
+		return drm_property_change_valid_get(prop, value, &unused) ? 0 : -EINVAL;
+	}
 	if (drm_property_type_is(prop, DRM_MODE_PROP_BLOB))
 		return entry->type == DRM_ATOMIC_REQUEST_BLOB &&
 		       (!entry->blob || entry->blob->dev == dev) ? 0 : -EINVAL;
