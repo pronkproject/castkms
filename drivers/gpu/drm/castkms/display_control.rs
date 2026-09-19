@@ -295,4 +295,16 @@ impl Current<'_> {
         }
         Ok(content_serial)
     }
+
+    /// An active blank output must not deliver pixels from an earlier revision.
+    pub(crate) fn check_blank_render_content(
+        &self,
+        content: Option<crate::scene::ContentSerial>,
+    ) -> Result {
+        let scene = self.scene.ok_or(EAGAIN)?;
+        if scene.layers().next().is_none() && scene.render_content() != content {
+            return Err(ESTALE);
+        }
+        Ok(())
+    }
 }

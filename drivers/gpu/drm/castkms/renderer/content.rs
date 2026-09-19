@@ -139,6 +139,7 @@ impl Released {
         if self.evidence.configuration != *current.configuration() {
             return Err(ESTALE);
         }
+        current.check_blank_render_content(self.evidence.content)?;
         match self.status() {
             Status::Pending => Err(EAGAIN),
             Status::Complete(result) => result,
