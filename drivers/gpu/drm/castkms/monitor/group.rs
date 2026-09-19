@@ -204,7 +204,7 @@ fn descriptions(edids: KVec<Edid>, member_count: usize) -> Result<KVec<Descripti
     for edid in edids {
         descriptions.push(
             Description::Attached {
-                edid: Some(edid),
+                edid: Some(Arc::new(edid, GFP_KERNEL)?),
                 #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
                 audio: None,
             },

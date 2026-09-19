@@ -17,7 +17,7 @@ use kernel::{
 
 enum Description {
     Attached {
-        edid: Option<Edid>,
+        edid: Option<Arc<Edid>>,
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
         audio: Option<Arc<crate::audio::Attachment>>,
     },
@@ -293,7 +293,7 @@ impl Control {
             }
         };
         Ok(Description::Attached {
-            edid,
+            edid: edid.map(|edid| Arc::new(edid, GFP_KERNEL)).transpose()?,
             #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
             audio,
         })
@@ -325,7 +325,7 @@ impl Control {
         let Description::Attached { edid, .. } = &description else {
             return Err(EINVAL);
         };
-        connector.guard(&guard).update_edid(edid.as_ref())?;
+        connector.guard(&guard).update_edid(edid.as_deref())?;
         let retired = self.monitor.publish(&self.identity, description)?;
         self.monitor.cec.set_attached(true);
         drop(guard);
