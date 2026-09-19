@@ -1262,6 +1262,16 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 		destroy_buffer(fd, &sources[i]);
 		destroy_buffer(fd, &destinations[i]);
 	}
+	{
+		drmModeAtomicReq *request = drmModeAtomicAlloc();
+
+		/* Disabling the CRTC does not clear its retained color state. */
+		CHECK(request);
+		property(fd, request, resources->crtcs[0], DRM_MODE_OBJECT_CRTC,
+			 "GAMMA_LUT", 0);
+		CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
+		drmModeAtomicFree(request);
+	}
 	destroy_buffer(fd, &shared);
 	destroy_buffer(fd, &scaled);
 }
