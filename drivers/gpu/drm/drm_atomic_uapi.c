@@ -1479,6 +1479,10 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 		drm_dbg_atomic(dev, "commit failed: reserved field set\n");
 		return -EINVAL;
 	}
+	if (dev->mode_config.preparation &&
+	    (arg->flags & DRM_MODE_PAGE_FLIP_ASYNC) &&
+	    !(arg->flags & DRM_MODE_ATOMIC_TEST_ONLY))
+		return -EOPNOTSUPP;
 
 	if (arg->flags & DRM_MODE_PAGE_FLIP_ASYNC) {
 		if (!dev->mode_config.async_page_flip) {
