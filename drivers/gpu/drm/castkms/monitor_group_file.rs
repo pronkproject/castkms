@@ -468,6 +468,7 @@ pub(crate) fn create(
     let topology = monitor::group::Topology::from_edids(&edids)?;
     let claim = dev.monitor_groups.claim(*topology.identity())?;
     let pending = monitor::Monitor::reserve_group(dev, &output_indices)?;
+    let prepared = pending.prepare(edids)?;
     let group_id = next_group_id()?;
     let mut mappings = [Mapping::default(); uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize];
     let mut crtc_ids = [0; uapi::DRM_CASTKMS_MONITOR_GROUP_MAX_MEMBERS as usize];
@@ -551,7 +552,7 @@ pub(crate) fn create(
     } else {
         None
     };
-    let (control, _) = pending.attach_unnotified(edids)?;
+    let (control, _) = prepared.publish_unnotified()?;
     drop(current);
     control.notify();
     *lease.control.lock() = Some(Managed {
