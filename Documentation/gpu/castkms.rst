@@ -150,6 +150,9 @@ callers must discard all output bytes on failure, including partial copyout.
 The anonymous close-on-exec control file supports query, attach, detach and CEC
 transport operations. Attach accepts either a complete validated EDID or no EDID, in
 which case the driver publishes fallback modes with 1920 by 1080 preferred.
+Attach and detach update native EDID-derived connector information before
+returning; clients need not probe modes before observing the corresponding
+CEC physical address or its invalidation.
 Each successful change emits a normal DRM hotplug event. The capability does
 not expose DRM objects, framebuffers, capture images, modesetting, or renderer
 authority, including when administratively issued. A second
