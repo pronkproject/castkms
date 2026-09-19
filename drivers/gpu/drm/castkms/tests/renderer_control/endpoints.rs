@@ -271,9 +271,13 @@ mod cases {
             check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Empty)?;
             check(device.constraints_output(crtc)?.lookup(old).err() == Some(ESTALE))?;
             endpoint.declare(private_images::profile()?, [640, 480])?;
+            check(endpoint.register_image(1, [640, 480], &[
+                private_images::buffer(device, ExportAccess::ReadWrite)?,
+            ]) == Err(ESTALE))?;
             endpoint.register_image(2, [640, 480], &[
                 private_images::buffer(device, ExportAccess::ReadWrite)?,
             ])?;
+            check(endpoint.unregister_image(1) == Err(ENOENT))?;
             endpoint.publish(None, |_| Ok(()))?;
             check(endpoint.constraints_id()? != old)
         })
