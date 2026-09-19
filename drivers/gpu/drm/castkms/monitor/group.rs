@@ -241,6 +241,13 @@ impl Monitor {
 impl Pending {
     /// Publish a validated attached group without an intermediate disconnected event.
     pub(crate) fn attach(self, edids: KVec<Edid>) -> Result<(Control, Topology)> {
+        let (control, topology) = self.attach_unnotified(edids)?;
+        control.notify();
+        Ok((control, topology))
+    }
+
+    /// Publish while holding the issuer's current-master guard.
+    pub(crate) fn attach_unnotified(self, edids: KVec<Edid>) -> Result<(Control, Topology)> {
         let topology = Topology::from_edids(&edids)?;
         let descriptions = descriptions(edids, self.controls.len())?;
         let controls = self.controls;
@@ -265,12 +272,17 @@ impl Pending {
             };
         }
         drop(states);
-        controls.first().ok_or(EINVAL)?.notify();
         Ok((Control { controls }, topology))
     }
 }
 
 impl Control {
+    pub(crate) fn notify(&self) {
+        if let Some(control) = self.controls.first() {
+            control.notify();
+        }
+    }
+
     fn release(&self) -> bool {
         let mut states: [Option<MutexGuard<'_, State>>; MAX_OUTPUTS as usize] =
             core::array::from_fn(|_| None);
