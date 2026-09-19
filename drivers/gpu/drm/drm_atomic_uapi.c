@@ -1503,6 +1503,11 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 	}
 
 	explicit_preparation = READ_ONCE(file_priv->atomic_preparation);
+	if (dev->mode_config.preparation &&
+	    (arg->flags & DRM_MODE_ATOMIC_NONBLOCK) &&
+	    !(arg->flags & DRM_MODE_ATOMIC_TEST_ONLY) &&
+	    !explicit_preparation)
+		return -EOPNOTSUPP;
 	prepare_blocking = dev->mode_config.preparation &&
 		!(arg->flags & (DRM_MODE_ATOMIC_TEST_ONLY | DRM_MODE_ATOMIC_NONBLOCK |
 				DRM_MODE_PAGE_FLIP_ASYNC));

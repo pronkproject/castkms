@@ -91,6 +91,13 @@ int main(int argc, char **argv)
 	crtc = drmModeGetCrtc(fd, crtc_id);
 	CHECK(crtc && crtc->mode_valid && crtc->buffer_id == a.fb);
 	drmModeFreeCrtc(crtc);
+	req = drmModeAtomicAlloc();
+	CHECK(req);
+	property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", a.fb);
+	errno = 0;
+	CHECK(drmModeAtomicCommit(fd, req, DRM_MODE_ATOMIC_NONBLOCK, NULL) != 0);
+	CHECK(errno == EOPNOTSUPP);
+	drmModeAtomicFree(req);
 	check_vblank(fd, mode);
 	if (argc == 3) {
 		struct buffer foreign = import_buffer(fd, argv[2], mode->hdisplay, mode->vdisplay);
@@ -110,11 +117,18 @@ int main(int argc, char **argv)
 		CHECK(req);
 		property(fd, req, plane_id, DRM_MODE_OBJECT_PLANE, "FB_ID", foreign.fb);
 		for (unsigned int i = 0; i < sizeof(flags) / sizeof(flags[0]); i++) {
-			uint32_t expected = flags[i] & DRM_MODE_ATOMIC_TEST_ONLY ?
+			uint32_t expected = flags[i] & (DRM_MODE_ATOMIC_TEST_ONLY |
+						 DRM_MODE_ATOMIC_NONBLOCK) ?
 					    a.fb : foreign.fb;
 
 			CHECK(drmModeSetCrtc(fd, crtc_id, a.fb, 0, 0, &connector_id, 1, mode) == 0);
-			CHECK(drmModeAtomicCommit(fd, req, flags[i], NULL) == 0);
+			if (flags[i] & DRM_MODE_ATOMIC_NONBLOCK) {
+				errno = 0;
+				CHECK(drmModeAtomicCommit(fd, req, flags[i], NULL) != 0);
+				CHECK(errno == EOPNOTSUPP);
+			} else {
+				CHECK(drmModeAtomicCommit(fd, req, flags[i], NULL) == 0);
+			}
 			crtc = drmModeGetCrtc(fd, crtc_id);
 			CHECK(crtc && crtc->mode_valid && crtc->buffer_id == expected);
 			drmModeFreeCrtc(crtc);
