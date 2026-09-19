@@ -23,7 +23,7 @@ DMA services.
 Kernel-controlled Final-image Capture
 ====================================
 
-``drm_capture.h`` provides an initial, kernel-only request core for a provider
+``drm_capture.h`` provides a kernel-only request core for a provider
 that already knows which final image its recipient is allowed to receive.
 It is not a grant-creation ioctl, a DRM object authorization check, or a way
 to export arbitrary scanout planes. The creating caller must establish that
@@ -35,8 +35,8 @@ reserves a credit and allocates zeroed private image storage before a provider
 claims a request. A full queue returns ``-EAGAIN`` without selecting a source.
 Completed results retain their credits until acknowledged, so both queued
 requests and unread results remain bounded. Memory use is bounded by the
-configured capacity times the image size, plus request metadata; a future
-userspace adapter must validate those limits against its own allocation quota.
+configured capacity times the image size, plus request metadata. A userspace
+adapter must validate those limits against its own allocation quota.
 
 The synchronous reference provider, ``drm_capture_publish_snapshot()``, serves
 the oldest queued request from an already composed kernel image. Its input
@@ -92,15 +92,15 @@ references. ``drm_capture_close()`` combines shutdown with release of the
 caller's reference. Neither shutdown nor close ends access by an already
 claimed provider job. A file adapter must preserve those distinctions when
 file references or provider registrations end. None of these operations needs
-a userspace ioctl context, so an adapter will call the same core as an
+a userspace ioctl context, so an adapter can call the same core as an
 in-kernel consumer.
 
 The KUnit ``drm_capture`` suite exercises the core with real allocations and
 kernel-controlled snapshot publication. It does not create a public capture
-interface. Capture-holder files, DRM grant policy, destination DMA-BUF registration,
-format negotiation, provider notification and safe Rust ownership wrappers
-are subsequent integrations. In particular, the CPU snapshot helper does not
-claim the delegated GPU composition path or create a future-userspace fence.
+interface by itself. Capture-holder files, DRM grant policy, destination
+DMA-BUF registration, format negotiation and provider notification are
+separate integrations. In particular, the CPU snapshot helper does not
+implement delegated GPU composition or create a userspace-controlled fence.
 
 VKMS Reference Composition
 --------------------------
