@@ -545,10 +545,11 @@ static void enum_property(int fd, drmModeAtomicReq *request, uint32_t object,
 	CHECK(drmModeAtomicAddProperty(request, object, property_id, value) >= 0);
 }
 
-static void check_property_value(int fd, uint32_t object, uint32_t type,
-				 const char *name, uint64_t expected)
+static uint64_t property_value(int fd, uint32_t object, uint32_t type,
+			      const char *name)
 {
 	drmModeObjectProperties *properties = drmModeObjectGetProperties(fd, object, type);
+	uint64_t value = 0;
 	bool found = false;
 
 	CHECK(properties);
@@ -557,13 +558,20 @@ static void check_property_value(int fd, uint32_t object, uint32_t type,
 
 		CHECK(property);
 		if (!strcmp(property->name, name)) {
-			CHECK(properties->prop_values[i] == expected);
+			value = properties->prop_values[i];
 			found = true;
 		}
 		drmModeFreeProperty(property);
 	}
 	drmModeFreeObjectProperties(properties);
 	CHECK(found);
+	return value;
+}
+
+static void check_property_value(int fd, uint32_t object, uint32_t type,
+				 const char *name, uint64_t expected)
+{
+	CHECK(property_value(fd, object, type, name) == expected);
 }
 
 static void check_tile_pixels(int dma_fd, const struct buffer *buffer,
@@ -813,7 +821,7 @@ static void add_overlay(drmModeAtomicReq *request, int fd, uint32_t plane,
 
 static void commit_stacked_overlays(int fd, uint32_t crtc,
 				    const struct buffer buffers[2],
-				    uint32_t planes[2])
+				    uint32_t planes[2], uint64_t previous_zpos[2])
 {
 	drmModeAtomicReq *request = drmModeAtomicAlloc();
 
@@ -821,6 +829,13 @@ static void commit_stacked_overlays(int fd, uint32_t crtc,
 	planes[0] = overlay_plane(fd, 0, 0);
 	planes[1] = overlay_plane(fd, 0, 1);
 	CHECK(planes[0] != planes[1]);
+	/* Equal starting positions use the planes' stable order for the first check. */
+	for (unsigned int i = 0; i < 2; i++) {
+		previous_zpos[i] = property_value(fd, planes[i], DRM_MODE_OBJECT_PLANE,
+						  "zpos");
+		property(fd, request, planes[i], DRM_MODE_OBJECT_PLANE,
+			 "zpos", 1);
+	}
 	add_overlay(request, fd, planes[0], crtc, &buffers[0], 200, 300);
 	add_overlay(request, fd, planes[1], crtc, &buffers[1], 400, 400);
 	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
@@ -837,7 +852,8 @@ static void raise_overlay(int fd, uint32_t plane)
 	drmModeAtomicFree(request);
 }
 
-static void disable_planes(int fd, const uint32_t planes[2])
+static void disable_planes(int fd, const uint32_t planes[2],
+			   const uint64_t previous_zpos[2])
 {
 	drmModeAtomicReq *request = drmModeAtomicAlloc();
 
@@ -845,6 +861,8 @@ static void disable_planes(int fd, const uint32_t planes[2])
 	for (unsigned int i = 0; i < 2; i++) {
 		property(fd, request, planes[i], DRM_MODE_OBJECT_PLANE, "FB_ID", 0);
 		property(fd, request, planes[i], DRM_MODE_OBJECT_PLANE, "CRTC_ID", 0);
+		property(fd, request, planes[i], DRM_MODE_OBJECT_PLANE,
+			 "zpos", previous_zpos[i]);
 	}
 	CHECK(drmModeAtomicCommit(fd, request, 0, NULL) == 0);
 	drmModeAtomicFree(request);
@@ -1099,6 +1117,7 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	struct buffer stacked[2];
 	drmModeModeInfo modes[2];
 	uint32_t stacked_planes[2];
+	uint64_t previous_zpos[2];
 	uint32_t overlay_id;
 	int destination_fds[2], ticket;
 
@@ -1211,7 +1230,8 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	destroy_buffer(fd, &overlay);
 	stacked[0] = create_buffer(fd, 320, 240, 0x4a);
 	stacked[1] = create_buffer(fd, 320, 240, 0xe1);
-	commit_stacked_overlays(fd, resources->crtcs[0], stacked, stacked_planes);
+	commit_stacked_overlays(fd, resources->crtcs[0], stacked, stacked_planes,
+				previous_zpos);
 	queue_tile_captures(captures, 8);
 	dequeue_tile_captures(captures, 8, results);
 	for (unsigned int i = 0; i < 2; i++)
@@ -1223,7 +1243,10 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	for (unsigned int i = 0; i < 2; i++)
 		check_stacked_overlay_pixels(destination_fds[i], &destinations[i],
 					     scaled_values, i, true);
-	disable_planes(fd, stacked_planes);
+	disable_planes(fd, stacked_planes, previous_zpos);
+	for (unsigned int i = 0; i < 2; i++)
+		check_property_value(fd, stacked_planes[i], DRM_MODE_OBJECT_PLANE,
+				     "zpos", previous_zpos[i]);
 	for (unsigned int i = 0; i < 2; i++)
 		destroy_buffer(fd, &stacked[i]);
 	commit_green_gamma(fd, resources->crtcs[0]);
