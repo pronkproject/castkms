@@ -49,6 +49,7 @@ pub(crate) struct Endpoint {
     device: RegisteredDeviceRef<Driver>,
     next_source_id: AtomicU64,
     next_output_id: AtomicU64,
+    last_image_id: AtomicU64,
     #[pin]
     state: Mutex<State>,
 }
@@ -60,6 +61,7 @@ impl Endpoint {
             device,
             next_source_id: AtomicU64::new(1),
             next_output_id: AtomicU64::new(1),
+            last_image_id: AtomicU64::new(0),
             state <- kernel::new_mutex!(State::Empty),
         }), GFP_KERNEL)
     }
@@ -123,7 +125,7 @@ impl Endpoint {
             Configuration::new(self.access.clone(), profile, dimensions)?,
             GFP_KERNEL,
         )?;
-        let pool = Pool::new()?;
+        let pool = Pool::new_after(self.last_image_id.load(Ordering::Relaxed))?;
         let mut state = self.state.lock();
         match &*state {
             State::Empty => (),
@@ -150,7 +152,9 @@ impl Endpoint {
                 if dimensions != configuration.dimensions() {
                     return Err(EINVAL);
                 }
-                pool.insert(id, || configuration.register_image(buffers))
+                pool.insert(id, || configuration.register_image(buffers))?;
+                self.last_image_id.store(pool.last_id(), Ordering::Relaxed);
+                Ok(())
             }
             State::Closed => Err(EKEYREVOKED),
             State::Empty => Err(ENODATA),

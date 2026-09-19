@@ -54,11 +54,20 @@ pub(crate) struct Pool {
 }
 
 impl Pool {
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn new() -> Result<Self> {
+        Self::new_after(0)
+    }
+
+    pub(crate) fn new_after(last_id: u64) -> Result<Self> {
         Ok(Self {
             entries: KVec::with_capacity(MAX_IMAGES, GFP_KERNEL)?,
-            last_id: 0,
+            last_id,
         })
+    }
+
+    pub(crate) fn last_id(&self) -> u64 {
+        self.last_id
     }
 
     pub(crate) fn check(&self, id: u64) -> Result {
