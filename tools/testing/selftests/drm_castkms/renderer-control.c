@@ -54,12 +54,11 @@ struct sw_sync_create_fence_data {
 	_IOWR('W', 0, struct sw_sync_create_fence_data)
 #define SW_SYNC_IOC_INC _IOW('W', 1, uint32_t)
 
-static void expect_error(int fd, unsigned long cmd, void *request, int error)
-{
-	errno = 0;
-	CHECK(ioctl(fd, cmd, request) < 0);
-	CHECK(errno == error);
-}
+#define expect_error(fd, cmd, request, error) do { \
+	errno = 0; \
+	CHECK(ioctl((fd), (cmd), (request)) < 0); \
+	CHECK(errno == (error)); \
+} while (0)
 
 static int pending_fence(int *timeline)
 {
