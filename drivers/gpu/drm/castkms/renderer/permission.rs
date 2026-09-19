@@ -141,6 +141,11 @@ pub(crate) struct WorkerRegistration {
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
 impl Access {
+    /// Terminal issuer revocation, without requiring the bound master to be current.
+    pub(crate) fn is_revoked(&self) -> bool {
+        *self.policy.revoked.lock()
+    }
+
     /// Observe the current work generation while the bound master is current.
     pub(crate) fn current_interval(&self) -> Result<Interval> {
         self.policy

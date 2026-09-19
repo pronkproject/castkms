@@ -577,7 +577,12 @@ struct drm_castkms_create_renderer {
  * required storage or changed job; EBUSY means retry is caller-driven.
  * poll prompts job acquisition, never carries descriptors or proves GPU work
  * complete. Readability does not reserve a job or a particular private image.
- * Withdrawal reports POLLHUP|POLLERR but leaves release/cleanup operations usable.
+ * Temporary loss of the bound master leaves poll idle; a retained file may
+ * configure a fresh generation after that same master returns and work drains.
+ * If old jobs still drain after return, hangup may describe their withdrawn
+ * generation; query again after release rather than treating it as file close.
+ * Explicit WITHDRAW and issuer revocation report POLLHUP|POLLERR but leave
+ * release/cleanup operations usable.
  */
 #define DRM_CASTKMS_RENDERER_STATE_EMPTY 0
 #define DRM_CASTKMS_RENDERER_STATE_CONFIGURED 1

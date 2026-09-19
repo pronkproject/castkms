@@ -4,6 +4,7 @@
 #include "fixture.h"
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -22,6 +23,22 @@ static void close_files(struct drm_castkms_renderer_files *files)
 	CHECK(close(files->revoke_fd) == 0);
 	files->renderer_fd = -1;
 	files->revoke_fd = -1;
+}
+
+static void idle_poll(int fd)
+{
+	struct pollfd event = { .fd = fd, .events = POLLIN };
+
+	CHECK(poll(&event, 1, 0) == 0 && event.revents == 0);
+}
+
+static void revoked_poll(int fd)
+{
+	struct pollfd event = { .fd = fd, .events = POLLIN };
+
+	CHECK(poll(&event, 1, 0) == 1);
+	CHECK((event.revents & (POLLHUP | POLLERR)) == (POLLHUP | POLLERR));
+	CHECK(!(event.revents & POLLNVAL));
 }
 
 int main(int argc, char **argv)
@@ -58,6 +75,7 @@ int main(int argc, char **argv)
 	CHECK(close(helper) == 0);
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY,
 		     &query, EKEYREVOKED);
+	revoked_poll(files.renderer_fd);
 	close_files(&files);
 
 	helper = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -67,12 +85,19 @@ int main(int argc, char **argv)
 	CHECK(query.version == DRM_CASTKMS_RENDERER_VERSION);
 	CHECK(drmDropMaster(master) == 0);
 	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query, EACCES);
+	idle_poll(files.renderer_fd);
 	acquire_master(master);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY, &query) == 0);
 	CHECK(query.state == DRM_CASTKMS_RENDERER_STATE_EMPTY);
+	idle_poll(files.renderer_fd);
+	CHECK(drmDropMaster(master) == 0);
+	CHECK(close(helper) == 0);
+	revoked_poll(files.renderer_fd);
+	acquire_master(master);
+	expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_QUERY,
+		     &query, EKEYREVOKED);
 
 	close_files(&files);
-	CHECK(close(helper) == 0);
 	drmModeFreeResources(resources);
 	CHECK(close(master) == 0);
 	return 0;

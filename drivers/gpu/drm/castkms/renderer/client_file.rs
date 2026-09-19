@@ -172,6 +172,9 @@ impl ClientFile {
         }) {
             Ok(true) => (bindings::POLLIN | bindings::POLLRDNORM) as _,
             Ok(false) => 0,
+            // Losing the bound master suspends observation, but the same master may
+            // return and reuse this endpoint after its old generation drains.
+            Err(EACCES) => 0,
             Err(_) => (bindings::POLLHUP | bindings::POLLERR) as _,
         }
     }

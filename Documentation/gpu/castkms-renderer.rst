@@ -257,6 +257,13 @@ and recipient jobs; once drained, the retained endpoint reports ``EMPTY`` when
 the same master returns and can configure a new generation. A list-change event
 only prompts re-query; it grants no authority.
 
+While the bound master is absent, renderer-file ``poll`` is idle rather than
+reporting terminal hangup. Issuer revocation and explicit withdrawal still report
+``POLLHUP|POLLERR``. If old jobs remain after the same master returns, hangup
+may report their withdrawn generation until they drain. Re-query the retained
+endpoint after release; hangup does not by itself mean that file cannot become
+``EMPTY``.
+
 Remaining integration
 =====================
 

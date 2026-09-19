@@ -57,6 +57,9 @@ impl Stream {
 impl Endpoint {
     /// Advisory source availability. An unselected publication is idle, not revoked.
     pub(crate) fn source_readable(&self) -> Result<bool> {
+        if self.access.is_revoked() {
+            return Err(EKEYREVOKED);
+        }
         self.refresh_generation()?;
         let state = self.state.lock();
         match &*state {
