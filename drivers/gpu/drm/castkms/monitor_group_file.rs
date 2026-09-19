@@ -537,8 +537,23 @@ pub(crate) fn create(
     .writer()
     .write(&files)?;
 
-    check_authority()?;
-    let (control, _) = pending.attach(edids)?;
+    let current = if let Some(snapshot) = &snapshot {
+        let guard = snapshot.master().lock_current().ok_or(EACCES)?;
+        if !guard.is_master_file(file) {
+            return Err(EACCES);
+        }
+        for connector in &authority_connectors {
+            if !guard.holds_object(&**connector) {
+                return Err(EACCES);
+            }
+        }
+        Some(guard)
+    } else {
+        None
+    };
+    let (control, _) = pending.attach_unnotified(edids)?;
+    drop(current);
+    control.notify();
     *lease.control.lock() = Some(Managed {
         _control: control,
         _claim: claim,
