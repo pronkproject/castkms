@@ -58,6 +58,39 @@ mod cases {
     }
 
     #[test]
+    fn active_blanking_acquires_a_zero_plane_job() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-blank-job", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.publish(None, |_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+
+            let first = endpoint.begin_source(1)?;
+            let first_serial = first.scene_description()?.content_serial;
+            check(first.scene_description()?.layers.len() == 1)?;
+            let first_id = first.id();
+            first.publish(|| ())?;
+            endpoint.release_source(first_id, Completion::Cpu)?;
+            device.atomic_update(|state| state.disable_plane(crtc.primary_plane()))?;
+            check(endpoint.source_readable()?)?;
+
+            let blank = endpoint.begin_source(1)?;
+            let description = blank.scene_description()?;
+            check(description.layers.is_empty())?;
+            check(description.output == [640, 480])?;
+            check(description.content_serial > first_serial)?;
+            let blank_id = blank.id();
+            blank.publish(|| ())?;
+            endpoint.release_source(blank_id, Completion::Cpu)?;
+            check(endpoint.completed_image(1).is_ok())?;
+            check(endpoint.begin_source(1).err() == Some(ENODATA))?;
+            Ok(())
+        })
+    }
+
+    #[test]
     fn terminal_producer_errors_never_become_source_readiness() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-producer-error", 1)?;
         with_registered_display(&display, |device, crtc, connector, scanout, file| {
