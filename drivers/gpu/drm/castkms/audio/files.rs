@@ -173,6 +173,8 @@ impl Client {
         };
         match client.access.readable() {
             Err(EAGAIN) | Err(EBUSY) => 0,
+            // Allocation failure is not revocation, and must not report hangup.
+            Err(ENOMEM) => bindings::POLLERR as _,
             Err(_) => (bindings::POLLHUP | bindings::POLLERR) as _,
             Ok(true) => (bindings::POLLIN | bindings::POLLRDNORM) as _,
             Ok(false) => 0,
