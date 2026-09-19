@@ -67,6 +67,56 @@ mod cases {
     }
 
     #[test]
+    fn output_poll_skips_stale_completed_images() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-output-interval", 1)?;
+        with_registered_display(&display, |device, crtc, connector, scanout, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.register_image(2, [640, 480], &[
+                private_images::buffer(device, ExportAccess::ReadWrite)?,
+            ])?;
+            endpoint.publish(None, |_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+
+            let first = endpoint.begin_source(1)?;
+            let first_id = first.id();
+            first.publish(|| ())?;
+            endpoint.release_source(first_id, Completion::Cpu)?;
+
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            device.atomic_update(|mut state| {
+                state.as_mut().set_crtc_config(crtc, Some(scanout))?;
+                state.add_crtc_state(crtc)?.set_constraints(&entry)
+            })?;
+            let second = endpoint.begin_source(2)?;
+            let second_id = second.id();
+            second.publish(|| ())?;
+            endpoint.release_source(second_id, Completion::Cpu)?;
+            check(endpoint.completed_image(1).err() == Some(ESTALE))?;
+            check(endpoint.completed_image(2).is_ok())?;
+
+            let grant = capture_grant(&file, crtc, connector)?;
+            let scope = grant.capture().describe_delegated()?;
+            let registration = scope.register_queue(1)?;
+            let backing = private_images::buffer(device, ExportAccess::ReadWrite)?;
+            let destination = scope.register_destination(
+                &backing, drm::fourcc::XRGB8888, drm::fourcc::FORMAT_MOD_LINEAR, 2560, 0,
+            )?;
+            registration.with_queue(|queue| queue.queue_to(7, &destination, None))?;
+            check(endpoint.output_readable()?)?;
+            let output = endpoint.begin_output(2)?;
+            let output_id = output.id();
+            output.publish(|| ())?;
+            endpoint.release_output(output_id, Completion::Cpu)?;
+            registration.with_queue(|queue| {
+                queue.advance();
+                queue.dequeue(|result| check(result.use_id == 7 && result.result.is_ok()))
+            })
+        })
+    }
+
+    #[test]
     fn failed_output_publication_grants_no_destination_access() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-output-publish", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {

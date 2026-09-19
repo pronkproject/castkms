@@ -34,20 +34,24 @@ impl Stream {
 impl Endpoint {
     pub(crate) fn output_readable(&self) -> Result<bool> {
         self.refresh_generation()?;
-        let (broker, image) = {
-            let state = self.state.lock();
-            let State::Ready { publication, pool, output, .. } = &*state else {
-                // Empty, configuration and publishing endpoints are idle, not terminal.
-                return if matches!(&*state, State::Closed) {
-                    Err(EKEYREVOKED)
-                } else {
-                    Ok(false)
-                };
+        let state = self.state.lock();
+        let State::Ready { publication, pool, output, .. } = &*state else {
+            // Empty, configuration and publishing endpoints are idle, not terminal.
+            return if matches!(&*state, State::Closed) {
+                Err(EKEYREVOKED)
+            } else {
+                Ok(false)
             };
-            if !matches!(output.slot, Slot::Ready) { return Ok(false); }
-            (publication.control().worker()?.outputs().clone(), pool.first_completed())
         };
-        Ok(image.is_some_and(|image| broker.can_claim(&image)))
+        if !matches!(output.slot, Slot::Ready) { return Ok(false); }
+        let control = publication.control();
+        let broker = control.worker()?.outputs().clone();
+        let readable = pool.completed_images().any(|image| {
+            // Queue admission turns an invalid image into a terminal recipient error.
+            // Ignore results from earlier display intervals before inspecting demand.
+            control.check_completed(image).is_ok() && broker.can_claim(image)
+        });
+        Ok(readable)
     }
 
     pub(crate) fn begin_output(&self, image_id: u64) -> Result<Pending<'_>> {

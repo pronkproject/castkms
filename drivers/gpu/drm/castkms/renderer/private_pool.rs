@@ -163,8 +163,9 @@ impl Pool {
             .ok_or(ENODATA)
     }
 
-    pub(crate) fn first_completed(&self) -> Option<Arc<Rendered>> {
-        self.entries.iter().find_map(|entry| entry.completed.clone())
+    /// Borrow every retained result so readiness can skip an older display interval.
+    pub(crate) fn completed_images(&self) -> impl Iterator<Item = &Arc<Rendered>> {
+        self.entries.iter().filter_map(|entry| entry.completed.as_ref())
     }
 
     /// Return the previous retention for destruction outside endpoint exclusion.
