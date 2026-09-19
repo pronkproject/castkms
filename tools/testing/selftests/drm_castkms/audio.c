@@ -238,6 +238,14 @@ int main(int argc, char **argv)
 		CHECK(poll(&event, 1, 0) == 0);
 	}
 	CHECK(close(next.revoke_fd) == 0);
+	CHECK(drmModeSetCrtc(fd, crtc_id, buffer.fb, 0, 0,
+			     &connector_id, 1, &mode) == 0);
+	{
+		struct pollfd event = { .fd = audio.audio_fd, .events = POLLIN };
+
+		CHECK(poll(&event, 1, 1500) == 1 && (event.revents & POLLIN) &&
+		      !(event.revents & (POLLHUP | POLLERR)));
+	}
 	CHECK(ioctl(audio.audio_fd, DRM_IOCTL_CASTKMS_AUDIO_QUERY, &query) == 0);
 	CHECK(close(next.audio_fd) == 0);
 	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH, &detach) == 0);
