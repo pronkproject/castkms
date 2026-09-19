@@ -195,6 +195,14 @@ int main(int argc, char **argv)
 	}
 	CHECK(found);
 	pause_resume(pcm);
+	/* Reasserting the same sink must keep its live PCM and capture grant. */
+	CHECK(ioctl(monitor_files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+	{
+		struct snd_pcm_status status = {0};
+
+		CHECK(ioctl(pcm, SNDRV_PCM_IOCTL_STATUS, &status) == 0);
+		CHECK(ioctl(audio.audio_fd, DRM_IOCTL_CASTKMS_AUDIO_QUERY, &query) == 0);
+	}
 	CHECK(drmModeSetCrtc(fd, crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
 	{
 		struct pollfd event = { .fd = audio.audio_fd, .events = POLLIN };
