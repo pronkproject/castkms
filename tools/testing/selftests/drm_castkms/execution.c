@@ -17,7 +17,9 @@ int main(int argc, char **argv)
 
 	CHECK(argc == 2);
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
-	CHECK(fd >= 0 && drmIsMaster(fd) == 1);
+	CHECK(fd >= 0);
+	acquire_master(fd);
+	CHECK(drmIsMaster(fd) == 1);
 	resources = drmModeGetResources(fd);
 	CHECK(resources && resources->count_crtcs > 0);
 	query.crtc_id = resources->crtcs[0];
