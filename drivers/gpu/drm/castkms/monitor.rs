@@ -176,22 +176,29 @@ impl Monitor {
     }
 
     fn release(&self, identity: &Arc<()>) -> Option<State> {
-        let retired = {
-            let mut state = self.state.lock();
-            match &*state {
-                State::Reserved { identity: current } if Arc::ptr_eq(current, identity) => {
-                    *state = State::Unmanaged;
-                    return None;
-                }
-                State::Managed {
-                    identity: current, ..
-                } if Arc::ptr_eq(current, identity) => {
-                    Some(core::mem::replace(&mut *state, State::Unmanaged))
-                }
-                _ => None,
+        let mut state = self.state.lock();
+        match &*state {
+            State::Managed {
+                identity: current, ..
+            } if Arc::ptr_eq(current, identity) => {
+                Some(core::mem::replace(&mut *state, State::Unmanaged))
             }
-        };
-        retired
+            _ => None,
+        }
+    }
+
+    fn release_without_native_update(&self, identity: &Arc<()>) -> bool {
+        let mut state = self.state.lock();
+        match &*state {
+            State::Managed {
+                identity: current, ..
+            } if Arc::ptr_eq(current, identity) => false,
+            State::Reserved { identity: current } if Arc::ptr_eq(current, identity) => {
+                *state = State::Unmanaged;
+                true
+            }
+            _ => true,
+        }
     }
 
     pub(crate) fn close(&self) {
@@ -356,6 +363,11 @@ impl Control {
 
 impl Drop for Control {
     fn drop(&mut self) {
+        // An unpublished reservation has not changed native connector state.
+        // It may be dropped while the issuer holds DRM's current-master lock.
+        if self.monitor.release_without_native_update(&self.identity) {
+            return;
+        }
         let registered = self.device.registration_guard();
         let guard = registered.as_ref().map(|registered| registered.mode_config_lock());
         let retired = self.monitor.release(&self.identity);
