@@ -635,6 +635,46 @@ static void zpos_is_reapplied_to_current_state(struct kunit *test)
 	}
 }
 
+static void plane_blending_is_reapplied_to_current_state(struct kunit *test)
+{
+	struct apply_fixture *f = new_fixture(test);
+	struct drm_atomic_request_entry entries[3] = {
+		{ .object = &f->plane->base, .type = DRM_ATOMIC_REQUEST_SCALAR,
+		  .scalar = DRM_BLEND_ALPHA_OPAQUE / 2 },
+		{ .object = &f->plane->base, .type = DRM_ATOMIC_REQUEST_SCALAR,
+		  .scalar = DRM_MODE_BLEND_COVERAGE },
+		{ .object = &f->plane->base, .type = DRM_ATOMIC_REQUEST_SCALAR,
+		  .scalar = DRM_SCALING_FILTER_NEAREST_NEIGHBOR },
+	};
+	struct drm_atomic_request *request;
+	unsigned int i;
+
+	KUNIT_ASSERT_EQ(test, drm_plane_create_alpha_property(f->plane), 0);
+	KUNIT_ASSERT_EQ(test, drm_plane_create_blend_mode_property(f->plane,
+		BIT(DRM_MODE_BLEND_PREMULTI) | BIT(DRM_MODE_BLEND_COVERAGE)), 0);
+	KUNIT_ASSERT_EQ(test, drm_plane_create_scaling_filter_property(f->plane,
+		BIT(DRM_SCALING_FILTER_DEFAULT) |
+		BIT(DRM_SCALING_FILTER_NEAREST_NEIGHBOR)), 0);
+	entries[0].property = f->plane->alpha_property;
+	entries[1].property = f->plane->blend_mode_property;
+	entries[2].property = f->plane->scaling_filter_property;
+	request = new_request(test, f, entries, ARRAY_SIZE(entries));
+	for (i = 0; i < 2; i++) {
+		struct drm_plane_state *state;
+
+		KUNIT_ASSERT_EQ(test, apply_request(request, f->state, validate_request, f), 0);
+		state = drm_atomic_get_new_plane_state(f->state, f->plane);
+		KUNIT_EXPECT_EQ(test, state->alpha, entries[0].scalar);
+		KUNIT_EXPECT_EQ(test, state->pixel_blend_mode, entries[1].scalar);
+		KUNIT_EXPECT_EQ(test, state->scaling_filter, entries[2].scalar);
+		drm_atomic_commit_clear(f->state);
+		f->plane->state->alpha = DRM_BLEND_ALPHA_OPAQUE;
+		f->plane->state->pixel_blend_mode = DRM_MODE_BLEND_PREMULTI;
+		f->plane->state->scaling_filter = DRM_SCALING_FILTER_DEFAULT;
+	}
+	KUNIT_EXPECT_EQ(test, f->validations, 2);
+}
+
 static void plane_color_is_reapplied_to_current_state(struct kunit *test)
 {
 	struct apply_fixture *f = new_fixture(test);
@@ -726,6 +766,7 @@ static struct kunit_case apply_tests[] = {
 	KUNIT_CASE(plane_color_is_reapplied_to_current_state),
 	KUNIT_CASE(rotation_is_reapplied_to_current_state),
 	KUNIT_CASE(zpos_is_reapplied_to_current_state),
+	KUNIT_CASE(plane_blending_is_reapplied_to_current_state),
 	KUNIT_CASE(framebuffer_is_reapplied_after_clear),
 	KUNIT_CASE(authority_is_rechecked_on_rebuild),
 	KUNIT_CASE(unsupported_property_prevents_application),
