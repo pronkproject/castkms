@@ -168,9 +168,9 @@ static void large_host_capture(int master, uint32_t crtc_id, uint32_t connector_
 	struct drm_capture_unregister_destination remove = { .id = 1 };
 	struct drm_capture_result result;
 	struct dma_buf_sync sync = { .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
-	struct buffer source, output;
-	const unsigned int sample_x[] = { 0, 2048, 4095 };
-	const unsigned int sample_y[] = { 0, 1080, 2159 };
+	struct buffer source, output, cursor;
+	const unsigned int sample_x[] = { 0, 2039, 2040, 2048, 2055, 2056, 4095 };
+	const unsigned int sample_y[] = { 0, 1071, 1072, 1080, 1087, 1088, 2159 };
 	drmModeConnector *connector;
 	drmModeModeInfo mode = {};
 	unsigned char *pixels;
@@ -189,11 +189,14 @@ static void large_host_capture(int master, uint32_t crtc_id, uint32_t connector_
 	CHECK(mode.clock);
 	source = create_buffer(master, 4096, 2160, 0x49);
 	output = create_buffer(master, 4096, 2160, 0x55);
+	cursor = create_buffer(master, 16, 16, 0xff);
 	CHECK(output.dumb.size > 16 * 1024 * 1024);
 	CHECK(drmPrimeHandleToFD(master, output.dumb.handle, DRM_CLOEXEC | DRM_RDWR,
 				 &output_fd) == 0);
 	CHECK(drmModeSetCrtc(master, crtc_id, source.fb, 0, 0,
 			     &connector_id, 1, &mode) == 0);
+	CHECK(drmModeSetCursor(master, crtc_id, cursor.dumb.handle, 16, 16) == 0);
+	CHECK(drmModeMoveCursor(master, crtc_id, 2040, 1072) == 0);
 	grant.files = (uintptr_t)&files;
 	CHECK(ioctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &grant) == 0);
 	CHECK(ioctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &description) == 0);
@@ -213,13 +216,16 @@ static void large_host_capture(int master, uint32_t crtc_id, uint32_t connector_
 	pixels = mmap(NULL, output.dumb.size, PROT_READ, MAP_SHARED, output_fd, 0);
 	CHECK(pixels != MAP_FAILED);
 	CHECK(ioctl(output_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
-	for (unsigned int yi = 0; yi < 3; yi++) {
-		for (unsigned int xi = 0; xi < 3; xi++) {
+	for (unsigned int yi = 0; yi < sizeof(sample_y) / sizeof(*sample_y); yi++) {
+		for (unsigned int xi = 0; xi < sizeof(sample_x) / sizeof(*sample_x); xi++) {
 			unsigned char *pixel = pixels + sample_y[yi] * output.dumb.pitch +
 						 sample_x[xi] * 4;
+			bool on_cursor = sample_x[xi] >= 2040 && sample_x[xi] < 2056 &&
+					 sample_y[yi] >= 1072 && sample_y[yi] < 1088;
+			unsigned char expected = on_cursor ? 0xff : 0x49;
 
-			CHECK(pixel[0] == 0x49 && pixel[1] == 0x49 &&
-			      pixel[2] == 0x49 && pixel[3] == 0xff);
+			CHECK(pixel[0] == expected && pixel[1] == expected &&
+			      pixel[2] == expected && pixel[3] == 0xff);
 		}
 	}
 	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
@@ -230,10 +236,12 @@ static void large_host_capture(int master, uint32_t crtc_id, uint32_t connector_
 	CHECK(ioctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM, &close_stream) == 0);
 	CHECK(close(files.control_fd) == 0);
 	CHECK(close(files.capture_fd) == 0);
+	CHECK(drmModeSetCursor(master, crtc_id, 0, 0, 0) == 0);
 	CHECK(drmModeSetCrtc(master, crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
 	CHECK(close(output_fd) == 0);
 	destroy_buffer(master, &source);
 	destroy_buffer(master, &output);
+	destroy_buffer(master, &cursor);
 }
 
 int main(int argc, char **argv)
@@ -354,6 +362,6 @@ int main(int argc, char **argv)
 	large_host_capture(master, grant.crtc_id, grant.connector_id);
 	close_monitor(&monitor);
 	CHECK(close(master) == 0);
-	puts("PASS: capture output, retained faults, cancellation and revoked dequeue");
+	puts("PASS: capture output, faults, cancellation, revocation, 4K and cursor");
 	return 0;
 }
