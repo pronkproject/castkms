@@ -259,10 +259,9 @@ only prompts re-query; it grants no authority.
 
 While the bound master is absent, renderer-file ``poll`` is idle rather than
 reporting terminal hangup. Issuer revocation and explicit withdrawal still report
-``POLLHUP|POLLERR``. If old jobs remain after the same master returns, hangup
-may report their withdrawn generation until they drain. Re-query the retained
-endpoint after release; hangup does not by itself mean that file cannot become
-``EMPTY``.
+``POLLHUP|POLLERR``. If old jobs remain after the same master returns, poll
+stays idle until their release makes the endpoint available for a new
+generation. Re-query the retained endpoint after release.
 
 Remaining integration
 =====================
