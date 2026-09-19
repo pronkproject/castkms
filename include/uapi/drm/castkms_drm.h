@@ -579,8 +579,8 @@ struct drm_castkms_create_renderer {
  * complete. Readability does not reserve a job or a particular private image.
  * Temporary loss of the bound master leaves poll idle; a retained file may
  * configure a fresh generation after that same master returns and work drains.
- * If old jobs still drain after return, hangup may describe their withdrawn
- * generation; query again after release rather than treating it as file close.
+ * If old jobs still drain after return, poll stays idle until their release
+ * makes the endpoint available for a new generation.
  * Explicit WITHDRAW and issuer revocation report POLLHUP|POLLERR but leave
  * release/cleanup operations usable.
  */
