@@ -193,7 +193,22 @@ mod cases {
             check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Empty)?;
             device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
             device.constraints_output(crtc)?.restore_default()?;
-            endpoint.declare(private_images::profile()?, [640, 480])
+            endpoint.declare(private_images::profile()?, [640, 480])?;
+            endpoint.register_image(2, [640, 480], &[
+                private_images::buffer(device, kernel::drm::gem::ExportAccess::ReadWrite)?,
+            ])?;
+            endpoint.publish(None, |_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|mut state| {
+                state.as_mut().set_crtc_config(crtc, Some(scanout))?;
+                state.add_crtc_state(crtc)?.set_constraints(&entry)
+            })?;
+            let pending = endpoint.begin_source(2)?;
+            let current = pending.id();
+            check(current > id)?;
+            pending.publish(|| ())?;
+            check(endpoint.release_source(id, Completion::WithoutAccess) == Err(ENOENT))?;
+            endpoint.release_source(current, Completion::WithoutAccess)
         })
     }
 }
