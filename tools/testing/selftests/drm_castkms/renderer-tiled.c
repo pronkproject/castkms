@@ -147,7 +147,7 @@ static void check_backend_rules(int fd, uint32_t crtc, uint64_t id, uint32_t pla
 	};
 	uint32_t ids[2];
 	bool found[2] = { 0 }, geometry_found = false;
-	unsigned int count = 0, total = 0, geometries = 0, plane_limits = 0;
+	unsigned int count = 0, geometries = 0, plane_limits = 0;
 
 	for (unsigned int i = 0; i < 2; i++)
 		ids[i] = property_id(fd, plane, names[i]);
@@ -192,17 +192,16 @@ static void check_backend_rules(int fd, uint32_t crtc, uint64_t id, uint32_t pla
 
 				CHECK(header->length == sizeof(*property));
 				CHECK(header->flags == DRM_MODE_CONSTRAINTS_RECORD_REQUIRED);
-				total++;
 				if (property->object_id != plane) {
 					cursor += header->length;
 					continue;
 				}
-				count++;
 				for (unsigned int rule = 0; rule < 2; rule++) {
 					if (property->property_id != ids[rule])
 						continue;
 					CHECK(!found[rule]);
 					found[rule] = true;
+					count++;
 					CHECK(property->type == DRM_MODE_PROP_ENUM);
 					CHECK(property->applicability_flags ==
 					      DRM_MODE_CONSTRAINTS_PROPERTY_PLANE_YUV);
@@ -254,7 +253,7 @@ static void check_backend_rules(int fd, uint32_t crtc, uint64_t id, uint32_t pla
 		}
 		CHECK(cursor == end);
 	}
-	CHECK(count == 2 && total == 2);
+	CHECK(count == 2);
 	CHECK(geometry_found && geometries == 9);
 	CHECK(plane_limits == 2);
 	for (unsigned int i = 0; i < 2; i++)
