@@ -5,6 +5,8 @@
 use super::*;
 use crate::monitor::Monitor;
 use kernel::drm::kms::connector::{Edid, Status};
+#[cfg(CONFIG_DRM_CLIENT)]
+use kernel::drm::kms::testing::RegisteredMasterFile;
 
 const EDID_1080P: [u8; 128] = [
     0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x31, 0xd8, 0x2a, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -82,6 +84,35 @@ mod cases {
         device.monitor.close();
         check(matches!(pending.publish(), Err(ENODEV)))?;
         check(device.monitor.status() == Status::Disconnected)
+    }
+
+    #[cfg(CONFIG_DRM_CLIENT)]
+    #[test]
+    fn failed_publication_releases_reservations_under_master_guard() -> Result {
+        let driver = CastKms::new_outputs(c"castkms-monitor-master-guard", 2)?;
+        let device = driver._display.registration_guard().ok_or(ENODEV)?;
+        let file = RegisteredMasterFile::new(&device)?;
+        let snapshot = file.file().master_snapshot().ok_or(EACCES)?;
+
+        let pending = device.displays[0].monitor.reserve(&device)?;
+        let current = snapshot.master().lock_current().ok_or(EACCES)?;
+        drop(pending);
+        drop(current);
+        check(device.displays[0].monitor.status() == Status::Disconnected)?;
+
+        let pending = Monitor::reserve_group(&device, &[0, 1])?;
+        let mut incomplete = KVec::new();
+        incomplete.push(tiled_edid(b"CASTTILE0", 0)?, GFP_KERNEL)?;
+        let current = snapshot.master().lock_current().ok_or(EACCES)?;
+        check(matches!(pending.attach_unnotified(incomplete), Err(EINVAL)))?;
+        drop(current);
+        check(device.displays[0].monitor.status() == Status::Disconnected)?;
+        check(device.displays[1].monitor.status() == Status::Disconnected)?;
+        let first = device.displays[0].monitor.reserve(&device)?;
+        let second = device.displays[1].monitor.reserve(&device)?;
+        drop(second);
+        drop(first);
+        Ok(())
     }
 
     #[test]
