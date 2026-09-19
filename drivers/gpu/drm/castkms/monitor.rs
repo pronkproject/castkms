@@ -76,41 +76,33 @@ impl Monitor {
         &self,
         connector: &connector::ConnectorGuard<'_, display::Connector>,
     ) -> i32 {
-        let state = self.state.lock();
-        let count = match &*state {
+        // Native EDID publication takes DRM's object-ID lock. Snapshot under
+        // the monitor lock, then release it before entering native DRM.
+        let attached = match &*self.state.lock() {
             State::Managed {
-                description:
-                    Description::Attached {
-                        edid: Some(edid), ..
-                    },
+                description: Description::Attached { edid, .. },
                 ..
-            } => match connector.add_edid_modes(edid) {
+            } => Some(edid.clone()),
+            _ => None,
+        };
+        let count = match attached {
+            Some(Some(edid)) => match connector.add_edid_modes(&edid) {
                 Ok(count) if count > 0 => count,
                 Ok(_) => Self::add_fallback_modes(connector),
                 Err(_) => 0,
             },
-            State::Managed {
-                description: Description::Attached { edid: None, .. },
-                ..
-            } => {
+            Some(None) => {
                 if connector.update_edid(None).is_err() {
                     0
                 } else {
                     Self::add_fallback_modes(connector)
                 }
             }
-            State::Unmanaged
-            | State::Reserved { .. }
-            | State::Managed {
-                description: Description::Disconnected,
-                ..
-            }
-            | State::Closed => {
+            None => {
                 let _ = connector.update_edid(None);
                 0
             }
         };
-        drop(state);
         self.cec.refresh_physical_address();
         count
     }
