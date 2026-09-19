@@ -86,18 +86,19 @@ Only one active audio stream can capture an attachment. Master loss suspends
 the retained capability with ``EAGAIN``, retires its tap and discards queued
 samples. This leaves the attachment available to the new master. If the bound
 ``drm_master`` later becomes current again, the same descriptor opens a fresh
-tap; no samples from its old interval survive. Detach, replacement, device
-removal and explicit revocation remain terminal, and a retained descriptor
-never follows a new attachment. Reasserting a monitor with identical ELD
-retains its existing ALSA card and audio attachment; changed ELD creates a
-replacement attachment. Disabling the CRTC suspends frame delivery and
-discards queued samples without revoking the audio capability. Re-enabling
-allows delivery again; applications must prepare interrupted ALSA playback
-before restarting it. A black image on an active CRTC does not stop audio.
-Existing ALSA files are disconnected on detach without waiting for their
-owners to close them.
-Audio capture does not depend on whether video is
-composed in the kernel or by a userspace renderer.
+tap; no samples from its old interval survive. If a newer grant already owns
+the attachment's exclusive tap, the retained grant's ``poll()`` remains idle
+until that tap is released; contention is not a terminal hangup. Detach,
+replacement, device removal and explicit revocation remain terminal, and a
+retained descriptor never follows a new attachment. Reasserting a monitor
+with identical ELD retains its existing ALSA card and audio attachment;
+changed ELD creates a replacement attachment. Disabling the CRTC suspends
+frame delivery and discards queued samples without revoking the audio
+capability. Re-enabling allows delivery again; applications must prepare
+interrupted ALSA playback before restarting it. A black image on an active
+CRTC does not stop audio. Existing ALSA files are disconnected on detach
+without waiting for their owners to close them. Audio capture does not depend
+on whether video is composed in the kernel or by a userspace renderer.
 
 The file operations adapt an independently callable kernel audio provider;
 kernel clients do not construct userspace ioctl requests. These experimental
