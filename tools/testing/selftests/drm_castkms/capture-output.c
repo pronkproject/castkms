@@ -157,7 +157,7 @@ int main(int argc, char **argv)
 	struct monitor_control monitor;
 	struct drm_mode_create_capture_grant grant = {};
 	struct drm_capture_grant_files files;
-	struct drm_capture_describe description;
+	struct drm_capture_describe description = {};
 	struct drm_capture_create_stream stream = { .id = 1, .capacity = 1 };
 	struct drm_capture_destroy_stream close_stream = { .id = 1 };
 	struct drm_capture_unregister_destination remove = { .id = 1 };

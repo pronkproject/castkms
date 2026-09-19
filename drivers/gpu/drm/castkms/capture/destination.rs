@@ -2,16 +2,16 @@
 
 //! Checked capture destination storage, without capture permission or pixel access.
 
+use crate::capture::output_layout::Layout as OutputLayout;
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 use crate::host_compositor::layout::Layout;
 use kernel::{
     dma_buf::DmaBuf,
-    drm::fourcc,
     prelude::*,
     sync::{aref::ARef, Arc}, //
 };
 
-/// One retained allocation and its checked single-plane XRGB8888 destination layout.
+/// One retained allocation and its checked single-plane destination layout.
 ///
 /// Construction does not map the buffer, wait for reuse, reserve a request or authorize
 /// a write. The owner must exclude conflicting use and validate the recipient when it
@@ -21,19 +21,23 @@ pub(crate) struct Image {
     dimensions: [u32; 2],
     pitch: usize,
     offset: usize,
+    layout: OutputLayout,
     storage: Option<Storage>,
 }
 
 enum Storage {
-    Host { _registration: crate::image_storage::Registration },
+    Host {
+        _registration: crate::image_storage::Registration,
+    },
     Delegated(Arc<crate::capture::provider::delegated_destination::Image>),
 }
 
 impl Image {
-    /// Validate the negotiated visible layout against all rows of supplied storage.
+    /// Validate the negotiated visible layout against supplied storage.
     ///
-    /// Offsets and strides are bytes. The complete final row, including stride padding,
-    /// must fit. Allocation bytes outside the described rows do not belong to this image.
+    /// Offsets and strides are bytes. For linear layouts, the complete final row,
+    /// including stride padding, must fit. Tiled layout bounds are checked by the
+    /// native importer after this metadata and allocation identity are retained.
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn new(
         buffer: ARef<DmaBuf>,
@@ -44,14 +48,7 @@ impl Image {
         offset: usize,
     ) -> Result<Self> {
         let (width, height) = layout.dimensions();
-        Self::new_checked(
-            buffer,
-            [width, height],
-            format,
-            modifier,
-            pitch,
-            offset,
-        )
+        Self::new_checked(buffer, [width, height], format, modifier, pitch, offset)
     }
 
     /// Validate recipient geometry without imposing the HOST compositor's axis limits.
@@ -69,14 +66,7 @@ impl Image {
         {
             return Err(EINVAL);
         }
-        Self::new_checked(
-            buffer,
-            dimensions,
-            format,
-            modifier,
-            pitch,
-            offset,
-        )
+        Self::new_checked(buffer, dimensions, format, modifier, pitch, offset)
     }
 
     fn new_checked(
@@ -87,35 +77,43 @@ impl Image {
         pitch: usize,
         offset: usize,
     ) -> Result<Self> {
-        if format != fourcc::XRGB8888 || modifier != fourcc::FORMAT_MOD_LINEAR {
-            return Err(EOPNOTSUPP);
-        }
-        let row = (dimensions[0] as usize).checked_mul(4).ok_or(EOVERFLOW)?;
-        if pitch < row || pitch % 4 != 0 || offset % 4 != 0 {
+        let layout = OutputLayout::new(format, modifier)?;
+        if pitch == 0 || pitch % 4 != 0 || offset % 4 != 0 {
             return Err(EINVAL);
         }
-        let span = pitch
-            .checked_mul(dimensions[1] as usize)
-            .ok_or(EOVERFLOW)?;
-        let end = offset.checked_add(span).ok_or(EOVERFLOW)?;
-        if end > buffer.size() {
+        if modifier == kernel::drm::fourcc::FORMAT_MOD_LINEAR {
+            let row = (dimensions[0] as usize).checked_mul(4).ok_or(EOVERFLOW)?;
+            if pitch < row {
+                return Err(EINVAL);
+            }
+            let span = pitch.checked_mul(dimensions[1] as usize).ok_or(EOVERFLOW)?;
+            let end = offset.checked_add(span).ok_or(EOVERFLOW)?;
+            if end > buffer.size() {
+                return Err(EINVAL);
+            }
+            // Bound per-delivery copying, including caller-supplied row padding.
+            if span > crate::image_storage::MAX_BYTES {
+                return Err(E2BIG);
+            }
+        } else if offset >= buffer.size() {
             return Err(EINVAL);
-        }
-        // Bound per-delivery copying, including caller-supplied row padding.
-        if span > crate::image_storage::MAX_BYTES {
-            return Err(E2BIG);
         }
         Ok(Self {
             buffer,
             dimensions,
             pitch,
             offset,
+            layout,
             storage: None,
         })
     }
 
     pub(crate) fn dimensions(&self) -> [u32; 2] {
         self.dimensions
+    }
+
+    pub(crate) fn layout(&self) -> OutputLayout {
+        self.layout
     }
 
     /// Retain the device-wide recipient role through detached destination access.
@@ -129,7 +127,9 @@ impl Image {
         {
             return Err(EINVAL);
         }
-        self.storage = Some(Storage::Host { _registration: storage });
+        self.storage = Some(Storage::Host {
+            _registration: storage,
+        });
         Ok(())
     }
 
@@ -140,10 +140,13 @@ impl Image {
         if self.storage.is_some() {
             return Err(EALREADY);
         }
+        if self.dimensions != scope.dimensions() {
+            return Err(EINVAL);
+        }
         let image = scope.register_destination(
             &self.buffer,
-            fourcc::XRGB8888,
-            fourcc::FORMAT_MOD_LINEAR,
+            self.layout.format(),
+            self.layout.modifier(),
             self.pitch,
             self.offset,
         )?;

@@ -181,7 +181,7 @@ static void open_capture(int fd, struct output *output)
 		.crtc_id = output->crtc, .connector_id = output->connector,
 		.files = (uintptr_t)&output->capture,
 	};
-	struct drm_capture_describe description;
+	struct drm_capture_describe description = {};
 	struct drm_capture_create_stream stream = { .id = 1, .capacity = 1 };
 	struct drm_capture_register_destination destination = {
 		.id = 1, .width = output->mode.hdisplay, .height = output->mode.vdisplay,
@@ -197,7 +197,6 @@ static void open_capture(int fd, struct output *output)
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &grant) == 0);
 	CHECK(fcntl(output->capture.capture_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(output->capture.control_fd, F_GETFD) == FD_CLOEXEC);
-	memset(&description, 0xa5, sizeof(description));
 	CHECK(ioctl(output->capture.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &description) == 0);
 	CHECK(description.width == output->mode.hdisplay &&
 	      description.height == output->mode.vdisplay && !description.reserved);

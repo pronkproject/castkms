@@ -22,6 +22,7 @@ use kernel::{
         Description,
         Destination,
         Readiness, //
+        RequestedLayout,
     },
     prelude::*,
     sync::Arc, //
@@ -164,7 +165,11 @@ unsafe impl ClientOwner for Client {
     }
 
     fn describe(&mut self) -> Result<Description> {
-        let offer = self.negotiation.describe()?;
+        self.describe_layout(RequestedLayout::default())
+    }
+
+    fn describe_layout(&mut self, layout: RequestedLayout) -> Result<Description> {
+        let offer = self.negotiation.describe_layout(layout)?;
         let image = offer.description();
         let [width, height] = image.dimensions();
         Description::new(

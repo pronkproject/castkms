@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::capture::negotiation::Negotiation;
+use kernel::drm::{capture::RequestedLayout, fourcc};
 
 #[kunit_tests(rust_castkms_capture_negotiation)]
 mod cases {
@@ -63,6 +64,22 @@ mod cases {
         check(matches!(negotiation.open(old, 1), Err(ESTALE)))?;
         let _queue = negotiation.open(fresh, 1)?;
         Ok(())
+    }
+
+    #[test]
+    fn host_offers_only_its_exact_linear_layout() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let mut negotiation = Negotiation::new(grantor.capture());
+        let default = negotiation.describe()?.id();
+        let host = RequestedLayout::exact(fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR)?;
+        check(negotiation.describe_layout(host)?.id() == default)?;
+        let other = RequestedLayout::exact(fourcc::ARGB8888, fourcc::FORMAT_MOD_LINEAR)?;
+        check(matches!(negotiation.describe_layout(other), Err(EOPNOTSUPP)))?;
+        check(negotiation.open(default, 1).is_ok())
     }
 
     #[test]

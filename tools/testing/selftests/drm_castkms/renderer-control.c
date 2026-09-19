@@ -343,7 +343,7 @@ int main(int argc, char **argv)
 	};
 	struct drm_capture_grant_files capture_files = { .capture_fd = -1, .control_fd = -1 };
 	struct drm_mode_create_capture_grant grant = { .files = (uintptr_t)&capture_files };
-	struct drm_capture_describe description;
+	struct drm_capture_describe description = {};
 	struct drm_capture_create_stream stream = { .id = 1, .capacity = 1 };
 	struct drm_capture_register_destination destination = {
 		.id = 1, .format = DRM_FORMAT_XRGB8888, .num_planes = 1,
@@ -363,7 +363,7 @@ int main(int argc, char **argv)
 	drmModeModeInfo *mode;
 	struct buffer source[2], private[2], output;
 	struct monitor_control monitor;
-	uint64_t host, worker, previous = 0;
+	uint64_t host, worker, previous = 0, tiled_offer;
 	unsigned int baseline;
 	uint32_t plane;
 	int fd, private_fd[2], output_fd, ready_timeline, ready_fence;
@@ -470,12 +470,60 @@ int main(int argc, char **argv)
 	CHECK(ioctl(fd, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &grant) == 0);
 	CHECK(fcntl(capture_files.capture_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(capture_files.control_fd, F_GETFD) == FD_CLOEXEC);
+	description.format = DRM_FORMAT_ARGB8888;
+	description.modifier = 9;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &description) == 0);
+	CHECK(description.format == DRM_FORMAT_ARGB8888 && description.modifier == 9);
+	tiled_offer = description.id;
+	stream.offer = tiled_offer;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CREATE_STREAM, &stream) == 0);
+	/* Exercise metadata and cancellation only; the dumb buffer is not tiled storage. */
+	destination.format = DRM_FORMAT_ARGB8888;
+	destination.modifier = 9;
+	destination.width = mode->hdisplay;
+	destination.height = mode->vdisplay;
+	destination.fds[0] = output_fd;
+	destination.strides[0] = output.dumb.pitch;
+	destination.width--;
+	expect_error(capture_files.capture_fd, DRM_IOCTL_CAPTURE_REGISTER_DESTINATION,
+		     &destination, EINVAL);
+	destination.width++;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_REGISTER_DESTINATION,
+		&destination) == 0);
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
+	cancel_capture.use_id = queue.use_id;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CANCEL,
+		&cancel_capture) == 0);
+	wait_capture(capture_files.capture_fd);
+	take_capture.result = (uintptr_t)&capture_result;
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE, &take_capture) == 0);
+	CHECK(capture_result.use_id == queue.use_id && capture_result.status == -ECANCELED);
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM,
+		&destroy_stream) == 0);
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
+		&remove_destination) == 0);
+	description = (struct drm_capture_describe) {};
+	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &description) == 0);
+	CHECK(description.id == tiled_offer + 1);
 	CHECK(description.width == mode->hdisplay && description.height == mode->vdisplay);
 	CHECK(description.format == DRM_FORMAT_XRGB8888);
 	CHECK(description.modifier == DRM_FORMAT_MOD_LINEAR && description.max_requests);
+	stream.id = 2;
+	stream.offer = tiled_offer;
+	expect_error(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CREATE_STREAM,
+		     &stream, ESTALE);
 	stream.offer = description.id;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CREATE_STREAM, &stream) == 0);
+	destination.id = 2;
+	destination.format = DRM_FORMAT_XRGB8888;
+	destination.modifier = DRM_FORMAT_MOD_LINEAR;
+	queue.stream = 2;
+	queue.destination = 2;
+	take_capture.stream = 2;
+	cancel_capture.stream = 2;
+	cancel_capture.use_id = 3;
+	remove_destination.id = 2;
+	destroy_stream.id = 2;
 	destination.width = mode->hdisplay;
 	destination.height = mode->vdisplay;
 	destination.fds[0] = output_fd;
@@ -579,9 +627,9 @@ int main(int argc, char **argv)
 		expect_error(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_ACQUIRE_JOB,
 			     &acquire, ENODATA);
 	}
-	stream.id = 2;
+	stream.id = 3;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_CREATE_STREAM, &stream) == 0);
-	queue.stream = 2;
+	queue.stream = 3;
 	queue.use_id = 1;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_QUEUE_OUTPUT, &queue) == 0);
 	flip(fd, plane, source[0].fb);
@@ -606,15 +654,14 @@ int main(int argc, char **argv)
 		&release_output) == 0);
 	CHECK(close(renderer_output.dma_buf_fd) == 0);
 	wait_capture(capture_files.capture_fd);
-	take_capture.stream = 2;
+	take_capture.stream = 3;
 	memset(&capture_result, 0xa5, sizeof(capture_result));
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DEQUEUE, &take_capture) == 0);
 	CHECK(capture_result.use_id == 1 && capture_result.status == -ECANCELED);
 	CHECK(!capture_result.completed_at_ns && !capture_result.reserved);
-	remove_destination.id = 1;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
 		&remove_destination) == 0);
-	destroy_stream.id = 2;
+	destroy_stream.id = 3;
 	CHECK(ioctl(capture_files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM,
 		&destroy_stream) == 0);
 	CHECK(close(capture_files.control_fd) == 0);

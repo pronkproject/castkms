@@ -4,6 +4,7 @@
 
 use super::delegated::Delegated;
 use crate::{
+    capture::output_layout::Layout as OutputLayout,
     capture::reuse::Dependencies,
     display_control::Current,
     image_storage::{Pool, Registration},
@@ -13,15 +14,15 @@ use kernel::{
     dma_buf::DmaBuf,
     dma_fence::Fence,
     dma_resv::Usage,
-    drm::fourcc,
     prelude::*,
     sync::{aref::ARef, poll::PollCondVar, Arc, Mutex},
 };
 
-/// Checked complete rows for the initial delegated output layout, not a source limit.
+/// Retained single-plane destination layout, not a source limit.
 #[derive(Clone, Copy)]
 pub(crate) struct Layout {
     pub(crate) dimensions: [u32; 2],
+    pub(crate) output: OutputLayout,
     pub(crate) pitch: usize,
     pub(crate) offset: usize,
 }
@@ -47,7 +48,7 @@ pub(crate) struct Image {
 impl Delegated {
     /// Register destination storage without mapping it or authorizing a write.
     /// The trusted output stage must define every exposed pixel, padding byte and unused
-    /// channel bit. Allocation regions outside the rows must not contain private pixels.
+    /// channel bit. Unused allocation regions must not contain private pixels.
     pub(crate) fn register_destination(
         &self,
         buffer: &ARef<DmaBuf>,
@@ -56,22 +57,27 @@ impl Delegated {
         pitch: usize,
         offset: usize,
     ) -> Result<Arc<Image>> {
-        if format != fourcc::XRGB8888 || modifier != fourcc::FORMAT_MOD_LINEAR {
-            return Err(EOPNOTSUPP);
-        }
+        let output = OutputLayout::new(format, modifier)?;
         if !buffer.is_writable() {
             return Err(EACCES);
         }
         let dimensions = self.dimensions();
-        let row = (dimensions[0] as usize).checked_mul(4).ok_or(EOVERFLOW)?;
-        if pitch < row || pitch % 4 != 0 || offset % 4 != 0 {
+        if pitch == 0 || pitch % 4 != 0 || offset % 4 != 0 {
             return Err(EINVAL);
         }
-        let end = pitch
-            .checked_mul(dimensions[1] as usize)
-            .and_then(|span| offset.checked_add(span))
-            .ok_or(EOVERFLOW)?;
-        if end > buffer.size() {
+        if modifier == kernel::drm::fourcc::FORMAT_MOD_LINEAR {
+            let row = (dimensions[0] as usize).checked_mul(4).ok_or(EOVERFLOW)?;
+            if pitch < row {
+                return Err(EINVAL);
+            }
+            let end = pitch
+                .checked_mul(dimensions[1] as usize)
+                .and_then(|span| offset.checked_add(span))
+                .ok_or(EOVERFLOW)?;
+            if end > buffer.size() {
+                return Err(EINVAL);
+            }
+        } else if offset >= buffer.size() {
             return Err(EINVAL);
         }
         let check = |current: &Current<'_>| {
@@ -91,7 +97,7 @@ impl Delegated {
             pin_init!(Image {
                 scope: self.clone(),
                 storage,
-                layout: Layout { dimensions, pitch, offset },
+                layout: Layout { dimensions, output, pitch, offset },
                 state <- kernel::new_mutex!(State { busy: false }),
             }),
             GFP_KERNEL,
@@ -115,11 +121,11 @@ impl Image {
     }
 
     pub(crate) fn format(&self) -> u32 {
-        fourcc::XRGB8888
+        self.layout.output.format()
     }
 
     pub(crate) fn modifier(&self) -> u64 {
-        fourcc::FORMAT_MOD_LINEAR
+        self.layout.output.modifier()
     }
 
     /// Reserve exclusive destination use. Request names belong to individual queues;

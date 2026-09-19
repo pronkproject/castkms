@@ -108,7 +108,7 @@ static void rejected_publication(int fd, struct drm_mode_create_capture_grant re
 static void describe_output(int master, const struct drm_mode_create_capture_grant *request,
 			   const struct drm_capture_grant_files *files)
 {
-	struct drm_capture_describe first, next;
+	struct drm_capture_describe first = {}, next = {};
 	drmModeConnector *connector = drmModeGetConnector(master, request->connector_id);
 	drmModeModeInfo mode;
 	struct buffer buffer;
@@ -126,11 +126,28 @@ static void describe_output(int master, const struct drm_mode_create_capture_gra
 	buffer = create_buffer(master, mode.hdisplay, mode.vdisplay, 0x39);
 	CHECK(drmModeSetCrtc(master, request->crtc_id, buffer.fb, 0, 0,
 			     &connector_id, 1, &mode) == 0);
-	memset(&first, 0xa5, sizeof(first));
+	first.width = 1;
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &first) == -1);
+	CHECK(errno == EINVAL);
+	first = (struct drm_capture_describe) {};
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &first) == 0);
 	CHECK(first.id == 1 && first.width == mode.hdisplay && first.height == mode.vdisplay);
 	CHECK(first.format == DRM_FORMAT_XRGB8888 && first.modifier == DRM_FORMAT_MOD_LINEAR);
 	CHECK(first.max_requests == 8 && first.reserved == 0);
+	next.modifier = 9;
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == -1);
+	CHECK(errno == EINVAL);
+	next = (struct drm_capture_describe) {};
+	next.format = first.format;
+	next.modifier = first.modifier;
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
+	CHECK(!memcmp(&first, &next, sizeof(first)));
+	next = (struct drm_capture_describe) {};
+	next.format = DRM_FORMAT_ARGB8888;
+	next.modifier = 9;
+	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == -1);
+	CHECK(errno == EOPNOTSUPP);
+	next = (struct drm_capture_describe) {};
 	CHECK(drmIoctl(files->control_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == -1);
 	CHECK(errno == ENOTTY);
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE ^ (1U << _IOC_SIZESHIFT),
@@ -158,9 +175,11 @@ static void describe_output(int master, const struct drm_mode_create_capture_gra
 	mode.htotal++;
 	CHECK(drmModeSetCrtc(master, request->crtc_id, buffer.fb, 0, 0,
 			     &connector_id, 1, &mode) == 0);
+	next = (struct drm_capture_describe) {};
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
 	CHECK(next.id == first.id + 1 && next.width == first.width && next.height == first.height);
 	CHECK(drmModeSetCrtc(master, request->crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
+	next = (struct drm_capture_describe) {};
 	CHECK(drmIoctl(files->capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == -1);
 	CHECK(errno == ENODEV);
 	destroy_buffer(master, &buffer);
@@ -170,7 +189,7 @@ int main(int argc, char **argv)
 {
 	struct drm_mode_create_capture_grant request = {}, *read_only;
 	struct drm_capture_grant_files files;
-	struct drm_capture_describe description;
+	struct drm_capture_describe description = {};
 	struct drm_mode_create_dumb dumb = {};
 	struct monitor_control monitor;
 	drmVersion *version;

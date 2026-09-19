@@ -3,6 +3,7 @@
 //! One capture-client stream over either host or delegated execution.
 
 use super::{destination::Image, host_queue, provider::{delegated_queue, Delegated}};
+use crate::capture::output_layout::Layout;
 use kernel::{dma_fence::Fence, prelude::*, sync::{aref::ARef, Arc}, time::{Instant, Monotonic}};
 
 pub(crate) struct Completion {
@@ -23,13 +24,15 @@ pub(crate) enum Queue {
     Host(host_queue::Queue),
     Delegated {
         registration: crate::renderer::output_broker::Registration,
+        layout: Layout,
     },
 }
 
 impl Queue {
-    pub(crate) fn delegated(scope: &Delegated, capacity: u32) -> Result<Self> {
+    pub(crate) fn delegated(scope: &Delegated, layout: Layout, capacity: u32) -> Result<Self> {
         Ok(Self::Delegated {
             registration: scope.register_queue(capacity)?,
+            layout,
         })
     }
 
@@ -48,7 +51,8 @@ impl Queue {
     ) -> Result {
         match self {
             Self::Host(queue) => queue.queue_to(use_id, destination, reuse),
-            Self::Delegated { registration, .. } => {
+            Self::Delegated { registration, layout } => {
+                if destination.layout() != *layout { return Err(EINVAL); }
                 let destination = destination.delegated()?;
                 registration.with_queue(|queue| queue.queue_to(use_id, &destination, reuse))
             }
@@ -111,7 +115,7 @@ impl Queue {
                     completed_at: frame.metadata().completed_at(),
                 }),
             })),
-            Self::Delegated { registration } => registration.with_queue(|queue| {
+            Self::Delegated { registration, .. } => registration.with_queue(|queue| {
                 queue.dequeue(|completion| {
                     publish(Completion {
                         use_id: completion.use_id,

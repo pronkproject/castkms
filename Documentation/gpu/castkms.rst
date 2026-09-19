@@ -697,6 +697,14 @@ These kernel operations remain usable without descriptors. The anonymous capture
 client adapts queued host output; selecting a userspace GPU renderer remains an
 independent execution feature.
 
+The public description query accepts either the default layout or an exact
+format/modifier pair. HOST descriptions remain linear XRGB8888. Delegated
+descriptions may select a packed 32-bit RGB format and modifier; the stream
+retains that choice, and queueing rejects a destination with a different
+layout. The query does not qualify a renderer's native importer for arbitrary
+modifier/backing combinations. Destination registration checks backing and
+aliasing, while the native delivery path checks importer compatibility.
+
 Describing a stream before allocation
 -------------------------------------
 
@@ -816,8 +824,9 @@ queued output, cancellation and terminal dequeue through :doc:`drm-capture`.
 Delivering to registered destinations
 -------------------------------------
 
-The initial public path captures through private host storage and then copies
-into a caller-owned linear destination. It is not a GPU-to-GPU implementation.
+HOST capture uses private storage and copies into a caller-owned linear
+destination. Delegated capture gives the renderer a registered destination
+with the stream's exact format and modifier, permitting GPU-to-GPU delivery.
 Layout, current permission and known source aliases are checked before output
 admission. Request depth and destination registrations have independent bounds;
 neither encodes a receiver's frame rate or transport window.

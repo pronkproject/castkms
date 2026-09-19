@@ -36,26 +36,40 @@ mod cases {
     }
 
     #[test]
-    fn unsupported_formats_do_not_qualify_a_destination() -> Result {
+    fn packed_formats_accept_exact_modifiers_and_reject_invalid_metadata() -> Result {
         with_exporter(|fixture| {
             let buffer = fixture.drm.export_dumb(64, 64, 32)?;
             let layout = Layout::new(64, 64)?;
-            check(matches!(
-                Image::new(
-                    buffer.clone(),
-                    layout,
-                    fourcc::ARGB8888,
-                    fourcc::FORMAT_MOD_LINEAR,
-                    256,
-                    0
-                ),
-                Err(EOPNOTSUPP)
-            ))?;
-            check(matches!(
-                Image::new(buffer.clone(), layout, fourcc::XRGB8888, 1, 256, 0),
-                Err(EOPNOTSUPP)
-            ))?;
+            for (format, modifier) in [
+                (fourcc::XRGB8888, fourcc::FORMAT_MOD_LINEAR),
+                (fourcc::ARGB8888, fourcc::FORMAT_MOD_LINEAR),
+                (fourcc::XBGR8888, 9),
+                (fourcc::ABGR8888, 9),
+            ] {
+                check(Image::new(buffer.clone(), layout, format, modifier, 256, 0).is_ok())?;
+            }
+            check(matches!(Image::new(
+                buffer.clone(), layout, fourcc::RGB565,
+                fourcc::FORMAT_MOD_LINEAR, 256, 0,
+            ), Err(EOPNOTSUPP)))?;
+            check(matches!(Image::new(
+                buffer, layout, fourcc::ARGB8888,
+                fourcc::FORMAT_MOD_INVALID, 256, 0,
+            ), Err(EOPNOTSUPP)))?;
             Ok(())
+        })
+    }
+
+    #[test]
+    fn tiled_metadata_does_not_claim_linear_row_storage() -> Result {
+        with_exporter(|fixture| {
+            let buffer = fixture.drm.export_dumb(64, 64, 32)?;
+            let layout = Layout::new(64, 64)?;
+            let image = Image::new(buffer.clone(), layout, fourcc::ARGB8888, 9, 512, 0)?;
+            check(image.pitch() == 512)?;
+            check(matches!(Image::new(
+                buffer, layout, fourcc::ARGB8888, 9, 512, 16384,
+            ), Err(EINVAL)))
         })
     }
 

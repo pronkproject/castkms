@@ -84,7 +84,7 @@ int main(int argc, char **argv)
 	struct monitor_control monitor;
 	struct drm_mode_create_capture_grant grant = {};
 	struct drm_capture_grant_files files;
-	struct drm_capture_describe first, next;
+	struct drm_capture_describe first = {}, next = {};
 	struct buffer buffer;
 	drmModeRes *resources;
 	drmModeConnector *connector;
@@ -153,12 +153,14 @@ int main(int argc, char **argv)
 	CHECK(close(files.capture_fd) == 0);
 	/* A fresh client starts a fresh namespace after the old client's resources leave. */
 	CHECK(drmIoctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &grant) == 0);
+	next = (struct drm_capture_describe) {};
 	CHECK(drmIoctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
 	for (uint64_t id = 1; id <= 16; id++)
 		CHECK(create_stream(files.capture_fd, id, next.id, 1) == 0);
 	CHECK(close(files.capture_fd) == 0);
 	CHECK(close(files.control_fd) == 0);
 	CHECK(drmIoctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &grant) == 0);
+	next = (struct drm_capture_describe) {};
 	CHECK(drmIoctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &next) == 0);
 	for (uint64_t id = 1; id <= 16; id++)
 		CHECK(create_stream(files.capture_fd, id, next.id, 1) == 0);
