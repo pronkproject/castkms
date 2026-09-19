@@ -26,14 +26,13 @@ destinations is a separate stage, so downstream buffer reuse does not extend
 access to KMS source buffers.
 
 Renderer authority is output-scoped and distinct from final-image capture
-authority. Normal issuance requires the exact current master file controlling
-the CRTC and connector. An administrative helper can instead set
-``DRM_CASTKMS_RENDERER_CREATE_ADMIN`` while holding ``CAP_SYS_ADMIN`` in the
-initial user namespace. That explicit mode selects the independently observed
-current top-level owner and rejects an owner change during issuance. It does not
-use the helper's DRM-master association, take master from the compositor or
-grant modesetting rights. The helper must drop an accidentally acquired master
-role before requesting it.
+authority. Creation requires ``CAP_SYS_ADMIN`` in the initial user namespace
+and zero flags. An administrative helper uses a DRM file distinct from the
+current master. Issuance selects the independently observed current top-level
+owner and rejects an owner change during issuance. It does not take master
+from the compositor or grant modesetting rights. The helper must drop an
+accidentally acquired master role before requesting it.
+
 The returned close-on-exec renderer descriptor grants scoped access to
 committed KMS sources for execution. It grants no modesetting authority and
 does not authorize the separate final-image capture interface. The renderer is
