@@ -172,7 +172,7 @@ impl Client {
                 .register_wait(File::from_raw_file(file), client.access.authority_changed())
         };
         match client.access.readable() {
-            Err(EAGAIN) => 0,
+            Err(EAGAIN) | Err(EBUSY) => 0,
             Err(_) => (bindings::POLLHUP | bindings::POLLERR) as _,
             Ok(true) => (bindings::POLLIN | bindings::POLLRDNORM) as _,
             Ok(false) => 0,
