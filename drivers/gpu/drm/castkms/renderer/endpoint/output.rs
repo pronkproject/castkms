@@ -33,7 +33,7 @@ impl Stream {
 
 impl Endpoint {
     pub(crate) fn output_readable(&self) -> Result<bool> {
-        self.refresh_generation()?;
+        let interval = self.refresh_generation()?;
         let state = self.state.lock();
         let State::Ready { publication, pool, output, .. } = &*state else {
             // Empty, configuration and publishing endpoints are idle, not terminal.
@@ -43,6 +43,9 @@ impl Endpoint {
                 Ok(false)
             };
         };
+        if publication.interval() != interval {
+            return Ok(false);
+        }
         if !matches!(output.slot, Slot::Ready) { return Ok(false); }
         let control = publication.control();
         let broker = control.worker()?.outputs().clone();

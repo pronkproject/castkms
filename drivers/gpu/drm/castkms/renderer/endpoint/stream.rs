@@ -60,11 +60,17 @@ impl Endpoint {
         if self.access.is_revoked() {
             return Err(EKEYREVOKED);
         }
-        self.refresh_generation()?;
+        let interval = self.refresh_generation()?;
         let state = self.state.lock();
         match &*state {
             State::Closed => Err(EKEYREVOKED),
             State::Ready { publication, source, .. } => {
+                // A claim from an earlier master interval can keep the retired
+                // publication attached until its release. The endpoint can be
+                // configured again afterward, so the drain is idle, not terminal.
+                if publication.interval() != interval {
+                    return Ok(false);
+                }
                 if !publication.is_live() {
                     return Err(EKEYREVOKED);
                 }

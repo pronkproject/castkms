@@ -186,6 +186,8 @@ mod cases {
                 Some(master.master().clone()),
             );
             check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Withdrawn)?;
+            check(!endpoint.source_readable()?)?;
+            check(!endpoint.output_readable()?)?;
             check(endpoint.begin_source(1).err() == Some(EBUSY))?;
             endpoint.release_source(id, Completion::WithoutAccess)?;
             check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Empty)?;

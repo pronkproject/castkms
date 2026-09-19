@@ -61,7 +61,7 @@ impl Endpoint {
 
     /// Retire state from an earlier master interval without reviving any of its work.
     /// Outstanding claims keep their release channel and delay reuse of the endpoint.
-    fn refresh_generation(&self) -> Result {
+    fn refresh_generation(&self) -> Result<Interval> {
         let interval = self.access.current_interval()?;
         let (retired, revocation, stale_id) = {
             let mut state = self.state.lock();
@@ -107,7 +107,7 @@ impl Endpoint {
             };
             drop(retired);
         }
-        Ok(())
+        Ok(interval)
     }
 
     /// Allocate an immutable declaration without changing native constraints availability.
