@@ -368,6 +368,11 @@ dirty framebuffer helper also rebuilds its plane update after preparation.
 Callers that submit atomic state directly still need their own preparation
 integration before delegated reading can be enabled.
 Neither explicit nor implicit atomic commits protect unrelated internal callers.
+Self-refresh entry and bridge-triggered CRTC reset are examples of direct
+submitters outside the retained request adapters. A participating driver must
+adapt and test either path before using it with outstanding delegated source
+reads; routing through ``drm_atomic_commit()`` alone does not prepare a
+replacement.
 
 Blocking atomic updates from userspace
 -------------------------------------
