@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 /* Administrative renderer issuance without transferring DRM master. */
 #include "fixture.h"
 
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "../../../../include/uapi/drm/castkms_drm.h"
@@ -53,6 +58,8 @@ int main(int argc, char **argv)
 	struct drm_castkms_renderer_query query = { 0 };
 	drmModeRes *resources;
 	int master, helper;
+	pid_t child;
+	int status;
 
 	CHECK(argc == 2);
 	master = open(argv[1], O_RDWR | O_CLOEXEC);
@@ -64,10 +71,19 @@ int main(int argc, char **argv)
 	create.crtc_id = resources->crtcs[0];
 	create.connector_id = resources->connectors[0];
 
-	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EACCES);
+	child = fork();
+	CHECK(child >= 0);
+	if (!child) {
+		CHECK(setresuid(65534, 65534, 65534) == 0);
+		expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EACCES);
+		expect_error(master, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EACCES);
+		_exit(0);
+	}
+	CHECK(waitpid(child, &status, 0) == child);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 	create.flags = 2;
 	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EINVAL);
-	create.flags = DRM_CASTKMS_RENDERER_CREATE_ADMIN;
+	create.flags = 0;
 	expect_error(master, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EBUSY);
 	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(fcntl(files.renderer_fd, F_GETFD) == FD_CLOEXEC);

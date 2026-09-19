@@ -112,7 +112,7 @@ static void check_pixels(const struct output *output, unsigned char value)
 	CHECK(munmap(pixels, output->destination.dumb.size) == 0);
 }
 
-static void publish(int fd, struct output *output)
+static void publish(int helper, struct output *output)
 {
 	struct drm_castkms_create_renderer create = {
 		.crtc_id = output->crtc, .connector_id = output->connector,
@@ -160,7 +160,7 @@ static void publish(int fd, struct output *output)
 	constraints.header.max_source[0] = width;
 	constraints.header.min_source[1] = height;
 	constraints.header.max_source[1] = height;
-	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(fcntl(output->renderer.renderer_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(output->renderer.revoke_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(ioctl(output->renderer.renderer_fd,
@@ -328,7 +328,7 @@ int main(int argc, char **argv)
 {
 	struct output outputs[OUTPUTS] = { 0 };
 	drmModeRes *resources;
-	int fd;
+	int fd, helper;
 
 	if (argc != 2) {
 		fprintf(stderr, "SKIP: supply a disposable two-output CastKMS node\n");
@@ -336,6 +336,8 @@ int main(int argc, char **argv)
 	}
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0 && drmIsMaster(fd));
+	helper = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(helper >= 0 && !drmIsMaster(helper));
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1) == 0);
 	resources = drmModeGetResources(fd);
@@ -370,7 +372,7 @@ int main(int argc, char **argv)
 		CHECK(drmPrimeHandleToFD(fd, outputs[i].destination.dumb.handle,
 					 DRM_CLOEXEC | DRM_RDWR,
 					 &outputs[i].destination_fd) == 0);
-		publish(fd, &outputs[i]);
+		publish(helper, &outputs[i]);
 		CHECK(selected(fd, outputs[i].crtc, 2) == outputs[i].host);
 		CHECK(drmModeSetCrtc(fd, outputs[i].crtc, outputs[i].source.fb, 0, 0,
 				     &outputs[i].connector, 1, &outputs[i].mode) == 0);
@@ -387,6 +389,7 @@ int main(int argc, char **argv)
 	for (unsigned int i = 0; i < OUTPUTS; i++)
 		cleanup(fd, &outputs[i]);
 	drmModeFreeResources(resources);
+	CHECK(close(helper) == 0);
 	CHECK(close(fd) == 0);
 	puts("PASS: atomic two-output renderer selection and isolated capture delivery");
 	return 0;

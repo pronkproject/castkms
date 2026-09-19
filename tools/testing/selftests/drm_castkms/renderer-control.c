@@ -385,12 +385,14 @@ int main(int argc, char **argv)
 	uint64_t host, worker, previous = 0, tiled_offer;
 	unsigned int baseline;
 	uint32_t plane;
-	int fd, private_fd[2], output_fd, ready_timeline, ready_fence;
+	int fd, helper, private_fd[2], output_fd, ready_timeline, ready_fence;
 	void *fault;
 
 	CHECK(argc == 2);
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0 && drmIsMaster(fd));
+	helper = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(helper >= 0 && !drmIsMaster(helper));
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1) == 0);
 	resources = drmModeGetResources(fd);
@@ -409,10 +411,10 @@ int main(int argc, char **argv)
 	CHECK(fault != MAP_FAILED);
 	baseline = open_files();
 	create.files = (uintptr_t)fault;
-	expect_error(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EFAULT);
+	expect_error(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create, EFAULT);
 	CHECK(open_files() == baseline);
 	create.files = (uintptr_t)&files;
-	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(fcntl(files.renderer_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(files.revoke_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(query_endpoint(files.renderer_fd).state == DRM_CASTKMS_RENDERER_STATE_EMPTY);
@@ -705,6 +707,7 @@ int main(int argc, char **argv)
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
 	close_monitor(&monitor);
+	CHECK(close(helper) == 0);
 	CHECK(close(fd) == 0);
 	puts("PASS: renderer jobs, independent output delivery, 24 frames and cleanup");
 	return 0;

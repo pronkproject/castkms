@@ -56,7 +56,6 @@
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_LIMITED (1U << DRM_CASTKMS_YUV_RANGE_LIMITED)
 #define DRM_CASTKMS_RENDERER_CONSTRAINTS_YUV_RANGE_FULL (1U << DRM_CASTKMS_YUV_RANGE_FULL)
 
-#define DRM_CASTKMS_RENDERER_CREATE_ADMIN (1U << 0)
 
 /*
  * Native-endian immutable whole-state execution contract. Exactly format_count records
@@ -528,16 +527,13 @@ struct drm_castkms_renderer_files {
  * @crtc_id: DRM object ID of the controlled CRTC
  * @connector_id: DRM object ID of the controlled connector
  * @files: pointer to writable struct drm_castkms_renderer_files output storage
- * @flags: zero, or DRM_CASTKMS_RENDERER_CREATE_ADMIN
+ * @flags: must be zero
  * @reserved: must be zero
  *
- * With zero flags, the calling DRM file must be the exact current master and
- * hold both display objects. DRM_CASTKMS_RENDERER_CREATE_ADMIN explicitly asks
- * for administrative issuance and requires CAP_SYS_ADMIN in the initial user
- * namespace. It selects the independently observed current top-level owner,
- * not the calling file's DRM master association, and rejects an owner change
- * during issuance. A caller which is itself current master must drop that
- * incidental role before administrative issuance. Absence of a distinct
+ * Creation requires CAP_SYS_ADMIN in the initial user namespace. It selects
+ * the independently observed current top-level owner, not the calling file's
+ * DRM master association, and rejects an owner change during issuance. The
+ * issuing file must not itself be the current master. Absence of a distinct
  * current owner, or a target delegated through a DRM lease, returns EBUSY.
  *
  * The renderer descriptor grants no modesetting authority and does not

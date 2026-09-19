@@ -535,7 +535,7 @@ int main(int argc, char **argv)
 	uint64_t host, worker, generation, event_generation;
 	uint64_t content_serial, job_id;
 	uint32_t plane;
-	int fd, private_fd;
+	int fd, helper, private_fd;
 
 	if (argc != 2 && argc != 3) {
 		fprintf(stderr, "SKIP: supply a disposable CastKMS node [DMA heap]\n");
@@ -543,6 +543,8 @@ int main(int argc, char **argv)
 	}
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0 && drmIsMaster(fd));
+	helper = open(argv[1], O_RDWR | O_CLOEXEC);
+	CHECK(helper >= 0 && !drmIsMaster(helper));
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_KMS_CONSTRAINTS, 1) == 0);
 	resources = drmModeGetResources(fd);
@@ -592,7 +594,7 @@ int main(int argc, char **argv)
 	image.width = mode->hdisplay;
 	image.height = mode->vdisplay;
 	image.buffers = (uintptr_t)&private_fd;
-	CHECK(ioctl(fd, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
+	CHECK(ioctl(helper, DRM_IOCTL_CASTKMS_CREATE_RENDERER, &create) == 0);
 	CHECK(fcntl(files.renderer_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(fcntl(files.revoke_fd, F_GETFD) == FD_CLOEXEC);
 	CHECK(ioctl(files.renderer_fd, DRM_IOCTL_CASTKMS_RENDERER_CONFIGURE,
@@ -796,6 +798,7 @@ int main(int argc, char **argv)
 	drmModeFreeConnector(connector);
 	drmModeFreeResources(resources);
 	close_monitor(&monitor);
+	CHECK(close(helper) == 0);
 	CHECK(close(fd) == 0);
 	puts("PASS: exact tiled renderer selection through public UAPI");
 	return 0;

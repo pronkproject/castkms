@@ -12,7 +12,10 @@ mod cases {
         let display = CastKms::new_constraints(c"castkms-renderer-disabled-issuer", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
             device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
-            let owner = crate::File::issue_renderer_control(file.file(), crtc, connector)?;
+            let issuer = file.associated_file()?;
+            let owner = crate::File::issue_renderer_control(
+                device, issuer.file(), crtc, connector,
+            )?;
             let endpoint = endpoints::prepared(device, &owner)?;
             endpoint.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
@@ -31,7 +34,10 @@ mod cases {
     fn issuer_close_unpins_ready_storage_without_completing_reads() -> Result {
         let display = CastKms::new_constraints(c"castkms-renderer-issuer-close", 1)?;
         with_registered_display(&display, |device, crtc, connector, _, file| {
-            let owner = crate::File::issue_renderer_control(file.file(), crtc, connector)?;
+            let issuer = file.associated_file()?;
+            let owner = crate::File::issue_renderer_control(
+                device, issuer.file(), crtc, connector,
+            )?;
             let endpoint = endpoints::prepared(device, &owner)?;
             endpoint.publish(None, |_| Ok(()))?;
             let output = device.constraints_output(crtc)?;
@@ -43,7 +49,7 @@ mod cases {
             let hold = crtc.display.output.with_accepted(|accepted| {
                 accepted.ok_or(EINVAL)?.source.hold_admission()
             })?;
-            drop(file);
+            drop(issuer);
             check(endpoint.describe().is_err())?;
             check(hold.prepared()?.is_none())?;
             check(endpoint.unregister_image(1) == Err(EBUSY))?;

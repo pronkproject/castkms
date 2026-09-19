@@ -34,15 +34,14 @@ pub(crate) fn create(
                 == core::mem::size_of::<uapi::drm_castkms_renderer_files>()
         )
     };
-    let administrative = request.flags & uapi::DRM_CASTKMS_RENDERER_CREATE_ADMIN != 0;
     if request.crtc_id == 0
         || request.connector_id == 0
-        || request.flags & !uapi::DRM_CASTKMS_RENDERER_CREATE_ADMIN != 0
+        || request.flags != 0
         || request.reserved.iter().any(|field| *field != 0)
     {
         return Err(EINVAL);
     }
-    if administrative && !cred::capable_in_initial_user_namespace(Capability::SysAdmin) {
+    if !cred::capable_in_initial_user_namespace(Capability::SysAdmin) {
         return Err(EACCES);
     }
     let renderer_reservation =
@@ -54,7 +53,6 @@ pub(crate) fn create(
         file,
         request.crtc_id,
         request.connector_id,
-        administrative,
     )?;
     let (renderer, revoker) = files.into_files();
     let output = RendererFiles {

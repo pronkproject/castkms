@@ -4,10 +4,27 @@
 
 use super::*;
 use crate::renderer::permission::Owner;
-use kernel::drm::kms::testing::MasterFile;
+use kernel::drm::kms::testing::{AssociatedFile, MasterFile};
 
-fn owner(fixture: &Fixture, file: &MasterFile<'_, Driver>) -> Result<Owner> {
-    File::issue_renderer_control(file.file(), fixture.drm.crtc()?, fixture.drm.connector()?)
+struct Issued<'a> {
+    owner: Owner,
+    _issuer: AssociatedFile<'a, Driver>,
+}
+
+impl core::ops::Deref for Issued<'_> {
+    type Target = Owner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.owner
+    }
+}
+
+fn owner<'a>(fixture: &'a Fixture, file: &MasterFile<'a, Driver>) -> Result<Issued<'a>> {
+    let issuer = file.associated_file()?;
+    let owner = File::issue_renderer_control(
+        fixture.drm.device(), issuer.file(), fixture.drm.crtc()?, fixture.drm.connector()?,
+    )?;
+    Ok(Issued { owner, _issuer: issuer })
 }
 
 fn enable(fixture: &Fixture) -> Result {
@@ -55,7 +72,7 @@ mod cases {
     }
 
     #[test]
-    fn file_issuance_requires_the_exact_current_master_file() -> Result {
+    fn issuance_rejects_the_current_master_file() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
         let file = fixture.drm.master_file()?;
@@ -63,13 +80,15 @@ mod cases {
         enable(&fixture)?;
         check(matches!(
             File::issue_renderer_control(
-                peer.file(),
+                fixture.drm.device(), file.file(),
                 fixture.drm.crtc()?,
                 fixture.drm.connector()?
             ),
-            Err(EACCES)
+            Err(EBUSY)
         ))?;
-        let owner = super::owner(&fixture, &file)?;
+        let owner = File::issue_renderer_control(
+            fixture.drm.device(), peer.file(), fixture.drm.crtc()?, fixture.drm.connector()?,
+        )?;
         owner.access().with_current(|_| Ok(()))
     }
 
@@ -81,7 +100,7 @@ mod cases {
         let helper_file = owner_file.associated_file()?;
         enable(&fixture)?;
         check(matches!(
-            File::issue_administrative_renderer_control_then_for_test(
+            File::issue_renderer_control_then_for_test(
                 fixture.drm.device(),
                 owner_file.file(),
                 fixture.drm.crtc()?,
@@ -90,7 +109,7 @@ mod cases {
             ),
             Err(EBUSY)
         ))?;
-        let owner = File::issue_administrative_renderer_control_then_for_test(
+        let owner = File::issue_renderer_control_then_for_test(
             fixture.drm.device(),
             helper_file.file(),
             fixture.drm.crtc()?,
@@ -107,7 +126,7 @@ mod cases {
         let owner_file = fixture.drm.master_file()?;
         let helper_file = owner_file.associated_file()?;
         enable(&fixture)?;
-        let owner = File::issue_administrative_renderer_control_then_for_test(
+        let owner = File::issue_renderer_control_then_for_test(
             fixture.drm.device(),
             helper_file.file(),
             fixture.drm.crtc()?,
@@ -129,7 +148,7 @@ mod cases {
         let helper_file = owner_file.associated_file()?;
         enable(&fixture)?;
         check(matches!(
-            File::issue_administrative_renderer_control_then_for_test(
+            File::issue_renderer_control_then_for_test(
                 fixture.drm.device(),
                 helper_file.file(),
                 fixture.drm.crtc()?,
@@ -148,10 +167,12 @@ mod cases {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
         let file = fixture.drm.master_file()?;
+        let helper_file = file.associated_file()?;
         enable(&fixture)?;
         let master = file.file().master_snapshot().ok_or(EINVAL)?;
         let result = File::issue_renderer_control_then_for_test(
-            file.file(),
+            fixture.drm.device(),
+            helper_file.file(),
             fixture.drm.crtc()?,
             fixture.drm.connector()?,
             || {
@@ -159,7 +180,7 @@ mod cases {
                 Ok(())
             },
         );
-        check(matches!(result, Err(EACCES)))?;
+        check(matches!(result, Err(ESTALE)))?;
         fixture
             .drm
             .device()

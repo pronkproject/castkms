@@ -104,144 +104,68 @@ impl File {
         Ok(owner)
     }
 
-    /// Issue renderer control for the current master identity.
-    ///
-    /// Construction runs outside native DRM locks. The second check prevents a file or
-    /// display-object ownership change during allocation from authorizing the result.
-    pub(crate) fn issue_renderer_control(
-        file: &drm::file::File<Self>,
-        crtc: &Crtc<display::Crtc>,
-        connector: &Connector<display::Connector>,
-    ) -> Result<RendererOwner> {
-        Self::issue_renderer_control_then(file, crtc, connector, || Ok(()))
-    }
-
-    /// Resolve file-visible IDs before issuing anonymous renderer endpoints.
+    /// Resolve device object IDs before issuing anonymous renderer endpoints.
     pub(crate) fn create_renderer_files(
         dev: &drm::Device<Driver, Registered>,
         file: &drm::file::File<Self>,
         crtc_id: u32,
         connector_id: u32,
-        administrative: bool,
     ) -> Result<crate::renderer::files::Files> {
-        let (crtc, connector) = if administrative {
-            (
-                dev.lookup_crtc_unfiltered(crtc_id)?,
-                dev.lookup_connector_unfiltered(connector_id)?,
-            )
-        } else {
-            (
-                dev.lookup_crtc(file, crtc_id)?,
-                dev.lookup_connector(file, connector_id)?,
-            )
-        };
-        let owner = if administrative {
-            Self::issue_administrative_renderer_control(dev, file, crtc.crtc(), &connector)?
-        } else {
-            Self::issue_renderer_control(file, crtc.crtc(), &connector)?
-        };
+        let crtc = dev.lookup_crtc_unfiltered(crtc_id)?;
+        let connector = dev.lookup_connector_unfiltered(connector_id)?;
+        let owner = Self::issue_renderer_control(dev, file, crtc.crtc(), &connector)?;
         crate::renderer::files::Files::new(owner, dev)
     }
 
-    fn issue_administrative_renderer_control(
+    pub(crate) fn issue_renderer_control(
         dev: &drm::Device<Driver>,
         file: &drm::file::File<Self>,
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
     ) -> Result<RendererOwner> {
-        Self::issue_renderer_control_from(
-            file,
-            crtc,
-            connector,
-            IssuanceOrigin::Administrative(dev),
-            || Ok(()),
-        )
+        Self::issue_renderer_control_then(dev, file, crtc, connector, || Ok(()))
     }
 
+    /// Construction runs outside native DRM locks. Recheck the owner interval before
+    /// publishing the grant so a master or object-ownership change cannot authorize it.
     fn issue_renderer_control_then(
+        dev: &drm::Device<Driver>,
         file: &drm::file::File<Self>,
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
         after_create: impl FnOnce() -> Result,
     ) -> Result<RendererOwner> {
-        Self::issue_renderer_control_from(
-            file,
-            crtc,
-            connector,
-            IssuanceOrigin::Master,
-            after_create,
-        )
-    }
-
-    fn issue_renderer_control_from(
-        file: &drm::file::File<Self>,
-        crtc: &Crtc<display::Crtc>,
-        connector: &Connector<display::Connector>,
-        origin: IssuanceOrigin<'_>,
-        after_create: impl FnOnce() -> Result,
-    ) -> Result<RendererOwner> {
-        let (master, interval) = match origin {
-            IssuanceOrigin::Master => {
-                (file.master_snapshot().ok_or(EACCES)?.master().clone(), None)
-            }
-            IssuanceOrigin::Administrative(dev) => {
-                let master = dev.authority.snapshot().ok_or(EBUSY)?;
-                let interval = dev.authority.interval().map_err(|error| {
-                    if error == EACCES {
-                        EBUSY
-                    } else {
-                        error
-                    }
-                })?;
-                (master, Some(interval))
-            }
-        };
+        let master = dev.authority.snapshot().ok_or(EBUSY)?;
+        let interval = dev.authority.interval().map_err(|error| {
+            if error == EACCES { EBUSY } else { error }
+        })?;
         let permission = {
-            let guard =
-                master
-                    .lock_current()
-                    .ok_or(if interval.is_some() { EBUSY } else { EACCES })?;
-            if interval.is_some() {
-                if guard.is_master_file(file) {
-                    return Err(EBUSY);
-                }
-                if !guard.exclusively_holds_object(crtc)
-                    || !guard.exclusively_holds_object(connector)
-                {
-                    return Err(EBUSY);
-                }
-                RendererPermission::new(&guard, crtc, connector)?
-            } else {
-                if !guard.is_master_file(file) {
-                    return Err(EACCES);
-                }
-                RendererPermission::new(&guard, crtc, connector)?
+            let guard = master.lock_current().ok_or(EBUSY)?;
+            if guard.is_master_file(file)
+                || !guard.exclusively_holds_object(crtc)
+                || !guard.exclusively_holds_object(connector)
+            {
+                return Err(EBUSY);
             }
+            RendererPermission::new(&guard, crtc, connector)?
         };
         let mut owner = RendererOwner::new(permission)?;
         after_create()?;
         {
-            let guard =
-                master
-                    .lock_current()
-                    .ok_or(if interval.is_some() { ESTALE } else { EACCES })?;
-            if interval.is_some()
-                && (!guard.exclusively_holds_object(crtc)
-                    || !guard.exclusively_holds_object(connector))
+            let guard = master.lock_current().ok_or(ESTALE)?;
+            if !guard.exclusively_holds_object(crtc)
+                || !guard.exclusively_holds_object(connector)
             {
                 return Err(EBUSY);
             }
-            if (interval.is_none() && !guard.is_master_file(file))
-                || (interval.is_some() && guard.is_master_file(file))
+            if guard.is_master_file(file)
                 || !guard.holds_object(crtc)
                 || !guard.holds_object(connector)
             {
                 return Err(EACCES);
             }
-            if let (IssuanceOrigin::Administrative(dev), Some(expected)) = (origin, interval) {
-                if dev.authority.interval() != Ok(expected) {
-                    return Err(ESTALE);
-                }
+            if dev.authority.interval() != Ok(interval) {
+                return Err(ESTALE);
             }
             owner.track_creator(&file.inner().renderer_grants)?;
         }
@@ -251,29 +175,13 @@ impl File {
 
     #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn issue_renderer_control_then_for_test(
-        file: &drm::file::File<Self>,
-        crtc: &Crtc<display::Crtc>,
-        connector: &Connector<display::Connector>,
-        after_create: impl FnOnce() -> Result,
-    ) -> Result<RendererOwner> {
-        Self::issue_renderer_control_then(file, crtc, connector, after_create)
-    }
-
-    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
-    pub(crate) fn issue_administrative_renderer_control_then_for_test(
         dev: &drm::Device<Driver>,
         file: &drm::file::File<Self>,
         crtc: &Crtc<display::Crtc>,
         connector: &Connector<display::Connector>,
         after_create: impl FnOnce() -> Result,
     ) -> Result<RendererOwner> {
-        Self::issue_renderer_control_from(
-            file,
-            crtc,
-            connector,
-            IssuanceOrigin::Administrative(dev),
-            after_create,
-        )
+        Self::issue_renderer_control_then(dev, file, crtc, connector, after_create)
     }
 
     /// Resolve the issuing file's IDs before entering the existing grant policy boundary.

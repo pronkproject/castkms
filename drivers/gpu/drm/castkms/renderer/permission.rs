@@ -103,7 +103,7 @@ impl Owner {
         })
     }
 
-    /// Attach issuer cleanup while its exact master-file role remains stabilized.
+    /// Attach issuer cleanup while the administrative file and bound master are stabilized.
     pub(crate) fn track_creator(&mut self, creator: &Creator) -> Result {
         if self.creator.is_some() {
             return Err(EEXIST);
