@@ -827,6 +827,8 @@ Delivering to registered destinations
 HOST capture uses private storage and copies into a caller-owned linear
 destination. Delegated capture gives the renderer a registered destination
 with the stream's exact format and modifier, permitting GPU-to-GPU delivery.
+Visible cursor planes are part of the composed final image; capture does not
+offer a separate cursor bitmap or exclude-cursor mode.
 Layout, current permission and known source aliases are checked before output
 admission. Request depth and destination registrations have independent bounds;
 neither encodes a receiver's frame rate or transport window.

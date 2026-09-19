@@ -1,3 +1,5 @@
+.. SPDX-License-Identifier: GPL-2.0 OR MIT
+
 ==================
 DRM capture grants
 ==================
@@ -8,6 +10,9 @@ public operations create a grant, describe an offered image configuration,
 create or destroy streams, register or remove destination storage, and queue,
 cancel or dequeue final-image output. The interface assignments are development
 ABI, not upstream allocations.
+The current interface has no cursor-exclusion request or separate cursor
+metadata channel. Providers grant their complete composed image under their
+own capture policy.
 
 Issuing a grant
 ==============
