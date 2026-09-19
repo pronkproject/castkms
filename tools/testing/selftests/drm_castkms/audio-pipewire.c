@@ -129,6 +129,14 @@ int main(int argc, char **argv)
 		fprintf(stderr, "SKIP: supply a disposable one-output CastKMS node with PipeWire running\n");
 		return 4;
 	}
+	if (system("command -v pw-dump >/dev/null 2>&1") != 0 ||
+	    system("command -v wpctl >/dev/null 2>&1") != 0 ||
+	    system("command -v pw-play >/dev/null 2>&1") != 0 ||
+	    system("command -v jq >/dev/null 2>&1") != 0 ||
+	    system("pw-dump >/dev/null 2>&1") != 0) {
+		fprintf(stderr, "SKIP: active PipeWire and pw-play, wpctl, jq commands required\n");
+		return 4;
+	}
 	CHECK(atexit(stop_player) == 0);
 	fd = open(argv[1], O_RDWR | O_CLOEXEC);
 	CHECK(fd >= 0);
