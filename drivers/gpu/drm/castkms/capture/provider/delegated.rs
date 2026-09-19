@@ -109,6 +109,11 @@ impl Delegated {
         })
     }
 
+    /// Check the current worker without adding a caller-specific callback type.
+    pub(super) fn check_worker(&self) -> Result {
+        self.with_worker(|_| Ok(()))
+    }
+
     pub(crate) fn with_image<R>(
         &self,
         image: &Rendered,

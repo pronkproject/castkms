@@ -153,7 +153,7 @@ impl Request {
     /// Reconcile worker loss without retaining its active ownership or claiming an image.
     pub(crate) fn status_for_worker(&self) -> Status {
         if matches!(self.state.lock().phase, Phase::Queued) {
-            if let Err(error) = self.destination.scope().with_worker(|_| Ok(())) {
+            if let Err(error) = self.destination.scope().check_worker() {
                 self.fail_queued(error);
             }
         }
