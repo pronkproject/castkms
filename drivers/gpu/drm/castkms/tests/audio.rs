@@ -61,6 +61,19 @@ mod cases {
     }
 
     #[test]
+    fn identical_audio_reattach_keeps_the_registered_source() -> Result {
+        renderer_control::with_display(|device, crtc, connector, _, file| {
+            let monitor = device.monitor.acquire(device)?;
+            monitor.attach(Some(edid()?))?;
+            let source = device.monitor.audio()?;
+            let owner = File::issue_audio_owner(file.file(), crtc, connector)?;
+            monitor.attach(Some(edid()?))?;
+            check(kernel::sync::Arc::ptr_eq(&source, &device.monitor.audio()?))?;
+            owner.access().check()
+        })
+    }
+
+    #[test]
     fn capture_is_exclusive_but_revocation_allows_a_new_owner() -> Result {
         renderer_control::with_display(|device, crtc, connector, _, file| {
             let monitor = device.monitor.acquire(device)?;
