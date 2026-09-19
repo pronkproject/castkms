@@ -76,10 +76,18 @@ impl Source {
 /// Dropping the monitor attachment disconnects ALSA even while capture handles survive.
 pub(crate) struct Attachment {
     pub(crate) source: Arc<Source>,
+    eld: [u8; kernel::bindings::MAX_ELD_BYTES as usize],
+    eld_len: usize,
     _card: Registration<Playback>,
 }
 
 impl Attachment {
+    pub(crate) fn matches_eld(&self, edid: &Edid) -> Result<bool> {
+        Ok(edid
+            .eld(false)?
+            .is_some_and(|eld| &self.eld[..self.eld_len] == eld.as_bytes()))
+    }
+
     pub(crate) fn new(
         device: &Device<Driver, Registered>,
         edid: &Edid,
@@ -89,6 +97,12 @@ impl Attachment {
         let Some(eld) = edid.eld(false)? else {
             return Ok(None);
         };
+        let mut eld_bytes = [0; kernel::bindings::MAX_ELD_BYTES as usize];
+        let eld_len = eld.as_bytes().len();
+        if eld_len > eld_bytes.len() {
+            return Err(EOVERFLOW);
+        }
+        eld_bytes[..eld_len].copy_from_slice(eld.as_bytes());
         let id = CString::try_from_fmt(fmt!("CastKMS{index}"))?;
         let mut display_name = [0; 17];
         let monitor_name = eld.monitor_name(&mut display_name);
@@ -134,6 +148,8 @@ impl Attachment {
         )?;
         Ok(Some(Self {
             source,
+            eld: eld_bytes,
+            eld_len,
             _card: card,
         }))
     }
