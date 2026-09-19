@@ -581,6 +581,9 @@ struct drm_castkms_create_renderer {
  * configure a fresh generation after that same master returns and work drains.
  * If old jobs still drain after return, poll stays idle until their release
  * makes the endpoint available for a new generation.
+ * Source-job IDs, output-job IDs and private-image names do not restart when
+ * that same descriptor configures a new generation. Delayed cleanup from an
+ * earlier interval cannot identify new work by reusing an old number.
  * Explicit WITHDRAW and issuer revocation report POLLHUP|POLLERR but leave
  * release/cleanup operations usable.
  */
