@@ -502,6 +502,39 @@ static uint32_t overlay_plane(int fd, unsigned int crtc_index,
 	return found;
 }
 
+static void enum_property(int fd, drmModeAtomicReq *request, uint32_t object,
+			  uint32_t type, const char *property_name,
+			  const char *value_name)
+{
+	drmModeObjectProperties *properties =
+		drmModeObjectGetProperties(fd, object, type);
+	uint64_t value = 0;
+	uint32_t property_id = 0;
+	bool found_value = false;
+
+	CHECK(properties);
+	for (uint32_t i = 0; i < properties->count_props; i++) {
+		drmModePropertyRes *candidate =
+			drmModeGetProperty(fd, properties->props[i]);
+
+		CHECK(candidate);
+		if (!strcmp(candidate->name, property_name)) {
+			property_id = candidate->prop_id;
+			for (int j = 0; j < candidate->count_enums; j++) {
+				if (!strcmp(candidate->enums[j].name, value_name)) {
+					value = candidate->enums[j].value;
+					found_value = true;
+				}
+			}
+		}
+		drmModeFreeProperty(candidate);
+	}
+	drmModeFreeObjectProperties(properties);
+	CHECK(property_id);
+	CHECK(found_value);
+	CHECK(drmModeAtomicAddProperty(request, object, property_id, value) >= 0);
+}
+
 static void check_tile_pixels(int dma_fd, const struct buffer *buffer,
 			      unsigned char value, bool cursor)
 {
@@ -741,6 +774,10 @@ static void add_overlay(drmModeAtomicReq *request, int fd, uint32_t plane,
 	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_Y", y);
 	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_W", 320);
 	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "CRTC_H", 240);
+	enum_property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+		      "pixel blend mode", "Pre-multiplied");
+	enum_property(fd, request, plane, DRM_MODE_OBJECT_PLANE,
+		      "SCALING_FILTER", "Nearest Neighbor");
 }
 
 static void commit_stacked_overlays(int fd, uint32_t crtc,
