@@ -266,9 +266,10 @@ and outstanding read lifetimes.
 Renderer issuance requires host ``CAP_SYS_ADMIN`` and a non-master helper's DRM
 file. The endpoint binds to the current top-level owner without granting the
 helper modesetting access. Issuance returns ``EBUSY`` unless a distinct current
-owner exclusively controls the selected output.
-Owner loss permanently stales that endpoint; creator close and the separate
-revocation descriptor remain independent terminal controls.
+owner exclusively controls the selected output. Temporary master loss suspends
+fresh work; the same master's return permits a new renderer configuration after
+old work drains. Creator close and the separate revocation descriptor remain
+independent terminal controls.
 
 Final-image capture uses the same two issuance origins through the generic DRM
 capture interface. CastKMS advertises administrative capture support separately
