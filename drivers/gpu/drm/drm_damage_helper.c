@@ -33,6 +33,10 @@
 #include <linux/export.h>
 
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_prepare_auth.h>
+#include <drm/drm_atomic_prepare_owner.h>
+#include <drm/drm_atomic_prepare_request.h>
+#include <drm/drm_auth.h>
 #include <drm/drm_damage_helper.h>
 #include <drm/drm_device.h>
 #include <drm/drm_framebuffer.h>
@@ -50,6 +54,39 @@ static void convert_clip_rect_to_rect(const struct drm_clip_rect *src,
 		dest++;
 		num_clips--;
 	}
+}
+
+struct dirtyfb_request {
+	struct drm_framebuffer *fb;
+	struct drm_property_blob *damage;
+	struct drm_file *file;
+};
+
+static int build_dirtyfb_request(struct drm_atomic_commit *state, void *data)
+{
+	struct dirtyfb_request *request = data;
+	struct drm_plane *plane;
+	bool changed = false;
+	int ret;
+
+	ret = drm_modeset_lock_all_ctx(state->dev, state->acquire_ctx);
+	if (ret)
+		return ret;
+	if (request->file && !drm_is_current_master(request->file))
+		return -EACCES;
+	drm_for_each_plane(plane, state->dev) {
+		struct drm_plane_state *plane_state;
+
+		if (plane->state->fb != request->fb)
+			continue;
+		plane_state = drm_atomic_get_plane_state(state, plane);
+		if (IS_ERR(plane_state))
+			return PTR_ERR(plane_state);
+		drm_property_replace_blob(&plane_state->fb_damage_clips,
+					  request->damage);
+		changed = true;
+	}
+	return changed ? DRM_ATOMIC_REQUEST_COMMIT : DRM_ATOMIC_REQUEST_UNCHANGED;
 }
 
 /**
@@ -112,25 +149,19 @@ int drm_atomic_helper_dirtyfb(struct drm_framebuffer *fb,
 			      unsigned int num_clips)
 {
 	struct drm_modeset_acquire_ctx ctx;
+	struct drm_prepare_owner *owner = NULL;
+	struct dirtyfb_request request = { .fb = fb, .file = file_priv };
 	struct drm_property_blob *damage = NULL;
 	struct drm_mode_rect *rects = NULL;
 	struct drm_atomic_commit *state;
 	struct drm_plane *plane;
 	int ret = 0;
 
-	/*
-	 * When called from ioctl, we are interruptible, but not when called
-	 * internally (ie. defio worker)
-	 */
-	drm_modeset_acquire_init(&ctx,
-		file_priv ? DRM_MODESET_ACQUIRE_INTERRUPTIBLE : 0);
-
-	state = drm_atomic_commit_alloc(fb->dev);
-	if (!state) {
-		ret = -ENOMEM;
-		goto out_drop_locks;
+	if (fb->dev->mode_config.preparation && file_priv) {
+		owner = drm_file_prepare_owner(file_priv);
+		if (IS_ERR(owner))
+			return PTR_ERR(owner);
 	}
-	state->acquire_ctx = &ctx;
 
 	if (clips) {
 		uint32_t inc = 1;
@@ -143,7 +174,7 @@ int drm_atomic_helper_dirtyfb(struct drm_framebuffer *fb,
 		rects = kzalloc_objs(*rects, num_clips);
 		if (!rects) {
 			ret = -ENOMEM;
-			goto out;
+			goto out_damage;
 		}
 
 		convert_clip_rect_to_rect(clips, rects, num_clips, inc);
@@ -153,9 +184,28 @@ int drm_atomic_helper_dirtyfb(struct drm_framebuffer *fb,
 		if (IS_ERR(damage)) {
 			ret = PTR_ERR(damage);
 			damage = NULL;
-			goto out;
+			goto out_damage;
 		}
 	}
+
+	if (fb->dev->mode_config.preparation) {
+		request.damage = damage;
+		ret = owner ? drm_atomic_commit_request_owned(fb->dev, owner,
+							build_dirtyfb_request, &request) :
+			    drm_atomic_commit_request(fb->dev, build_dirtyfb_request,
+						      &request);
+		goto out_damage;
+	}
+
+	/* The ordinary path is interruptible only for an ioctl caller. */
+	drm_modeset_acquire_init(&ctx,
+		file_priv ? DRM_MODESET_ACQUIRE_INTERRUPTIBLE : 0);
+	state = drm_atomic_commit_alloc(fb->dev);
+	if (!state) {
+		ret = -ENOMEM;
+		goto out_ctx;
+	}
+	state->acquire_ctx = &ctx;
 
 retry:
 	drm_for_each_plane(plane, fb->dev) {
@@ -190,13 +240,16 @@ out:
 			goto retry;
 	}
 
-	drm_property_blob_put(damage);
-	kfree(rects);
 	drm_atomic_commit_put(state);
 
-out_drop_locks:
+out_ctx:
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
+out_damage:
+	if (owner)
+		drm_prepare_owner_put(owner);
+	drm_property_blob_put(damage);
+	kfree(rects);
 
 	return ret;
 
