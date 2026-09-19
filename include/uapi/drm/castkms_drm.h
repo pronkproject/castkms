@@ -1021,8 +1021,9 @@ struct drm_castkms_create_audio_capture {
  * modeset must be prepared again. Nonzero reads smaller than one frame fail
  * with EINVAL; an empty nonblocking stream returns
  * EAGAIN. Authority suspension also returns EAGAIN; poll remains idle until
- * reacquisition or terminal revocation. poll() reports readable samples or
- * terminal POLLHUP|POLLERR, except allocation failure reports POLLERR
+ * reacquisition or terminal revocation. After reacquisition, another grant's
+ * exclusive tap can temporarily keep poll idle. poll() reports readable
+ * samples or terminal POLLHUP|POLLERR; allocation failure reports POLLERR
  * without POLLHUP.
  */
 struct drm_castkms_audio_query {
