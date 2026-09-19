@@ -266,6 +266,7 @@ impl Request {
             })?;
         Ok(Some(Claim {
             request: self.clone(),
+            image: image.clone(),
             report,
             retirement: Some(retirement),
         }))
@@ -336,6 +337,7 @@ unsafe impl Retire for Hold {
 #[must_use = "output claims must report native completion or confirm no access"]
 pub(crate) struct Claim {
     request: Arc<Request>,
+    image: Arc<Rendered>,
     report: Arc<Report>,
     retirement: Option<Retirement<Hold>>,
 }
@@ -345,6 +347,16 @@ impl Claim {
     /// Retaining a DMA-BUF reference grants no write beyond the claimed stage.
     pub(crate) fn destination(&self) -> &Image {
         &self.request.destination
+    }
+
+    /// Recheck recipient permission, worker readiness and accepted image before
+    /// publishing the destination descriptor. A claimed but unpublished stage
+    /// carries no userspace access and may still be released without access.
+    pub(crate) fn publish_if_current(&self, publish: impl FnOnce()) -> Result {
+        self.request.destination.scope().with_image(&self.image, |_| {
+            publish();
+            Ok(())
+        })
     }
 
     /// Report only materialized native work covering E reads and D writes. CPU completion
