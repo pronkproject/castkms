@@ -488,6 +488,9 @@ struct drm_castkms_cec_receive {
  * @physical_address: current EDID-derived CEC physical address
  * @logical_address_mask: logical addresses assigned by the CEC core
  * @reserved: returned zero
+ *
+ * Statistics belong to the connector's CEC adapter and accumulate across
+ * monitor-control lifetimes. Creating another control does not reset them.
  */
 struct drm_castkms_cec_state {
 	__u64 state_generation;
