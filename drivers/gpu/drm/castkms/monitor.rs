@@ -358,13 +358,18 @@ impl Control {
 
 impl Drop for Control {
     fn drop(&mut self) {
+        let registered = self.device.registration_guard();
+        let guard = registered.as_ref().map(|registered| registered.mode_config_lock());
         let retired = self.monitor.release(&self.identity);
         if retired.is_some() {
+            if let (Some(guard), Ok(connector)) = (guard.as_ref(), self.monitor.cec.connector()) {
+                let _ = connector.guard(guard).update_edid(None);
+            }
             self.monitor.cec.reset();
         }
-        let changed = retired.is_some();
-        drop(retired);
-        if changed {
+        drop(guard);
+        if retired.is_some() {
+            drop(retired);
             self.notify();
         }
     }
