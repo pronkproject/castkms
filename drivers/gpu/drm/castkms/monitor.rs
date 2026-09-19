@@ -318,8 +318,17 @@ impl Control {
     }
 
     pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
-        let retired = self.monitor.publish(&self.identity, self.description(edid)?)?;
+        let description = self.description(edid)?;
+        let registered = self.device.registration_guard().ok_or(ENODEV)?;
+        let connector = self.monitor.cec.connector()?;
+        let guard = registered.mode_config_lock();
+        let Description::Attached { edid, .. } = &description else {
+            return Err(EINVAL);
+        };
+        connector.guard(&guard).update_edid(edid.as_ref())?;
+        let retired = self.monitor.publish(&self.identity, description)?;
         self.monitor.cec.set_attached(true);
+        drop(guard);
         drop(retired);
         self.notify();
         Ok(())
