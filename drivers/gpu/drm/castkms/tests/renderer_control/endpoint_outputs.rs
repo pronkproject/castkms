@@ -178,4 +178,36 @@ mod cases {
             })
         })
     }
+
+    #[test]
+    fn revoked_recipient_grant_blocks_output_publication() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-output-revoke", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.publish(None, |_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+            let source = endpoint.begin_source(1)?;
+            let id = source.id();
+            source.publish(|| ())?;
+            endpoint.release_source(id, Completion::Cpu)?;
+
+            let grant = capture_grant(&file, crtc, connector)?;
+            let scope = grant.capture().describe_delegated()?;
+            let registration = scope.register_queue(1)?;
+            let backing = private_images::buffer(device, ExportAccess::ReadWrite)?;
+            let destination = scope.register_destination(
+                &backing, drm::fourcc::XRGB8888, drm::fourcc::FORMAT_MOD_LINEAR, 2560, 0,
+            )?;
+            registration.with_queue(|queue| queue.queue_to(1, &destination, None))?;
+            let pending = endpoint.begin_output(1)?;
+            drop(grant);
+            check(pending.publish(|| ()).err() == Some(EKEYREVOKED))?;
+            registration.with_queue(|queue| {
+                queue.advance();
+                queue.dequeue(|result| check(result.result == Err(EKEYREVOKED)))
+            })
+        })
+    }
 }
