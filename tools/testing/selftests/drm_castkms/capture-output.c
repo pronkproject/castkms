@@ -152,6 +152,90 @@ static void failed_publication(int client)
 	CHECK(munmap(mapping, page_size * 2) == 0);
 }
 
+static void large_host_capture(int master, uint32_t crtc_id, uint32_t connector_id)
+{
+	struct drm_mode_create_capture_grant grant = { .crtc_id = crtc_id,
+		.connector_id = connector_id };
+	struct drm_capture_grant_files files;
+	struct drm_capture_describe description = {};
+	struct drm_capture_create_stream stream = { .id = 1, .capacity = 1 };
+	struct drm_capture_register_destination destination = {
+		.id = 1, .width = 4096, .height = 2160,
+		.format = DRM_FORMAT_XRGB8888, .num_planes = 1,
+		.modifier = DRM_FORMAT_MOD_LINEAR,
+	};
+	struct drm_capture_destroy_stream close_stream = { .id = 1 };
+	struct drm_capture_unregister_destination remove = { .id = 1 };
+	struct drm_capture_result result;
+	struct dma_buf_sync sync = { .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ };
+	struct buffer source, output;
+	const unsigned int sample_x[] = { 0, 2048, 4095 };
+	const unsigned int sample_y[] = { 0, 1080, 2159 };
+	drmModeConnector *connector;
+	drmModeModeInfo mode = {};
+	unsigned char *pixels;
+	int output_fd;
+
+	connector = drmModeGetConnector(master, connector_id);
+	CHECK(connector);
+	for (int i = 0; i < connector->count_modes; i++) {
+		if (connector->modes[i].hdisplay == 4096 &&
+		    connector->modes[i].vdisplay == 2160) {
+			mode = connector->modes[i];
+			break;
+		}
+	}
+	drmModeFreeConnector(connector);
+	CHECK(mode.clock);
+	source = create_buffer(master, 4096, 2160, 0x49);
+	output = create_buffer(master, 4096, 2160, 0x55);
+	CHECK(output.dumb.size > 16 * 1024 * 1024);
+	CHECK(drmPrimeHandleToFD(master, output.dumb.handle, DRM_CLOEXEC | DRM_RDWR,
+				 &output_fd) == 0);
+	CHECK(drmModeSetCrtc(master, crtc_id, source.fb, 0, 0,
+			     &connector_id, 1, &mode) == 0);
+	grant.files = (uintptr_t)&files;
+	CHECK(ioctl(master, DRM_IOCTL_MODE_CREATE_CAPTURE_GRANT, &grant) == 0);
+	CHECK(ioctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESCRIBE, &description) == 0);
+	CHECK(description.width == 4096 && description.height == 2160);
+	CHECK(description.format == DRM_FORMAT_XRGB8888 &&
+	      description.modifier == DRM_FORMAT_MOD_LINEAR);
+	stream.offer = description.id;
+	CHECK(ioctl(files.capture_fd, DRM_IOCTL_CAPTURE_CREATE_STREAM, &stream) == 0);
+	destination.fds[0] = output_fd;
+	destination.strides[0] = output.dumb.pitch;
+	CHECK(ioctl(files.capture_fd, DRM_IOCTL_CAPTURE_REGISTER_DESTINATION,
+		    &destination) == 0);
+	CHECK(queue(files.capture_fd, 1, 1, -1) == 0);
+	wait_result(files.capture_fd);
+	CHECK(dequeue(files.capture_fd, &result) == 0);
+	CHECK(result.use_id == 1 && result.status == 0 && result.completed_at_ns > 0);
+	pixels = mmap(NULL, output.dumb.size, PROT_READ, MAP_SHARED, output_fd, 0);
+	CHECK(pixels != MAP_FAILED);
+	CHECK(ioctl(output_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	for (unsigned int yi = 0; yi < 3; yi++) {
+		for (unsigned int xi = 0; xi < 3; xi++) {
+			unsigned char *pixel = pixels + sample_y[yi] * output.dumb.pitch +
+						 sample_x[xi] * 4;
+
+			CHECK(pixel[0] == 0x49 && pixel[1] == 0x49 &&
+			      pixel[2] == 0x49 && pixel[3] == 0xff);
+		}
+	}
+	sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+	CHECK(ioctl(output_fd, DMA_BUF_IOCTL_SYNC, &sync) == 0);
+	CHECK(munmap(pixels, output.dumb.size) == 0);
+	CHECK(ioctl(files.capture_fd, DRM_IOCTL_CAPTURE_UNREGISTER_DESTINATION,
+		    &remove) == 0);
+	CHECK(ioctl(files.capture_fd, DRM_IOCTL_CAPTURE_DESTROY_STREAM, &close_stream) == 0);
+	CHECK(close(files.control_fd) == 0);
+	CHECK(close(files.capture_fd) == 0);
+	CHECK(drmModeSetCrtc(master, crtc_id, 0, 0, 0, NULL, 0, NULL) == 0);
+	CHECK(close(output_fd) == 0);
+	destroy_buffer(master, &source);
+	destroy_buffer(master, &output);
+}
+
 int main(int argc, char **argv)
 {
 	struct monitor_control monitor;
@@ -267,6 +351,7 @@ int main(int argc, char **argv)
 	destroy_buffer(master, &changed);
 	destroy_buffer(master, &output);
 	destroy_buffer(master, &replacement);
+	large_host_capture(master, grant.crtc_id, grant.connector_id);
 	close_monitor(&monitor);
 	CHECK(close(master) == 0);
 	puts("PASS: capture output, retained faults, cancellation and revoked dequeue");
