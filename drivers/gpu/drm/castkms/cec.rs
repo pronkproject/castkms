@@ -121,6 +121,10 @@ impl Cec {
         &self.changed
     }
 
+    pub(crate) fn connector(&self) -> Result<ARef<Connector<display::Connector>>> {
+        self.state.lock().connector.clone().ok_or(ENODEV)
+    }
+
     pub(crate) fn readable(&self) -> Result<bool> {
         let state = self.state.lock();
         if state.closed {
