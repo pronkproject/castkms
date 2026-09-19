@@ -29,13 +29,14 @@ mod cases {
             let (mut pool, publication) = prepare(device, &owner)?;
             let output = device.constraints_output(crtc)?;
             let before = output.snapshot(0)?;
-            check(publication.publish(device, |id| {
+            check(publication.prepare_reply(|id| {
                 check(id == publication.entry().id())?;
                 Err(EFAULT)
             }) == Err(EFAULT))?;
             check(output.snapshot(0)?.info().generation == before.info().generation)?;
             check(output.lookup(publication.entry().id()).err() == Some(ESTALE))?;
-            publication.publish(device, |_| Ok(()))?;
+            publication.prepare_reply(|_| Ok(()))?;
+            publication.publish(device)?;
             check(output.snapshot(0)?.info().selected_id == before.info().selected_id)?;
             device.atomic_update(|state| {
                 state.add_crtc_state(crtc)?.set_constraints(publication.entry())
@@ -55,8 +56,9 @@ mod cases {
             let (mut pool, publication) = prepare(device, &owner)?;
             owner.revoke();
             let mut replied = false;
-            check(publication.publish(device, |_| { replied = true; Ok(()) }) == Err(EKEYREVOKED))?;
+            check(publication.prepare_reply(|_| { replied = true; Ok(()) }) == Err(EKEYREVOKED))?;
             check(!replied)?;
+            check(publication.publish(device) == Err(EKEYREVOKED))?;
             check(device.constraints_output(crtc)?.snapshot(0)?.info().count == 1)?;
             drop(pool.remove(1)?);
             Ok(())
@@ -72,8 +74,10 @@ mod cases {
             let (_, first) = prepare(device, &owner)?;
             let (_, second) = prepare(device, &owner)?;
             let first_entry = first.entry().clone();
-            first.publish(device, |_| Ok(()))?;
-            second.publish(device, |_| Ok(()))?;
+            first.prepare_reply(|_| Ok(()))?;
+            first.publish(device)?;
+            second.prepare_reply(|_| Ok(()))?;
+            second.publish(device)?;
             let output = device.constraints_output(crtc)?;
             check(output.snapshot(0)?.info().count == 3)?;
             drop(first);

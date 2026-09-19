@@ -177,9 +177,9 @@ impl Endpoint {
         &self.access.device().changed
     }
 
-    /// Prepare outside endpoint exclusion, then serialize reply, listing and owner install.
-    /// No fallible operation follows successful listing. The reply callback follows Publication's
-    /// restrictions; closing concurrently cannot leave a ready unowned native entry.
+    /// Prepare and copy the reply outside endpoint exclusion, then serialize listing and owner
+    /// install. No fallible operation follows successful listing. A concurrent close or master
+    /// change after copyout fails publication; callers must discard result bytes on error.
     pub(crate) fn publish(
         &self,
         completion: Option<ARef<Fence>>,
@@ -198,13 +198,16 @@ impl Endpoint {
             core::mem::replace(&mut *state, State::Publishing)
         };
         let mut pending = Pending { endpoint: self, resources: Some(resources) };
-        let registered = self.device.registration_guard().ok_or(ENODEV)?;
         let Some(State::Configured { configuration, pool }) = &pending.resources else {
             return Err(EIO);
         };
         // This owner is declared before the lock, so errors revoke it after lock release.
-        let publication =
-            Publication::new(&registered, configuration, pool, completion.as_deref())?;
+        let publication = {
+            let registered = self.device.registration_guard().ok_or(ENODEV)?;
+            Publication::new(&registered, configuration, pool, completion.as_deref())?
+        };
+        publication.prepare_reply(reply)?;
+        let registered = self.device.registration_guard().ok_or(ENODEV)?;
         let mut state = self.state.lock();
         if matches!(&*state, State::Closed) {
             return Err(EKEYREVOKED);
@@ -216,7 +219,7 @@ impl Endpoint {
         let Some(State::Configured { configuration, pool }) = pending.resources.take() else {
             return Err(EIO);
         };
-        let result = publication.publish(&registered, reply);
+        let result = publication.publish(&registered);
         match result {
             Ok(()) => *state = State::Ready {
                 publication,

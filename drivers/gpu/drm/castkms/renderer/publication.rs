@@ -79,21 +79,20 @@ impl Publication {
         self._owner.worker().interval()
     }
 
-    /// Copy the reply before native publication while issuer authority is stable.
-    /// On any error callers ignore the copied identity. The callback must not publish files,
-    /// select this entry, revoke its owner, or reenter authority. Success lists a ready backend
-    /// but does not change accepted state; the endpoint must retain this owner before unlock.
-    pub(crate) fn publish(
-        &self,
-        registered: &Device<Driver, Registered>,
-        reply: impl FnOnce(u64) -> Result,
-    ) -> Result {
+    /// Prepare result copyout without holding endpoint or native DRM locks.
+    /// The precheck avoids copying a known-stale identity. Authority is checked again at
+    /// publication because it can change while userspace handles a faulting reply page.
+    pub(crate) fn prepare_reply(&self, reply: impl FnOnce(u64) -> Result) -> Result {
+        self.access.with_output_interval(self.interval(), || Ok(()))?;
+        reply(self.entry.id())
+    }
+
+    /// List a ready backend after reply copyout and final issuer revalidation.
+    /// The endpoint must hold its state lock and retain this owner before unlock.
+    pub(crate) fn publish(&self, registered: &Device<Driver, Registered>) -> Result {
         let output = self.access.constraints_output(registered)?;
         let provider = self.access.display().constraints.as_ref().ok_or(EOPNOTSUPP)?;
-        self.access.with_output_interval(self.interval(), || {
-            reply(self.entry.id())?;
-            provider.publish(&output, &self.entry)
-        })
+        self.access.with_output_interval(self.interval(), || provider.publish(&output, &self.entry))
     }
 }
 

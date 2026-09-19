@@ -14,7 +14,8 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let (pool, publication) = publication::prepare(device, &owner)?;
             let control = publication.control();
-            publication.publish(device, |_| Ok(()))?;
+            publication.prepare_reply(|_| Ok(()))?;
+            publication.publish(device)?;
             device.atomic_update(|state| {
                 state.add_crtc_state(crtc)?.set_constraints(control.entry())
             })?;
@@ -43,8 +44,10 @@ mod cases {
             let (_, second) = publication::prepare(device, &owner)?;
             let first_control = first.control();
             let second_control = second.control();
-            first.publish(device, |_| Ok(()))?;
-            second.publish(device, |_| Ok(()))?;
+            first.prepare_reply(|_| Ok(()))?;
+            first.publish(device)?;
+            second.prepare_reply(|_| Ok(()))?;
+            second.publish(device)?;
             let image = pool.image(1)?;
             check(first_control.claim(1, None, image.prepare(1)?).err() == Some(ESTALE))?;
             device.atomic_update(|state| {
@@ -74,7 +77,8 @@ mod cases {
             let owner = owner(&file, crtc, connector)?;
             let (pool, publication) = publication::prepare(device, &owner)?;
             let control = publication.control();
-            publication.publish(device, |_| Ok(()))?;
+            publication.prepare_reply(|_| Ok(()))?;
+            publication.publish(device)?;
             device.atomic_update(|state| {
                 state.add_crtc_state(crtc)?.set_constraints(publication.entry())
             })?;
