@@ -335,9 +335,14 @@ impl Control {
     }
 
     pub(crate) fn detach(&self) -> Result {
+        let registered = self.device.registration_guard().ok_or(ENODEV)?;
+        let connector = self.monitor.cec.connector()?;
+        let guard = registered.mode_config_lock();
+        connector.guard(&guard).update_edid(None)?;
         let retired = self.monitor
             .publish(&self.identity, Description::Disconnected)?;
         self.monitor.cec.set_attached(false);
+        drop(guard);
         drop(retired);
         self.notify();
         Ok(())
