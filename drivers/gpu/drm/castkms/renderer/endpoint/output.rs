@@ -132,7 +132,11 @@ impl Pending<'_> {
             claim.release(Completion::WithoutAccess);
             return Err(ECANCELED);
         }
-        publish();
+        if let Err(error) = claim.publish_if_current(publish) {
+            drop(state);
+            claim.release(Completion::WithoutAccess);
+            return Err(error);
+        }
         output.slot = Slot::Claimed { id: self.id, claim };
         Ok(())
     }
