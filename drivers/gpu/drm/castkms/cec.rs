@@ -71,6 +71,8 @@ pub(crate) struct Cec {
     #[pin]
     state: Mutex<State>,
     #[pin]
+    address_update: Mutex<()>,
+    #[pin]
     changed: PollCondVar,
 }
 
@@ -96,6 +98,7 @@ impl Cec {
                     received: 0,
                     invalid: 0,
                 }),
+                address_update <- kernel::new_mutex!(()),
                 changed <- kernel::new_poll_condvar!(),
             }),
             GFP_KERNEL,
@@ -164,6 +167,10 @@ impl Cec {
     }
 
     pub(crate) fn refresh_physical_address(&self) {
+        // Serialize the native adapter update with other refreshers and close.
+        // Do not hold `state` across the native call: CEC callbacks may acquire it
+        // while the adapter serializes its own address change.
+        let _update = self.address_update.lock();
         let (connector, valid) = {
             let state = self.state.lock();
             let Some(connector) = state.connector.clone() else {
@@ -246,6 +253,7 @@ impl Cec {
             (aborted, connector)
         };
         Self::report_abort(aborted, true);
+        let _update = self.address_update.lock();
         if let Some(connector) = connector {
             connector.cec_set_physical_address_valid(false);
         }
