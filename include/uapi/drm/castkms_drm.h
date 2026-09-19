@@ -979,11 +979,12 @@ struct drm_castkms_audio_files {
  * the same bound drm_master becomes current again, the descriptor opens a fresh
  * tap; samples from the preceding interval never resume. This allows the new
  * current master to create its own stream in the meantime. Creator close,
- * revocation, detach or device removal remains terminal. An old file never
- * follows a replacement attachment. Capture operates independently of the
- * selected video renderer. Disabling the CRTC suspends delivery without
- * revoking the capability. Files are installed only after the complete result
- * has been copied successfully.
+ * revocation, detach or device removal remains terminal. Reasserting a
+ * monitor with identical ELD retains its audio attachment; changed ELD
+ * replaces it, and an old file never follows that replacement. Capture is
+ * independent of the selected video renderer. Disabling the CRTC suspends
+ * delivery without revoking the capability. Files are installed only after
+ * the complete result has been copied successfully.
  */
 struct drm_castkms_create_audio_capture {
 	__u32 crtc_id;
