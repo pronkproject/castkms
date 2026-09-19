@@ -18,6 +18,7 @@ obj-$(CONFIG_DRM_KUNIT_TEST) += \
 	drm_atomic_property_test.o \
 	drm_atomic_rotation_test.o \
 	drm_atomic_plane_color_test.o \
+	drm_atomic_plane_hotspot_test.o \
 	drm_atomic_cursor_test.o \
 	drm_atomic_power_test.o \
 	drm_atomic_gamma_test.o \

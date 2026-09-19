@@ -606,22 +606,8 @@ static int drm_atomic_plane_set_property(struct drm_plane *plane,
 	} else if (plane->funcs->atomic_set_property) {
 		return plane->funcs->atomic_set_property(plane, state,
 				property, val);
-	} else if (property == plane->hotspot_x_property) {
-		if (plane->type != DRM_PLANE_TYPE_CURSOR) {
-			drm_dbg_atomic(plane->dev,
-				       "[PLANE:%d:%s] is not a cursor plane: 0x%llx\n",
-				       plane->base.id, plane->name, val);
-			return -EINVAL;
-		}
-		state->hotspot_x = val;
-	} else if (property == plane->hotspot_y_property) {
-		if (plane->type != DRM_PLANE_TYPE_CURSOR) {
-			drm_dbg_atomic(plane->dev,
-				       "[PLANE:%d:%s] is not a cursor plane: 0x%llx\n",
-				       plane->base.id, plane->name, val);
-			return -EINVAL;
-		}
-		state->hotspot_y = val;
+	} else if (drm_atomic_is_plane_hotspot_property(plane, property)) {
+		return drm_atomic_set_hotspot_property_for_plane(state, property, val);
 	} else {
 		drm_dbg_atomic(plane->dev,
 			       "[PLANE:%d:%s] unknown property [PROP:%d:%s]\n",

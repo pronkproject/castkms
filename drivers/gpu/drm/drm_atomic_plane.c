@@ -139,3 +139,43 @@ int drm_atomic_set_color_property_for_plane(struct drm_plane_state *state,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(drm_atomic_set_color_property_for_plane);
+
+bool drm_atomic_is_plane_hotspot_property(struct drm_plane *plane,
+					  struct drm_property *property)
+{
+	return property && (property == plane->hotspot_x_property ||
+			    property == plane->hotspot_y_property);
+}
+
+/**
+ * drm_atomic_set_hotspot_property_for_plane - set a cursor hotspot coordinate
+ * @state: uncommitted cursor-plane state protected by its modeset lock
+ * @property: the plane's HOTSPOT_X or HOTSPOT_Y property
+ * @value: signed offset encoded in the atomic property value
+ *
+ * Checks the cursor-plane type, property attachment and signed range before
+ * changing the selected coordinate. Errors leave both coordinates unchanged.
+ * No file access or driver property callback is involved.
+ *
+ * Return: 0 on success, -EOPNOTSUPP for another property, or -EINVAL for a
+ * non-cursor plane, detached property or value outside the advertised range.
+ */
+int drm_atomic_set_hotspot_property_for_plane(struct drm_plane_state *state,
+					      struct drm_property *property, u64 value)
+{
+	struct drm_plane *plane = state->plane;
+	struct drm_mode_object *unused;
+
+	if (!drm_atomic_is_plane_hotspot_property(plane, property))
+		return -EOPNOTSUPP;
+	if (plane->type != DRM_PLANE_TYPE_CURSOR ||
+	    drm_mode_obj_find_prop_id(&plane->base, property->base.id) != property ||
+	    !drm_property_change_valid_get(property, value, &unused))
+		return -EINVAL;
+	if (property == plane->hotspot_x_property)
+		state->hotspot_x = U642I64(value);
+	else
+		state->hotspot_y = U642I64(value);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(drm_atomic_set_hotspot_property_for_plane);
