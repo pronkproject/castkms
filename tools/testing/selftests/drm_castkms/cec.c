@@ -190,6 +190,10 @@ int main(int argc, char **argv)
 	attach.edid_size = sizeof(edid);
 	attach.edid_ptr = (uintptr_t)edid;
 	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_ATTACH, &attach) == 0);
+	/* Native display information must be current before any mode probe. */
+	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE,
+		    &state) == 0);
+	CHECK(state.physical_address == 0x1000);
 	connector = drmModeGetConnector(fd, connector_id);
 	CHECK(connector && connector->connection == DRM_MODE_CONNECTED);
 	drmModeFreeConnector(connector);
