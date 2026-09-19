@@ -137,6 +137,7 @@ int main(int argc, char **argv)
 	};
 	struct drm_castkms_monitor_query query = {0};
 	struct drm_castkms_monitor_attach attach = {0};
+	struct drm_castkms_monitor_detach detach = {0};
 	struct drm_castkms_cec_set_transport transport = {
 		.flags = DRM_CASTKMS_CEC_TRANSPORT_ONLINE,
 	};
@@ -342,6 +343,11 @@ int main(int argc, char **argv)
 
 		CHECK(ioctl(cec_fd, CEC_ADAP_S_LOG_ADDRS, &addresses) == 0);
 	}
+	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_DETACH,
+		    &detach) == 0);
+	CHECK(ioctl(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE,
+		    &state) == 0);
+	CHECK(state.physical_address == CEC_PHYS_ADDR_INVALID);
 	CHECK(close(files.revoke_fd) == 0);
 	expect_error(files.control_fd, DRM_IOCTL_CASTKMS_MONITOR_CEC_GET_STATE,
 		     &state, ECANCELED);
