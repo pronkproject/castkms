@@ -91,6 +91,27 @@ mod cases {
     }
 
     #[test]
+    fn active_blanking_rejects_the_prior_private_image() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-blank-image", 1)?;
+        with_registered_display(&display, |device, crtc, connector, _, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.publish(None, |_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+            let source = endpoint.begin_source(1)?;
+            let id = source.id();
+            source.publish(|| ())?;
+            endpoint.release_source(id, Completion::Cpu)?;
+            check(endpoint.completed_image(1).is_ok())?;
+
+            device.atomic_update(|state| state.disable_plane(crtc.primary_plane()))?;
+            check(endpoint.completed_image(1).err() == Some(ESTALE))?;
+            check(endpoint.begin_output(1).err() == Some(ESTALE))
+        })
+    }
+
+    #[test]
     fn terminal_producer_errors_never_become_source_readiness() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-producer-error", 1)?;
         with_registered_display(&display, |device, crtc, connector, scanout, file| {
