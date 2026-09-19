@@ -463,8 +463,8 @@ static drmModeModeInfo mode_1080p(int fd, uint32_t connector_id)
 	return mode;
 }
 
-static uint32_t overlay_plane(int fd, unsigned int crtc_index,
-			      unsigned int ordinal)
+static uint32_t plane_by_type(int fd, unsigned int crtc_index,
+			      uint64_t type, unsigned int ordinal)
 {
 	drmModePlaneRes *planes = drmModeGetPlaneResources(fd);
 	unsigned int matched = 0;
@@ -488,8 +488,7 @@ static uint32_t overlay_plane(int fd, unsigned int crtc_index,
 							      props->props[p]);
 
 			CHECK(prop);
-			if (!strcmp(prop->name, "type") &&
-			    props->prop_values[p] == DRM_PLANE_TYPE_OVERLAY &&
+			if (!strcmp(prop->name, "type") && props->prop_values[p] == type &&
 			    matched++ == ordinal)
 				found = plane->plane_id;
 			drmModeFreeProperty(prop);
@@ -500,6 +499,17 @@ static uint32_t overlay_plane(int fd, unsigned int crtc_index,
 	drmModeFreePlaneResources(planes);
 	CHECK(found);
 	return found;
+}
+
+static uint32_t overlay_plane(int fd, unsigned int crtc_index,
+			      unsigned int ordinal)
+{
+	return plane_by_type(fd, crtc_index, DRM_PLANE_TYPE_OVERLAY, ordinal);
+}
+
+static uint32_t cursor_plane(int fd, unsigned int crtc_index)
+{
+	return plane_by_type(fd, crtc_index, DRM_PLANE_TYPE_CURSOR, 0);
 }
 
 static void enum_property(int fd, drmModeAtomicReq *request, uint32_t object,
@@ -533,6 +543,27 @@ static void enum_property(int fd, drmModeAtomicReq *request, uint32_t object,
 	CHECK(property_id);
 	CHECK(found_value);
 	CHECK(drmModeAtomicAddProperty(request, object, property_id, value) >= 0);
+}
+
+static void check_property_value(int fd, uint32_t object, uint32_t type,
+				 const char *name, uint64_t expected)
+{
+	drmModeObjectProperties *properties = drmModeObjectGetProperties(fd, object, type);
+	bool found = false;
+
+	CHECK(properties);
+	for (uint32_t i = 0; i < properties->count_props; i++) {
+		drmModePropertyRes *property = drmModeGetProperty(fd, properties->props[i]);
+
+		CHECK(property);
+		if (!strcmp(property->name, name)) {
+			CHECK(properties->prop_values[i] == expected);
+			found = true;
+		}
+		drmModeFreeProperty(property);
+	}
+	drmModeFreeObjectProperties(properties);
+	CHECK(found);
 }
 
 static void check_tile_pixels(int dma_fd, const struct buffer *buffer,
@@ -961,6 +992,23 @@ static int prepare_tiles(int fd, const drmModeRes *resources)
 	return ticket;
 }
 
+static void commit_cursor_hotspot(int fd, const drmModeRes *resources, int ticket)
+{
+	drmModeAtomicReq *request = drmModeAtomicAlloc();
+	uint32_t plane = cursor_plane(fd, 0);
+
+	CHECK(request);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "HOTSPOT_X", (uint64_t)-9);
+	property(fd, request, plane, DRM_MODE_OBJECT_PLANE, "HOTSPOT_Y", 11);
+	for (unsigned int i = 0; i < 2; i++)
+		property(fd, request, resources->crtcs[i], DRM_MODE_OBJECT_CRTC,
+			 DRM_PREPARE_FD_PROPERTY, ticket);
+	CHECK(drmModeAtomicCommit(fd, request, DRM_MODE_ATOMIC_NONBLOCK, NULL) == 0);
+	drmModeAtomicFree(request);
+	check_property_value(fd, plane, DRM_MODE_OBJECT_PLANE, "HOTSPOT_X", (uint64_t)-9);
+	check_property_value(fd, plane, DRM_MODE_OBJECT_PLANE, "HOTSPOT_Y", 11);
+}
+
 static void check_preparation_status(int ticket, uint32_t status)
 {
 	struct drm_prepare_query query = {0};
@@ -1115,6 +1163,10 @@ static void exercise_tile_pixels(int fd, const drmModeRes *resources,
 	CHECK(drmModeSetCursor(fd, resources->crtcs[0], cursor.dumb.handle,
 			       64, 64) == 0);
 	CHECK(drmModeMoveCursor(fd, resources->crtcs[0], 100, 100) == 0);
+	ticket = prepare_tiles(fd, resources);
+	commit_cursor_hotspot(fd, resources, ticket);
+	check_preparation_status(ticket, DRM_PREPARE_CONSUMED);
+	CHECK(close(ticket) == 0);
 	queue_tile_captures(captures, 4);
 	dequeue_tile_captures(captures, 4, results);
 	for (unsigned int i = 0; i < 2; i++) {
@@ -1269,6 +1321,7 @@ int main(int argc, char **argv)
 	CHECK(fd >= 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1) == 0);
+	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_CURSOR_PLANE_HOTSPOT, 1) == 0);
 	CHECK(drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC_PREPARATION, 1) == 0);
 	CHECK(drmSetMaster(fd) == 0 || errno == EINVAL);
 	resources = drmModeGetResources(fd);
