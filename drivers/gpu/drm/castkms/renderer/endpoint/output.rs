@@ -2,7 +2,7 @@
 
 //! Recipient output claims, independent of compositor source reads.
 
-use super::{Endpoint, State};
+use super::{Endpoint, Ordering, State};
 use crate::{
     capture::provider::{delegated_destination::Image, delegated_request::Claim},
     renderer::job::Completion,
@@ -22,8 +22,8 @@ pub(super) struct Stream {
 }
 
 impl Stream {
-    pub(super) fn new() -> Self {
-        Self { next_id: 1, last_released: None, slot: Slot::Ready }
+    pub(super) fn new(next_id: u64) -> Self {
+        Self { next_id, last_released: None, slot: Slot::Ready }
     }
 
     pub(super) fn idle(&self) -> bool {
@@ -71,6 +71,7 @@ impl Endpoint {
         let broker = publication.control().worker()?.outputs().clone();
         let id = output.next_id;
         output.next_id = id.checked_add(1).ok_or(EOVERFLOW)?;
+        self.next_output_id.store(output.next_id, Ordering::Relaxed);
         output.slot = Slot::Publishing { id };
         drop(state);
         let mut pending = Pending { endpoint: self, id, image_id, claim: None };

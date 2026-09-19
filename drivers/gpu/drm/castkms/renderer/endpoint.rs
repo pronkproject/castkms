@@ -48,6 +48,7 @@ pub(crate) struct Endpoint {
     access: Access,
     device: RegisteredDeviceRef<Driver>,
     next_source_id: AtomicU64,
+    next_output_id: AtomicU64,
     #[pin]
     state: Mutex<State>,
 }
@@ -58,6 +59,7 @@ impl Endpoint {
             access,
             device,
             next_source_id: AtomicU64::new(1),
+            next_output_id: AtomicU64::new(1),
             state <- kernel::new_mutex!(State::Empty),
         }), GFP_KERNEL)
     }
@@ -228,7 +230,7 @@ impl Endpoint {
                 publication,
                 pool,
                 source: stream::Stream::new(self.next_source_id.load(Ordering::Relaxed)),
-                output: output::Stream::new(),
+                output: output::Stream::new(self.next_output_id.load(Ordering::Relaxed)),
             },
             Err(error) => {
                 drop(state);
