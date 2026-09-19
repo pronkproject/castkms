@@ -352,8 +352,10 @@ Renderer job descriptions
 an image retained by ``RENDERER_REGISTER_IMAGE``. A renderer should allocate
 the advertised maximum of 64 KiB for the result. Insufficient capacity returns
 ``ENOSPC``; failure does not consume the job or install any descriptors, even
-if userspace memory was partially written. Blank states and content already
-reported as composed or submitted return ``ENODATA``.
+if userspace memory was partially written. An active blank output yields a
+zero-plane job with its own output revision. The worker fills its private image
+with opaque black and applies output color operations. Content already reported
+as composed or submitted returns ``ENODATA``.
 
 The version-one result contains a job header followed by back-to-front plane
 records and output color-op records. Each plane record includes its role,

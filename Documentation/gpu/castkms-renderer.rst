@@ -161,6 +161,11 @@ acquire source access. There is one outstanding job per endpoint.
 The job includes primary, overlay and cursor plane records in stable
 back-to-front order, with ``src_*`` crop, ``crtc_*`` geometry and ordered
 plane/output color-op records.
+Removing the last visible plane from an active output yields a zero-plane job
+with a new output revision. The worker renders opaque black into its private
+image, then applies output color operations. No source DMA-BUF is exported
+for that job. An image from before blanking cannot be acquired for recipient
+delivery after the blank state is accepted.
 Sampling is nearest-neighbor; blending is premultiplied source-over against
 opaque black. A producer already completed with an error makes acquisition
 return
