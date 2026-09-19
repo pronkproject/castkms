@@ -67,6 +67,77 @@ mod cases {
     }
 
     #[test]
+    fn old_output_release_cannot_resolve_a_new_generation_claim() -> Result {
+        let display = CastKms::new_constraints(c"castkms-endpoint-output-generation", 1)?;
+        with_registered_display(&display, |device, crtc, connector, scanout, file| {
+            let owner = owner(&file, crtc, connector)?;
+            let endpoint = endpoints::prepared(device, &owner)?;
+            endpoint.publish(None, |_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|state| state.add_crtc_state(crtc)?.set_constraints(&entry))?;
+            let source = endpoint.begin_source(1)?;
+            let id = source.id();
+            source.publish(|| ())?;
+            endpoint.release_source(id, Completion::Cpu)?;
+
+            let first_output_id = {
+                let grant = capture_grant(&file, crtc, connector)?;
+                let scope = grant.capture().describe_delegated()?;
+                let registration = scope.register_queue(1)?;
+                let backing = private_images::buffer(device, ExportAccess::ReadWrite)?;
+                let destination = scope.register_destination(
+                    &backing, drm::fourcc::XRGB8888, drm::fourcc::FORMAT_MOD_LINEAR, 2560, 0,
+                )?;
+                registration.with_queue(|queue| queue.queue_to(1, &destination, None))?;
+                let pending = endpoint.begin_output(1)?;
+                let id = pending.id();
+                pending.publish(|| ())?;
+                endpoint.release_output(id, Completion::Cpu)?;
+                id
+            };
+
+            let master = file.file().master_snapshot().ok_or(EINVAL)?;
+            <Driver as kernel::drm::Driver>::master_changed(device, None);
+            <Driver as kernel::drm::Driver>::master_changed(
+                device, Some(master.master().clone()),
+            );
+            check(endpoint.describe()?.phase == crate::renderer::endpoint::Phase::Empty)?;
+            device.atomic_update(|state| state.set_crtc_config(crtc, None))?;
+            device.constraints_output(crtc)?.restore_default()?;
+            endpoint.declare(private_images::profile()?, [640, 480])?;
+            endpoint.register_image(2, [640, 480], &[
+                private_images::buffer(device, ExportAccess::ReadWrite)?,
+            ])?;
+            endpoint.publish(None, |_| Ok(()))?;
+            let entry = device.constraints_output(crtc)?.lookup(endpoint.constraints_id()?)?;
+            device.atomic_update(|mut state| {
+                state.as_mut().set_crtc_config(crtc, Some(scanout))?;
+                state.add_crtc_state(crtc)?.set_constraints(&entry)
+            })?;
+            let source = endpoint.begin_source(2)?;
+            let id = source.id();
+            source.publish(|| ())?;
+            endpoint.release_source(id, Completion::Cpu)?;
+
+            let grant = capture_grant(&file, crtc, connector)?;
+            let scope = grant.capture().describe_delegated()?;
+            let registration = scope.register_queue(1)?;
+            let backing = private_images::buffer(device, ExportAccess::ReadWrite)?;
+            let destination = scope.register_destination(
+                &backing, drm::fourcc::XRGB8888, drm::fourcc::FORMAT_MOD_LINEAR, 2560, 0,
+            )?;
+            registration.with_queue(|queue| queue.queue_to(2, &destination, None))?;
+            let pending = endpoint.begin_output(2)?;
+            let current = pending.id();
+            check(current > first_output_id)?;
+            pending.publish(|| ())?;
+            check(endpoint.release_output(first_output_id, Completion::WithoutAccess)
+                == Err(ENOENT))?;
+            endpoint.release_output(current, Completion::Cpu)
+        })
+    }
+
+    #[test]
     fn output_poll_skips_stale_completed_images() -> Result {
         let display = CastKms::new_constraints(c"castkms-endpoint-output-interval", 1)?;
         with_registered_display(&display, |device, crtc, connector, scanout, file| {
