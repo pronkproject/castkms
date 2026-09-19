@@ -19,7 +19,7 @@ enum Description {
     Attached {
         edid: Option<Edid>,
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
-        audio: Option<crate::audio::Attachment>,
+        audio: Option<Arc<crate::audio::Attachment>>,
     },
     Disconnected,
 }
@@ -268,19 +268,30 @@ impl Control {
     fn description(&self, edid: Option<Edid>) -> Result<Description> {
         #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
         let audio = {
-            let device = self.device.registration_guard().ok_or(ENODEV)?;
-            let index = device
-                .displays
-                .iter()
-                .position(|display| Arc::ptr_eq(&display.monitor, &self.monitor))
-                .ok_or(EINVAL)?;
+            let previous = {
+                let state = self.monitor.state.lock();
+                match &*state {
+                    State::Managed {
+                        identity,
+                        description: Description::Attached { audio: Some(audio), .. },
+                    } if Arc::ptr_eq(identity, &self.identity) => Some(audio.clone()),
+                    _ => None,
+                }
+            };
             match &edid {
-                Some(edid) => crate::audio::Attachment::new(
-                    &device,
-                    edid,
-                    index,
-                    self.monitor.audio_link.clone(),
-                )?,
+                Some(edid) => {
+                    // An exact ELD reassertion keeps the card, its open PCM and tap.
+                    // Changed audio capabilities create a new attachment instead.
+                    if let Some(audio) = previous {
+                        if audio.matches_eld(edid)? {
+                            Some(audio)
+                        } else {
+                            self.new_audio(edid)?
+                        }
+                    } else {
+                        self.new_audio(edid)?
+                    }
+                }
                 None => None,
             }
         };
@@ -289,6 +300,24 @@ impl Control {
             #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
             audio,
         })
+    }
+
+    #[cfg(CONFIG_DRM_CASTKMS_AUDIO)]
+    fn new_audio(&self, edid: &Edid) -> Result<Option<Arc<crate::audio::Attachment>>> {
+        let device = self.device.registration_guard().ok_or(ENODEV)?;
+        let index = device
+            .displays
+            .iter()
+            .position(|display| Arc::ptr_eq(&display.monitor, &self.monitor))
+            .ok_or(EINVAL)?;
+        Ok(crate::audio::Attachment::new(
+            &device,
+            edid,
+            index,
+            self.monitor.audio_link.clone(),
+        )?
+        .map(|audio| Arc::new(audio, GFP_KERNEL))
+        .transpose()?)
     }
 
     pub(crate) fn attach(&self, edid: Option<Edid>) -> Result {
