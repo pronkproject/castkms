@@ -568,7 +568,7 @@ impl Fence {
 unsafe impl AlwaysRefCounted for Fence {
     fn inc_ref(&self) {
         // SAFETY: `self.as_raw()` is a pointer to a valid `struct dma_fence`.
-        unsafe { bindings::dma_fence_get(self.as_raw()) }
+        unsafe { bindings::dma_fence_get(self.as_raw()) };
     }
 
     unsafe fn dec_ref(ptr: NonNull<Self>) {
