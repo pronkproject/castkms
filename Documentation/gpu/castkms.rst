@@ -888,6 +888,16 @@ attachment and explicit disconnection. The capability remains effective after
 DRM master handoff. Its final close must leave the connector disconnected, and
 a new current master must then be able to issue the next capability.
 
+Standalone client probes can use ``monitor-run`` to keep a fallback monitor
+connected while the client holds DRM master through its own file::
+
+    tools/testing/selftests/drm_castkms/monitor-run /dev/dri/cardN command [args...]
+
+The utility releases master before starting the command and disconnects the
+monitor after the command exits. It is built alongside the selftests but does
+not run as an automatic test. Use it only with an unused CastKMS device in a
+disposable VM.
+
 The capture-grant test exercises public issuance and output descriptions
 without reading captured pixels. It checks master-file authority, distinct
 close-on-exec endpoints, creator and control close, duplicate control ownership,
