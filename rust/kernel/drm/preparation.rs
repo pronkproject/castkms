@@ -17,12 +17,14 @@ use core::{mem::ManuallyDrop, ptr::NonNull};
 mod domain;
 mod file;
 mod guard;
+mod observer;
 mod set;
 mod ticket;
 
 pub use self::{
     domain::Domain,
     guard::RetirementGuard,
+    observer::{AdmissionListener, AdmissionObserver},
     set::{
         PreparedRetirement,
         RetirementSet, //
@@ -97,6 +99,21 @@ impl Source {
         })
     }
 
+    /// Inspect admission after registering an observer of its transitions.
+    pub fn admission_status(&self) -> Result<AdmissionStatus> {
+        let status = unsafe { bindings::drm_prepare_source_admission_status(self.0.get()) };
+        if status == 0 {
+            Ok(AdmissionStatus::Open)
+        } else if status == EBUSY.to_errno() {
+            Ok(AdmissionStatus::Held)
+        } else if status == ESHUTDOWN.to_errno() {
+            Ok(AdmissionStatus::Sealed)
+        } else {
+            to_result(status)?;
+            Err(EIO)
+        }
+    }
+
     /// Permanently close admission, leaving already-claimed access unresolved.
     pub fn seal(&self) {
         // SAFETY: The source is live; sealing is synchronized and idempotent.
@@ -128,6 +145,16 @@ impl Source {
             })),
         }
     }
+}
+
+/// State relevant to retrying a read after admission was refused.
+pub enum AdmissionStatus {
+    /// New read claims may be accepted.
+    Open,
+    /// At least one preparation owner temporarily excludes new claims.
+    Held,
+    /// The source permanently excludes new claims.
+    Sealed,
 }
 
 /// An owned hold on new read admission, independent of any ticket file descriptor.

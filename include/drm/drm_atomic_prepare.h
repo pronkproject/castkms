@@ -11,6 +11,7 @@ struct drm_prepare_admission_hold;
 struct drm_prepare_domain;
 struct drm_prepare_retirement_set;
 struct drm_prepare_retirement_guard;
+struct drm_prepare_source_observer;
 
 /* Related sources share a provider-owned admission domain, not a global lock.
  * Domain operations may sleep. Each source independently retains its domain.
@@ -83,6 +84,18 @@ struct drm_prepare_read_claim *drm_prepare_source_claim(struct drm_prepare_sourc
 void drm_prepare_source_seal(struct drm_prepare_source *source);
 /* Zero means permanently sealed with no unresolved claims, not GPU completion. */
 int drm_prepare_source_ready(struct drm_prepare_source *source);
+
+/* Notify without sleeping when admission reopens, seals, or becomes unusable.
+ * Registration retains the source. Destruction synchronizes with callbacks.
+ * The callback may run in atomic context and must not retain its data pointer.
+ * Register before inspecting admission to avoid losing a transition.
+ */
+struct drm_prepare_source_observer *
+drm_prepare_source_observe(struct drm_prepare_source *source,
+			  void (*notify)(void *data), void *data);
+void drm_prepare_source_observer_destroy(struct drm_prepare_source_observer *observer);
+/* 0: open; -EBUSY: held; -ESHUTDOWN: permanently sealed; -EIO: abandoned. */
+int drm_prepare_source_admission_status(struct drm_prepare_source *source);
 
 /*
  * A temporary admission hold retains its source. Its final put allows new

@@ -39,7 +39,25 @@ struct drm_prepare_source {
 	unsigned int admission_holds;
 	bool sealed;
 	bool claim_abandoned;
+	wait_queue_head_t admission_changes;
 };
+
+struct drm_prepare_source_observer {
+	wait_queue_entry_t wait;
+	struct drm_prepare_source *source;
+	void (*notify)(void *data);
+	void *data;
+};
+
+static int source_admission_changed(wait_queue_entry_t *wait, unsigned int mode,
+				    int flags, void *key)
+{
+	struct drm_prepare_source_observer *observer =
+		container_of(wait, struct drm_prepare_source_observer, wait);
+
+	observer->notify(observer->data);
+	return 0;
+}
 
 struct drm_prepare_admission_hold {
 	struct kref ref;
@@ -114,6 +132,7 @@ drm_prepare_source_create_in(struct drm_prepare_domain *domain, unsigned int cap
 	kref_init(&source->ref);
 	source->domain = drm_prepare_domain_get(domain);
 	INIT_LIST_HEAD(&source->reads);
+	init_waitqueue_head(&source->admission_changes);
 	source->capacity = capacity;
 	return source;
 }
@@ -152,6 +171,52 @@ void drm_prepare_source_put(struct drm_prepare_source *source)
 	kref_put(&source->ref, source_free);
 }
 EXPORT_SYMBOL_GPL(drm_prepare_source_put);
+
+struct drm_prepare_source_observer *
+drm_prepare_source_observe(struct drm_prepare_source *source,
+			  void (*notify)(void *data), void *data)
+{
+	struct drm_prepare_source_observer *observer;
+
+	if (!source || !notify)
+		return ERR_PTR(-EINVAL);
+	observer = kzalloc_obj(*observer);
+	if (!observer)
+		return ERR_PTR(-ENOMEM);
+	observer->source = drm_prepare_source_get(source);
+	observer->notify = notify;
+	observer->data = data;
+	init_waitqueue_func_entry(&observer->wait, source_admission_changed);
+	add_wait_queue(&source->admission_changes, &observer->wait);
+	return observer;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_source_observe);
+
+void drm_prepare_source_observer_destroy(struct drm_prepare_source_observer *observer)
+{
+	remove_wait_queue(&observer->source->admission_changes, &observer->wait);
+	drm_prepare_source_put(observer->source);
+	kfree(observer);
+}
+EXPORT_SYMBOL_GPL(drm_prepare_source_observer_destroy);
+
+int drm_prepare_source_admission_status(struct drm_prepare_source *source)
+{
+	int status;
+
+	mutex_lock(&source->domain->lock);
+	if (source->claim_abandoned)
+		status = -EIO;
+	else if (source->sealed)
+		status = -ESHUTDOWN;
+	else if (source->admission_holds)
+		status = -EBUSY;
+	else
+		status = 0;
+	mutex_unlock(&source->domain->lock);
+	return status;
+}
+EXPORT_SYMBOL_GPL(drm_prepare_source_admission_status);
 
 struct drm_prepare_read_claim *drm_prepare_source_claim(struct drm_prepare_source *source)
 {
@@ -199,9 +264,14 @@ EXPORT_SYMBOL_GPL(drm_prepare_source_claim);
 
 void drm_prepare_source_seal(struct drm_prepare_source *source)
 {
+	bool changed;
+
 	mutex_lock(&source->domain->lock);
+	changed = !source->sealed;
 	source->sealed = true;
 	mutex_unlock(&source->domain->lock);
+	if (changed)
+		wake_up_all(&source->admission_changes);
 }
 EXPORT_SYMBOL_GPL(drm_prepare_source_seal);
 
@@ -313,9 +383,14 @@ static void admission_hold_free(struct kref *ref)
 	struct drm_prepare_admission_hold *hold = container_of(ref, struct drm_prepare_admission_hold, ref);
 	struct drm_prepare_source *source = hold->source;
 
+	bool reopened;
+
 	mutex_lock(&source->domain->lock);
 	source->admission_holds--;
+	reopened = !source->admission_holds && !source->sealed;
 	mutex_unlock(&source->domain->lock);
+	if (reopened)
+		wake_up_all(&source->admission_changes);
 	drm_prepare_source_put(source);
 	kfree(hold);
 }
@@ -353,9 +428,11 @@ static void finish_read(struct drm_prepare_read_claim *read, struct dma_fence *f
 {
 	struct drm_prepare_source *source = read->source;
 	LIST_HEAD(retired);
+	bool admission_failed;
 
 	mutex_lock(&source->domain->lock);
 	source->unresolved_claims--;
+	admission_failed = abandoned && !source->claim_abandoned;
 	source->claim_abandoned |= abandoned;
 	if (fence) {
 		read->fence = dma_fence_get(fence);
@@ -366,6 +443,8 @@ static void finish_read(struct drm_prepare_read_claim *read, struct dma_fence *f
 	}
 	mutex_unlock(&source->domain->lock);
 	wake_up_all(&source->domain->readiness);
+	if (admission_failed)
+		wake_up_all(&source->admission_changes);
 	free_reads(&retired);
 	/* Released entries belong to the source, not to an independent claim. */
 	drm_prepare_source_put(source);
