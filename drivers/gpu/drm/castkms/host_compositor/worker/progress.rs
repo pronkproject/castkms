@@ -27,6 +27,13 @@ impl Progress {
         self.requested
     }
 
+    pub(super) fn has_pending(&self) -> bool {
+        self.completed
+            .as_ref()
+            .is_none_or(|(through, _)| *through < self.requested)
+            && self.requested != 0
+    }
+
     /// The single worker completes attempts in order; return replaced storage for unlocked drop.
     pub(super) fn finish(&mut self, through: u64, outcome: Outcome) -> Option<Outcome> {
         self.completed

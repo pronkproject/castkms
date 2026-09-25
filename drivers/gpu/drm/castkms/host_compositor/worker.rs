@@ -21,6 +21,7 @@ use crate::{
     Output, //
 };
 use kernel::{
+    drm::preparation::{AdmissionListener, AdmissionObserver, AdmissionStatus},
     prelude::*,
     sync::{
         Arc,
@@ -50,24 +51,34 @@ enum State {
         outcome: Option<Outcome>,
         last_image: Option<Arc<Completed>>,
         progress: Progress,
+        observer: Option<AdmissionObserver<Worker>>,
     },
     Closed,
 }
 
+struct RetiredAttempt {
+    _outcome: Option<Outcome>,
+    _image: Option<Arc<Completed>>,
+    _completion: Option<Outcome>,
+    _observer: Option<AdmissionObserver<Worker>>,
+}
+
 impl State {
     /// Return replaced storage for destruction outside the worker's result lock.
-    fn record(
-        &mut self,
-        through: u64,
-        next: Outcome,
-    ) -> (Option<Outcome>, Option<Arc<Completed>>, Option<Outcome>) {
+    fn record(&mut self, through: u64, next: Outcome) -> RetiredAttempt {
         let Self::Open {
             outcome,
             last_image,
             progress,
+            observer,
         } = self
         else {
-            return (Some(next), None, None);
+            return RetiredAttempt {
+                _outcome: Some(next),
+                _image: None,
+                _completion: None,
+                _observer: None,
+            };
         };
         let retired_image = match &next {
             Outcome::Image(image) => last_image.replace(image.clone()),
@@ -75,7 +86,12 @@ impl State {
             Outcome::Failed(_) => None,
         };
         let retired_attempt = progress.finish(through, next.clone());
-        (outcome.replace(next), retired_image, retired_attempt)
+        RetiredAttempt {
+            _outcome: outcome.replace(next),
+            _image: retired_image,
+            _completion: retired_attempt,
+            _observer: observer.take(),
+        }
     }
 }
 
@@ -96,27 +112,90 @@ impl_has_work! {
     impl HasWork<Self> for Worker { self.work }
 }
 
+impl Worker {
+    fn requeue_if_open(worker: &Arc<Self>) {
+        let state = worker.state.lock();
+        if matches!(*state, State::Open { .. }) {
+            let _ = workqueue::system_dfl().enqueue(worker.clone());
+        }
+    }
+}
+
+impl AdmissionListener for Worker {
+    fn admission_changed(listener: &Arc<Self>) {
+        let _ = workqueue::system_dfl().enqueue(listener.clone());
+    }
+}
+
 impl WorkItem for Worker {
     type Pointer = Arc<Self>;
 
     fn run(worker: Arc<Self>) {
         let through = match &*worker.state.lock() {
-            State::Open { progress, .. } => progress.starting(),
+            State::Open { progress, .. } if progress.has_pending() => progress.starting(),
+            State::Open { .. } => return,
             State::Closed => return,
         };
-        let outcome = match compose::current_checked(&worker.output, &worker.pool, || {
+        let attempt = compose::current_checked(&worker.output, &worker.pool, || {
             let state = worker.state.lock();
             if matches!(*state, State::Closed) {
                 return Err(ENODEV);
             }
             let execution = worker.execution.admit_host()?;
             Ok((state, execution))
-        }) {
-            Ok(Some(image)) => match Arc::new(image, GFP_KERNEL) {
+        });
+        let outcome = match attempt {
+            Ok(compose::Attempt::Changed) => {
+                Self::requeue_if_open(&worker);
+                return;
+            }
+            Ok(compose::Attempt::AdmissionClosed(source)) => {
+                let observer = match AdmissionObserver::new(&source, worker.clone()) {
+                    Ok(observer) => observer,
+                    Err(error) => {
+                        let retired = worker.state.lock().record(through, Outcome::Failed(error));
+                        worker.changed.notify_all();
+                        drop(retired);
+                        return;
+                    }
+                };
+                let replaced = {
+                    let mut state = worker.state.lock();
+                    match &mut *state {
+                        State::Open {
+                            observer: current, ..
+                        } => current.replace(observer),
+                        State::Closed => return,
+                    }
+                };
+                drop(replaced);
+                match source.admission_status() {
+                    Ok(AdmissionStatus::Held) => (),
+                    Ok(AdmissionStatus::Open) => {
+                        Self::requeue_if_open(&worker);
+                    }
+                    Ok(AdmissionStatus::Sealed) => {
+                        if worker.output.has_current_source(&source) {
+                            let retired = worker.state.lock().record(through, Outcome::Failed(EIO));
+                            worker.changed.notify_all();
+                            drop(retired);
+                        } else {
+                            Self::requeue_if_open(&worker);
+                        }
+                    }
+                    Err(error) => {
+                        let retired = worker.state.lock().record(through, Outcome::Failed(error));
+                        worker.changed.notify_all();
+                        drop(retired);
+                    }
+                }
+                return;
+            }
+            Ok(compose::Attempt::Image(image)) => match Arc::new(image, GFP_KERNEL) {
                 Ok(image) => Outcome::Image(image),
                 Err(error) => Outcome::Failed(error.into()),
             },
-            Ok(None) => Outcome::NoScene,
+            Ok(compose::Attempt::NoScene) => Outcome::NoScene,
             Err(error) => Outcome::Failed(error),
         };
         let retired = worker.state.lock().record(through, outcome);
@@ -130,6 +209,8 @@ impl WorkItem for Worker {
 /// Dropping the owner closes request admission, drains queued work and releases cached
 /// images. Registration must close or drop the owner before tearing down the DRM device.
 /// Worker callbacks never own this shutdown object.
+/// A pending admission observer retains the worker until completion or owner shutdown
+/// detaches it; shutdown drops the observer before draining work.
 /// No claim is taken by queueing; the callback chooses the then-current scene.
 pub(crate) struct Owner {
     worker: Arc<Worker>,
@@ -158,6 +239,7 @@ impl Owner {
                     outcome: None,
                     last_image: None,
                     progress: Progress::new(),
+                    observer: None,
                 }),
                 changed <- kernel::sync::new_condvar!(),
                 output,
@@ -236,7 +318,9 @@ impl Handle {
             return Err(ENODEV);
         };
         let requested = progress.request()?;
-        let _queued = workqueue::system_dfl().enqueue(self.worker.clone());
+        if let State::Open { observer: None, .. } = &*state {
+            let _queued = workqueue::system_dfl().enqueue(self.worker.clone());
+        }
         Ok(Request::new(self.worker.clone(), requested))
     }
 

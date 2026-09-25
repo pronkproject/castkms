@@ -19,7 +19,7 @@ mod cases {
     use super::*;
 
     #[test]
-    fn failed_attempts_preserve_the_last_complete_image() -> Result {
+    fn admission_hold_keeps_a_request_pending_without_reusing_cached_pixels() -> Result {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
         fixture.select(&fb, false, 0)?;
@@ -39,22 +39,57 @@ mod cases {
             return Err(EINVAL);
         };
         let hold = source.hold_admission()?;
-        handle.request()?;
+        let pending = handle.request_outcome()?;
         handle.flush_for_test();
-        check(matches!(
-            handle.take_outcome(),
-            Some(Outcome::Failed(EBUSY))
-        ))?;
+        check(pending.try_outcome()?.is_none())?;
         let retained = handle.last_image().ok_or(EINVAL)?;
         check(core::ptr::eq(&*first, &*retained))?;
         check(handle.take_outcome().is_none())?;
         check(hold.prepared()?.is_some())?;
         drop(hold);
+        let Outcome::Image(second) = pending.wait()? else {
+            return Err(EINVAL);
+        };
+        check(!core::ptr::eq(&*first, &*second))?;
         fixture.state.close();
         check(handle.last_image().is_none())?;
         let mut row = [0xff; 2560];
         retained.read_row(0, &mut row)?;
         check(row == [0; 2560])?;
+        Ok(())
+    }
+
+    #[test]
+    fn replacing_a_held_scene_wakes_its_pending_request() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let output = &fixture.drm.device().output;
+        let old: ARef<Source> = output
+            .inspect_accepted(|accepted| accepted.map(|(source, _)| source.into()))
+            .ok_or(EINVAL)?;
+        let configuration = output
+            .with_accepted(|accepted| accepted.map(|accepted| accepted.configuration.clone()))
+            .ok_or(EINVAL)?;
+        let host = fixture
+            .drm
+            .device()
+            .host
+            .configure(fixture.drm.device(), Layout::new(640, 480)?)?;
+        let hold = old.hold_admission()?;
+        let pending = host.request_outcome()?;
+        host.flush_for_test();
+        check(pending.try_outcome()?.is_none())?;
+        output.publish_with_configuration(
+            Source::new(2)?,
+            crate::output::SceneUpdate::Retain,
+            configuration,
+        );
+        let Outcome::Image(_) = pending.wait()? else {
+            return Err(EINVAL);
+        };
+        check(old.prepared()?.is_some())?;
+        drop(hold);
         Ok(())
     }
 

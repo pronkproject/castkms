@@ -11,7 +11,7 @@ use super::{
     }, //
 };
 use crate::{
-    output::Identity,
+    output::{CpuRead, Identity},
     scene::{
         Configuration,
         ContentSerial, //
@@ -21,7 +21,9 @@ use crate::{
 };
 use kernel::{
     drm::auth::MasterRef,
+    drm::preparation::Source,
     prelude::*,
+    sync::aref::ARef,
     sync::Arc,
     time::{
         Instant,
@@ -41,6 +43,13 @@ pub(crate) struct Completed {
     content: Option<ContentSerial>,
     completed_at: Instant<Monotonic>,
     owner: Option<MasterRef<Driver>>,
+}
+
+pub(crate) enum Attempt {
+    NoScene,
+    Changed,
+    AdmissionClosed(ARef<Source>),
+    Image(Completed),
 }
 
 #[cfg_attr(not(CONFIG_DRM_CASTKMS_KUNIT_TEST), expect(dead_code))]
@@ -94,7 +103,12 @@ impl Completed {
 /// publishing its partial contents; success releases all source access before returning.
 #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
 pub(crate) fn current(output: &Output, pool: &Arc<Pool>) -> Result<Option<Completed>> {
-    current_checked(output, pool, || Ok(()))
+    match current_checked(output, pool, || Ok(()))? {
+        Attempt::NoScene => Ok(None),
+        Attempt::Changed => Err(EAGAIN),
+        Attempt::AdmissionClosed(_) => Err(EBUSY),
+        Attempt::Image(image) => Ok(Some(image)),
+    }
 }
 
 /// Retain caller admission across source claiming, after all mapping preparation.
@@ -106,14 +120,14 @@ pub(crate) fn current_checked<G>(
     output: &Output,
     pool: &Arc<Pool>,
     admit: impl FnOnce() -> Result<G>,
-) -> Result<Option<Completed>> {
+) -> Result<Attempt> {
     // An empty publication needs neither private storage nor source admission.
     if !output.has_scene() {
-        return Ok(None);
+        return Ok(Attempt::NoScene);
     }
     let mut slot = pool.reserve()?;
     let layout = slot.with_image(|image| image.layout())?;
-    let metadata = output.with_checked_cpu_scene(
+    let metadata = output.try_checked_cpu_scene(
         |scene| {
             if !scene.host_binding() {
                 return Err(EOPNOTSUPP);
@@ -173,11 +187,14 @@ pub(crate) fn current_checked<G>(
             result
         },
     )?;
-    let Some(metadata) = metadata else {
-        return Ok(None);
+    let metadata = match metadata {
+        CpuRead::NoScene => return Ok(Attempt::NoScene),
+        CpuRead::Changed => return Ok(Attempt::Changed),
+        CpuRead::AdmissionClosed(source) => return Ok(Attempt::AdmissionClosed(source)),
+        CpuRead::Read(metadata) => metadata,
     };
     let (content, owner, configuration) = metadata?;
-    Ok(Some(Completed {
+    Ok(Attempt::Image(Completed {
         slot,
         output: output.identity().clone(),
         configuration,

@@ -2,8 +2,8 @@
 
 //! Authorized kernel capture driven by the shared host worker.
 
-mod progress;
 mod pending;
+mod progress;
 mod queue;
 
 use super::*;
@@ -144,6 +144,31 @@ mod cases {
     }
 
     #[test]
+    fn preparation_hold_leaves_capture_pending_until_admission_reopens() -> Result {
+        let fixture = Fixture::new()?;
+        let _connector = fixture.drm.publish_connector_identity()?;
+        let file = fixture.drm.master_file()?;
+        let _fb = select(&fixture, &file)?;
+        let grantor = grant(&fixture, &file)?;
+        let stream = Stream::new(&grantor.capture(), 1)?;
+        let source: ARef<Source> = fixture
+            .drm
+            .device()
+            .output
+            .inspect_accepted(|accepted| accepted.map(|(source, _)| source.into()))
+            .ok_or(EINVAL)?;
+        let hold = source.hold_admission()?;
+        let mut pending = stream.queue()?;
+        fixture.drm.device().host.current()?.flush_for_test();
+        check(pending.try_complete_frame()?.is_none())?;
+        check(hold.prepared()?.is_some())?;
+        drop(hold);
+        let frame = pending.wait_frame()?;
+        check(frame.request().status()? == Status::Complete(Ok(())))?;
+        Ok(())
+    }
+
+    #[test]
     fn closed_stream_does_not_stop_a_siblings_worker() -> Result {
         let fixture = Fixture::new()?;
         let _connector = fixture.drm.publish_connector_identity()?;
@@ -192,7 +217,9 @@ mod cases {
         let mut old = Stream::new(&capture, 1)?;
         drop(old.capture()?);
         fixture.drm.update(|mut transaction| {
-            transaction.as_mut().set_crtc_config(fixture.drm.crtc()?, None)
+            transaction
+                .as_mut()
+                .set_crtc_config(fixture.drm.crtc()?, None)
         })?;
         fixture.select(&fb, false, 0)?;
         check(matches!(old.capture(), Err(EKEYREVOKED)))?;

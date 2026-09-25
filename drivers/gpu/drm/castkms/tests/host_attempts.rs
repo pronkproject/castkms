@@ -93,6 +93,29 @@ mod cases {
     }
 
     #[test]
+    fn closing_while_admission_is_held_detaches_the_pending_observer() -> Result {
+        let fixture = Fixture::new()?;
+        let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;
+        fixture.select(&fb, false, 0)?;
+        let source: kernel::sync::aref::ARef<kernel::drm::preparation::Source> = fixture
+            .drm
+            .device()
+            .output
+            .inspect_accepted(|accepted| accepted.map(|(source, _)| source.into()))
+            .ok_or(EINVAL)?;
+        let hold = source.hold_admission()?;
+        let configuration = &fixture.drm.device().host;
+        let host = configuration.configure(fixture.drm.device(), Layout::new(640, 480)?)?;
+        let pending = host.request_outcome()?;
+        host.flush_for_test();
+        check(pending.try_outcome()?.is_none())?;
+        configuration.stop_worker()?;
+        check(matches!(pending.wait(), Err(ENODEV)))?;
+        drop(hold);
+        Ok(())
+    }
+
+    #[test]
     fn a_failed_attempt_is_observable_by_every_covered_request() -> Result {
         let fixture = Fixture::new()?;
         let fb = fixture.framebuffer(provenance::Provenance::from_snapshot(None))?;

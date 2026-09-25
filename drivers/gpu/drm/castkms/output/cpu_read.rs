@@ -5,6 +5,13 @@
 use super::*;
 use kernel::drm::preparation::ReadClaim;
 
+pub(crate) enum CpuRead<R> {
+    NoScene,
+    Changed,
+    AdmissionClosed(kernel::sync::aref::ARef<kernel::drm::preparation::Source>),
+    Read(R),
+}
+
 struct CpuClaim(Option<ReadClaim>);
 
 impl Drop for CpuClaim {
@@ -55,12 +62,27 @@ impl<S: Clone + Unpin, C: Clone + Unpin> Output<S, C> {
     /// source claim; a cutoff after successful claiming must let that admitted CPU read retire.
     /// The output always claims and revalidates its own retained source, independent of the
     /// caller's guard. The preparation, storage and synchronous-read rules above still apply.
+    #[cfg(CONFIG_DRM_CASTKMS_KUNIT_TEST)]
     pub(crate) fn with_checked_cpu_scene<P, G, R>(
         &self,
         prepare: impl FnOnce(&S) -> Result<P>,
         admit: impl FnOnce() -> Result<G>,
         read: impl FnOnce(&S, &C, &P) -> R,
     ) -> Result<Option<R>> {
+        match self.try_checked_cpu_scene(prepare, admit, read)? {
+            CpuRead::NoScene => Ok(None),
+            CpuRead::Changed => Err(EAGAIN),
+            CpuRead::AdmissionClosed(_) => Err(EBUSY),
+            CpuRead::Read(result) => Ok(Some(result)),
+        }
+    }
+
+    pub(crate) fn try_checked_cpu_scene<P, G, R>(
+        &self,
+        prepare: impl FnOnce(&S) -> Result<P>,
+        admit: impl FnOnce() -> Result<G>,
+        read: impl FnOnce(&S, &C, &P) -> R,
+    ) -> Result<CpuRead<R>> {
         let candidate = {
             let state = self.state.lock();
             match &*state {
@@ -75,11 +97,15 @@ impl<S: Clone + Unpin, C: Clone + Unpin> Output<S, C> {
             }
         };
         let Some((source, scene, configuration)) = candidate else {
-            return Ok(None);
+            return Ok(CpuRead::NoScene);
         };
         let resources = prepare(&scene)?;
         let admission = admit()?;
-        let claim = CpuClaim(Some(source.claim()?));
+        let claim = match source.claim() {
+            Ok(claim) => CpuClaim(Some(claim)),
+            Err(error) if error == EBUSY => return Ok(CpuRead::AdmissionClosed(source)),
+            Err(error) => return Err(error),
+        };
         drop(admission);
         let current = {
             let state = self.state.lock();
@@ -87,11 +113,11 @@ impl<S: Clone + Unpin, C: Clone + Unpin> Output<S, C> {
                 if core::ptr::eq(&*current.source, &*source))
         };
         if !current {
-            return Err(EAGAIN);
+            return Ok(CpuRead::Changed);
         }
         let result = read(&scene, &configuration, &resources);
         drop(claim);
-        Ok(Some(result))
+        Ok(CpuRead::Read(result))
     }
 }
 

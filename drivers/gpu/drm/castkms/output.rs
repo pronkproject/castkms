@@ -4,6 +4,8 @@
 
 mod cpu_read;
 
+pub(crate) use cpu_read::CpuRead;
+
 use kernel::{
     drm::preparation::Source,
     prelude::*,
@@ -146,6 +148,11 @@ impl<S: Unpin, C: Unpin> Output<S, C> {
             &*self.state.lock(),
             Publication::Open(Some(Generation { scene: Some(_), .. }))
         )
+    }
+
+    pub(crate) fn has_current_source(&self, source: &Source) -> bool {
+        matches!(&*self.state.lock(), Publication::Open(Some(current))
+            if core::ptr::eq(&*current.source, source))
     }
 
     /// Observe accepted configuration and scene descriptions in one publication interval.
